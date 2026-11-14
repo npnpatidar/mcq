@@ -237,4 +237,31 @@ Percentiles are also computed per row without card clustering: 200 rows over 30 
 
 ---
 
+## Round status (appended 2026-11-14)
+
+The findings above are the evidence record; this table is the outcome. B1–B4 were fixed over four rounds of subagent implementation, each round followed by a three-specialist review sweep (design/domain, implementation/integration, tests/docs). The final verification pass was run by the supervisor, not a subagent, because the subagent quota was exhausted.
+
+| Finding | Outcome | Commit | Proof |
+|---|---|---|---|
+| **B1** epoch can start at 0 | Fixed | `58c5d8e` | `StatsRetentionStreamTest.openingStatisticsOnAMigratedV27InstallSeedsANewEpoch`; `GradingRulesStoreTest.schedulerConfigNowCarriesTheIdStoredWithTheSeededCuts`; `StatsSeedFailureTest` (a failed seed surfaces an error, never a version-0 report) |
+| **B2** fresh-install file probe | Fixed | `58c5d8e` | `StartupTest.aNewInstallSeedsCorrectnessOnlyFromTheBackgroundProbe`, `anInstallWithHistoryIsNotSeeded` (real `Application`); `GradingRulesStoreTest.onePaperMakesTheInstallAnUpgrade`, `aReviewRowAlsoMakesTheInstallAnUpgrade` |
+| **B3** seed voided by any preference | Fixed | `58c5d8e` | `GradingRulesStoreTest.anUnrelatedPreferenceAndAnEmptyDatabaseStillSeedCorrectnessOnly`, `anExplicitlyStoredFalseIsNeverOverwrittenByTheSeed` |
+| **B4** Reset flips the rule | Fixed | `58c5d8e` | `SettingsViewModelResetTest.resetKeepsTheRuleInTheUiAndInTheStore`; `GradingRulesStoreTest.aResetUnderCorrectnessOnlyKeepsTheRuleAndRecordsIt`, `aResetWithAnUnchangedPairLeavesTheVersionAndEpochAlone`, `aFirstResetOfARetiredPairMintsNoManualRow` |
+| **M1** upgrade retires a tuned pair | Partly — now documented, not preserved | `d4ed972` | README 2104 states the retirement; no in-app notice yet, and the old value is still not kept |
+| **M2** calibration chart hidden under correctness-only | Open | — | — |
+| **M3** suggestion is a relative rule | Open (owner decision) | — | — |
+| **M4** suggested pair is unusable | Open | — | — |
+| **M5** "not yet" line states the wrong gate | Open | — | — |
+| **M6** no end-to-end correctness-only test | Open | — | — |
+| **M7** stats test excluded the new fields | Open | — | — |
+| **M8** v27 amended in place | Open | — | `27.json` still hand-edited; needs one build to regenerate |
+| **M9** backup coverage | Partly | `58c5d8e` | marker exclusion and restore-kept-rule are covered; `correctnessOnly=true` in a version row and legacy `ladderBlocks` fixtures are not |
+| **M10** shared DataStore leakage | Partly | `58c5d8e` | `robolectric.properties` + `TestMcqApplication` + `SettingsResetRule` replace the probe race; the general leak across unrelated classes remains |
+
+Residual risk now documented in the code and README: if the first-start probe fails and the learner imports a paper before a retry succeeds, the install is treated as an upgrade for good and the correctness-only default is lost silently.
+
+Local evidence for `58c5d8e`: `compileDebugKotlin`, `compileDebugUnitTestKotlin`, `compileDebugAndroidTestKotlin`, `lintDebug` (no new issue in a touched file) and the 165-class pure-JVM suite (1478 tests) all pass. Every Robolectric class is CI-only on this aarch64 host — including all the new oracles above — so the branch is unproven until CI runs.
+
+---
+
 *Findings marked "verified" were re-checked against the tree during synthesis; the rest carry the reviewing agent's `path:line` evidence and should be re-confirmed when fixed.*

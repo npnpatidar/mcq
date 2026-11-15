@@ -502,9 +502,18 @@ class CalibrationTest {
 
     @Test
     fun `a move past the end of the range keeps the pair`() {
-        val floor = Calibration.suggestCuts(closedReport(-0.30), 1, 60)
+        // The Easy cut's floor is 2 s (SchedulerConfig.sanitized): a proposal of
+        // 1 s would be snapped back on save, so it is not a proposal.
+        val floor = Calibration.suggestCuts(closedReport(-0.30), 2, 60)
         assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, floor.status)
-        assertEquals(1L, floor.nextFast)
+        assertEquals(2L, floor.nextFast)
+        assertEquals(Calibration.MIN_EASY_SECONDS, floor.nextFast)
+
+        // The floor itself is still reachable: −30 pp is a 4 s step, so 6 s
+        // moves to exactly 2 s rather than to the forbidden 1 s.
+        val toFloor = Calibration.suggestCuts(closedReport(-0.30), 6, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, toFloor.status)
+        assertEquals(2L, toFloor.nextFast)
 
         // fast must stay below slow, so the Hard cut is the wall.
         val ceiling = Calibration.suggestCuts(closedReport(0.30), 59, 60)
@@ -568,7 +577,9 @@ class CalibrationTest {
             repeat(30) { add(timedRow("wrong-$it", 4, t0 + day, correct = false)) }
             repeat(20) { add(timedRow("guess-$it", 4, t0 + day, guess = true)) }
             repeat(10) { add(timedRow("skip-$it", 4, t0 + day, skipped = true)) }
-            repeat(5) { add(timedRow("zero-$it", 0, t0 + day)) }
+            // A row with no measurement at all (pre-v27): the one value that
+            // says "not timed" rather than "answered fast". Sub-second rows are
+            // stored as 0 and are counted instead — see the test below.
             repeat(5) { add(timedRow("null-$it", null, t0 + day)) }
             // Dwells recorded while the clock was tinted: the feedback could
             // have shaped them, so they are not free evidence.
@@ -580,6 +591,68 @@ class CalibrationTest {
         assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
         assertEquals("noise must not enter the percentiles", 200, suggestion.evidence)
         assertEquals(14L, suggestion.nextFast)
+    }
+
+    /**
+     * The owner's rule for sub-second answers: the grade stays Good, but the
+     * answer-time suggestion keeps the row. A reflex is a real reading of the
+     * learner's fast end, and p10 is exactly that tail, so dropping it biases
+     * the suggested Easy cut upward and can leave a fast learner permanently
+     * short of the row gate.
+     */
+    @Test
+    fun `a sub-second answer counts toward the gate`() {
+        // 199 measured answers plus one reflex: exactly the 200-row gate.
+        val rows = timedRows(linkedMapOf(0L to 1, 15L to 199))
+        val suggestion = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals("the reflex must be the 200th row", 200, suggestion.evidence)
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+    }
+
+    @Test
+    fun `a sub-second answer enters the percentile as one second`() {
+        // 21 answers inside the first second, 185 at 60 s. p10 interpolates
+        // between the last reflex and the first 60 s reading: read as 1 s it
+        // lands at 31 s, read as 0 s it would land at 30 s.
+        val subSecond = timedRows(linkedMapOf(0L to 21, 60L to 185))
+        // The same rows stored as the one second each of them is worth.
+        val asSeconds = timedRows(linkedMapOf(1L to 21, 60L to 185))
+        val counted = Calibration.suggestCutsFromDwell(
+            subSecond, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        val spelledOut = Calibration.suggestCutsFromDwell(
+            asSeconds, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(206, counted.evidence)
+        assertEquals("a stored 0 reads as the second it stands for", 31L, counted.nextFast)
+        assertEquals(
+            "and the pair is exactly the one the 1 s rows give",
+            spelledOut.nextFast to spelledOut.nextSlow,
+            counted.nextFast to counted.nextSlow
+        )
+    }
+
+    @Test
+    fun `an unmeasured answer stays out of the answer-time pair`() {
+        val measured = timedRows(linkedMapOf(15L to 200))
+        val withNulls = measured + List(50) { timedRow("null-$it", null, t0 + day) }
+        val suggestion = Calibration.suggestCutsFromDwell(
+            withNulls, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(
+            "a row with no measurement is not an observation of the pace",
+            200,
+            suggestion.evidence
+        )
+        // And 200 rows at 15 s is a pace, so the nulls changed nothing at all.
+        assertEquals(
+            Calibration.suggestCutsFromDwell(
+                measured, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+            ).let { it.nextFast to it.nextSlow },
+            suggestion.nextFast to suggestion.nextSlow
+        )
     }
 
     @Test

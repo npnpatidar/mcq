@@ -747,12 +747,29 @@ class McqRepository internal constructor(
     suspend fun getPaper(paperId: String): Paper? = paperStore.getPaper(paperId)
     suspend fun savePaper(paper: Paper) = paperStore.savePaper(paper)
     suspend fun deleteImpact(paperId: String): DeleteImpact = paperStore.deleteImpact(paperId)
-    suspend fun deletePaper(paperId: String) = paperStore.deletePaper(paperId)
+
+    /**
+     * Deleting removes `review_log` rows, and the calibration cache is keyed on
+     * `max(reviewedAt)` — which a delete only moves when the newest row was
+     * among the deleted — so a cached report could keep counting reviews that
+     * no longer exist until the block advanced. The invalidation runs after the
+     * store call, never inside its transaction: a rolled-back delete changed
+     * nothing that needs forgetting.
+     */
+    suspend fun deletePaper(paperId: String) {
+        paperStore.deletePaper(paperId)
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun movePaper(paperId: String, delta: Int): Boolean =
         paperStore.movePaper(paperId, delta)
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String =
         paperStore.addCategory(paperId, title, parentId)
-    suspend fun deleteCategory(categoryId: String) = paperStore.deleteCategory(categoryId)
+    suspend fun deleteCategory(categoryId: String) {
+        paperStore.deleteCategory(categoryId)
+        // Same reason as [deletePaper]: the rows are gone, the cache key need
+        // not have moved.
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun nestCategoryIntoSibling(categoryId: String): Boolean =
         paperStore.nestCategoryIntoSibling(categoryId)
     suspend fun promoteCategoryOutOfParent(categoryId: String): Boolean =
@@ -1484,13 +1501,25 @@ class McqRepository internal constructor(
         categoryTitle: String
     ) = questionStore.ensurePaperAndCategory(paperId, paperTitle, categoryId, categoryTitle)
     suspend fun saveQuestion(question: Question) = questionStore.saveQuestion(question)
-    suspend fun deleteQuestion(questionId: String) = questionStore.deleteQuestion(questionId)
-    suspend fun deleteQuestions(questionIds: Collection<String>) =
+    suspend fun deleteQuestion(questionId: String) {
+        questionStore.deleteQuestion(questionId)
+        // Same reason as [deletePaper]: the review rows are gone, the cache key
+        // need not have moved.
+        statsStore.invalidateCalibrationCache()
+    }
+
+    suspend fun deleteQuestions(questionIds: Collection<String>) {
         questionStore.deleteQuestions(questionIds)
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun duplicateQuestion(questionId: String): String? =
         questionStore.duplicateQuestion(questionId)
-    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
+    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
         questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
+        // A cross-paper move deletes the review rows (the schedule restarts in
+        // the new paper), so the cached report may count reviews that are gone.
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
         questionStore.copyQuestionsToCategory(questionIds, targetCategoryId)
     suspend fun bulkUpdateQuestions(

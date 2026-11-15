@@ -178,6 +178,10 @@ data class SchedulerConfig(
     /**
      * Correct answers faster than this (seconds) infer Easy. Absolute: the
      * clock starts when the card appears, so reading time is inside the cut.
+     *
+     * Never below 2 s ([sanitized]): an answer inside the first second is
+     * stored as 0 and graded Good, so a 1 s cut would leave the Easy band
+     * empty and the cut evidence unable to say anything at all.
      */
     val fastSeconds: Long = 6L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
@@ -221,11 +225,15 @@ data class SchedulerConfig(
         leechThreshold = leechThreshold.coerceIn(1, 100),
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
-        fastSeconds = fastSeconds.coerceIn(1, 3599),
+        // 2..3599: a 1 s cut sits inside the untimed band (everything under one
+        // second is stored as 0 and graded Good), so no dwell could ever be
+        // Easy, contrast1 would stay null forever and the answer-time
+        // suggestion could never advise again.
+        fastSeconds = fastSeconds.coerceIn(2, 3599),
         // The pair needs a one-second gap. With both cuts equal the Good class
         // is empty, so the calibration contrast is null forever and the report
         // can never say anything — a degenerate rule, not a preference.
-        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3599) + 1, 3600),
+        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(2, 3599) + 1, 3600),
         gradingVersion = gradingVersion.coerceAtLeast(0),
         fsrsFitVersion = fsrsFitVersion.coerceAtLeast(0),
         fsrsParameters = fsrsParameters
@@ -412,10 +420,15 @@ object Study {
      * An answer given before the clock has shown its first second is stored as
      * 0, the untimed value. A correct answer that fast is a reflex or a
      * mis-tap, not a recall measured in time, so it grades Good: [inferGrade]
-     * reads 0 as "no timing" and [dwellBand] calls it neutral, and the
-     * answer-time suggestion's `dwellSeconds > 0` queries leave the row out. A
-     * wrong one is Again either way. Rounding 500-999 ms up to a second would
-     * instead hand out Easy for the fastest possible tap.
+     * reads 0 as "no timing" and [dwellBand] calls it neutral. A wrong one is
+     * Again either way. Rounding 500-999 ms up to a second would instead hand
+     * out Easy for the fastest possible tap.
+     *
+     * The answer-time suggestion keeps these rows rather than dropping them —
+     * it counts 0 as one second, because a reflex is a real reading of the
+     * learner's fast end and the tenth percentile is exactly that tail. The
+     * grade is still Good; only the suggestion's percentile reinterprets the
+     * value (see `Calibration.suggestCutsFromDwell`).
      */
     fun gradedDwellSeconds(elapsedMillis: Long): Long {
         val millis = elapsedMillis.coerceAtLeast(0L)

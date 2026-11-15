@@ -699,8 +699,11 @@ class SpacedRepetitionTest {
 
     @Test
     fun `infer grade uses the configured time thresholds`() {
-        val slow = SchedulerConfig(fastSeconds = 1, slowSeconds = 60)
-        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 30, config = slow))
+        // A pair far from the default, so the assertions can only pass if the
+        // config is read: nothing here is reachable on 6/60.
+        val tuned = SchedulerConfig(fastSeconds = 50, slowSeconds = 60)
+        assertEquals(ReviewGrade.EASY, Study.inferGrade(true, 30, config = tuned))
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 55, config = tuned))
         val default = SchedulerConfig()
         assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 30, config = default))
         assertEquals(ReviewGrade.HARD, Study.inferGrade(true, 60, config = default))
@@ -735,6 +738,33 @@ class SpacedRepetitionTest {
         val top = SchedulerConfig(fastSeconds = 3600, slowSeconds = 3600).sanitized()
         assertEquals(3599L, top.fastSeconds)
         assertEquals(3600L, top.slowSeconds)
+    }
+
+    @Test
+    fun `sanitized lifts a one-second Easy cut to the floor of two`() {
+        // A stored 1 — written by a build that still allowed it, or typed into
+        // an old field. One sanitize is enough, and a second pass is a no-op,
+        // so the stored value converges instead of drifting.
+        val stored = SchedulerConfig(fastSeconds = 1, slowSeconds = 60).sanitized()
+        assertEquals(2L, stored.fastSeconds)
+        assertEquals("the Hard cut is untouched by the floor", 60L, stored.slowSeconds)
+        assertEquals(stored, stored.sanitized())
+
+        // Why the floor exists: the Easy band is `1 until fastSeconds`. At 2 it
+        // is exactly the one measured second, so a contrast can exist at all;
+        // at 1 the band is empty, which is what made the Easy class vanish.
+        assertEquals(ReviewGrade.EASY, Study.inferGrade(true, 1, config = stored))
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 0, config = stored))
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 2, config = stored))
+        // At 3 s the band is 1..2 — the same non-emptiness, one second wider.
+        val three = SchedulerConfig(fastSeconds = 3, slowSeconds = 60).sanitized()
+        assertEquals(ReviewGrade.EASY, Study.inferGrade(true, 2, config = three))
+        assertEquals(ReviewGrade.GOOD, Study.inferGrade(true, 3, config = three))
+        // The old floor really was empty: nothing satisfies `in 1 until 1`.
+        assertEquals(
+            ReviewGrade.GOOD,
+            Study.inferGrade(true, 1, config = SchedulerConfig(fastSeconds = 1, slowSeconds = 60))
+        )
     }
 
     @Test

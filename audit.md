@@ -23,6 +23,17 @@
 
 All original Blockers **B1–B4** and Majors **M1, M2, M4–M7, M9, M10** are fixed or closed as recorded below. **M8** is accepted by owner decision and **M3** is an owner decision.
 
+**State after the four implementation batches (2026-11-15).** No Blocker and no Major is
+open: **F1** is fixed and hardened against a mismatched pair and an unusable timestamp
+(**R1**), **F2** is fixed, **F3/F5** fixtures execute, **F4** copy matches the app, **F6** is
+settled by a from-scratch regeneration, **F7** documents are deleted, and the two later
+rulings **F8** (2 s Easy floor) and **F9** (sub-second rows count as one second in the
+suggestion only) are implemented with tests. What remains is deliberate: the 80 `plan §N`
+code citations, the accepted **M8** no-27→28 decision, the **minor 6** migrated-row contract,
+the **F11** nits, three untested UI behaviours, the untested legacy *streaming* import, and the
+deleted-analysis provenance of the PR's 812-row figure. CI green at `18f55e2`; the branch
+needs one more green run on the batch-4 commit before release.
+
 ---
 
 ## Findings
@@ -146,6 +157,8 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 
 **Suggested fix.** Require `fast >= 2` in `sanitized` and the Settings range, or surface the empty Easy class in the report as a named degeneracy. This is the same class of problem the equal-cut guard just closed.
 
+**Owner ruling (2026-11-15): raise the floor to 2 s.** Implemented: `sanitized` clamps to `2..3599` (and the `slowSeconds` gap clamp reads the same floor), the Settings field range is `2f..3599f`, and `Calibration.suggestCuts` now treats a target below `MIN_EASY_SECONDS = 2` as `AT_LIMIT`, so it cannot propose a 1 s cut that the config would silently snap back to 2. Tests: `sanitized lifts a one-second Easy cut to the floor of two` (idempotent) and the floor case in `CalibrationTest`.
+
 ---
 
 ### F9 — Sub-second answers can never satisfy the 200-row pace gate *(Minor, consequence of `5e91f1e`)*
@@ -155,6 +168,8 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 **Why it matters.** The owner accepted the untimed convention, but its interaction with the gate is a dead end for exactly the fastest learners the suggestion is meant to serve. The commit message is explicit that the row "stays out of the answer-time suggestion", so this is a consequence to record, not a slip.
 
 **Suggested fix.** Document the dead end in the card or README, or count sub-second rows as 1 s for the percentile only (never for grading).
+
+**Owner ruling (2026-11-15): count sub-second rows as one second in the suggestion only.** Implementation keeps grading untouched — under a second is still stored as 0, still untimed, still `Good` — and changes only `suggestCutsFromDwell`: `elapsedSeconds == null` (no measurement, pre-v27) stays excluded, `elapsedSeconds == 0` now counts toward `MIN_DWELL_ROWS` / `MIN_DWELL_CARDS` / `MIN_DWELL_DAYS` and enters the percentile as `coerceAtLeast(1)`. The KDoc at `gradedDwellSeconds` no longer claims the row is dropped. Tests: `a sub-second answer counts toward the gate`, `a sub-second answer enters the percentile as one second` (21 × 0 s + 185 × 60 s ⇒ p10 = 31 s, where dropping the zeros gives 60 s and reading them as 0 gives 30 s), and `an unmeasured answer stays out of the answer-time pair`.
 
 ---
 
@@ -283,6 +298,15 @@ All six decisions were made in favour of the recommended option.
 | **F6** | **Regenerate** `27.json` with a build; commit only if it differs; no 27→28 | Build + schema file |
 | **F7** | **Delete the obsolete documents** — `ladder-evaluation.md` removed; `audit.md` kept until release | Docs |
 
+### Later rulings (2026-11-15, after the first release review)
+
+| # | Ruling | Consequence |
+|---|---|---|
+| **F8** | **Raise the Easy-cut floor to 2 s.** `sanitized` allowed `fast = 1`, and `inferGrade` needs `dwell in 1 until fast`, so a 1 s cut left the Easy class permanently empty: `contrast1` null, the cut suggestion stuck at `NEEDS_EVIDENCE` for good. | Code, UI range, copy and tests |
+| **F9** | **Count sub-second answers as one second in the answer-time suggestion only.** Grading is untouched (under 1 s stays untimed and `Good`), but the row now counts toward the 200/30/14 gates and enters the percentile instead of being dropped, so a fast learner's p10 is no longer biased upward and the gate is reachable. | Code, copy and tests |
+| **R2 follow-up** | **Invalidate the calibration cache when reviews are deleted.** The key's freshness guard only notices appends, so a cached report could keep counting deleted reviews until the block advanced. | Code and test |
+
+
 **Residual accepted after the rulings:** the 80 `plan §N` code-comment citations (code, not documents), and the items the owner previously decided to leave (`M3` pace suggestion, `M8` no 27→28, naming). `F8` (`fast = 1`) was not part of the ruling set and is not in this batch.
 
 ## Suggested order of work
@@ -380,6 +404,69 @@ both invalidations sit in a non-suspending `finally`; `calibrationCache` is a
 `ConcurrentHashMap` written from two dispatchers, so the new accessor needs no lock; the
 `retainRetiredCutsIfAbsent` refactor is behaviour-identical and still runs inside the reset edit;
 the `AT_LIMIT` branch is reachable only with a non-null contrast and only under timed grading.
+
+### Third batch (reviewer 2 findings)
+
+| # | Fix |
+|---|---|
+| I1 | `GradingGuard` (cut pair, ladder id, rule, as `settings.json` carries them) plus `McqRepository.settingsUnchangedSince`. Both exports take the snapshot, stream, then re-read; a moved guard deletes the file and fails with `BACKUP_RULE_MOVED` ("… the grading settings changed while the backup was being written … the file was discarded — try again."). The document is deleted through `DocumentsContract.deleteDocument`, since a `DocumentsProvider` URI ignores `ContentResolver.delete`. Every writer mints a new ladder id, so even a save-and-revert moves the guard. |
+| I2 | `ensureVersionLocked` reads the id and pair from one `SchedulerConfig` snapshot; the second read and the trailing re-read are gone. |
+| I3–I4 | `StatsStore`, `GradingRulesStore` and `McqRepository` KDocs corrected: the key moves on appends (deletions are a recorded follow-up), the "usable start" sentence is scoped to rows that exist, and the non-existent "settings-only restore" wording is replaced by "defence in depth against a backup whose settings and log disagree". |
+| I5 | `easy_answer_threshold_help` no longer claims Easy applies from one second up. |
+| I6 | `settingsRestore` returns `Unit`; no caller or test consumed the `Int`. |
+
+### Reviewer 3 (tests / copy / docs / release) — run by the supervisor
+
+The subagent could not start (provider quota exhausted), so I ran this pass directly against the
+tree, the same substitution recorded for reviewer T in the first audit.
+
+- **Test adequacy.** No vacuous assertion found in the new tests. The four F1 tests each fail if
+  their branch regresses: the exact-match test counts rows before and after (2, unchanged) and
+  pins the restored `effectiveFrom`; the mismatch test asserts a *different* id with
+  `effectiveFrom >= restoredAfter` **and** that row 5 keeps 4/20 and its old stamp; the timestamp
+  test loops over `0` and a future instant and asserts a positive stamp not after now; the
+  pre-v27 test asserts the retired keys, which the upgrade path is the only writer of. The cache
+  test loads once (1 pair), deletes the oldest row, restores again and requires 0 — it would pass
+  vacuously if the cache were not read at all, so it is checked against `StatsStore`'s
+  `calibrationCache` lookup, which is on that path. The migration test resolves `version(7)` and
+  pins 8/30, so a dropped copy fails it. `MigrationTest`'s new review names a question that does
+  not exist; harmless (`review_log` has an FK on `paperId` only) but noted.
+- **Copy.** Placeholders and call sites match for every changed string (`stats_cuts_from_times_same`
+  takes fast, slow, evidence in that order; both `stats_cuts_limit*` take fast, slow; the three
+  gate lines take the measured value and the constant). Only `values/` exists, so no locale is
+  stale. The 5 pp step, the 2 s / 5 s / 120 s clamps, the 200/30/14 gates and the first-second
+  rule all match the constants.
+- **Docs.** No reference to a deleted document survives outside `audit.md`. `README.md` matches
+  the code after one supervisor fix: line 2078 still said Easy applies "from one second up",
+  which is false while the Easy cut is 1 s, and was corrected in the same pass as the string.
+- **PR body.** Rewritten: the two deleted files are no longer cited, the calibration card is
+  described as kept, the upgrade note no longer claims the cuts are kept, the step is "5 pp of
+  contrast", and the test count is 165 classes / 1 480 tests instead of "326 classes".
+- **Release state.** No `versionCode`/`versionName`, workflow, signing, Gradle or artifact-name
+  change; no new dependency. Branch is a feature branch; PR #81 is still a draft.
+
+### Fourth batch — the two later rulings
+
+| # | Fix |
+|---|---|
+| F8 | `SchedulerConfig.sanitized` floors the Easy cut at 2 s (`slowSeconds`' gap clamp reads the same floor); the Settings field range is `2f..3599f`; `Calibration.suggestCuts` treats a target below the new `MIN_EASY_SECONDS = 2` as `AT_LIMIT`, so it cannot propose a cut the config would snap back. A stored 1 converges to 2 in one pass and a second `sanitized()` is a no-op. |
+| F9 | `suggestCutsFromDwell` keeps `elapsedSeconds != null` and now includes `0`, counting it toward all three gates and entering the percentile as one second. Grading, the stored value and every other statistics path are untouched. |
+| R2 follow-up | `statsStore.invalidateCalibrationCache()` runs after the store call returns in `deletePaper`, `deleteCategory`, `deleteQuestion`, `deleteQuestions` and `moveQuestionsToCategory` — the five funnel points that remove `review_log` rows. A rolled-back store call invalidates nothing. |
+
+New tests: `a sub-second answer counts toward the gate`, `a sub-second answer enters the
+percentile as one second`, `an unmeasured answer stays out of the answer-time pair`,
+`sanitized lifts a one-second Easy cut to the floor of two`, the `AT_LIMIT`/`STEP_DOWN` floor
+cases, and `aDeletionDoesNotServeTheReportBuiltFromDeletedReviews`.
+
+### Executed evidence after the third batch
+| Check | Result |
+|---|---|
+| `:app:assembleDebug` (batch 3 tree) | BUILD SUCCESSFUL |
+| Pure-JVM suite | **165 classes, 1 480 tests, 0 failures**, 2 skipped |
+| Pure-JVM suite (batch 4 tree) | **165 classes, 1 484 tests, 0 failures**, 2 skipped |
+| Full `:app:testDebugUnitTest --rerun-tasks` (all 262 classes) | 632 failures, **all 81 failing classes Robolectric/SQLite** (`The Robolectric native runtime is not supported on Linux (aarch64)`); **0 pure-JVM classes fail** |
+| CI on `18f55e2` (run 43678004818) | **green** — wrapper-validation, build, release-build, ui-test |
+| `27.json` regenerated from scratch | byte-identical, `identityHash` unchanged |
 
 ---
 

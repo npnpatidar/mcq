@@ -665,6 +665,97 @@ class StatsRetentionStreamTest {
         epochStart = 0L
     ).pairs
 
+    /**
+     * A cached report must not outlive the reviews it counted.
+     *
+     * `StatsStore.calibrationCache` is keyed on `max(reviewedAt)`, and a delete
+     * only moves that when the newest row was among the deleted. Here q1's two
+     * rows are older than q2's surviving one, so the key is byte-identical
+     * before and after the delete: only the repository's invalidation stops the
+     * second read from serving the first report (which still counts a pair that
+     * no longer exists).
+     */
+    @Test
+    fun aDeletionDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                id = 5,
+                easySeconds = 6L,
+                slowSeconds = 60L,
+                effectiveFrom = todayStart - 20 * day,
+                reason = "manual",
+                correctnessOnly = false
+            )
+        )
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity("q1", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = ""),
+                QuestionEntity("q2", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = "")
+            )
+        )
+        val labelAt = todayStart - 10 * day + 2 * hour
+        db.reviewLogDao().insertAll(
+            listOf(
+                gradedRow("q1", labelAt),
+                gradedRow("q1", labelAt + hour),
+                // The newest row belongs to the other card, so deleting q1
+                // leaves the cache key's freshness guard exactly where it was.
+                gradedRow("q2", now - hour)
+            )
+        )
+        repository.settingsRestore(v27Settings(version = 5))
+
+        val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "the fixture must be a usable pair",
+            1,
+            before.calibrationReport!!.pairs
+        )
+        val newestBefore = newestReviewAt()
+        assertEquals(now - hour, newestBefore)
+
+        repository.deleteQuestion("q1")
+
+        assertEquals(
+            "the delete must not move the cache key",
+            newestBefore,
+            newestReviewAt()
+        )
+        val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "a delete must not serve the report built from deleted reviews",
+            0,
+            after.calibrationReport!!.pairs
+        )
+    }
+
+    /** One AUTO row from a graded rule (v5 in this file), ready to pair. */
+    private fun gradedRow(questionId: String, at: Long) = ReviewLogEntity(
+        paperId = "p1",
+        questionId = questionId,
+        rating = 3,
+        reviewedAt = at,
+        stateBefore = "REVIEW",
+        intervalDaysAfter = 8,
+        gradeSource = "AUTO",
+        gradingVersion = 5,
+        predictedRecall = 0.9,
+        fsrsFitVersion = 0,
+        wasGuess = false,
+        wasCorrect = true,
+        wasSkipped = false
+    )
+
+    /** `max(reviewedAt)` — the calibration cache key's only row-derived input. */
+    private fun newestReviewAt(): Long = db.openHelper.readableDatabase
+        .query("SELECT MAX(reviewedAt) FROM review_log")
+        .use { cursor ->
+            cursor.moveToFirst()
+            cursor.getLong(0)
+        }
+
     @Test
     fun paperScopeKeepsOnlyItsOwnRows() = dbBlocking {
         seedLog()

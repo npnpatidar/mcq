@@ -381,11 +381,12 @@ internal class StatsStore(
      * *appends* moves the key; a restore is the one that appends without
      * moving it.
      *
-     * A deletion (a paper, question or category) is the other writer that
-     * leaves the key alone: it removes `review_log` rows, and `maxReviewedAt`
-     * only falls when the newest row was among them, so the cache can keep
-     * counting a review that is gone until the block advances. That gap
-     * predates this cache and is left alone here.
+     * A deletion (a paper, question or category) and a cross-paper move are the
+     * other writers that leave the key alone: they remove `review_log` rows,
+     * and `maxReviewedAt` only falls when the newest row was among them, so the
+     * cache could keep counting a review that is gone until the block advances.
+     * Their callers — the five repository funnels that delete reviews — invalidate
+     * once the store call has committed.
      */
     internal fun invalidateCalibrationCache() {
         calibrationCache.clear()

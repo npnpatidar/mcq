@@ -60,6 +60,14 @@ object Calibration {
     const val DWELL_EASY_PERCENT = 10
     const val DWELL_HARD_PERCENT = 90
 
+    /**
+     * The Easy cut's floor, mirrored from `SchedulerConfig.sanitized`. A 1 s
+     * cut is not worth proposing: everything under one second is stored as 0
+     * and graded Good, so the Easy band would be empty and the proposal would
+     * snap back to 2 s on save.
+     */
+    const val MIN_EASY_SECONDS = 2L
+
     /** The pair from answer times is clamped into a range worth naming. */
     const val MIN_DWELL_FAST_SECONDS = 2L
     const val MIN_DWELL_GAP_SECONDS = 5L
@@ -95,7 +103,11 @@ object Calibration {
         val wasCorrect: Boolean?,
         val wasSkipped: Boolean?,
         val intervalDaysAfter: Int?,
-        /** Whole-second dwell; null on rows written before timing existed. */
+        /**
+         * Whole-second dwell; null on rows written before timing existed. 0 is
+         * a measurement too: every answer given inside the first second is
+         * stored as 0 ([com.mcqapp.domain.Study.gradedDwellSeconds]).
+         */
         val elapsedSeconds: Long? = null,
         /**
          * Whether the grading version that produced this row ignored the clock.
@@ -181,8 +193,8 @@ object Calibration {
      * scheduler settings, and the next report judges the result.
      *
      * The step is bounded because a contrast says which way to move and roughly
-     * how far outside the 5 pp band the evidence sits, not where the optimum
-     * is: one report of a few hundred pairs cannot resolve seconds on its own.
+     * how far the evidence sits from agreement, not where the optimum is: one
+     * report of a few hundred pairs cannot resolve seconds on its own.
      */
     data class CutSuggestion(
         val currentFast: Long,
@@ -255,7 +267,7 @@ object Calibration {
         }
         val contrast = report.contrast1
         val value = contrast.value ?: return keep(CutSuggestion.Status.NEEDS_EVIDENCE)
-        // One second per 5 pp outside the band, so a wider gap moves further,
+        // One second per 5 pp of contrast, so a wider gap moves further,
         // but never past [MAX_STEP_SECONDS].
         val step = (abs(value) / DIRECTION_THRESHOLD)
             .roundToInt()
@@ -264,7 +276,11 @@ object Calibration {
         return when (contrast.direction) {
             Direction.LOWER -> {
                 val target = fastSeconds - step
-                if (target < 1L) keep(CutSuggestion.Status.AT_LIMIT)
+                // [SchedulerConfig.sanitized] floors the Easy cut at 2 s: 1 s
+                // sits inside the untimed band, so a proposal below the floor
+                // is not a proposal either — storing it would snap back to 2
+                // and the learner would see a suggestion that does nothing.
+                if (target < MIN_EASY_SECONDS) keep(CutSuggestion.Status.AT_LIMIT)
                 else CutSuggestion(
                     fastSeconds, slowSeconds, target, slowSeconds,
                     CutSuggestion.Status.STEP_DOWN
@@ -304,6 +320,16 @@ object Calibration {
      * 200 answers on 30 cards resolve the tenth percentile from roughly 30
      * distinct readings. Read the result as a pace quantile, not a precise cut
      * — [MIN_DWELL_CARDS] is the guard against a single card setting both ends.
+     *
+     * Timing convention: `elapsedSeconds == null` means "not measured" (rows
+     * written before timing existed) and is excluded everywhere. A stored 0 is
+     * a measurement — every answer inside the first second is stored as 0 —
+     * so it counts toward all three gates and enters the percentile as 1 s.
+     * Dropping it would discard exactly the fast tail p10 is read from, bias
+     * the Easy cut upward and keep a fast learner permanently short of
+     * [MIN_DWELL_ROWS]. The grade those rows already have is untouched: 0 still
+     * grades Good ([com.mcqapp.domain.Study.inferGrade]); only this estimate
+     * reads it as one second.
      */
     fun suggestCutsFromDwell(
         reviews: List<Row>,
@@ -313,7 +339,7 @@ object Calibration {
     ): CutSuggestion {
         val usable = reviews.filter {
             it.correctnessOnly &&
-                it.elapsedSeconds != null && it.elapsedSeconds > 0L &&
+                it.elapsedSeconds != null &&
                 it.wasCorrect == true &&
                 it.wasGuess != true &&
                 it.wasSkipped != true
@@ -339,7 +365,9 @@ object Calibration {
         if (cards.size < MIN_DWELL_CARDS) return insufficient(CutSuggestion.Gate.CARDS)
         if (now - first < MIN_DWELL_DAYS * DAY_MS) return insufficient(CutSuggestion.Gate.DAYS)
 
-        val sorted = usable.map { it.elapsedSeconds!! }.sorted()
+        // Sub-second answers are stored as 0 and are real observations of the
+        // fast end, so they enter as one second rather than being dropped.
+        val sorted = usable.map { it.elapsedSeconds!!.coerceAtLeast(1L) }.sorted()
         val fast = percentile(sorted, DWELL_EASY_PERCENT)
             .coerceAtLeast(MIN_DWELL_FAST_SECONDS)
         val slow = percentile(sorted, DWELL_HARD_PERCENT)

@@ -382,11 +382,14 @@ private fun AnkiSchedulerBody(
             help = stringResource(R.string.easy_answer_threshold_help),
             value = config.fastSeconds,
             step = 1.0,
-            // 1..3599: the domain clamps fastSeconds to 1..3599
+            // 2..3599: the domain clamps fastSeconds to 2..3599
             // (SpacedRepetition.sanitized, which keeps a second of room below
             // the Hard cut), and a restored 601-3600 value used to render as a
-            // permanent error with dead steppers (consolidated_bugs.md H3).
-            range = 1f..3599f,
+            // permanent error with dead steppers (consolidated_bugs.md H3). The
+            // floor is 2 s, not 1: an answer inside the first second is untimed
+            // and grades Good, so a 1 s cut would leave the Easy band empty and
+            // the cut evidence could never advise again.
+            range = 2f..3599f,
             suffix = "s",
             onChange = { onFastChange(it.toLong()) }
         )

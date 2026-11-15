@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.Calibration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -501,25 +502,74 @@ class CalibrationTest {
     }
 
     @Test
-    fun `a move past the end of the range keeps the pair`() {
-        // The Easy cut's floor is 2 s (SchedulerConfig.sanitized): a proposal of
-        // 1 s would be snapped back on save, so it is not a proposal.
-        val floor = Calibration.suggestCuts(closedReport(-0.30), 2, 60)
-        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, floor.status)
-        assertEquals(2L, floor.nextFast)
-        assertEquals(Calibration.MIN_EASY_SECONDS, floor.nextFast)
-
-        // The floor itself is still reachable: −30 pp is a 4 s step, so 6 s
-        // moves to exactly 2 s rather than to the forbidden 1 s.
+    fun `a move past the end of the range stops at the floor`() {
+        // The Easy cut's floor is 2 s (SchedulerConfig.sanitized): a 1 s cut
+        // would be snapped back on save and would leave the Easy band empty.
+        // The step is the evidence's estimate, so the target is clamped to the
+        // floor rather than refused: from 6 s a 4 s step lands exactly on it,
+        // and that is a legal move.
         val toFloor = Calibration.suggestCuts(closedReport(-0.30), 6, 60)
         assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, toFloor.status)
         assertEquals(2L, toFloor.nextFast)
+        assertEquals(Calibration.MIN_EASY_SECONDS, toFloor.nextFast)
+
+        // At the floor there is no legal move left, so the pair is kept.
+        val atFloor = Calibration.suggestCuts(closedReport(-0.30), 2, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, atFloor.status)
+        assertEquals(2L, atFloor.nextFast)
+        assertEquals(Calibration.MIN_EASY_SECONDS, atFloor.nextFast)
+        assertFalse(atFloor.changes)
 
         // fast must stay below slow, so the Hard cut is the wall.
         val ceiling = Calibration.suggestCuts(closedReport(0.30), 59, 60)
         assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, ceiling.status)
         assertEquals(59L, ceiling.nextFast)
         assertEquals(60L, ceiling.nextSlow)
+    }
+
+    /**
+     * The floor is a place the cut may land, not a reason to refuse to move:
+     * a learner at 3 s with strong evidence is still one legal second away
+     * from it, and a suggestion that refuses to move says "no legal move"
+     * when a legal move exists.
+     */
+    @Test
+    fun `a downward step is clamped to the floor instead of being refused`() {
+        // A 30 pp gap is a 4 s step (capped). From 3 s it would land at −1 s.
+        val fromThree = Calibration.suggestCuts(closedReport(-0.30), 3, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, fromThree.status)
+        assertEquals(2L, fromThree.nextFast)
+        assertEquals(Calibration.MIN_EASY_SECONDS, fromThree.nextFast)
+
+        // From 5 s the same capped step would land at 1 s.
+        val fromFive = Calibration.suggestCuts(closedReport(-0.30), 5, 60)
+        assertEquals(Calibration.CutSuggestion.Status.STEP_DOWN, fromFive.status)
+        assertEquals(2L, fromFive.nextFast)
+        assertEquals(Calibration.MIN_EASY_SECONDS, fromFive.nextFast)
+
+        // At the floor there is nothing legal left to move to.
+        val atFloor = Calibration.suggestCuts(closedReport(-0.30), 2, 60)
+        assertEquals(Calibration.CutSuggestion.Status.AT_LIMIT, atFloor.status)
+        assertEquals(2L, atFloor.nextFast)
+        assertFalse(atFloor.changes)
+    }
+
+    /**
+     * The calibration floor is the domain's, not a copy of it: the two have to
+     * move together, or the suggestion can propose a cut the config silently
+     * snaps back.
+     */
+    @Test
+    fun `the calibration floor is the domain floor, not a restatement`() {
+        assertEquals(
+            "the calibration floor must be the domain's, not a copy of it",
+            SchedulerConfig.MIN_FAST_SECONDS,
+            Calibration.MIN_EASY_SECONDS
+        )
+        assertEquals(
+            Calibration.MIN_EASY_SECONDS,
+            SchedulerConfig(fastSeconds = 1, slowSeconds = 60).sanitized().fastSeconds
+        )
     }
 
     // --- the answer-time pair (correctness-only rule) ---
@@ -685,6 +735,54 @@ class CalibrationTest {
         assertEquals(Calibration.CutSuggestion.Gate.DAYS, fewDays.blockingGate)
     }
 
+    /**
+     * A stored 0 is a measurement (a reflex), so it counts toward every gate.
+     * Here it is the answer that puts the card count over the floor: dropping
+     * it would leave a fast learner one card short of a suggestion forever.
+     */
+    @Test
+    fun `a sub-second answer counts toward the card gate`() {
+        // 200 answers on 29 cards: one card short of the 30-card gate.
+        val rows = timedRows(linkedMapOf(15L to 200), cards = 29)
+        val withoutTheReflex = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, withoutTheReflex.status)
+        assertEquals(Calibration.CutSuggestion.Gate.CARDS, withoutTheReflex.blockingGate)
+        assertEquals(29, withoutTheReflex.evidenceCards)
+
+        // One reflex on a 30th card is the answer that gets there.
+        val withTheReflex = rows + timedRow("q29", 0, t0 + day)
+        val suggestion = Calibration.suggestCutsFromDwell(
+            withTheReflex, now = t0 + 400 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals(201, suggestion.evidence)
+    }
+
+    /**
+     * The same rule for the span: the reflex is an answer like any other, so
+     * the pace it belongs to is measured from the day it was given.
+     */
+    @Test
+    fun `a sub-second answer counts toward the day gate`() {
+        // 200 answers inside 13 days: one day short of the 14-day span.
+        val rows = timedRows(linkedMapOf(15L to 200), cards = 40, spanDays = 13)
+        val withoutTheReflex = Calibration.suggestCutsFromDwell(
+            rows, now = t0 + 13 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.NEEDS_EVIDENCE, withoutTheReflex.status)
+        assertEquals(Calibration.CutSuggestion.Gate.DAYS, withoutTheReflex.blockingGate)
+
+        // The reflex is one day older, so it is what makes the span 14 days.
+        val withTheReflex = rows + timedRow("q-reflex", 0, t0 - day)
+        val suggestion = Calibration.suggestCutsFromDwell(
+            withTheReflex, now = t0 + 13 * day, fastSeconds = 6, slowSeconds = 60
+        )
+        assertEquals(Calibration.CutSuggestion.Status.FROM_TIMES, suggestion.status)
+        assertEquals(201, suggestion.evidence)
+    }
+
     @Test
     fun `answer times are clamped into a range worth naming`() {
         // A slow tail must not push the Hard cut past the ceiling.
@@ -702,6 +800,29 @@ class CalibrationTest {
         )
         assertEquals(2L, tight.nextFast)
         assertEquals(7L, tight.nextSlow)
+    }
+
+    /**
+     * The answer-time estimator has its own noise floor, but its proposal must
+     * still be legal for the domain. If the domain floor ever rises above the
+     * estimator floor, the clamp must follow the higher of the two.
+     */
+    @Test
+    fun `the answer time fast cut never falls below the domain floor`() {
+        val suggestion = Calibration.suggestCutsFromDwell(
+            timedRows(linkedMapOf(1L to 200)),
+            now = t0 + 400 * day,
+            fastSeconds = 6,
+            slowSeconds = 60
+        )
+        assertTrue(
+            "the answer-time proposal must never be below the domain floor",
+            suggestion.nextFast >= Calibration.MIN_EASY_SECONDS
+        )
+        assertEquals(
+            maxOf(Calibration.MIN_DWELL_FAST_SECONDS, Calibration.MIN_EASY_SECONDS),
+            suggestion.nextFast
+        )
     }
 
     @Test

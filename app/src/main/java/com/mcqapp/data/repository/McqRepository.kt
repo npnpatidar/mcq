@@ -707,8 +707,20 @@ class McqRepository internal constructor(
         passageStore.getPassagesByIds(ids)
     suspend fun getPassagesForPaper(paperId: String): List<com.mcqapp.domain.Passage> =
         passageStore.getPassagesForPaper(paperId)
-    suspend fun savePassage(passage: com.mcqapp.domain.Passage): String =
-        passageStore.savePassage(passage)
+    /**
+     * Saving a passage can move its members to another category: a passage
+     * lives in a category, and moving it takes every member with it. A member
+     * that crosses into another paper loses its `review_log` rows (the
+     * schedule restarts in the new paper), so the cached report may count
+     * reviews that are gone. Same reason as [deletePaper]: the invalidation
+     * runs after the store call, never inside its transaction, so a rolled-back
+     * save changed nothing that needs forgetting.
+     */
+    suspend fun savePassage(passage: com.mcqapp.domain.Passage): String {
+        val id = passageStore.savePassage(passage)
+        statsStore.invalidateCalibrationCache()
+        return id
+    }
     suspend fun passageMemberCount(passageId: String): Int =
         passageStore.memberCount(passageId)
     suspend fun passageMemberCounts(): Map<String, Int> =
@@ -730,8 +742,22 @@ class McqRepository internal constructor(
     suspend fun getPassageMemberIds(passageId: String): List<String> =
         db.questionDao().getMemberIdsByPassage(passageId)
 
-    suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) =
+    /**
+     * Assigning questions to a passage moves any member that sits in another
+     * category into the passage's category, which can cross a paper boundary
+     * and delete that member's `review_log` rows. The cached report may count
+     * reviews that are gone, so it is invalidated after the store call
+     * returns, exactly like [savePassage].
+     *
+     * No screen calls this yet — the passage editor assigns through the
+     * passage's own save — but the wrapper is the only way into the store, so
+     * the invalidation belongs here rather than at a caller that may never
+     * come.
+     */
+    suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) {
         passageStore.assignQuestions(questionIds, passageId)
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun unassignQuestionsFromPassage(questionIds: Collection<String>) =
         passageStore.unassignQuestions(questionIds)
     suspend fun unassignAllFromPassage(passageId: String) =
@@ -755,6 +781,13 @@ class McqRepository internal constructor(
      * no longer exist until the block advanced. The invalidation runs after the
      * store call, never inside its transaction: a rolled-back delete changed
      * nothing that needs forgetting.
+     *
+     * The writers that can remove review rows are the paper, category and
+     * question deletes, the bulk move to another category, the passage
+     * wrappers whose member move can cross a paper boundary, and a question
+     * save or duplicate whose passage enforcement makes such a move. Each
+     * invalidates the cache after its store call has returned; the bulk move
+     * and question save/duplicate paths do so only when rows were removed.
      */
     suspend fun deletePaper(paperId: String) {
         paperStore.deletePaper(paperId)
@@ -1500,7 +1533,20 @@ class McqRepository internal constructor(
         categoryId: String,
         categoryTitle: String
     ) = questionStore.ensurePaperAndCategory(paperId, paperTitle, categoryId, categoryTitle)
-    suspend fun saveQuestion(question: Question) = questionStore.saveQuestion(question)
+    /**
+     * Saves a question.
+     *
+     * An ordinary edit leaves review history alone. Assigning the question to
+     * a passage in another category can instead enforce that passage's
+     * category and move the question (or another member of a malformed group)
+     * across a paper, which deletes the affected member's `review_log` rows.
+     * The store returns the exact number of rows removed, so the calibration
+     * cache is invalidated only when this save really changed history.
+     */
+    suspend fun saveQuestion(question: Question) {
+        val reviewRowsRemoved = questionStore.saveQuestion(question)
+        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
+    }
     suspend fun deleteQuestion(questionId: String) {
         questionStore.deleteQuestion(questionId)
         // Same reason as [deletePaper]: the review rows are gone, the cache key
@@ -1512,13 +1558,27 @@ class McqRepository internal constructor(
         questionStore.deleteQuestions(questionIds)
         statsStore.invalidateCalibrationCache()
     }
-    suspend fun duplicateQuestion(questionId: String): String? =
-        questionStore.duplicateQuestion(questionId)
+    /**
+     * Deep-copies a question and returns the clone's id.
+     *
+     * The clone has no history of its own, but the passage-category
+     * enforcement used by [saveQuestion] also runs for the clone. It can move
+     * another member of a malformed passage group across a paper and delete
+     * that member's review rows, so the exact removal count decides whether
+     * the calibration cache is invalidated.
+     */
+    suspend fun duplicateQuestion(questionId: String): String? {
+        val result = questionStore.duplicateQuestion(questionId)
+        if (result != null && result.reviewRowsRemoved > 0) {
+            statsStore.invalidateCalibrationCache()
+        }
+        return result?.questionId
+    }
     suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
-        questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
+        val reviewRowsRemoved = questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
         // A cross-paper move deletes the review rows (the schedule restarts in
         // the new paper), so the cached report may count reviews that are gone.
-        statsStore.invalidateCalibrationCache()
+        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
     }
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
         questionStore.copyQuestionsToCategory(questionIds, targetCategoryId)

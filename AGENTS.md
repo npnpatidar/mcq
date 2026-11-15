@@ -28,6 +28,21 @@ Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar
   sequentially with the identical question, adopt the convergent answer, and report the
   decision and the split afterwards.
 
+## Product premises (owner rule, set 2026-11-15)
+
+Judge behaviour, find bugs, review and recommend under these premises. A finding that only
+exists because one of them is false is not a defect and must not drive code or copy changes.
+
+- **The user is honest.** Nobody is gaming the app, farming Easy grades, or looking for a
+  loophole. Do not design, test or review for adversarial use.
+- **Normal-speed learners.** This is an everyday study app, not a speed test. A pace under
+  one or two seconds per card is rare and not a population to design for; a rule whose only
+  benefit goes to a sub-second speed-runner is not worth its complexity.
+- **No clock games.** Do not assume a learner stops the clock, reads the question, then
+  restarts it before answering. The pause control exists for interruptions. A scenario built
+  on pausing to think *around* the timer is out of scope, so evidence stored as `0 s` should
+  be read as a genuinely quick answer, not as a paused one.
+
 ## Build and test
 
 ```bash

@@ -1,6 +1,7 @@
 package com.mcqapp.domain.stats
 
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.SchedulerConfig
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
@@ -61,14 +62,23 @@ object Calibration {
     const val DWELL_HARD_PERCENT = 90
 
     /**
-     * The Easy cut's floor, mirrored from `SchedulerConfig.sanitized`. A 1 s
-     * cut is not worth proposing: everything under one second is stored as 0
-     * and graded Good, so the Easy band would be empty and the proposal would
-     * snap back to 2 s on save.
+     * The Easy cut's floor, taken from the domain clamp rather than restated:
+     * a 1 s cut is not worth proposing, because a correct answer under one
+     * second is stored as 0 and graded Good, so the Easy band would be empty
+     * and the proposal would snap back to 2 s on save.
      */
-    const val MIN_EASY_SECONDS = 2L
+    const val MIN_EASY_SECONDS = SchedulerConfig.MIN_FAST_SECONDS
 
-    /** The pair from answer times is clamped into a range worth naming. */
+    /**
+     * The answer-time pair's own floor: the estimate's noise floor, not the
+     * domain clamp. A percentile of whole-second dwells cannot place a cut
+     * below the resolution of its own measurement, so the answer-time
+     * suggestion never proposes less than this. It coincides with
+     * [MIN_EASY_SECONDS] today and is deliberately a separate number: every
+     * answer-time fast cut is clamped to
+     * `maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS)`, so this estimator
+     * floor can never drift below the domain's legal floor.
+     */
     const val MIN_DWELL_FAST_SECONDS = 2L
     const val MIN_DWELL_GAP_SECONDS = 5L
     const val MAX_DWELL_SLOW_SECONDS = 120L
@@ -104,9 +114,10 @@ object Calibration {
         val wasSkipped: Boolean?,
         val intervalDaysAfter: Int?,
         /**
-         * Whole-second dwell; null on rows written before timing existed. 0 is
-         * a measurement too: every answer given inside the first second is
-         * stored as 0 ([com.mcqapp.domain.Study.gradedDwellSeconds]).
+         * Whole-second dwell; null when the caller had no trustworthy
+         * measurement for this row. 0 is a measurement too: every answer given
+         * inside the first second is stored as 0
+         * ([com.mcqapp.domain.Study.gradedDwellSeconds]).
          */
         val elapsedSeconds: Long? = null,
         /**
@@ -228,7 +239,11 @@ object Calibration {
             /** The Easy cut moves up. */
             STEP_UP,
 
-            /** The evidence points past the end of the allowed range. */
+            /**
+             * A direction-specific wall: for a downward step, the Easy cut is
+             * already at its floor; for an upward step, the Hard cut caps how
+             * far the Easy cut may rise.
+             */
             AT_LIMIT,
 
             /**
@@ -257,6 +272,19 @@ object Calibration {
      * Converts the report into the pair to try next. The Hard cut is shown but
      * never moved: δ2 is not acted on, so a suggestion that moved it would
      * launder a number the evidence does not support.
+     *
+     * A downward step stops at [MIN_EASY_SECONDS] rather than being refused:
+     * the step size is the evidence's estimate, the floor is the domain's
+     * limit, and a learner at 3 s with strong evidence is still one legal
+     * second away from the floor. In that direction,
+     * [CutSuggestion.Status.AT_LIMIT] means the Easy cut is already at the
+     * floor.
+     *
+     * An upward step is different: the Hard cut caps how far the Easy cut may
+     * rise, so [CutSuggestion.Status.AT_LIMIT] means the proposed target
+     * would reach or pass the Hard cut. The target is not clamped down to
+     * `slow - 1`: a one-second Good band is nearly the degenerate pair the
+     * app refuses elsewhere.
      */
     fun suggestCuts(report: Report, fastSeconds: Long, slowSeconds: Long): CutSuggestion {
         fun keep(status: CutSuggestion.Status) =
@@ -275,12 +303,15 @@ object Calibration {
             .toLong()
         return when (contrast.direction) {
             Direction.LOWER -> {
-                val target = fastSeconds - step
-                // [SchedulerConfig.sanitized] floors the Easy cut at 2 s: 1 s
-                // sits inside the untimed band, so a proposal below the floor
-                // is not a proposal either — storing it would snap back to 2
-                // and the learner would see a suggestion that does nothing.
-                if (target < MIN_EASY_SECONDS) keep(CutSuggestion.Status.AT_LIMIT)
+                // The step is the evidence's estimate, so it is left alone;
+                // the target is only clamped to the floor
+                // ([SchedulerConfig.sanitized] rejects anything below
+                // [MIN_EASY_SECONDS], and a 1 s cut leaves no measured second
+                // below it that could ever grade Easy). Landing exactly on the
+                // floor is a legal move, so only a clamp that leaves the cut
+                // unchanged is "at the limit".
+                val target = (fastSeconds - step).coerceAtLeast(MIN_EASY_SECONDS)
+                if (target >= fastSeconds) keep(CutSuggestion.Status.AT_LIMIT)
                 else CutSuggestion(
                     fastSeconds, slowSeconds, target, slowSeconds,
                     CutSuggestion.Status.STEP_DOWN
@@ -321,8 +352,10 @@ object Calibration {
      * distinct readings. Read the result as a pace quantile, not a precise cut
      * — [MIN_DWELL_CARDS] is the guard against a single card setting both ends.
      *
-     * Timing convention: `elapsedSeconds == null` means "not measured" (rows
-     * written before timing existed) and is excluded everywhere. A stored 0 is
+     * Timing convention: `elapsedSeconds == null` means "not measured" — the
+     * caller had no trustworthy measurement for that row — and is excluded
+     * everywhere. It is not "pre-v27": the column has existed for many
+     * versions, so an old row can carry a value like any other. A stored 0 is
      * a measurement — every answer inside the first second is stored as 0 —
      * so it counts toward all three gates and enters the percentile as 1 s.
      * Dropping it would discard exactly the fast tail p10 is read from, bias
@@ -369,7 +402,7 @@ object Calibration {
         // fast end, so they enter as one second rather than being dropped.
         val sorted = usable.map { it.elapsedSeconds!!.coerceAtLeast(1L) }.sorted()
         val fast = percentile(sorted, DWELL_EASY_PERCENT)
-            .coerceAtLeast(MIN_DWELL_FAST_SECONDS)
+            .coerceAtLeast(maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS))
         val slow = percentile(sorted, DWELL_HARD_PERCENT)
             .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
         // A tight pace would otherwise name two cuts a second apart, where a
@@ -377,7 +410,7 @@ object Calibration {
         val wideSlow = slow.coerceAtLeast(fast + MIN_DWELL_GAP_SECONDS)
             .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
         val wideFast = fast.coerceAtMost(wideSlow - MIN_DWELL_GAP_SECONDS)
-            .coerceAtLeast(MIN_DWELL_FAST_SECONDS)
+            .coerceAtLeast(maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS))
         return CutSuggestion(
             currentFast = fastSeconds,
             currentSlow = slowSeconds,

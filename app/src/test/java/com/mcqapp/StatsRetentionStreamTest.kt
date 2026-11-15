@@ -11,9 +11,11 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.GradingVersionEntity
 import com.mcqapp.data.local.PaperEntity
+import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionTagEntity
 import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getCategoryTitlesByIdsChunked
 import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.data.repository.McqRepository
@@ -22,6 +24,7 @@ import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
+import com.mcqapp.domain.Passage
 import com.mcqapp.domain.stats.Calibration
 import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
@@ -668,15 +671,176 @@ class StatsRetentionStreamTest {
     /**
      * A cached report must not outlive the reviews it counted.
      *
-     * `StatsStore.calibrationCache` is keyed on `max(reviewedAt)`, and a delete
-     * only moves that when the newest row was among the deleted. Here q1's two
-     * rows are older than q2's surviving one, so the key is byte-identical
-     * before and after the delete: only the repository's invalidation stops the
-     * second read from serving the first report (which still counts a pair that
-     * no longer exists).
+     * `StatsStore.calibrationCache` is keyed on `max(reviewedAt)`, and a
+     * review-row removal only moves that when the newest row was among those
+     * removed. The fixture below keeps the newest row on another card, so the
+     * key is byte-identical before and after every removal: only the
+     * repository's invalidation stops the second read from serving the first
+     * report (which still counts a pair that no longer exists).
      */
     @Test
     fun aDeletionDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        assertReviewRemovalStopsTheCachedReport("a question delete") {
+            repository.deleteQuestion("q1")
+        }
+    }
+
+    /** The same funnel, one paper up: the paper's own rows go with it. */
+    @Test
+    fun aPaperDeletionDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        assertReviewRemovalStopsTheCachedReport("a paper delete") {
+            repository.deletePaper("p1")
+        }
+    }
+
+    /** The same funnel, one category up. */
+    @Test
+    fun aCategoryDeletionDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        assertReviewRemovalStopsTheCachedReport("a category delete") {
+            repository.deleteCategory("c1")
+        }
+    }
+
+    /** The same funnel, in bulk. */
+    @Test
+    fun aBulkDeletionDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        assertReviewRemovalStopsTheCachedReport("a bulk question delete") {
+            repository.deleteQuestions(listOf("q1"))
+        }
+    }
+
+    /**
+     * The same funnel, without a delete: a question moved into another paper
+     * loses its schedule, and its review rows go with it.
+     */
+    @Test
+    fun aCrossPaperMoveDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        assertReviewRemovalStopsTheCachedReport("a cross-paper move") {
+            repository.moveQuestionsToCategory(listOf("q1"), "c2")
+        }
+    }
+
+    /**
+     * The sixth funnel: a passage moved to another category takes its members
+     * with it, and a member that crosses a paper boundary loses its review
+     * rows on the way.
+     */
+    @Test
+    fun aPassageMoveDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        // q1 becomes the member of a passage that lives in paper p1.
+        db.questionDao().upsertAll(
+            listOf(
+                QuestionEntity(
+                    "q1", "c1", passageId = "passage-1",
+                    text = "", searchText = "", searchTextFolded = "",
+                    tags = "", tagsFolded = ""
+                )
+            )
+        )
+        db.passageDao().upsert(
+            PassageEntity(
+                id = "passage-1",
+                categoryId = "c1",
+                title = "Passage One",
+                text = "[]",
+                searchText = "Passage One",
+                searchTextFolded = "passage one"
+            )
+        )
+
+        val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "the fixture must be a usable pair",
+            1,
+            before.calibrationReport!!.pairs
+        )
+
+        // The passage moves to paper p2, so its member crosses a paper
+        // boundary and its review rows are deleted with the schedule.
+        repository.savePassage(
+            Passage(id = "passage-1", categoryId = "c2", title = "Passage One")
+        )
+
+        assertEquals(
+            "the move must not move the cache key",
+            now - hour,
+            newestReviewAt()
+        )
+        val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "a passage move must not serve the report built from deleted reviews",
+            0,
+            after.calibrationReport!!.pairs
+        )
+    }
+
+    /**
+     * The seventh funnel: assigning a question to a passage in another
+     * category enforces the passage's category. The question then crosses a
+     * paper boundary and loses its review rows with its old schedule.
+     */
+    @Test
+    fun aQuestionSaveIntoAnotherPaperPassageDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+        seedDeletablePair()
+        db.passageDao().upsert(
+            PassageEntity(
+                id = "passage-in-p2",
+                categoryId = "c2",
+                title = "Passage In Paper Two",
+                text = "[]",
+                searchText = "Passage In Paper Two",
+                searchTextFolded = "passage in paper two"
+            )
+        )
+        val q1 = repository.getQuestion("q1")!!
+
+        assertReviewRemovalStopsTheCachedReport("a question save into another paper's passage") {
+            repository.saveQuestion(q1.copy(passageId = "passage-in-p2"))
+        }
+    }
+
+    /**
+     * The companion of the delete cases: without a read that is served from
+     * the cache, they cannot tell "invalidated" from "never cached". Here the
+     * row is deleted straight through the DAO, so no repository wrapper runs
+     * and nothing invalidates the cache — the second read must still serve the
+     * stale report, which is what proves the first read was cached at all.
+     */
+    @Test
+    fun theCalibrationReportIsServedFromTheCache() = dbBlocking {
+        seedDeletablePair()
+
+        val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "the fixture must be a usable pair",
+            1,
+            before.calibrationReport!!.pairs
+        )
+
+        // Straight through the DAO: no wrapper, no invalidation.
+        db.reviewLogDao().deleteByQuestionsChunked(listOf("q1"))
+
+        val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "the cache must still serve the report built from the deleted row",
+            1,
+            after.calibrationReport!!.pairs
+        )
+    }
+
+    /**
+     * The fixture every review-removal funnel needs: one usable pair on q1
+     * (paper p1) and one newer row on q2 (paper p2), so removing q1's card
+     * cannot move the cache key — `max(reviewedAt)` is its only row-derived
+     * input.
+     */
+    private suspend fun seedDeletablePair() {
         db.gradingRulesDao().insertVersion(
             GradingVersionEntity(
                 id = 5,
@@ -688,11 +852,13 @@ class StatsRetentionStreamTest {
             )
         )
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
         db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))
+        db.categoryDao().upsert(CategoryEntity("c2", "p2", "Beta"))
         db.questionDao().upsertAll(
             listOf(
                 QuestionEntity("q1", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = ""),
-                QuestionEntity("q2", "c1", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = "")
+                QuestionEntity("q2", "c2", text = "", searchText = "", searchTextFolded = "", tags = "", tagsFolded = "")
             )
         )
         val labelAt = todayStart - 10 * day + 2 * hour
@@ -700,13 +866,22 @@ class StatsRetentionStreamTest {
             listOf(
                 gradedRow("q1", labelAt),
                 gradedRow("q1", labelAt + hour),
-                // The newest row belongs to the other card, so deleting q1
-                // leaves the cache key's freshness guard exactly where it was.
-                gradedRow("q2", now - hour)
+                // The newest row belongs to the other paper's card, so every
+                // delete below leaves the cache key's freshness guard alone.
+                gradedRow("q2", now - hour, paperId = "p2")
             )
         )
         repository.settingsRestore(v27Settings(version = 5))
+    }
 
+    /**
+     * The shared assertion of the review-removal funnels: the cached report
+     * must not outlive the reviews it counted.
+     */
+    private suspend fun assertReviewRemovalStopsTheCachedReport(
+        what: String,
+        removeReviews: suspend () -> Unit
+    ) {
         val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
         assertEquals(
             "the fixture must be a usable pair",
@@ -716,24 +891,28 @@ class StatsRetentionStreamTest {
         val newestBefore = newestReviewAt()
         assertEquals(now - hour, newestBefore)
 
-        repository.deleteQuestion("q1")
+        removeReviews()
 
         assertEquals(
-            "the delete must not move the cache key",
+            "the review-row removal must not move the cache key",
             newestBefore,
             newestReviewAt()
         )
         val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
         assertEquals(
-            "a delete must not serve the report built from deleted reviews",
+            "$what must not serve the report built from deleted reviews",
             0,
             after.calibrationReport!!.pairs
         )
     }
 
     /** One AUTO row from a graded rule (v5 in this file), ready to pair. */
-    private fun gradedRow(questionId: String, at: Long) = ReviewLogEntity(
-        paperId = "p1",
+    private fun gradedRow(
+        questionId: String,
+        at: Long,
+        paperId: String = "p1"
+    ) = ReviewLogEntity(
+        paperId = paperId,
         questionId = questionId,
         rating = 3,
         reviewedAt = at,

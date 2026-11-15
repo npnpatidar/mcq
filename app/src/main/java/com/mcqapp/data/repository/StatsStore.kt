@@ -220,6 +220,17 @@ internal class StatsStore(
      * cached on the exact inputs a refresh would change; an open block cannot
      * serve a stale answer forever because `max(reviewedAt)` is in the key.
      *
+     * The cache is only filled when no invalidation completed while this pass
+     * was running ([calibrationGeneration]). After
+     * [invalidateCalibrationCache] executes, a report computed from pre-delete
+     * rows is not inserted, and an invalidation that overlaps a concurrent
+     * insert wins.
+     *
+     * The repository order is DB transaction commit -> invalidation call. The
+     * interval between those two steps is not covered: a read racing it may
+     * hit or briefly insert and serve one stale report, which the
+     * invalidation then clears.
+     *
      * The stored `predictedRecall` is reused, never re-derived: a refit would
      * otherwise silently rewrite history's forecasts.
      */
@@ -232,6 +243,11 @@ internal class StatsStore(
         // Reset; the report, its cache key and the suggestion all use it.
         val (resolvedConfig, versionStart) = configWithEpoch(config)
         val version = resolvedConfig.gradingVersion
+        // Captured before the row scan: an invalidation that completes while
+        // this pass is reading bumps the generation, and the report built from
+        // rows deleted before that invalidation must not be inserted
+        // afterwards (see [invalidateCalibrationCache]).
+        val generation = calibrationGeneration
         var maxReviewedAt = 0L
         // The weight-set boundary is tracked unscoped: a refit anywhere in the
         // log changes the forecast yardstick for every paper's report.
@@ -298,8 +314,22 @@ internal class StatsStore(
             return CalibrationLoad(it, dwellSuggestion, resolvedConfig)
         }
         val report = Calibration.report(rows, now, epochStart, refitInEpoch)
-        calibrationCache.clear()
-        calibrationCache[key] = report
+        synchronized(calibrationCache) {
+            // An invalidation that completed while the report was being
+            // computed bumped the generation: rows deleted before it may be
+            // inside this report, and the key it would be stored under is one
+            // the delete did not move (`maxReviewedAt` only falls when the
+            // newest row went). Caching it would resurrect the deleted
+            // reviews, so the entry is dropped and the next read rebuilds the
+            // report from the rows that are left. If the insert reaches the
+            // lock first, the invalidation waits and then clears it; if the
+            // invalidation reaches the lock first, the generation mismatch
+            // rejects the insert.
+            if (generation == calibrationGeneration) {
+                calibrationCache.clear()
+                calibrationCache[key] = report
+            }
+        }
         return CalibrationLoad(report, dwellSuggestion, resolvedConfig)
     }
 
@@ -374,6 +404,30 @@ internal class StatsStore(
         java.util.concurrent.ConcurrentHashMap<CalibrationCacheKey, Calibration.Report>()
 
     /**
+     * How many times the calibration cache has been invalidated.
+     *
+     * The cache is cleared by the writers that delete `review_log` rows, but a
+     * report that is already being computed could otherwise be inserted
+     * afterwards under a key the delete did not move — and then be served
+     * until the block advanced. The generation is captured before the row scan
+     * and compared again under the cache lock before the insert. After
+     * [invalidateCalibrationCache] executes, a report computed from pre-delete
+     * rows is not cached; an invalidation that overlaps a concurrent insert
+     * wins.
+     *
+     * The repository order is DB transaction commit -> invalidation call. The
+     * commit-to-invalidation interval is not covered by the generation: a read
+     * racing that window may return one stale report, which the invalidation
+     * then clears.
+     *
+     * Only the writers touch it, and they do so under
+     * `synchronized(calibrationCache)`, so the plain increment is safe; the
+     * readers only read it.
+     */
+    @Volatile
+    private var calibrationGeneration = 0L
+
+    /**
      * Drops the memoised calibration report. A restore now keeps the restored
      * version id and epoch, so the key — built from the id and the row's
      * `effectiveFrom`, not from the rows themselves — can be identical before
@@ -385,11 +439,29 @@ internal class StatsStore(
      * other writers that leave the key alone: they remove `review_log` rows,
      * and `maxReviewedAt` only falls when the newest row was among them, so the
      * cache could keep counting a review that is gone until the block advances.
-     * Their callers — the five repository funnels that delete reviews — invalidate
-     * once the store call has committed.
+     * Their callers — the repository funnels that can remove review rows: the
+     * paper, category and question deletes, the bulk move, the passage
+     * wrappers whose member move can cross a paper, and a question save or
+     * duplicate whose passage enforcement makes such a move — invalidate once
+     * the store call has committed. The bulk move and the question
+     * save/duplicate paths do so only when the store reports that it removed
+     * rows; the passage wrappers invalidate conservatively after their call.
+     *
+     * The invalidation also bumps [calibrationGeneration]. After this method
+     * executes, a report computed from pre-delete rows is not inserted, and an
+     * invalidation that overlaps a concurrent insert wins; the next read
+     * rebuilds the report from the rows that are left.
+     *
+     * The repository order is DB transaction commit -> this invalidation call.
+     * The interval between those two steps is not covered: a read racing it
+     * may hit or briefly insert and serve one stale report, which this method
+     * then clears.
      */
     internal fun invalidateCalibrationCache() {
-        calibrationCache.clear()
+        synchronized(calibrationCache) {
+            calibrationGeneration++
+            calibrationCache.clear()
+        }
     }
 
     /**

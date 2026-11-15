@@ -179,9 +179,9 @@ data class SchedulerConfig(
      * Correct answers faster than this (seconds) infer Easy. Absolute: the
      * clock starts when the card appears, so reading time is inside the cut.
      *
-     * Never below 2 s ([sanitized]): an answer inside the first second is
-     * stored as 0 and graded Good, so a 1 s cut would leave the Easy band
-     * empty and the cut evidence unable to say anything at all.
+     * Never below [MIN_FAST_SECONDS] ([sanitized]): a correct answer inside the
+     * first second is stored as 0 and graded Good, so a 1 s cut would leave the
+     * Easy band empty and the cut evidence unable to say anything at all.
      */
     val fastSeconds: Long = 6L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
@@ -218,6 +218,26 @@ data class SchedulerConfig(
      */
     val fsrsFitVersion: Int = 0
 ) {
+    companion object {
+        /**
+         * The lowest Easy cut [sanitized] accepts. Below it the Easy band is
+         * empty: a correct answer inside the first second is stored as 0 and
+         * graded Good, so a 1 s cut would leave no measured second below it to
+         * award Easy, the contrast would stay null forever and the cut
+         * suggestion could never advise again. The answer-time suggestion has
+         * its own floor and can still advise; it is not blocked by the Easy
+         * class. One constant, so the domain clamp, the Settings field range
+         * and `Calibration.MIN_EASY_SECONDS` cannot drift.
+         */
+        const val MIN_FAST_SECONDS = 2L
+
+        /**
+         * The highest Easy cut [sanitized] accepts: the largest cut that still
+         * leaves a second of room below the 3600 s Hard ceiling.
+         */
+        const val MAX_FAST_SECONDS = 3599L
+    }
+
     /** Guards against values that would break scheduling entirely. */
     fun sanitized(): SchedulerConfig = copy(
         maxIntervalDays = maxIntervalDays.coerceIn(1, 36500),
@@ -225,15 +245,20 @@ data class SchedulerConfig(
         leechThreshold = leechThreshold.coerceIn(1, 100),
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
-        // 2..3599: a 1 s cut sits inside the untimed band (everything under one
-        // second is stored as 0 and graded Good), so no dwell could ever be
-        // Easy, contrast1 would stay null forever and the answer-time
-        // suggestion could never advise again.
-        fastSeconds = fastSeconds.coerceIn(2, 3599),
+        // A cut below [MIN_FAST_SECONDS] leaves no measured second below it:
+        // a correct answer inside the first second is stored as 0 and graded
+        // Good, so the Easy band (`dwell in 1 until fastSeconds`) would be
+        // empty.
+        fastSeconds = fastSeconds.coerceIn(MIN_FAST_SECONDS, MAX_FAST_SECONDS),
         // The pair needs a one-second gap. With both cuts equal the Good class
         // is empty, so the calibration contrast is null forever and the report
-        // can never say anything — a degenerate rule, not a preference.
-        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(2, 3599) + 1, 3600),
+        // can never say anything — a degenerate rule, not a preference. The
+        // floor is re-derived from the clamped fast cut so the gap holds for a
+        // stored pair of 1/2: 2/3, not 2/2.
+        slowSeconds = slowSeconds.coerceIn(
+            fastSeconds.coerceIn(MIN_FAST_SECONDS, MAX_FAST_SECONDS) + 1,
+            3600
+        ),
         gradingVersion = gradingVersion.coerceAtLeast(0),
         fsrsFitVersion = fsrsFitVersion.coerceAtLeast(0),
         fsrsParameters = fsrsParameters
@@ -333,9 +358,12 @@ object Study {
     const val EXPLORE_NEW_EVERY = 3
 
     /**
-     * Infers a grade from an answered attempt. Untracked timing (0s) is a
-     * normal Good rather than effortless. Takes the timing thresholds from
-     * [config] so a user who retunes them also changes history reconstruction.
+     * Infers a grade from an answered attempt. A zero-second dwell (0s) means
+     * the answer came inside the first second: a correct, non-skipped answer
+     * with it grades Good rather than Easy, while a wrong answer (a guess or
+     * not) or a skipped answer is Again as always. Takes the timing thresholds
+     * from [config] so a user who retunes them also changes history
+     * reconstruction.
      * The cuts are absolute: nothing is added for reading the question, so the
      * same pair grades every card regardless of length.
      *

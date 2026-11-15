@@ -23,7 +23,7 @@
 
 All original Blockers **B1–B4** and Majors **M1, M2, M4–M7, M9, M10** are fixed or closed as recorded below. **M8** is accepted by owner decision and **M3** is an owner decision.
 
-**State after the four implementation batches (2026-11-15).** No Blocker and no Major is
+**State after the implementation batches of 2026-11-15.** No Blocker and no Major is
 open: **F1** is fixed and hardened against a mismatched pair and an unusable timestamp
 (**R1**), **F2** is fixed, **F3/F5** fixtures execute, **F4** copy matches the app, **F6** is
 settled by a from-scratch regeneration, **F7** documents are deleted, and the two later
@@ -31,8 +31,11 @@ rulings **F8** (2 s Easy floor) and **F9** (sub-second rows count as one second 
 suggestion only) are implemented with tests. What remains is deliberate: the 80 `plan §N`
 code citations, the accepted **M8** no-27→28 decision, the **minor 6** migrated-row contract,
 the **F11** nits, three untested UI behaviours, the untested legacy *streaming* import, and the
-deleted-analysis provenance of the PR's 812-row figure. CI green at `18f55e2`; the branch
-needs one more green run on the batch-4 commit before release.
+deleted-analysis provenance of the PR's 812-row figure. CI is green on `5ecdede` (run
+43681964531, all four jobs; the first attempt hit one flaky assertion in
+`StreamingImportCancelTest` and the re-run passed). The review round that followed added two
+more batches (the three-review findings and the two owner rulings); the branch is releasable once
+those batches are green in CI.
 
 ---
 
@@ -158,6 +161,12 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 **Suggested fix.** Require `fast >= 2` in `sanitized` and the Settings range, or surface the empty Easy class in the report as a named degeneracy. This is the same class of problem the equal-cut guard just closed.
 
 **Owner ruling (2026-11-15): raise the floor to 2 s.** Implemented: `sanitized` clamps to `2..3599` (and the `slowSeconds` gap clamp reads the same floor), the Settings field range is `2f..3599f`, and `Calibration.suggestCuts` now treats a target below `MIN_EASY_SECONDS = 2` as `AT_LIMIT`, so it cannot propose a 1 s cut that the config would silently snap back to 2. Tests: `sanitized lifts a one-second Easy cut to the floor of two` (idempotent) and the floor case in `CalibrationTest`.
+
+**Owner ruling on the in-app copy (2026-11-15).** The Settings help now names the floor, so the field's refusal of `1` is explained where the learner sees it: `easy_answer_threshold_help` gains "so the threshold cannot go below 2 s — a 1 s cut would have no answer left in it".
+
+**Owner ruling on the last legal step (2026-11-15).** `suggestCuts` no longer refuses a lowering move just because the full evidence step would cross the floor: it clamps the target at `MIN_EASY_SECONDS`. At `fast = 3` with a 10 pp contrast the card now proposes 2 s instead of saying "keep 3 s", because 2 s is legal and is a move in the direction the evidence points. `AT_LIMIT` stays for a cut already at the floor (and for a raise blocked by the Hard wall).
+
+**Owner ruling on the empty Easy class (2026-11-15).** Accepted as-is, no new copy: with normal-speed learners an empty Easy class at a sensible cut is rare, and the readiness line already reports the smaller class's card count. Recorded as a deliberate non-change, not a leftover.
 
 ---
 
@@ -307,7 +316,7 @@ All six decisions were made in favour of the recommended option.
 | **R2 follow-up** | **Invalidate the calibration cache when reviews are deleted.** The key's freshness guard only notices appends, so a cached report could keep counting deleted reviews until the block advanced. | Code and test |
 
 
-**Residual accepted after the rulings:** the 80 `plan §N` code-comment citations (code, not documents), and the items the owner previously decided to leave (`M3` pace suggestion, `M8` no 27→28, naming). `F8` (`fast = 1`) was not part of the ruling set and is not in this batch.
+**Residual accepted after the rulings:** the 80 `plan §N` code-comment citations (code, not documents), and the items the owner previously decided to leave (`M3` pace suggestion, `M8` no 27→28, naming).
 
 ## Suggested order of work
 
@@ -451,12 +460,54 @@ tree, the same substitution recorded for reviewer T in the first audit.
 |---|---|
 | F8 | `SchedulerConfig.sanitized` floors the Easy cut at 2 s (`slowSeconds`' gap clamp reads the same floor); the Settings field range is `2f..3599f`; `Calibration.suggestCuts` treats a target below the new `MIN_EASY_SECONDS = 2` as `AT_LIMIT`, so it cannot propose a cut the config would snap back. A stored 1 converges to 2 in one pass and a second `sanitized()` is a no-op. |
 | F9 | `suggestCutsFromDwell` keeps `elapsedSeconds != null` and now includes `0`, counting it toward all three gates and entering the percentile as one second. Grading, the stored value and every other statistics path are untouched. |
-| R2 follow-up | `statsStore.invalidateCalibrationCache()` runs after the store call returns in `deletePaper`, `deleteCategory`, `deleteQuestion`, `deleteQuestions` and `moveQuestionsToCategory` — the five funnel points that remove `review_log` rows. A rolled-back store call invalidates nothing. |
+| R2 follow-up | `statsStore.invalidateCalibrationCache()` runs after the store call returns in every repository funnel that can remove `review_log` rows. A rolled-back store call invalidates nothing. The list grew in the review round below (a cross-paper passage move), so it is named by what it does rather than by a count. |
 
 New tests: `a sub-second answer counts toward the gate`, `a sub-second answer enters the
 percentile as one second`, `an unmeasured answer stays out of the answer-time pair`,
 `sanitized lifts a one-second Easy cut to the floor of two`, the `AT_LIMIT`/`STEP_DOWN` floor
 cases, and `aDeletionDoesNotServeTheReportBuiltFromDeletedReviews`.
+
+### The review round on batch 4 (three specialist reviewers, 2026-11-15)
+
+`5ecdede` was reviewed by three reviewers in sequence — design/domain, implementation/integration,
+tests/docs — because the batch touches the grading clamp and the report's gate logic.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| A stored `0` is also written when the learner pauses the clock, so F9 could read an unmeasured answer as a 1 s pace | major | **Not a defect under the owner's product premises** (2026-11-15): the user is honest, nobody pauses the clock to think around the timer, and a `0 s` row is read as a genuinely quick answer. No code, no copy change. |
+| "The five repository funnels that delete reviews" was false: a cross-paper passage move deletes `review_log` rows too | major | **Fixed** (batch 5): `savePassage` and `assignQuestionsToPassage` invalidate after their store call; the KDoc names the real set without a count. |
+| An invalidation landing mid-compute was erased by the cache insert | minor | **Fixed** (batch 5): a generation counter, captured before the row scan, checked under the cache lock before the insert. |
+| The 2 s floor existed as four independent literals | minor | **Fixed** (batch 5): `SchedulerConfig.MIN_FAST_SECONDS` / `MAX_FAST_SECONDS` now feed `sanitized`, `Calibration.MIN_EASY_SECONDS` and the Settings field range. |
+| `AT_LIMIT` refused a legal downward move (a 1 s target under a 3 s cut, although 2 s was legal) | minor | **Owner ruling**: clamp the target at the floor; `AT_LIMIT` then means "already at the floor". Implemented in batch 5, with tests. |
+| The Easy class is *representable* at the floor but practically empty for normal-speed learners, and an empty class is invisible | minor | **Owner ruling: accepted as-is, no new copy.** Recorded so it is not re-opened as a leftover. |
+| The Settings help never named the 2 s minimum | minor | **Owner ruling**: the help now says the threshold cannot go below 2 s and why. Implemented in batch 5. |
+| The floor change was not pinned by any assertion; the card/day gates of a `0 s` row were untested; four delete funnels were untested; the deletion test could not tell "invalidated" from "never cached" | minor/major | **Fixed** (batch 5): the clamped step is pinned, the card and day gates have their own fixtures, all delete funnels have a case, and a companion case deletes straight through the DAO and proves the stale report is still served from the cache. |
+| The "1 s cut sits inside the untimed band" explanation is false (the untimed band is the single value 0; a 1 s cut leaves no measured second below it) | minor | **Fixed** in the README, the commit text and the code comments. |
+
+Two further reviewer points were accepted as deliberate: the answer-time suggestion keeps its own
+floor (a different meaning from the domain floor), and the Hard cut still caps how far the Easy
+cut may rise — `AT_LIMIT` is reported per direction, with separate copy (`stats_cuts_limit` and
+`stats_cuts_limit_hard`).
+
+### Fifth batch
+
+| # | Fix |
+|---|---|
+| R1 | `savePassage` and `assignQuestionsToPassage` invalidate the calibration cache after their store call returns; the KDoc names the real set of writers. |
+| R2 | `StatsStore` carries a generation counter, captured before the row scan and checked under the cache lock, so an invalidation that lands mid-compute is not erased by the insert. |
+| R3 | One shared floor: `SchedulerConfig.MIN_FAST_SECONDS = 2`, `MAX_FAST_SECONDS = 3599`, used by `sanitized`, `Calibration.MIN_EASY_SECONDS` and the Settings field range. |
+| R4 | The suggested step is clamped at the floor: `target = (fastSeconds - step).coerceAtLeast(MIN_EASY_SECONDS)`. For `LOWER`, `AT_LIMIT` now means the cut is already at the floor; for `RAISE` it still means the proposed target reaches or passes the Hard cut, because a one-second Good band is nearly the degenerate pair the app refuses elsewhere. |
+| R5 | `easy_answer_threshold_help` names the 2 s minimum and why it exists. |
+| R6 | Tests: the clamped step (fails on `5ecdede`), the card and day gates of a `0 s` row, the slow-gap half of the clamp, the other four delete funnels, the passage move (fails on `5ecdede`), and a companion case proving the cache is read. |
+
+### Sixth batch — the final review round
+
+| # | Fix |
+|---|---|
+| R7 | The generation guard's KDoc promises only what the code delivers: after `invalidateCalibrationCache()` executes, a report computed from pre-delete rows is not inserted, and the interval between the transaction commit and the invalidation call is explicitly not covered. |
+| R8 | A seventh route that can remove `review_log` rows: `saveQuestion` → `enforcePassageCategory` → `moveQuestionsToCategory` can cross a paper. The exact number of deleted rows is now propagated (`deleteByQuestionsChunked` returns a count), and `saveQuestion`, `duplicateQuestion` and the bulk move invalidate only when rows were really removed. |
+| R9 | Two comments that said a 0 s answer "grades Good" without the "correct" qualification. |
+| R10 | Both answer-time fast-cut clamps are `maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS)`, so neither suggestion can propose a cut the configuration would change. |
 
 ### Executed evidence after the third batch
 | Check | Result |
@@ -464,8 +515,10 @@ cases, and `aDeletionDoesNotServeTheReportBuiltFromDeletedReviews`.
 | `:app:assembleDebug` (batch 3 tree) | BUILD SUCCESSFUL |
 | Pure-JVM suite | **165 classes, 1 480 tests, 0 failures**, 2 skipped |
 | Pure-JVM suite (batch 4 tree) | **165 classes, 1 484 tests, 0 failures**, 2 skipped |
+| Pure-JVM suite (batches 5–6 tree) | **165 classes, 1 490 tests, 0 failures**, 2 skipped |
 | Full `:app:testDebugUnitTest --rerun-tasks` (all 262 classes) | 632 failures, **all 81 failing classes Robolectric/SQLite** (`The Robolectric native runtime is not supported on Linux (aarch64)`); **0 pure-JVM classes fail** |
 | CI on `18f55e2` (run 43678004818) | **green** — wrapper-validation, build, release-build, ui-test |
+| CI on `5ecdede` (run 43681964531) | green on re-run: the first attempt failed one assertion in `StreamingImportCancelTest` (parser-thread cleanup, 10 s deadline), a flake in code this batch does not touch; the re-run passed all four jobs with 2 172 tests, 0 failures, 7 skipped |
 | `27.json` regenerated from scratch | byte-identical, `identityHash` unchanged |
 
 ---

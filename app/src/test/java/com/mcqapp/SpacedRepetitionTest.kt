@@ -768,6 +768,16 @@ class SpacedRepetitionTest {
     }
 
     @Test
+    fun `sanitized keeps the gap when the floor lifts the easy cut`() {
+        // A stored pair of 1/2: the Easy cut is lifted to the floor, and the
+        // Hard cut has to follow it up — a pair of 2/2 has no Good class at
+        // all, so the calibration contrast could never exist.
+        val stored = SchedulerConfig(fastSeconds = 1, slowSeconds = 2).sanitized()
+        assertEquals(2L, stored.fastSeconds)
+        assertEquals(3L, stored.slowSeconds)
+    }
+
+    @Test
     fun `default config is already sanitized`() {
         assertEquals(SchedulerConfig(), SchedulerConfig().sanitized())
     }

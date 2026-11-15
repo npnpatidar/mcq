@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.FsrsOptimizer
+import com.mcqapp.domain.SchedulerConfig
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -382,14 +383,16 @@ private fun AnkiSchedulerBody(
             help = stringResource(R.string.easy_answer_threshold_help),
             value = config.fastSeconds,
             step = 1.0,
-            // 2..3599: the domain clamps fastSeconds to 2..3599
+            // The range is the domain's, not a copy of it: the domain clamps
+            // fastSeconds to SchedulerConfig.MIN_FAST_SECONDS..MAX_FAST_SECONDS
             // (SpacedRepetition.sanitized, which keeps a second of room below
             // the Hard cut), and a restored 601-3600 value used to render as a
             // permanent error with dead steppers (consolidated_bugs.md H3). The
-            // floor is 2 s, not 1: an answer inside the first second is untimed
-            // and grades Good, so a 1 s cut would leave the Easy band empty and
-            // the cut evidence could never advise again.
-            range = 2f..3599f,
+            // floor is 2 s, not 1: a correct answer inside the first second is
+            // untimed and grades Good, so a 1 s cut leaves no measured second
+            // below it and the Easy band would be empty.
+            range = SchedulerConfig.MIN_FAST_SECONDS.toFloat()..
+                SchedulerConfig.MAX_FAST_SECONDS.toFloat(),
             suffix = "s",
             onChange = { onFastChange(it.toLong()) }
         )

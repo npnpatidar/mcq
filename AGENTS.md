@@ -114,6 +114,16 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   FileProvider authority; the two can be installed at the same time and neither replaces
   the other. A release APK still only installs over a release with the same signing key,
   and the CI release is signed with a throwaway key.
+- **Monitor a run in the background, never in the foreground.** A build takes ~8 minutes, so
+  `gh run watch <run-id> --exit-status` runs backgrounded; blocking on it foreground (or
+  sleeping and re-polling `gh run list`) wastes the turn:
+
+  ```bash
+  gh run watch <run-id> --exit-status --interval 30 >/tmp/opencode/run-watch.log 2>&1
+  ```
+
+  Then do other work or end the turn, and download the APKs when the completion notice
+  arrives.
 - **A PR with merge conflicts gets no `pull_request` run at all** — not a failing one, none:
   GitHub cannot build the test-merge ref, so the workflow never starts and `gh run list`
   stays empty for the branch. Rebase onto `main` first, then expect the run.

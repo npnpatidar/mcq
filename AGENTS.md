@@ -23,6 +23,21 @@ Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar
   (design/domain, implementation/integration, tests/docs) for anything significant,
   including the grading rule, the Room schema, the backup format or first-run defaults.
 - Subagents run **strictly sequentially**, never in parallel, even independent ones.
+- **A subagent killed by a provider quota error is retried, not abandoned.** Try once to
+  continue the same session (call `subagent` with its `sessionID` and the full remaining
+  brief); if that session dies again, launch a **fresh** subagent carrying the whole brief,
+  because the dead session can stay pinned to the exhausted provider. A quota death is an
+  infrastructure failure, not a result: never skip, shrink or downgrade that reviewer pass
+  to get past it.
+- **Reviews verify against official upstream references, never against this repo's own
+  design documents.** Plans, blueprints, audits and `ChatGPT_*.md` drafts written here can
+  be wrong — a plan agreeing with the code proves nothing. Check algorithms against the
+  upstream source or spec (for FSRS: `open-spaced-repetition/fsrs-rs`, `ts-fsrs`, the FSRS
+  wiki, the Anki manual and Anki's FSRS integration), and platform claims against the
+  official docs (Android/Room, Kotlin, Gradle). Cite the URL next to every external claim,
+  and when upstream and a local document disagree, report the disagreement instead of
+  assuming the local one is right. The owner rules in this file are authoritative as
+  *product decisions*, but they are not evidence about what an algorithm does.
 - Behaviour changes, user-facing copy, scope and release state are the owner's call. When
   the owner is away and a decision is unavoidable, launch three decision subagents
   sequentially with the identical question, adopt the convergent answer, and report the

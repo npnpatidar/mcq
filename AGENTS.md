@@ -89,7 +89,7 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   `termux-mcq-20261115` on the account), so `origin` pushes over `git@github.com:npnpatidar/mcq.git`
   work from git and lazygit. `gh auth setup-git` is also configured, so HTTPS still works as a
   fallback. A new device only needs `sh github-ssh-bootstrap.sh` from the bundle in
-  `/root/.config/github-auth/` (also on `/sdcard/.github-auth/`): it generates a per-device key,
+  `/root/.config/github-auth/` (also on `/sdcard/repo/.github-auth/`): it generates a per-device key,
   logs `gh` in with the bundled token, and registers the key on GitHub with no browser step.
 - **Never point a branch's upstream at a raw URL.** `branch.<name>.remote` must be `origin`;
   a URL there makes git treat the URL as a remote name and lazygit's push fails with

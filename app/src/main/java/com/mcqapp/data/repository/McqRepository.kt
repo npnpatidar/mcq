@@ -235,9 +235,10 @@ class McqRepository internal constructor(
      * the remaining fields are the settings store's business.
      *
      * [schedulerWriteMutex] serialises this against [resetSchedulerConfig] and
-     * [settingsRestore]: those read the stored pair, write a new one and mint a
-     * version row, and two of them interleaving could file new cuts under an id
-     * that named the pair they replaced.
+     * [settingsRestore]: a cut save and Reset read the stored pair, write a new
+     * one and mint a version row, and a restore rewrites the pair and the whole
+     * `grading_versions` table, so two of them interleaving could file new cuts
+     * under an id that named the pair they replaced.
      */
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
         schedulerWriteMutex.withLock {
@@ -467,24 +468,69 @@ class McqRepository internal constructor(
     suspend fun settingsSnapshot() = settings.snapshot()
 
     /**
-     * Full replace of every preference from a backup. Restored cuts get a
-     * fresh `prior` grading version continuing the restored numbering, so each
-     * review row still points at the pair that graded it.
+     * Whether the live preferences still carry the grading values [exported]
+     * was taken with: the cut pair, the `grading_versions` id that names it and
+     * the grading rule.
      *
-     * The `finally` invalidates the first-start answer even if the settings
-     * or version write throws: the database half of a full restore has
-     * already committed by the time this runs, so the pre-restore answer no
-     * longer describes the install.
+     * A backup export writes its settings snapshot and *then* streams the study
+     * rows, so it needs this twice — once on the snapshot it wrote, once after
+     * the stream. A cut save or a rule switch in between would leave the file
+     * pairing one rule's settings with the other rule's reviews, and a restore
+     * trusts exactly that pairing when the row at the restored id describes the
+     * restored pair. False is a refused export, never a repaired one: the
+     * caller discards the file and the learner retries.
      */
-    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) =
+    internal suspend fun settingsUnchangedSince(
+        exported: com.mcqapp.data.backup.McqBackupFormat.SettingsFile
+    ): Boolean = settings.gradingGuard(exported) == settings.gradingGuard(settings.snapshot())
+
+    /**
+     * Full replace of every preference from a backup, with the restored
+     * grading version resolved after it.
+     *
+     * A full v27 restore has already replayed its `grading_versions` rows, so
+     * the restored `ladder_version` names a row that graded exactly the reviews
+     * being restored. `gradingRules.currentVersion()` keeps that id and its
+     * `effectiveFrom` and writes nothing, so the calibration epoch continues
+     * where the backup left off instead of restarting at "now" and excluding
+     * the restored history. An id whose row is missing — a crash — gets the
+     * same in-place repair every read performs, with the restored pair and a
+     * current timestamp.
+     *
+     * The guard that decides between keeping and minting lives in
+     * `GradingRulesStore.ensureVersionLocked`: it keeps the epoch only when the
+     * row it names describes the restored pair and carries a usable start, and
+     * mints a `prior` version stamped now otherwise. A row graded under other
+     * cuts, or stamped at or before 0 or in the future by a device with a wrong
+     * clock, cannot share an epoch with these cuts — `Calibration.report`
+     * filters by `reviewedAt >= epochStart` alone, so the old reviews would be
+     * counted as evidence for the new pair. Every restore wipes all tables and
+     * replays the backup's own rows, so in the ordinary case that row is the
+     * backup's own; the mismatch branch is defence in depth against a backup
+     * whose settings and log disagree, not a settings-only path.
+     *
+     * A pre-v27 backup carries no `grading_rules_version`, so its pair cannot
+     * be reinterpreted under the absolute rule: the old pair is retired, the
+     * shipped 6/60 takes over, and one new `prior` version opens a fresh epoch.
+     *
+     * The `finally` invalidates the first-start answer and the cached
+     * calibration report even if the settings or version write throws: the
+     * database half of a full restore has already committed by the time this
+     * runs, so the pre-restore answer no longer describes the install, and a
+     * report built from pre-restore rows can no longer be keyed apart from the
+     * post-restore one now that the id and epoch survive.
+     */
+    suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
         schedulerWriteMutex.withLock {
             try {
                 settings.restore(snapshot)
-                gradingRules.seedAfterRestore()
+                gradingRules.currentVersion()
             } finally {
+                statsStore.invalidateCalibrationCache()
                 installFreshness.invalidate()
             }
         }
+    }
 
     // --- search & storage (no collaborator: they span everything) ---
 

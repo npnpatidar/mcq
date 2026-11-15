@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.backup.McqBackupFormat
@@ -26,6 +27,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -253,6 +255,24 @@ class GradingRulesStoreTest {
         }
 
     /**
+     * The two inert preferences that keep a retired pre-v27 pair. They are
+     * outside [SettingsResetRule]'s key set, so a test that asserts them has to
+     * own their starting state.
+     */
+    private suspend fun clearRetiredCuts() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(longPreferencesKey("retired_easy_seconds"))
+            prefs.remove(longPreferencesKey("retired_slow_seconds"))
+        }
+    }
+
+    private suspend fun retiredCuts(): Pair<Long?, Long?> {
+        val prefs = context.dataStore.data.first()
+        return prefs[longPreferencesKey("retired_easy_seconds")] to
+            prefs[longPreferencesKey("retired_slow_seconds")]
+    }
+
+    /**
      * B3: an explicitly stored choice always wins, including `false`. The empty
      * database would otherwise seed correctness-only.
      */
@@ -444,26 +464,222 @@ class GradingRulesStoreTest {
         assertEquals(9L, row.easySeconds)
     }
 
+    /**
+     * F1: a v27 backup already carries the row its `ladder_version` names, and
+     * that row graded exactly the reviews the backup restores. Keeping the id
+     * and its `effectiveFrom` is what lets the calibration epoch continue
+     * across a restore instead of restarting at "now" and excluding the
+     * restored history. Nothing is inserted.
+     */
     @Test
-    fun restoreSeedsANewPriorVersionContinuingTheNumbering() = dbBlocking {
+    fun aRestoreKeepsTheRestoredVersionAndItsEpoch() = dbBlocking {
         rules().currentVersion()
-        // Pretend the restored backup carried version 5 with its own cuts.
+        val restoredFrom = 1_700_000_000_000L
         db.gradingRulesDao().insertVersion(
             GradingVersionEntity(
                 id = 5,
                 easySeconds = 11L,
                 slowSeconds = 33L,
-                effectiveFrom = 1L,
-                reason = "prior"
+                effectiveFrom = restoredFrom,
+                reason = "manual"
             )
         )
-        // A restore rewrites the preferences before the seed reads them.
-        store().writeCuts(11L, 33L, 5)
-        val seeded = rules().seedAfterRestore()
-        assertEquals(6, seeded)
-        assertEquals("prior", db.gradingRulesDao().version(6L)!!.reason)
-        assertEquals(11L, db.gradingRulesDao().version(6L)!!.easySeconds)
+        val repository = upgradeRepository()
+        repository.settingsRestore(v27Settings(version = 5, fast = 11L, slow = 33L))
+
+        assertEquals("the restored id wins", 5, repository.gradingVersion())
+        assertEquals(
+            "a restore that resolves must not mint a row",
+            2,
+            db.gradingRulesDao().allVersions().size
+        )
+        val row = db.gradingRulesDao().version(5L)!!
+        assertEquals("the epoch must not move", restoredFrom, row.effectiveFrom)
+        assertEquals(11L, row.easySeconds)
+        assertEquals(33L, row.slowSeconds)
+        assertEquals(5, repository.schedulerConfigNow().gradingVersion)
     }
+
+    /**
+     * F1: the id is kept even when its row did not survive — the read repairs
+     * it in place with the restored pair, which is the same crash repair every
+     * read performs. The timestamp is the repair's own: with no row the backup
+     * cannot say when the pair started.
+     */
+    @Test
+    fun aRestoreRepairsAMissingVersionRowUnderTheRestoredId() = dbBlocking {
+        rules().currentVersion()
+        val repairedAfter = System.currentTimeMillis()
+        val repository = upgradeRepository()
+        repository.settingsRestore(v27Settings(version = 5, fast = 11L, slow = 33L))
+
+        assertEquals("the restored id is repaired, not renumbered", 5, repository.gradingVersion())
+        val repaired = db.gradingRulesDao().version(5L)!!
+        assertEquals("prior", repaired.reason)
+        assertEquals(11L, repaired.easySeconds)
+        assertEquals(33L, repaired.slowSeconds)
+        assertTrue(
+            "a repaired row is stamped now, not with an invented start",
+            repaired.effectiveFrom >= repairedAfter
+        )
+    }
+
+    /**
+     * F1, the other half: an id is not an identity. A settings-only restore
+     * can hand back a `ladder_version` this install already uses for a
+     * *different* pair — here the local row at id 5 began an epoch of 4/20.
+     * Keeping its `effectiveFrom` would let `Calibration.report`, which filters
+     * on `reviewedAt >= epochStart` alone, count those reviews as evidence for
+     * the restored 6/60. So the epoch restarts at now under a new `prior` id,
+     * and the 4/20 row keeps its pair and its timestamp.
+     */
+    @Test
+    fun aRestoreKeepsTheEpochOnlyForThePairItNames() = dbBlocking {
+        rules().currentVersion()
+        val otherPairStart = 1_700_000_000_000L
+        db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                id = 5,
+                easySeconds = 4L,
+                slowSeconds = 20L,
+                effectiveFrom = otherPairStart,
+                reason = "manual"
+            )
+        )
+        val restoredAfter = System.currentTimeMillis()
+        val repository = upgradeRepository()
+        repository.settingsRestore(v27Settings(version = 5, fast = 6L, slow = 60L))
+
+        val repaired = repository.gradingVersion()
+        assertNotEquals("the other pair's epoch must not be adopted", 5, repaired)
+        assertEquals("the new prior row continues the numbering", 6, repaired)
+        val row = db.gradingRulesDao().version(repaired.toLong())!!
+        assertEquals("prior", row.reason)
+        assertEquals(6L, row.easySeconds)
+        assertEquals(60L, row.slowSeconds)
+        assertTrue(
+            "the epoch must start now, not inside the other pair's window " +
+                "(repaired=${row.effectiveFrom}, otherPair=$otherPairStart)",
+            row.effectiveFrom >= restoredAfter
+        )
+        // History is append-only: the row that graded 4/20 keeps both its pair
+        // and its start, so its reviews still resolve what actually graded them.
+        val other = db.gradingRulesDao().version(5L)!!
+        assertEquals(4L, other.easySeconds)
+        assertEquals(20L, other.slowSeconds)
+        assertEquals(otherPairStart, other.effectiveFrom)
+        assertEquals(6, repository.schedulerConfigNow().gradingVersion)
+        assertEquals(6L, repository.schedulerConfigNow().fastSeconds)
+        assertEquals(60L, repository.schedulerConfigNow().slowSeconds)
+    }
+
+    /**
+     * F1: a backup from a device whose clock was wrong can carry the right pair
+     * with an unusable `effectiveFrom`. Zero pools every review ever recorded;
+     * a future instant excludes all of them. Neither is an epoch, so the same
+     * guard that rejects another pair rejects the stamp and restarts at now.
+     */
+    @Test
+    fun aRestoreRejectsAnUnusableEpochTimestamp() = dbBlocking {
+        rules().currentVersion()
+        val future = System.currentTimeMillis() + 24 * 60 * 60 * 1000L
+        listOf(5 to 0L, 9 to future).forEach { (id, stamp) ->
+            db.gradingRulesDao().insertVersion(
+                GradingVersionEntity(
+                    id = id.toLong(),
+                    easySeconds = 6L,
+                    slowSeconds = 60L,
+                    effectiveFrom = stamp,
+                    reason = "manual"
+                )
+            )
+            val repository = upgradeRepository()
+            repository.settingsRestore(v27Settings(version = id, fast = 6L, slow = 60L))
+
+            val version = repository.gradingVersion()
+            assertNotEquals("stamp=$stamp must not be adopted", id, version)
+            val row = db.gradingRulesDao().version(version.toLong())!!
+            assertEquals("stamp=$stamp is a pair match, so the cut is the same", 6L, row.easySeconds)
+            assertTrue(
+                "stamp=$stamp must be replaced by now",
+                row.effectiveFrom > 0L && row.effectiveFrom <= System.currentTimeMillis()
+            )
+        }
+    }
+
+    /**
+     * F1: a pre-v27 backup carries no `grading_rules_version`, so its pair
+     * cannot be reinterpreted under the absolute rule. The upgrade path runs:
+     * the old pair is retired, the shipped 6/60 takes over, and one new `prior`
+     * row opens a fresh epoch.
+     */
+    @Test
+    fun aPreV27RestoreStillMintsAPriorVersion() = dbBlocking {
+        // SettingsResetRule leaves the pacing knobs to the class, and the
+        // upgrade path copies whatever pair it finds into the retired keys.
+        // Start from no stored pair, so the only one this test can see is the
+        // one the backup carries.
+        context.dataStore.edit { prefs ->
+            prefs.remove(doublePreferencesKey("anki_fast_seconds"))
+            prefs.remove(doublePreferencesKey("anki_slow_seconds"))
+        }
+        clearRetiredCuts()
+        rules().currentVersion()
+        val repository = upgradeRepository()
+        repository.settingsRestore(
+            McqBackupFormat.SettingsFile(
+                mapOf(
+                    "anki_fast_seconds" to McqBackupFormat.PreferenceEntry(
+                        "double",
+                        JsonPrimitive(8.0)
+                    ),
+                    "anki_slow_seconds" to McqBackupFormat.PreferenceEntry(
+                        "double",
+                        JsonPrimitive(30.0)
+                    )
+                )
+            )
+        )
+
+        assertEquals("the retired numbering continues", 2, repository.gradingVersion())
+        val seeded = db.gradingRulesDao().version(2L)!!
+        assertEquals("prior", seeded.reason)
+        assertEquals(6L, seeded.easySeconds)
+        assertEquals(60L, seeded.slowSeconds)
+        assertEquals(6L, repository.schedulerConfigNow().fastSeconds)
+        assertEquals(
+            "the retired pair must be kept aside, not dropped with the id",
+            8L to 30L,
+            retiredCuts()
+        )
+    }
+
+    /** A v27 settings file: the rule gate, the version id and the cut pair. */
+    private fun v27Settings(version: Int, fast: Long, slow: Long) =
+        McqBackupFormat.SettingsFile(
+            mapOf(
+                "grading_rules_version" to McqBackupFormat.PreferenceEntry(
+                    "int",
+                    JsonPrimitive(SettingsStore.GRADING_RULES_VERSION)
+                ),
+                "ladder_version" to McqBackupFormat.PreferenceEntry(
+                    "int",
+                    JsonPrimitive(version)
+                ),
+                "correctness_only" to McqBackupFormat.PreferenceEntry(
+                    "boolean",
+                    JsonPrimitive(false)
+                ),
+                "anki_fast_seconds" to McqBackupFormat.PreferenceEntry(
+                    "double",
+                    JsonPrimitive(fast.toDouble())
+                ),
+                "anki_slow_seconds" to McqBackupFormat.PreferenceEntry(
+                    "double",
+                    JsonPrimitive(slow.toDouble())
+                )
+            )
+        )
 
     /**
      * The upgrade case: v26 left a version id and a pair tuned for the reading
@@ -618,15 +834,20 @@ class GradingRulesStoreTest {
     }
 
     /**
-     * Item 6: the first Reset of a retired pre-v27 pair is not a change. The
-     * effective pair was already the shipped 6/60, so no `manual` row is
+     * Item 6 / F2: the first Reset of a retired pre-v27 pair is not a change.
+     * The effective pair was already the shipped 6/60, so no `manual` row is
      * minted — but the stale id still has to go, and unlike an unchanged
      * *current* pair the epoch does move: the next read mints a fresh `prior`
      * row at now, because the retired row's `effectiveFrom` names cuts that no
      * longer grade anything.
+     *
+     * The pair itself must not vanish with the id: the reset overwrites it in
+     * the same edit, so it is copied into the retired keys first, exactly as
+     * the upgrade path keeps it.
      */
     @Test
     fun aFirstResetOfARetiredPairMintsNoManualRow() = dbBlocking {
+        clearRetiredCuts()
         val retired = GradingVersionEntity(
             id = 1,
             easySeconds = 8L,
@@ -647,6 +868,11 @@ class GradingRulesStoreTest {
             "an unchanged effective pair must not mint a version",
             1,
             db.gradingRulesDao().allVersions().size
+        )
+        assertEquals(
+            "the reset overwrites the retired pair, so it must keep it",
+            8L to 30L,
+            retiredCuts()
         )
 
         // The next read seeds the effective pair as `prior` under a new id,

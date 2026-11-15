@@ -145,11 +145,12 @@ private fun LegendEntry(color: Color, @StringRes labelRes: Int) {
 }
 
 /**
- * The answer-time pair, shown while correctness-only grading is on. This is not
- * calibration: nothing is compared against outcomes, and the card says so. It
- * exists so that switching the rule off is not the first time a number
- * appears — the pair is picked from the dwells the learner has already
- * recorded.
+ * The answer-time pair. This is not calibration: nothing is compared against
+ * outcomes, and the card says so. It exists so that switching the rule off is
+ * not the first time a number appears — the pair is picked from the dwells the
+ * learner has already recorded. Under correctness-only it is the only pair on
+ * offer, so it is always shown; under timed grading it stays only while it
+ * still differs from the pair in force.
  */
 @Composable
 private fun DwellCutsCard(suggestion: Calibration.CutSuggestion, timed: Boolean) {
@@ -320,8 +321,14 @@ private fun CalibrationEvidence(
                         )
 
                     Calibration.CutSuggestion.Status.AT_LIMIT ->
+                        // The wall is the one the evidence pushed against:
+                        // the Easy cut's floor, or the Hard cut above it.
                         stringResource(
-                            R.string.stats_cuts_limit,
+                            if (report.contrast1.direction == Calibration.Direction.RAISE) {
+                                R.string.stats_cuts_limit_hard
+                            } else {
+                                R.string.stats_cuts_limit
+                            },
                             suggestion.nextFast,
                             suggestion.nextSlow
                         )

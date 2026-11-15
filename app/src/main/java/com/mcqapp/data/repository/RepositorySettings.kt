@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -31,6 +32,23 @@ import kotlinx.serialization.json.longOrNull
 // Internal, not private: RepositorySettingsTest seeds the same file directly to
 // prove legacy keys are inert and that corrupt values fall back to defaults.
 internal val Context.dataStore by preferencesDataStore(name = "settings")
+
+/**
+ * The stored values a backup's `settings.json` and its streamed study rows
+ * must agree on: the cut pair, the `grading_versions` id that names that pair
+ * and the grading rule.
+ *
+ * The id is part of the comparison because [SettingsStore.writeCuts] never
+ * reuses one: a save that moves a cut and a save that moves it back both mint a
+ * new id, so an interleaved change is visible even when the final pair matches
+ * the first one.
+ */
+internal data class GradingGuard(
+    val easySeconds: String?,
+    val slowSeconds: String?,
+    val gradingVersion: String?,
+    val correctnessOnly: String?
+)
 
 /**
  * Every DataStore-backed preference in one place: appearance, behaviour
@@ -481,20 +499,37 @@ internal class SettingsStore(
     }
 
     /**
-     * Captures the stored pair before the absolute rule retires it. A no-op
-     * once a pair has been kept, and a no-op when the install never stored one.
+     * Captures the stored pair into the retired keys. A no-op once a pair has
+     * been kept, and a no-op when the install never stored one.
+     *
+     * Written against [MutablePreferences] so the upgrade path can call it in
+     * its own edit and Reset can call it inside the edit that is about to
+     * overwrite the pair — one copy of the rule, so the two cannot drift.
      */
-    internal suspend fun retainRetiredCuts() {
-        context.dataStore.edit { prefs ->
-            if (prefs[retiredEasyKey] != null) return@edit
-            val easy = prefs[schedKey("fast_seconds")]?.toLong() ?: return@edit
-            val slow = prefs[schedKey("slow_seconds")]?.toLong() ?: return@edit
-            prefs[retiredEasyKey] = easy
-            prefs[retiredSlowKey] = slow
-        }
+    private fun MutablePreferences.retainRetiredCutsIfAbsent() {
+        if (this[retiredEasyKey] != null) return
+        val easy = this[schedKey("fast_seconds")]?.toLong() ?: return
+        val slow = this[schedKey("slow_seconds")]?.toLong() ?: return
+        this[retiredEasyKey] = easy
+        this[retiredSlowKey] = slow
     }
 
-    /** The stored grading version, or null when none has been written yet. */
+    /**
+     * Captures the stored pair before the absolute rule retires it. See
+     * [retainRetiredCutsIfAbsent].
+     */
+    internal suspend fun retainRetiredCuts() {
+        context.dataStore.edit { it.retainRetiredCutsIfAbsent() }
+    }
+
+    /**
+     * The stored grading version, or null when none has been written yet.
+     *
+     * Only the versioning test reads the bare key: production takes the id from
+     * [schedulerConfigNow], where it rides the same snapshot as the pair it
+     * names, so a restore landing between two reads cannot pair one rule's id
+     * with another rule's cuts.
+     */
     internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
 
@@ -522,10 +557,11 @@ internal class SettingsStore(
      *   The first reset of a *retired* pre-v27 pair is the exception. That pair
      *   was never in force ([schedulerConfig] had already replaced it with the
      *   shipped 6/60), so it also returns `false` and writes no `manual` row,
-     *   but its stale version id is dropped. The next version read therefore
-     *   mints a fresh `prior` row at "now", and the epoch **does** move: the
-     *   old row's `effectiveFrom` names a pair that no longer grades anything,
-     *   so the earliest honest start for the new rule is this moment.
+     *   but its stale version id is dropped and the pair itself is copied into
+     *   the retired keys before this edit overwrites it. The next version read
+     *   therefore mints a fresh `prior` row at "now", and the epoch **does**
+     *   move: the old row's `effectiveFrom` names a pair that no longer grades
+     *   anything, so the earliest honest start for the new rule is this moment.
      */
     suspend fun resetSchedulerConfig(): Boolean {
         var pairChanged = false
@@ -552,6 +588,13 @@ internal class SettingsStore(
             // separate reads disagree about whether the pair moved.
             pairChanged = cutsCurrent &&
                 (wasFast != c.fastSeconds || wasSlow != c.slowSeconds)
+            if (!cutsCurrent) {
+                // This edit is about to overwrite a pair the absolute rule
+                // retired. Keep it the way the upgrade path does, before the
+                // values below replace it: the pair cannot be reinterpreted,
+                // but a hand-tuned one should not vanish without a trace.
+                prefs.retainRetiredCutsIfAbsent()
+            }
             listOf(
                 "max_interval" to c.maxIntervalDays.toDouble(),
                 "relearn_ms" to c.relearnMs.toDouble(),
@@ -650,6 +693,30 @@ internal class SettingsStore(
         }
         return McqBackupFormat.SettingsFile(out)
     }
+
+    /**
+     * [snapshot] read as the values a backup's other half must agree with —
+     * see [GradingGuard]. Call it on the snapshot the backup writes and again
+     * on a fresh one after the study rows have streamed: equal values prove
+     * both halves describe one instant.
+     *
+     * They are two reads of two different stores, minutes apart on a large
+     * bank, and the settings screen stays interactive in between. A cut save or
+     * a rule switch in that window would put one rule's settings beside the
+     * other rule's reviews, and a restore trusts exactly that pairing whenever
+     * the row at the restored id describes the restored pair.
+     */
+    internal fun gradingGuard(snapshot: McqBackupFormat.SettingsFile): GradingGuard =
+        GradingGuard(
+            easySeconds = snapshot.text(schedKey("fast_seconds").name),
+            slowSeconds = snapshot.text(schedKey("slow_seconds").name),
+            gradingVersion = snapshot.text(ladderVersionKey.name),
+            correctnessOnly = snapshot.text(correctnessOnlyKey.name)
+        )
+
+    /** One preference's value as the export wrote it, or null when absent. */
+    private fun McqBackupFormat.SettingsFile.text(name: String): String? =
+        (preferences[name]?.value as? JsonPrimitive)?.content
 
     /**
      * Replaces every preference with the backup's values: the restore is a

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.GradingVersionEntity
@@ -16,6 +17,7 @@ import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.local.getCategoryTitlesByIdsChunked
 import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.DayBoundary
@@ -26,6 +28,7 @@ import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -259,6 +262,264 @@ class StatsRetentionStreamTest {
             assertEquals(scope == null, streamed.categoryRetention.isNotEmpty())
         }
     }
+
+    /**
+     * F3: the correctness-only branch of the assertion above has to execute in
+     * CI. The fixture there is always timed — the papers are logged before the
+     * first config read, so the install is an upgrade and stays on the clock —
+     * which left its `else` half unreachable. This switches the rule the way
+     * the Settings screen does and asserts the payload that rule produces,
+     * plus the ordinary aggregation that must survive the switch.
+     */
+    @Test
+    fun correctnessOnlyPayloadCarriesTheAnswerTimePair() = dbBlocking {
+        seedLog()
+        val written = repository.updateSchedulerConfig {
+            it.copy(correctnessOnlyGrading = true)
+        }
+        assertTrue(
+            "the fixture must actually be on correctness-only grading",
+            written.correctnessOnlyGrading
+        )
+
+        val streamed = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertFalse("the rule in force must be reported", streamed.timeBasedGrading)
+        assertNotNull(
+            "correctness-only grading must offer the answer-time pair",
+            streamed.dwellSuggestion
+        )
+        assertNull(
+            "no Easy/Hard labels exist, so the contrast has nothing to say",
+            streamed.cutSuggestion
+        )
+        // The same payload shape as the timed fixture: the rule changes what a
+        // grade means, not what the tab aggregates.
+        assertTrue(streamed.retentionTrend.points.any { it.count > 0 })
+        assertTrue(streamed.weekdayRetention.any { it.reviews > 0 })
+        assertTrue(streamed.calibration.samples > 0)
+        assertNotNull("the calibration report is still built", streamed.calibrationReport)
+    }
+
+    /**
+     * F1: a full restore must not restart the calibration epoch. The restored
+     * `grading_versions` row carries the `effectiveFrom` the backup was taken
+     * under, and the reviews it graded sit after it, so keeping that id keeps
+     * them countable. Before the fix the restore minted a fresh row stamped
+     * "now", which dropped every restored label from the report.
+     */
+    @Test
+    fun aRestoreKeepsTheCalibrationEvidenceItBrought() = dbBlocking {
+        val restoredStart = todayStart - 20 * day
+        db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                id = 5,
+                easySeconds = 6L,
+                slowSeconds = 60L,
+                effectiveFrom = restoredStart,
+                reason = "manual",
+                correctnessOnly = false
+            )
+        )
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        // One usable label → outcome pair, both graded under version 5 and both
+        // inside the epoch the backup's row names.
+        val labelAt = todayStart - 10 * day + 2 * hour
+        val graded = ReviewLogEntity(
+            paperId = "p1",
+            questionId = "q1",
+            rating = 3,
+            reviewedAt = labelAt,
+            stateBefore = "REVIEW",
+            intervalDaysAfter = 8,
+            gradeSource = "AUTO",
+            gradingVersion = 5,
+            predictedRecall = 0.9,
+            fsrsFitVersion = 0,
+            wasGuess = false,
+            wasCorrect = true,
+            wasSkipped = false
+        )
+        db.reviewLogDao().insertAll(
+            listOf(graded, graded.copy(reviewedAt = labelAt + hour))
+        )
+        assertEquals("the fixture must be a usable pair", 1, calibrationPairs())
+
+        repository.settingsRestore(v27Settings(version = 5))
+
+        val streamed = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        val report = streamed.calibrationReport!!
+        assertEquals(
+            "the restored id and its epoch win over a freshly minted row",
+            5,
+            repository.schedulerConfigNow().gradingVersion
+        )
+        assertEquals("the epoch must be the restored row's", restoredStart, report.epochStart)
+        assertTrue(
+            "reviews restored inside the epoch must stay in the evidence " +
+                "(pairs=${report.pairs})",
+            report.pairs > 0
+        )
+        assertEquals(
+            "a restore that resolves writes no version row",
+            1,
+            db.gradingRulesDao().allVersions().size
+        )
+    }
+
+    /**
+     * F1, the settings-only case: the restored `ladder_version` names a local
+     * row that graded a *different* pair (4/20) while the backup's settings say
+     * 6/60. `Calibration.report` filters on `reviewedAt >= epochStart` alone, so
+     * reusing that row's start would count its 4/20 reviews as evidence for the
+     * restored cuts. The epoch must restart after them instead.
+     */
+    @Test
+    fun aRestoreDoesNotCountReviewsGradedUnderAnotherPair() = dbBlocking {
+        val otherPairStart = todayStart - 30 * day
+        db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                id = 5,
+                easySeconds = 4L,
+                slowSeconds = 20L,
+                effectiveFrom = otherPairStart,
+                reason = "manual"
+            )
+        )
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        val labelAt = todayStart - 10 * day + 2 * hour
+        val graded = ReviewLogEntity(
+            paperId = "p1",
+            questionId = "q1",
+            rating = 3,
+            reviewedAt = labelAt,
+            stateBefore = "REVIEW",
+            intervalDaysAfter = 8,
+            gradeSource = "AUTO",
+            gradingVersion = 5,
+            predictedRecall = 0.9,
+            fsrsFitVersion = 0,
+            wasGuess = false,
+            wasCorrect = true,
+            wasSkipped = false
+        )
+        db.reviewLogDao().insertAll(
+            listOf(graded, graded.copy(reviewedAt = labelAt + hour))
+        )
+        assertEquals("the fixture must be a usable pair", 1, calibrationPairs())
+
+        repository.settingsRestore(v27Settings(version = 5))
+
+        val report = repository
+            .statsRetention(null, StatsAggregator.Range.ALL, now)
+            .calibrationReport!!
+        assertEquals(
+            "the 4/20 row cannot open an epoch for 6/60",
+            6,
+            repository.schedulerConfigNow().gradingVersion
+        )
+        assertTrue(
+            "the epoch must start after the other pair's reviews " +
+                "(epoch=${report.epochStart}, label=$labelAt)",
+            report.epochStart > labelAt
+        )
+        assertEquals(
+            "reviews graded under the other pair are not evidence for these cuts",
+            0,
+            report.pairs
+        )
+    }
+
+    /**
+     * F1: the calibration cache is keyed on (scope, version, fit version, block
+     * end, max reviewedAt), none of which a restore has to move any more — it
+     * keeps the restored id and epoch. A full restore replaces the study log
+     * before the settings land, so a report built from the pre-restore rows must
+     * not be served for the rows it brought. `max(reviewedAt)` is deliberately
+     * left identical here: it is the freshness guard the key relies on, and it
+     * cannot notice rows that were replaced rather than appended.
+     */
+    @Test
+    fun aRestoreDoesNotServeTheReportBuiltFromPreRestoreRows() = dbBlocking {
+        val restoredStart = todayStart - 20 * day
+        db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                id = 5,
+                easySeconds = 6L,
+                slowSeconds = 60L,
+                effectiveFrom = restoredStart,
+                reason = "manual",
+                correctnessOnly = false
+            )
+        )
+        db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
+        val labelAt = todayStart - 10 * day + 2 * hour
+        val graded = ReviewLogEntity(
+            paperId = "p1",
+            questionId = "q1",
+            rating = 3,
+            reviewedAt = labelAt,
+            stateBefore = "REVIEW",
+            intervalDaysAfter = 8,
+            gradeSource = "AUTO",
+            gradingVersion = 5,
+            predictedRecall = 0.9,
+            fsrsFitVersion = 0,
+            wasGuess = false,
+            wasCorrect = true,
+            wasSkipped = false
+        )
+        db.reviewLogDao().insertAll(
+            listOf(graded, graded.copy(reviewedAt = labelAt + hour))
+        )
+        repository.settingsRestore(v27Settings(version = 5))
+
+        val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "the fixture must be a usable pair",
+            1,
+            before.calibrationReport!!.pairs
+        )
+
+        // The restore's first half replaced the log; the later row — the cache
+        // key's freshness guard — is still the newest row in the log.
+        db.openHelper.writableDatabase.execSQL(
+            "DELETE FROM review_log WHERE id = (SELECT MIN(id) FROM review_log)"
+        )
+        repository.settingsRestore(v27Settings(version = 5))
+
+        val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "a restore must not serve the report built from pre-restore rows",
+            0,
+            after.calibrationReport!!.pairs
+        )
+    }
+
+    /** A v27 settings file: the rule gate, the version id and the pair in force. */
+    private fun v27Settings(version: Int) = McqBackupFormat.SettingsFile(
+        mapOf(
+            "grading_rules_version" to McqBackupFormat.PreferenceEntry(
+                "int",
+                JsonPrimitive(SettingsStore.GRADING_RULES_VERSION)
+            ),
+            "ladder_version" to McqBackupFormat.PreferenceEntry(
+                "int",
+                JsonPrimitive(version)
+            ),
+            "correctness_only" to McqBackupFormat.PreferenceEntry(
+                "boolean",
+                JsonPrimitive(false)
+            ),
+            "anki_fast_seconds" to McqBackupFormat.PreferenceEntry(
+                "double",
+                JsonPrimitive(6.0)
+            ),
+            "anki_slow_seconds" to McqBackupFormat.PreferenceEntry(
+                "double",
+                JsonPrimitive(60.0)
+            )
+        )
+    )
 
     /**
      * B1 regression: Statistics can be the first screen a v27 install reads.

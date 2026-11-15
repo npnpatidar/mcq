@@ -374,6 +374,24 @@ internal class StatsStore(
         java.util.concurrent.ConcurrentHashMap<CalibrationCacheKey, Calibration.Report>()
 
     /**
+     * Drops the memoised calibration report. A restore now keeps the restored
+     * version id and epoch, so the key — built from the id and the row's
+     * `effectiveFrom`, not from the rows themselves — can be identical before
+     * and after it while the reviews behind it are not. Every writer that
+     * *appends* moves the key; a restore is the one that appends without
+     * moving it.
+     *
+     * A deletion (a paper, question or category) is the other writer that
+     * leaves the key alone: it removes `review_log` rows, and `maxReviewedAt`
+     * only falls when the newest row was among them, so the cache can keep
+     * counting a review that is gone until the block advances. That gap
+     * predates this cache and is left alone here.
+     */
+    internal fun invalidateCalibrationCache() {
+        calibrationCache.clear()
+    }
+
+    /**
      * The overview tab, streamed: the log is replayed and the cards are paged
      * into one [StatsAggregator.OverviewAccumulator], so neither list is ever
      * built. This is the tab the page opens on, so it is the read that decides

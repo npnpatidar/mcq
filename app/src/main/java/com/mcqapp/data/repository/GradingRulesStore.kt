@@ -24,8 +24,14 @@ enum class GradingReason(val stored: String) {
  * The cuts live in DataStore because the scheduler reads them on every pull;
  * this store is the one path that changes them, so every change also owns a
  * `grading_versions` row and every review can name the pair that graded it.
- * Nothing here adapts anything: a row is written when the learner edits a cut
- * and when a restore seeds the pair it imported, and never by the app itself.
+ * Nothing here adapts anything and nothing is written just because the app
+ * ran. A row is written when the learner edits a cut or switches the rule,
+ * when Reset puts the defaults back, when a restore leaves a version whose row
+ * cannot describe the pair it restored, when a stored version number has no
+ * row or a row whose epoch is unusable, and once on the first read after a
+ * pre-v27 upgrade — that branch retires the old pair and seeds the shipped
+ * one, and rewrites the upgrade gate in the same edit, so it runs at most once
+ * per install.
  *
  * The write order is deliberate: the cuts and the version number land in one
  * DataStore edit, then the history row is inserted. A crash between the two
@@ -119,34 +125,6 @@ internal open class GradingRulesStore(
     }
 
     /**
-     * A restore wipes the preferences and replays the backup's, including a
-     * grading version id this install may never have seen. Seeding a fresh
-     * `prior` row continuing from the highest restored id keeps the review log
-     * resolvable: every row's version still points at a pair.
-     */
-    suspend fun seedAfterRestore(): Int {
-        warmDatabase()
-        return mutex.withLock {
-            val config = settings.schedulerConfigNow()
-            val id = nextVersionId()
-            settings.writeCuts(
-                config.fastSeconds,
-                config.slowSeconds,
-                id,
-                config.correctnessOnlyGrading
-            )
-            insert(
-                id,
-                config.fastSeconds,
-                config.slowSeconds,
-                GradingReason.PRIOR,
-                config.correctnessOnlyGrading
-            )
-            id
-        }
-    }
-
-    /**
      * Warms the first SQLite open on the IO dispatcher before any DAO access in
      * this store. All public entry points go through here so a first-use writer
      * cannot race the connection pool open against a caller holding the main
@@ -181,12 +159,38 @@ internal open class GradingRulesStore(
     /**
      * Must run under [mutex]. Returns the current version, writing the missing
      * history row for an existing key first — that is the crash repair, and it
-     * also covers a restore that carried a version number from elsewhere.
+     * also covers a restore that carried a version number whose row did not
+     * survive.
+     *
+     * A stored id is reused only when its row exists, describes the pair being
+     * used and carries a usable start: the same `easySeconds`/`slowSeconds`
+     * and an `effectiveFrom` above 0 and no later than now. Everything else
+     * gets a fresh `prior` version stamped now instead. The one reuse that
+     * compares nothing is an id whose row is missing: it keeps the id and gets
+     * a new row for the stored pair, because a crash between the cut write and
+     * the row insert leaves exactly that state and there is no older row to
+     * distrust.
+     *
+     * Comparing the pair covers a restore whose row at that id describes
+     * different cuts, and a backup written on a device whose clock stamped the
+     * row at or before 0 or in the future. Every restore wipes the tables and
+     * replays the backup's own rows, so the first is defence in depth rather
+     * than a reachable path.
+     *
+     * The pair matters because `Calibration.report` filters on
+     * `reviewedAt >= epochStart` alone: an epoch borrowed from another pair
+     * would count reviews graded under that pair as evidence for these cuts.
+     * The timestamp matters because an epoch that starts at no real instant
+     * either swallows the whole log or excludes all of it.
      *
      * A pair saved under an older build of the rule gets a fresh `prior`
-     * version instead of reusing its id: the old id's `effectiveFrom` predates
-     * the rule change, and an epoch that starts there would pool reviews graded
+     * version for the same reason: the old id's `effectiveFrom` predates the
+     * rule change, and an epoch that starts there would pool reviews graded
      * under the reading allowance with reviews graded without it.
+     *
+     * `grading_versions` stays append-only either way: a pair that cannot
+     * reuse an epoch gets a new id, never a rewritten row, so every historic
+     * review still resolves the pair that actually graded it.
      */
     private suspend fun ensureVersionLocked(): Int {
         if (settings.gradingRulesVersionNow() < SettingsStore.GRADING_RULES_VERSION) {
@@ -211,10 +215,15 @@ internal open class GradingRulesStore(
             )
             return id
         }
-        val stored = settings.gradingVersionOrNull()
-        if (stored != null && stored > 0) {
-            if (db.gradingRulesDao().version(stored.toLong()) == null) {
-                val config = settings.schedulerConfigNow()
+        // The id and the pair it names come from one snapshot: reading the
+        // version key and the cuts separately let a restore land between them
+        // and pair the pre-restore id with the post-restore pair, which minted
+        // a `prior` row and restarted the very epoch this guard preserves.
+        val config = settings.schedulerConfigNow()
+        if (config.gradingVersion > 0) {
+            val stored = config.gradingVersion
+            val row = db.gradingRulesDao().version(stored.toLong())
+            if (row == null) {
                 db.gradingRulesDao().insertVersion(
                     GradingVersionEntity(
                         id = stored.toLong(),
@@ -225,10 +234,18 @@ internal open class GradingRulesStore(
                         correctnessOnly = config.correctnessOnlyGrading
                     )
                 )
+                return stored
             }
-            return stored
+            // The row exists; it may still be the wrong epoch for this pair
+            // (see the KDoc above). Only an exact pair match at a usable
+            // instant is kept — everything else falls through to a new
+            // `prior` row stamped now.
+            val samePair = row.easySeconds == config.fastSeconds &&
+                row.slowSeconds == config.slowSeconds
+            val usableStart = row.effectiveFrom > 0L &&
+                row.effectiveFrom <= System.currentTimeMillis()
+            if (samePair && usableStart) return stored
         }
-        val config = settings.schedulerConfigNow()
         val id = nextVersionId()
         settings.writeCuts(
             config.fastSeconds,

@@ -620,6 +620,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val settings = McqBackupFormat.SettingsFile(
                         preferences = repository.settingsSnapshot().preferences
                     )
+                    // This snapshot and the study log streamed below are two
+                    // reads of one instant, and a restore now trusts that: it
+                    // keeps the restored `ladder_version` and the
+                    // `grading_versions` row it names, so a settings snapshot
+                    // taken across a cut save would pair restored cuts with a
+                    // row that graded different ones. No lock is held across
+                    // the stream (it takes minutes on a big bank and would
+                    // stall every Settings write behind it), so the check is
+                    // after it instead: an unchanged guard means the two halves
+                    // still describe one instant.
                     val output = app.contentResolver.openOutputStream(uri)
                     if (output == null) {
                         onError("Could not open file for writing")
@@ -652,6 +662,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             },
                             settings = settings
                         )
+                    }
+                    // The stream above can take minutes; the study section
+                    // stays interactive throughout. If a cut save or a rule
+                    // switch landed in it, these settings and those rows
+                    // describe two different rules and a restore would trust
+                    // the pair it finds. Refuse the file rather than hand the
+                    // learner a backup that lies: the document is ours (the
+                    // picker just created it), so drop it and let a retry
+                    // produce a consistent one.
+                    if (!repository.settingsUnchangedSince(settings)) {
+                        Logger.w(
+                            "SETTINGS",
+                            "Grading settings moved during the backup; dropping $uri"
+                        )
+                        // A document URI is deleted through the provider's own
+                        // call, not ContentResolver.delete: DocumentsProvider
+                        // does not implement the latter.
+                        runCatching {
+                            if (android.provider.DocumentsContract.isDocumentUri(app, uri)) {
+                                android.provider.DocumentsContract.deleteDocument(
+                                    app.contentResolver,
+                                    uri
+                                )
+                            } else {
+                                app.contentResolver.delete(uri, null, null)
+                            }
+                        }.onFailure { Logger.w("SETTINGS", "Could not drop $uri", it) }
+                        throw IllegalStateException(BACKUP_RULE_MOVED)
                     }
                     Logger.i("SETTINGS", "Backup written (streamed)")
                 }
@@ -721,6 +759,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 val settings = McqBackupFormat.SettingsFile(
                     preferences = repository.settingsSnapshot().preferences
                 )
+                // Same invariant as `backupAll`: this snapshot and the study log
+                // streamed below must describe one instant.
                 java.io.FileOutputStream(file).use { out ->
                     McqBackupFormat.writeTo(
                         output = out,
@@ -744,6 +784,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         },
                         settings = settings
                     )
+                }
+                // Same guard, same reason as `backupAll`. A cache file left
+                // behind would be shared as if it described one rule.
+                if (!repository.settingsUnchangedSince(settings)) {
+                    Logger.w(
+                        "SETTINGS",
+                        "Grading settings moved during the backup; dropping '${file.name}'"
+                    )
+                    if (!file.delete()) {
+                        Logger.w("SETTINGS", "Could not drop '${file.name}'")
+                    }
+                    throw IllegalStateException(BACKUP_RULE_MOVED)
                 }
                 Logger.i("SETTINGS", "Shared backup '${file.name}' (${file.length()} bytes)")
                 com.mcqapp.util.shareIntent(app, file, "application/zip")
@@ -795,5 +847,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 onError("Restore failed: ${e.message}")
             }
         }
+    }
+
+    private companion object {
+        /**
+         * The message both backup exports fail with when the grading settings
+         * moved while they ran. The failure paths prefix their own sentence
+         * ("Backup failed: ", or the share dialog's copy), so this states what
+         * happened and what the learner should do.
+         */
+        const val BACKUP_RULE_MOVED =
+            "the grading settings changed while the backup was being written, so its " +
+                "settings and study log would disagree. The file was discarded — try again."
     }
 }

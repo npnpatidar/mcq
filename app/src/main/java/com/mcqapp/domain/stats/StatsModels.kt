@@ -637,15 +637,18 @@ data class RetentionData(
      */
     val cutSuggestion: Calibration.CutSuggestion? = null,
     /**
-     * The pair the learner's own answer times imply, shown while correctness-only
-     * grading is on. Null under timed grading, where the contrast suggestion
-     * above is the one that applies.
+     * The pair the learner's own answer times imply, computed under both
+     * grading rules. Under correctness-only it is always shown, because it is
+     * the pair the learner would type into the fields; under timed grading it
+     * is shown only while it still `changes` the pair in force, so a line that
+     * merely repeats the current cuts stays off the card.
      */
     val dwellSuggestion: Calibration.CutSuggestion? = null,
     /**
      * Whether the grade came from the answer clock (v27). False under
-     * correctness-only grading: the calibration card measures the two cuts, so
-     * it has nothing to show and is hidden instead of staying empty.
+     * correctness-only grading, where no Easy or Hard label exists: the
+     * calibration card is still shown, with its forecast/Brier chart, but its
+     * cut evidence is hidden because it measures the two cuts.
      */
     val timeBasedGrading: Boolean = true
 )

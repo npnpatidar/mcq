@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -1340,8 +1341,9 @@ class MigrationTest {
 
     /**
      * A genuine v26 file: the v25 chain plus the 25->26 columns, with the
-     * ladder's two tables populated, so 26->27 has something to copy and
-     * something to drop.
+     * ladder's two tables populated and one review stamped with ladder version
+     * 7, so 26->27 has something to copy, something to resolve and something
+     * to drop.
      */
     private fun createV26WithLadderHistory() {
         createV25WithSeed()
@@ -1367,6 +1369,14 @@ class MigrationTest {
                     "(id,startAt,endAt,ladderVersion,policyVersion,easyPairs," +
                     "easyCards,goodPairs,goodCards,hardPairs,hardCards,outcome) " +
                     "VALUES (1,1000,2000,7,1,10,5,12,6,8,4,'no-change')"
+            )
+            // One review actually stamped with the version whose row the
+            // migration copies. The v25 seed's row above carries the default 0,
+            // so this is the case that proves a non-zero id still resolves.
+            raw.execSQL(
+                "INSERT INTO review_log (id,paperId,questionId,rating,reviewedAt," +
+                    "elapsedSeconds,wasGuess,wasCorrect,ladderVersion) VALUES " +
+                    "(2,'p1','q2',3,6000,8,0,1,7)"
             )
             raw.version = 26
         }
@@ -1397,8 +1407,21 @@ class MigrationTest {
                 }
                 assertTrue("ladder tables still present: $ladderTables", ladderTables.isEmpty())
 
-                // The old review keeps its version id; the column is intact.
+                // The old review keeps its default 0; the column is intact.
                 assertEquals(0, db.reviewLogDao().historyForQuestion("q1").single().gradingVersion)
+
+                // A review stamped with the copied id reads back as 7 and that
+                // id still resolves to the pair that graded it, so a pre-v27
+                // row's cuts are recoverable after the ladder is gone.
+                assertEquals(
+                    7,
+                    db.reviewLogDao().historyForQuestion("q2").single().gradingVersion
+                )
+                val resolved = db.gradingRulesDao().version(7L)
+                assertNotNull("the copied version id must resolve", resolved)
+                assertEquals(7L, resolved!!.id)
+                assertEquals(8L, resolved.easySeconds)
+                assertEquals(30L, resolved.slowSeconds)
             } finally {
                 db.close()
             }

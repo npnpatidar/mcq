@@ -33,9 +33,11 @@ code citations, the accepted **M8** no-27→28 decision, the **minor 6** migrate
 the **F11** nits, three untested UI behaviours, the untested legacy *streaming* import, and the
 deleted-analysis provenance of the PR's 812-row figure. CI is green on `5ecdede` (run
 43681964531, all four jobs; the first attempt hit one flaky assertion in
-`StreamingImportCancelTest` and the re-run passed). The review round that followed added two
-more batches (the three-review findings and the two owner rulings); the branch is releasable once
-those batches are green in CI.
+`StreamingImportCancelTest` and the re-run passed). The review round that followed added three more
+batches (the three-review findings, the two owner rulings, and the final review round). **CI is
+green on `d9a9d67`** (run 43722623486, all four jobs), which is the first executed evidence for
+the new Robolectric deletion regressions. The branch is ready for the owner to release; PR #81
+stays draft until they say go.
 
 ---
 
@@ -519,6 +521,7 @@ cut may rise — `AT_LIMIT` is reported per direction, with separate copy (`stat
 | Full `:app:testDebugUnitTest --rerun-tasks` (all 262 classes) | 632 failures, **all 81 failing classes Robolectric/SQLite** (`The Robolectric native runtime is not supported on Linux (aarch64)`); **0 pure-JVM classes fail** |
 | CI on `18f55e2` (run 43678004818) | **green** — wrapper-validation, build, release-build, ui-test |
 | CI on `5ecdede` (run 43681964531) | green on re-run: the first attempt failed one assertion in `StreamingImportCancelTest` (parser-thread cleanup, 10 s deadline), a flake in code this batch does not touch; the re-run passed all four jobs with 2 172 tests, 0 failures, 7 skipped |
+| CI on `d9a9d67` (run 43722623486) | **green** — wrapper-validation, build, release-build, ui-test. This is the first executed evidence for the new deletion regressions and the Robolectric tests of batches 5–6. |
 | `27.json` regenerated from scratch | byte-identical, `identityHash` unchanged |
 
 ---

@@ -11,6 +11,38 @@ Android MCQ app (Kotlin, Jetpack Compose, Room). Repo `git@github.com:npnpatidar
 - Releases tag the merge commit on `main` as `0.0.N`, in the existing shape: asset
   `mcq-<tag>-signed.apk` plus its `.sha256`, notes auto-generated with the PR links.
 
+## Supervisor workflow (owner rule, set 2026-11-14)
+
+- The supervising agent does **not** write product code: no edits under `app/`, no build
+  files, no schema. Every code change goes to an implementation subagent with a scoped brief
+  (intent, files, constraints, acceptance criteria); the supervisor reviews the result.
+- Markdown (reports, commit messages, PR text) and read-only inspection stay with the
+  supervisor.
+- Every code change is reviewed by a **separate** reviewer subagent — never the author.
+  One area-matched reviewer per batch by default; **three** specialist reviewers
+  (design/domain, implementation/integration, tests/docs) for anything significant,
+  including the grading rule, the Room schema, the backup format or first-run defaults.
+- Subagents run **strictly sequentially**, never in parallel, even independent ones.
+- Behaviour changes, user-facing copy, scope and release state are the owner's call. When
+  the owner is away and a decision is unavoidable, launch three decision subagents
+  sequentially with the identical question, adopt the convergent answer, and report the
+  decision and the split afterwards.
+
+## Product premises (owner rule, set 2026-11-15)
+
+Judge behaviour, find bugs, review and recommend under these premises. A finding that only
+exists because one of them is false is not a defect and must not drive code or copy changes.
+
+- **The user is honest.** Nobody is gaming the app, farming Easy grades, or looking for a
+  loophole. Do not design, test or review for adversarial use.
+- **Normal-speed learners.** This is an everyday study app, not a speed test. A pace under
+  one or two seconds per card is rare and not a population to design for; a rule whose only
+  benefit goes to a sub-second speed-runner is not worth its complexity.
+- **No clock games.** Do not assume a learner stops the clock, reads the question, then
+  restarts it before answering. The pause control exists for interruptions. A scenario built
+  on pausing to think *around* the timer is out of scope, so evidence stored as `0 s` should
+  be read as a genuinely quick answer, not as a paused one.
+
 ## Build and test
 
 ```bash

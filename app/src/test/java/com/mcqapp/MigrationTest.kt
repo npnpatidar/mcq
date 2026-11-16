@@ -207,7 +207,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_23_24,
         AppDatabase.MIGRATION_24_25,
         AppDatabase.MIGRATION_25_26,
-        AppDatabase.MIGRATION_26_27
+        AppDatabase.MIGRATION_26_27,
+        AppDatabase.MIGRATION_27_28
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1079,6 +1080,35 @@ class MigrationTest {
     }
 
     @Test
+    fun `a fresh install lands on version 28 with no ladder tables`() {
+        // The complement of the chain tests: a new install never runs a
+        // migration, so it proves the generated 28.json is what the entities
+        // create — the FSRS-7 columns and grading_versions, with both ladder
+        // tables absent.
+        context.deleteDatabase("fresh-create.db")
+        val fresh = AppDatabase.builder(context, "fresh-create.db")
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val raw = fresh.openHelper.writableDatabase
+            assertEquals(28, raw.version)
+            val tables = raw.query(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+            }
+            assertTrue("grading_versions missing: $tables", tables.contains("grading_versions"))
+            assertTrue(
+                "ladder tables still created: $tables",
+                "ladder_versions" !in tables && "ladder_blocks" !in tables
+            )
+        } finally {
+            fresh.close()
+            context.deleteDatabase("fresh-create.db")
+        }
+    }
+
+    @Test
     fun `a fresh v21 create gets the partial index from the production builder`() {
         // Through AppDatabase.builder, not a hand-added callback: deleting the
         // callback from the production wiring must fail this test.
@@ -1294,12 +1324,13 @@ class MigrationTest {
     }
 
     @Test
-    fun `migration 25 to 27 keeps old reviews and versions the cuts`() {
+    fun `migration 25 to 28 keeps old reviews and versions the cuts`() {
         runBlocking {
             createV25WithSeed()
             val db = openMigrated()
             try {
-                // Opening ran 25->27; Room's identity check proves the schema.
+                // Opening ran 25->26->27->28; Room's identity check proves the
+                // schema, including that the ladder 25->26 created is gone.
                 val old = db.reviewLogDao().historyForQuestion("q1").single()
                 assertEquals(3, old.rating)
                 assertEquals(12L, old.elapsedSeconds)
@@ -1309,6 +1340,14 @@ class MigrationTest {
                 assertNull(old.proposedRating)
                 assertNull(old.predictedRecall)
                 assertNull(old.wasSkipped)
+
+                val ladderTables = db.openHelper.readableDatabase.query(
+                    "SELECT name FROM sqlite_master WHERE type='table' " +
+                        "AND name IN ('ladder_versions','ladder_blocks')"
+                ).use { cursor ->
+                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                }
+                assertTrue("ladder tables still present: $ladderTables", ladderTables.isEmpty())
 
                 // The version table is usable and the cascade is wired.
                 val versionId = db.gradingRulesDao().insertVersion(
@@ -1340,13 +1379,42 @@ class MigrationTest {
     }
 
     /**
-     * A genuine v26 file: the v25 chain plus the 25->26 columns, with the
-     * ladder's two tables populated and one review stamped with ladder version
-     * 7, so 26->27 has something to copy, something to resolve and something
-     * to drop.
+     * A genuine v26 file: the v25 seed plus one review and one FSRS-6 card
+     * state. The 26→27 migration must keep both rows, add the fast trace as a
+     * defaulted zero (the scheduler reads that as "unknown") and leave the
+     * old log row's fast trace null.
      */
-    private fun createV26WithLadderHistory() {
+    private fun createV26WithSeed() {
         createV25WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(25) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_25_26.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt,reps," +
+                    "lapses,leech,lastReviewedAt,contentHash,difficulty,stability," +
+                    "cardState,reviewCount) VALUES " +
+                    "('p1','q1',2.5,3,1234,2,0,0,1000,'h1',5.5,12.0,'REVIEW',2)"
+            )
+            raw.version = 26
+        }
+    }
+
+    /**
+     * The same v26 file with the pre-rename grading ladder populated as well:
+     * one version row, one evidence block and one review stamped with that
+     * version, so the 27→28 step has something to copy, something to resolve
+     * and something to drop beside the FSRS-6 card row the 26→27 step must
+     * leave alone.
+     */
+    private fun createV26WithBothHistories() {
+        createV26WithSeed()
         val config = SupportSQLiteOpenHelper.Configuration.builder(context)
             .name("migration-test.db")
             .callback(object : SupportSQLiteOpenHelper.Callback(26) {
@@ -1356,7 +1424,6 @@ class MigrationTest {
             .build()
         FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
             val raw = helper.writableDatabase
-            AppDatabase.MIGRATION_25_26.migrate(raw)
             raw.execSQL(
                 "INSERT INTO ladder_versions " +
                     "(id,easySeconds,slowSeconds,effectiveFrom,reason,previousId,blockId,policyVersion) " +
@@ -1378,24 +1445,92 @@ class MigrationTest {
                     "elapsedSeconds,wasGuess,wasCorrect,ladderVersion) VALUES " +
                     "(2,'p1','q2',3,6000,8,0,1,7)"
             )
-            raw.version = 26
         }
     }
 
     @Test
-    fun `migration 26 to 27 copies versions and drops the ladder blocks`() {
+    fun `migration 26 to 27 adds the fast stability trace`() {
         runBlocking {
-            createV26WithLadderHistory()
+            createV26WithSeed()
             val db = openMigrated()
             try {
-                // The pair survives with its id, so every pre-v27 review row
-                // still resolves the cuts that graded it.
+                // Opening ran 26->27; Room's identity check proves the schema.
+                val old = db.cardStateDao().get("p1", "q1")!!
+                // The schedule the learner sees is untouched...
+                assertEquals(3, old.intervalDays)
+                assertEquals(1234L, old.dueAt)
+                assertEquals(2, old.reps)
+                assertEquals(12.0, old.stability, 0.0)
+                assertEquals(5.5, old.difficulty, 0.0)
+                // ...and the new trace defaults to "unknown", not to a guess.
+                assertEquals(0.0, old.stabilityFast, 0.0)
+
+                // The pre-v27 log row keeps a null fast trace.
+                assertNull(db.reviewLogDao().historyForQuestion("q1").single().stabilityFastAfter)
+
+                // Both new columns round-trip.
+                db.reviewLogDao().insert(
+                    com.mcqapp.data.local.ReviewLogEntity(
+                        paperId = "p1",
+                        questionId = "q1",
+                        rating = 3,
+                        reviewedAt = 6000,
+                        stabilityAfter = 14.0,
+                        stabilityFastAfter = 11.2
+                    )
+                )
+                assertEquals(
+                    11.2,
+                    db.reviewLogDao().historyForQuestion("q1").last().stabilityFastAfter!!,
+                    0.0
+                )
+                db.cardStateDao().upsert(old.copy(stabilityFast = 11.2))
+                assertEquals(11.2, db.cardStateDao().get("p1", "q1")!!.stabilityFast, 0.0)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * Both histories in one v26 file, run through the whole remaining chain.
+     *
+     * The v26 schema is the last one that carried the pre-rename grading
+     * ladder, so this file is the only shape that can prove the destructive
+     * step: the ladder is copied into `grading_versions` and dropped, while
+     * the FSRS-6 card row the 26→27 step upgraded keeps the schedule the
+     * learner already sees.
+     */
+    @Test
+    fun `migration 26 to 28 carries both the FSRS-6 card row and the ladder rows`() {
+        runBlocking {
+            createV26WithBothHistories()
+            val db = openMigrated()
+            try {
+                // Opening ran 26->27->28; Room's identity check proves the schema.
+                val card = db.cardStateDao().get("p1", "q1")!!
+                // Neither step may touch what the learner is scheduled against.
+                assertEquals(3, card.intervalDays)
+                assertEquals(1234L, card.dueAt)
+                assertEquals(2, card.reps)
+                assertEquals(0, card.lapses)
+                assertEquals(1000L, card.lastReviewedAt)
+                assertEquals("h1", card.contentHash)
+                assertEquals(12.0, card.stability, 0.0)
+                assertEquals(5.5, card.difficulty, 0.0)
+                // The fast trace a v26 file could not have reads as "unknown".
+                assertEquals(0.0, card.stabilityFast, 0.0)
+                assertNull(db.reviewLogDao().historyForQuestion("q1").single().stabilityFastAfter)
+
+                // The ladder row is the whole content of grading_versions: the
+                // pair survives with its id, so every pre-28 review row still
+                // resolves the cuts that graded it. v26 never had the
+                // correctness-only mode.
                 val version = db.gradingRulesDao().allVersions().single()
                 assertEquals(7L, version.id)
                 assertEquals(8L, version.easySeconds)
                 assertEquals(30L, version.slowSeconds)
                 assertEquals("manual", version.reason)
-                // v26 never had the correctness-only mode.
                 assertFalse(version.correctnessOnly)
 
                 // The evidence blocks are gone, table and all.
@@ -1411,7 +1546,7 @@ class MigrationTest {
                 assertEquals(0, db.reviewLogDao().historyForQuestion("q1").single().gradingVersion)
 
                 // A review stamped with the copied id reads back as 7 and that
-                // id still resolves to the pair that graded it, so a pre-v27
+                // id still resolves to the pair that graded it, so a pre-28
                 // row's cuts are recoverable after the ladder is gone.
                 assertEquals(
                     7,

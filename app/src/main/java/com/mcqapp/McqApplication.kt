@@ -26,6 +26,14 @@ open class McqApplication : Application() {
         Logger.e("APP", "Startup job failed", throwable)
     }
 
+    /**
+     * Process-scoped work that must finish eventually but must never block
+     * startup or decide a caller's outcome. The FSRS-7 migration and card
+     * rebuild live here (AGENTS.md: no WorkManager dependency), as does the
+     * rebuild a backup restore starts — that one must never turn a committed
+     * restore into "Restore failed". All of it is idempotent and resumable, so
+     * a killed process simply resumes next launch.
+     */
     private val startupScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO + startupExceptionHandler)
 
@@ -41,7 +49,7 @@ open class McqApplication : Application() {
 
     /** The production wiring: a new install is one whose database is empty. */
     val repository: McqRepository by lazy {
-        McqRepository(AppDatabase.get(this), this)
+        McqRepository(AppDatabase.get(this), this, startupScope)
     }
 
     override fun onCreate() {
@@ -59,6 +67,19 @@ open class McqApplication : Application() {
             Logger.e("APP", "Uncaught exception on thread '${thread.name}', pid=${Process.myPid()}", throwable)
             previousHandler?.uncaughtException(thread, throwable)
                 ?: Log.e("APP", "No previous uncaught exception handler", throwable)
+        }
+
+        startupScope.launch {
+            try {
+                repository.ensureFsrs7()
+            } catch (e: Exception) {
+                Logger.e("FSRS7", "model migration failed", e)
+            }
+            try {
+                repository.rebuildFsrs7Memory()
+            } catch (e: Exception) {
+                Logger.e("FSRS7", "card-state rebuild failed; will resume next launch", e)
+            }
         }
 
         // Decide the first-start grading rule now, on IO. The answer comes

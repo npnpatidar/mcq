@@ -70,6 +70,9 @@ internal class StreamingImportSession(
     private var paperOpen = false
     private var paperIndex = 0
     private var effectivePaperId = ""
+
+    /** The file's own id for the open paper — the schedule map's key prefix. */
+    private var sourcePaperId = ""
     private var isNewPaper = false
     private var categoryIndex = 0
     private val catsInPaper = mutableListOf<CategoryEntity>()
@@ -107,15 +110,23 @@ internal class StreamingImportSession(
     private val passageIdRemap = HashMap<String, String>()
 
     /**
-     * Where each accepted question landed, for the tail's `scheduling` — which
-     * is read after every paper, so it can only be applied at [finish]. Null
-     * unless [captureSchedules] was set.
+     * One entry per accepted question: where it landed, under which of the
+     * file's own identities it was named, and its stored content hash. The
+     * tail's `scheduling` is read after every paper, so it can only be applied
+     * at [finish]. Null unless [captureSchedules] was set.
      */
-    private val acceptedSchedules: HashMap<String, ScheduleTarget>? =
-        if (captureSchedules) HashMap() else null
+    private val acceptedSchedules: ArrayList<ScheduleTarget>? =
+        if (captureSchedules) ArrayList() else null
 
-    /** The paper a question was written under, and its stored content hash. */
+    /**
+     * One accepted question. [sourcePaperId] and [sourceQuestionId] are the
+     * file's own ids — the composite and bare halves of a `scheduling` key —
+     * while [paperId] and [questionId] are the effective rows actually
+     * written.
+     */
     private class ScheduleTarget(
+        val sourcePaperId: String,
+        val sourceQuestionId: String,
         val paperId: String,
         val questionId: String,
         val contentHash: String
@@ -124,7 +135,7 @@ internal class StreamingImportSession(
     /** Logged once when a file carries schedules but the import did not ask for them. */
     private var warnedNoScheduleCapture = false
 
-    /** Entries naming a question this import did not accept, for the summary. */
+    /** Cards the file had a schedule for that this import did not accept, for the summary. */
     private var skippedSchedules = 0
 
     /**
@@ -249,7 +260,7 @@ internal class StreamingImportSession(
             Logger.i(
                 "STREAMIMPORT",
                 "Restored $restoredSchedules card states; skipped $skippedSchedules " +
-                    "schedule entries for questions this import did not accept"
+                    "cards the file had a schedule for but this import did not accept"
             )
         }
     }
@@ -282,6 +293,7 @@ internal class StreamingImportSession(
             header
         }
         val paperMatch = matchImportedPaper(db, editedHeader.id, editedHeader.title)
+        sourcePaperId = editedHeader.id
         effectivePaperId = paperMatch?.paper?.id ?: editedHeader.id
         isNewPaper = paperMatch == null
         if (paperMatch != null) {
@@ -616,16 +628,28 @@ internal class StreamingImportSession(
             // either, so a tail `scheduling` page reports it as skipped.
             if (!contentChanged) {
                 // Accepted, so a tail `scheduling` entry naming it applies at
-                // [finish]: remember the paper it landed under, the row id it was
-                // written under, and the hash of its stored bytes.
-                acceptedSchedules?.put(dto.id, ScheduleTarget(effectivePaperId, effectiveQuestionId, contentHash))
+                // [finish]: remember the file's own ids, the row it landed
+                // under and the hash of its stored bytes.
+                acceptedSchedules?.add(
+                    ScheduleTarget(
+                        sourcePaperId = sourcePaperId,
+                        sourceQuestionId = dto.id,
+                        paperId = effectivePaperId,
+                        questionId = effectiveQuestionId,
+                        contentHash = contentHash
+                    )
+                )
 
                 // Review progress is applied only to a question this import
                 // accepted, exactly as the whole-file importer applies the file's
                 // `scheduling` map. The hash is the stored bytes' hash, because
                 // that is what the study session recomputes: a mismatch reads as
                 // edited content and would reset the card on the next load.
-                schedules[dto.id]?.let { schedule ->
+                // This map comes from the Anki reader, one paper at a time and
+                // keyed by bare question id — the version-1 shape — so the
+                // version-1 precedence is the one that describes it; a
+                // composite key cannot occur here.
+                lookupCardSchedule(schedules, sourcePaperId, dto.id, JSON_LEGACY_VERSION)?.let { schedule ->
                     db.cardStateDao().upsert(
                         CardStateEntity(
                             paperId = effectivePaperId,
@@ -639,6 +663,7 @@ internal class StreamingImportSession(
                             lastReviewedAt = schedule.lastReviewedAt,
                             difficulty = schedule.difficulty,
                             stability = schedule.stability,
+                            stabilityFast = schedule.stabilityFast,
                             cardState = runCatching {
                                 CardStateKind.valueOf(schedule.cardState)
                             }.getOrDefault(CardStateKind.NEW),
@@ -858,15 +883,17 @@ internal class StreamingImportSession(
 
     /**
      * The file's `scheduling`, applied to the questions this import accepted —
-     * the same rule the whole-file importer uses for `file.scheduling`. The
-     * tail is read only after every paper, so the entries are applied here
-     * rather than while their batch was written: [acceptedSchedules] remembered
-     * where each accepted question landed. An entry naming a question that is
-     * not in that map was a skipped duplicate, so it is dropped and a schedule
-     * the user has since moved on with is not rolled back. The streamed JSON
-     * pages wait in [bufferedSchedules] and join the tail here; the tail's own
-     * `scheduling` stays empty on that path (the streaming reader consumes it),
-     * so both member orders stream into the same apply.
+     * the same rule the whole-file importer uses for `file.scheduling`, and the
+     * same key precedence ([lookupCardSchedule]), so the two readers cannot
+     * disagree about which entry names a card. The tail is read only after
+     * every paper, so the entries are applied here rather than while their
+     * batch was written: [acceptedSchedules] remembered where each accepted
+     * question landed. An entry naming a question this import did not accept
+     * was a skipped duplicate, so it is dropped and a schedule the user has
+     * since moved on with is not rolled back. The streamed JSON pages wait in
+     * [bufferedSchedules] and join the tail here; the tail's own `scheduling`
+     * stays empty on that path (the streaming reader consumes it), so both
+     * member orders stream into the same apply.
      */
     private suspend fun applyTailSchedules(tail: LegacyParser.StreamedFile) {
         val pages = bufferedSchedules + tail.scheduling.map { it.key to it.value }
@@ -881,20 +908,34 @@ internal class StreamingImportSession(
             }
             return
         }
-        db.withTransaction { applySchedulePage(pages, targets) }
+        db.withTransaction { applySchedulePage(pages.toMap(), targets, tail.version) }
     }
 
-    /** One page of schedule entries for the questions [targets] remembers. */
+    /**
+     * The file's schedule entries for the questions [targets] remembers, one
+     * write per accepted card.
+     *
+     * Iterating the accepted cards rather than the entries is what makes a
+     * version-2 file apply once: it names an unambiguous card under both the
+     * composite and the bare key, and resolving each key separately would
+     * count (and write) the same schedule twice. The entry map is the
+     * whole-file importer's profile, which holds `file.scheduling` outright.
+     */
     private suspend fun applySchedulePage(
-        entries: List<Pair<String, CardScheduleDto>>,
-        targets: Map<String, ScheduleTarget>
+        schedules: Map<String, CardScheduleDto>,
+        targets: List<ScheduleTarget>,
+        version: Int
     ) {
-        for ((questionId, schedule) in entries) {
-            val target = targets[questionId]
-            if (target == null) {
-                skippedSchedules++
-                continue
-            }
+        val acceptedKeys = HashSet<String>(targets.size * 2)
+        for (target in targets) {
+            acceptedKeys += target.sourceQuestionId
+            acceptedKeys += cardScheduleKey(target.sourcePaperId, target.sourceQuestionId)
+            val schedule = lookupCardSchedule(
+                schedules,
+                target.sourcePaperId,
+                target.sourceQuestionId,
+                version
+            ) ?: continue
             db.cardStateDao().upsert(
                 CardStateEntity(
                     paperId = target.paperId,
@@ -908,6 +949,7 @@ internal class StreamingImportSession(
                     lastReviewedAt = schedule.lastReviewedAt,
                     difficulty = schedule.difficulty,
                     stability = schedule.stability,
+                    stabilityFast = schedule.stabilityFast,
                     cardState = runCatching {
                         CardStateKind.valueOf(schedule.cardState)
                     }.getOrDefault(CardStateKind.NEW),
@@ -916,6 +958,23 @@ internal class StreamingImportSession(
                 )
             )
             restoredSchedules++
+        }
+        // A version-2 file names an unambiguous card twice — the composite key
+        // and the bare alias — so counting unmatched keys would report one
+        // rejected card as two skips. Count the cards instead: a composite key
+        // names one outright, and a bare key folds into the card whose
+        // composite key was skipped as well. A version-1 file has bare keys
+        // only, so every skipped key is its own card.
+        val skippedComposites = schedules.keys.filterTo(HashSet()) { key ->
+            key !in acceptedKeys && CARD_SCHEDULE_KEY_SEPARATOR in key
+        }
+        val skippedQuestionIds = skippedComposites.mapTo(HashSet()) { key ->
+            key.substringAfter(CARD_SCHEDULE_KEY_SEPARATOR)
+        }
+        skippedSchedules += skippedComposites.size + schedules.keys.count { key ->
+            key !in acceptedKeys &&
+                CARD_SCHEDULE_KEY_SEPARATOR !in key &&
+                key !in skippedQuestionIds
         }
     }
 }

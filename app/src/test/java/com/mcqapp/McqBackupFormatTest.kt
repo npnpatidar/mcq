@@ -77,12 +77,19 @@ class McqBackupFormatTest {
                 McqBackupFormat.CardStateRow(
                     paperId = "p1", questionId = "q1", ease = 2.5, intervalDays = 3,
                     dueAt = 99L, reps = 2, lapses = 0, leech = false,
-                    lastReviewedAt = 50L, contentHash = "h", cardState = "REVIEW"
+                    lastReviewedAt = 50L, contentHash = "h",
+                    // FSRS-7's second stability trace must survive the archive:
+                    // losing it would silently collapse every restored card
+                    // onto `Sf = S`, a different memory than the one exported.
+                    difficulty = 4.5, stability = 8.0, stabilityFast = 3.25,
+                    cardState = "REVIEW", reviewCount = 2
                 )
             ),
             reviewLog = listOf(
                 McqBackupFormat.ReviewLogRow(
-                    id = 1, paperId = "p1", questionId = "q1", rating = 3, reviewedAt = 50L
+                    id = 1, paperId = "p1", questionId = "q1", rating = 3, reviewedAt = 50L,
+                    stabilityAfter = 8.0, difficultyAfter = 4.5,
+                    stabilityFastAfter = 3.25, intervalDaysAfter = 3
                 )
             ),
             inProgressTest = "{\"paperId\":\"p1\"}"
@@ -236,5 +243,31 @@ class McqBackupFormatTest {
                 out.toString()
             )
         )
+    }
+
+    /**
+     * A backup written before v27 has no fast trace. It must still decode — and
+     * with the value the scheduler reads as "unknown" (0 for a card, null for a
+     * log row), not with an invented one.
+     */
+    @Test
+    fun aPreFsrs7StudyFileDecodesWithAnUnknownFastTrace() {
+        val json = """
+            {"cardState":[{"paperId":"p1","questionId":"q1","ease":2.5,
+              "intervalDays":3,"dueAt":99,"reps":2,"lapses":0,"leech":false,
+              "lastReviewedAt":50,"contentHash":"h","difficulty":4.0,
+              "stability":5.0,"cardState":"REVIEW","reviewCount":2}],
+             "reviewLog":[{"id":1,"paperId":"p1","questionId":"q1","rating":3,
+              "reviewedAt":50,"stabilityAfter":5.0,"difficultyAfter":4.0,
+              "intervalDaysAfter":3}]}
+        """.trimIndent()
+
+        val study = McqBackupFormat.json.decodeFromString(
+            McqBackupFormat.StudyFile.serializer(),
+            json
+        )
+        assertEquals(0.0, study.cardState.single().stabilityFast, 0.0)
+        assertEquals(5.0, study.cardState.single().stability, 0.0)
+        assertEquals(null, study.reviewLog.single().stabilityFastAfter)
     }
 }

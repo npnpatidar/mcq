@@ -56,7 +56,12 @@ data class ReplayReview(
      * Only computed for guessed-correct rows (the counterfactual the guessing
      * dashboard prices); null everywhere else.
      */
-    val wouldBeGoodIntervalDays: Int? = null
+    val wouldBeGoodIntervalDays: Int? = null,
+    /**
+     * The fast stability trace recorded after this answer (v27). Null on rows
+     * written before FSRS-7, and on rows that record no post-state at all.
+     */
+    val stabilityFastAfter: Double? = null
 ) {
     /** Again is the only failing grade; Hard, Good and Easy are passes. */
     val passed: Boolean get() = rating != ReviewGrade.AGAIN.ordinal + 1
@@ -100,7 +105,9 @@ data class ReviewHistoryEntry(
     val stateBefore: CardStateKind?,
     val stabilityAfter: Double?,
     val difficultyAfter: Double?,
-    val intervalDaysAfter: Int?
+    val intervalDaysAfter: Int?,
+    /** The fast stability trace recorded after the review (v27). */
+    val stabilityFastAfter: Double? = null
 )
 
 /**

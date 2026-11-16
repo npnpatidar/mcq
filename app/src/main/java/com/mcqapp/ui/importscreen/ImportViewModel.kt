@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.io.ImportOverrides
 import com.mcqapp.data.io.ImportRunJournal
+import com.mcqapp.data.io.JSON_LEGACY_VERSION
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
@@ -364,7 +365,7 @@ internal fun buildImportFile(
 ): McqFileDto {
     if (original == null || original.papers.isEmpty()) {
         return McqFileDto(
-            version = 1,
+            version = JSON_LEGACY_VERSION,
             papers = listOf(buildPreviewPaperDto(s, null)),
             // Passages are not previewed, but member questions keep their
             // passageId, so the parsed block must ride along or the import
@@ -376,7 +377,10 @@ internal fun buildImportFile(
     }
     val firstPaper = buildPreviewPaperDto(s, original)
     return McqFileDto(
-        version = 1,
+        // The original's `scheduling` map rides along untouched, so the file
+        // keeps declaring the format that map was written in — a version-2
+        // map read as version 1 would resolve the bare alias first.
+        version = original.version,
         papers = listOf(firstPaper) + original.papers.drop(1),
         passages = original.passages,
         bookmarks = original.bookmarks,
@@ -929,9 +933,12 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     buildImportFile(s, original)
                 }
                 if (backup) {
+                    // Entries, not cards: a version-2 file writes an
+                    // unambiguous card under its composite key and its bare
+                    // alias, so the map is roughly twice the card count.
                     Logger.i("IMPORTVM", "import(): backup restore, " +
                         "${file.papers.size} papers, " +
-                        "${file.scheduling.size} scheduled cards, " +
+                        "${file.scheduling.size} schedule entries, " +
                         "${file.attempts.size} attempts")
                 }
                 Logger.d("IMPORTVM", "import(): using ${s.questions.size} edited state questions " +

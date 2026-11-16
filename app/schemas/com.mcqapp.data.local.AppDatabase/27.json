@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 27,
-    "identityHash": "c8196a592389f537cf16f3dca4c1c7e3",
+    "identityHash": "ee3a66043dc39a46ab09438750f1ee0d",
     "entities": [
       {
         "tableName": "papers",
@@ -914,7 +914,7 @@
       },
       {
         "tableName": "card_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, `ease` REAL NOT NULL, `intervalDays` INTEGER NOT NULL, `dueAt` INTEGER NOT NULL, `reps` INTEGER NOT NULL, `lapses` INTEGER NOT NULL, `leech` INTEGER NOT NULL, `lastReviewedAt` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, `difficulty` REAL NOT NULL, `stability` REAL NOT NULL, `cardState` TEXT NOT NULL, `reviewCount` INTEGER NOT NULL, PRIMARY KEY(`paperId`, `questionId`), FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, `ease` REAL NOT NULL, `intervalDays` INTEGER NOT NULL, `dueAt` INTEGER NOT NULL, `reps` INTEGER NOT NULL, `lapses` INTEGER NOT NULL, `leech` INTEGER NOT NULL, `lastReviewedAt` INTEGER NOT NULL, `contentHash` TEXT NOT NULL, `difficulty` REAL NOT NULL, `stability` REAL NOT NULL, `stabilityFast` REAL NOT NULL DEFAULT 0.0, `cardState` TEXT NOT NULL, `reviewCount` INTEGER NOT NULL, PRIMARY KEY(`paperId`, `questionId`), FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "paperId",
@@ -987,6 +987,13 @@
             "columnName": "stability",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "stabilityFast",
+            "columnName": "stabilityFast",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "0.0"
           },
           {
             "fieldPath": "cardState",
@@ -1067,7 +1074,7 @@
       },
       {
         "tableName": "review_log",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, `rating` INTEGER NOT NULL, `reviewedAt` INTEGER NOT NULL, `elapsedSeconds` INTEGER, `stateBefore` TEXT, `stabilityAfter` REAL, `difficultyAfter` REAL, `intervalDaysAfter` INTEGER, `wasGuess` INTEGER, `wasCorrect` INTEGER, `proposedRating` INTEGER, `gradeSource` TEXT, `ladderVersion` INTEGER NOT NULL DEFAULT 0, `predictedRecall` REAL, `fsrsFitVersion` INTEGER, `readingAllowanceSeconds` INTEGER, `wasSkipped` INTEGER, FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `paperId` TEXT NOT NULL, `questionId` TEXT NOT NULL, `rating` INTEGER NOT NULL, `reviewedAt` INTEGER NOT NULL, `elapsedSeconds` INTEGER, `stateBefore` TEXT, `stabilityAfter` REAL, `difficultyAfter` REAL, `stabilityFastAfter` REAL, `intervalDaysAfter` INTEGER, `wasGuess` INTEGER, `wasCorrect` INTEGER, `proposedRating` INTEGER, `gradeSource` TEXT, `ladderVersion` INTEGER NOT NULL DEFAULT 0, `predictedRecall` REAL, `fsrsFitVersion` INTEGER, `readingAllowanceSeconds` INTEGER, `wasSkipped` INTEGER, FOREIGN KEY(`paperId`) REFERENCES `papers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "id",
@@ -1120,6 +1127,11 @@
             "affinity": "REAL"
           },
           {
+            "fieldPath": "stabilityFastAfter",
+            "columnName": "stabilityFastAfter",
+            "affinity": "REAL"
+          },
+          {
             "fieldPath": "intervalDaysAfter",
             "columnName": "intervalDaysAfter",
             "affinity": "INTEGER"
@@ -1145,7 +1157,7 @@
             "affinity": "TEXT"
           },
           {
-            "fieldPath": "gradingVersion",
+            "fieldPath": "ladderVersion",
             "columnName": "ladderVersion",
             "affinity": "INTEGER",
             "notNull": true,
@@ -1685,8 +1697,8 @@
         ]
       },
       {
-        "tableName": "grading_versions",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, `effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, `correctnessOnly` INTEGER NOT NULL DEFAULT 0)",
+        "tableName": "ladder_versions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, `effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, `previousId` INTEGER, `blockId` INTEGER, `policyVersion` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1719,11 +1731,20 @@
             "notNull": true
           },
           {
-            "fieldPath": "correctnessOnly",
-            "columnName": "correctnessOnly",
+            "fieldPath": "previousId",
+            "columnName": "previousId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "blockId",
+            "columnName": "blockId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "policyVersion",
+            "columnName": "policyVersion",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -1734,13 +1755,158 @@
         },
         "indices": [
           {
-            "name": "index_grading_versions_effectiveFrom",
+            "name": "index_ladder_versions_effectiveFrom",
             "unique": false,
             "columnNames": [
               "effectiveFrom"
             ],
             "orders": [],
-            "createSql": "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` ON `${TABLE_NAME}` (`effectiveFrom`)"
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ladder_versions_effectiveFrom` ON `${TABLE_NAME}` (`effectiveFrom`)"
+          }
+        ]
+      },
+      {
+        "tableName": "ladder_blocks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startAt` INTEGER NOT NULL, `endAt` INTEGER NOT NULL, `ladderVersion` INTEGER NOT NULL, `fsrsFitVersion` INTEGER, `policyVersion` INTEGER NOT NULL, `easyPairs` INTEGER NOT NULL, `easyCards` INTEGER NOT NULL, `goodPairs` INTEGER NOT NULL, `goodCards` INTEGER NOT NULL, `hardPairs` INTEGER NOT NULL, `hardCards` INTEGER NOT NULL, `delta1` REAL, `delta1Low` REAL, `delta1High` REAL, `delta2` REAL, `delta2Low` REAL, `delta2High` REAL, `followUpEasy` REAL, `followUpGood` REAL, `outcome` TEXT NOT NULL, `decidedAt` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startAt",
+            "columnName": "startAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endAt",
+            "columnName": "endAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ladderVersion",
+            "columnName": "ladderVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fsrsFitVersion",
+            "columnName": "fsrsFitVersion",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "policyVersion",
+            "columnName": "policyVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "easyPairs",
+            "columnName": "easyPairs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "easyCards",
+            "columnName": "easyCards",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "goodPairs",
+            "columnName": "goodPairs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "goodCards",
+            "columnName": "goodCards",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hardPairs",
+            "columnName": "hardPairs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hardCards",
+            "columnName": "hardCards",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "delta1",
+            "columnName": "delta1",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "delta1Low",
+            "columnName": "delta1Low",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "delta1High",
+            "columnName": "delta1High",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "delta2",
+            "columnName": "delta2",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "delta2Low",
+            "columnName": "delta2Low",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "delta2High",
+            "columnName": "delta2High",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "followUpEasy",
+            "columnName": "followUpEasy",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "followUpGood",
+            "columnName": "followUpGood",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "outcome",
+            "columnName": "outcome",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decidedAt",
+            "columnName": "decidedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ladder_blocks_startAt",
+            "unique": false,
+            "columnNames": [
+              "startAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ladder_blocks_startAt` ON `${TABLE_NAME}` (`startAt`)"
           }
         ]
       },
@@ -1814,7 +1980,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8196a592389f537cf16f3dca4c1c7e3')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'ee3a66043dc39a46ab09438750f1ee0d')"
     ]
   }
 }

@@ -60,6 +60,8 @@ fun StudySchedulerSection(
     onSimplifiedChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
+    fsrs7Notice: Boolean,
+    onDismissFsrs7Notice: () -> Unit,
     onOptimizeFsrs: () -> Unit,
     onDismissFsrsOptimize: () -> Unit,
     onRestoreFsrsDefaults: () -> Unit,
@@ -102,6 +104,8 @@ fun StudySchedulerSection(
                 onSimplifiedChange = onSimplifiedChange,
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimizeState,
+                fsrs7Notice = fsrs7Notice,
+                onDismissFsrs7Notice = onDismissFsrs7Notice,
                 onOptimizeFsrs = onOptimizeFsrs,
                 onDismissFsrsOptimize = onDismissFsrsOptimize,
                 onRestoreFsrsDefaults = onRestoreFsrsDefaults
@@ -132,6 +136,8 @@ private fun AnkiSchedulerBody(
     onSimplifiedChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
+    fsrs7Notice: Boolean,
+    onDismissFsrs7Notice: () -> Unit,
     onOptimizeFsrs: () -> Unit,
     onDismissFsrsOptimize: () -> Unit,
     onRestoreFsrsDefaults: () -> Unit
@@ -223,117 +229,6 @@ private fun AnkiSchedulerBody(
     )
     Spacer(Modifier.height(12.dp))
 
-    // --- optimizer: Anki's "Optimize FSRS parameters" button ---
-
-    Text(
-        stringResource(R.string.optimize_fsrs_parameters),
-        style = MaterialTheme.typography.bodyMedium
-    )
-    Text(
-        stringResource(
-            R.string.optimize_fsrs_parameters_help,
-            FsrsOptimizer.MIN_REVIEWS
-        ),
-        style = MaterialTheme.typography.bodySmall
-    )
-    Spacer(Modifier.height(4.dp))
-    val optimizing = fsrsOptimizeState is FsrsOptimizeState.Running
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Button(
-            onClick = onOptimizeFsrs,
-            enabled = fsrsReviewCount >= FsrsOptimizer.MIN_REVIEWS && !optimizing,
-            modifier = Modifier.weight(1f)
-        ) {
-            if (optimizing) {
-                val running = fsrsOptimizeState as FsrsOptimizeState.Running
-                Text(
-                    // The schedule size lands with the fit's first
-                    // progress report; until then there is no honest
-                    // denominator to show.
-                    if (running.total == 0) {
-                        stringResource(R.string.optimizing_fsrs_start)
-                    } else {
-                        stringResource(
-                            R.string.optimizing_fsrs,
-                            running.step,
-                            running.total
-                        )
-                    }
-                )
-            } else {
-                Text(stringResource(R.string.optimize_fsrs_parameters))
-            }
-        }
-        if (optimizing) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp))
-        }
-    }
-    if (!optimizing && fsrsReviewCount < FsrsOptimizer.MIN_REVIEWS) {
-        Text(
-            stringResource(
-                R.string.optimize_fsrs_needs_reviews,
-                fsrsReviewCount,
-                FsrsOptimizer.MIN_REVIEWS
-            ),
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
-    when (val state = fsrsOptimizeState) {
-        is FsrsOptimizeState.Done -> {
-            Text(
-                stringResource(
-                    R.string.optimize_fsrs_done,
-                    state.result.predictions,
-                    state.result.cards,
-                    String.format(Locale.US, "%.4f", state.result.lossBefore),
-                    String.format(Locale.US, "%.4f", state.result.lossAfter)
-                ),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Row {
-                TextButton(onClick = { showRestoreDefaultsConfirm = true }) {
-                    Text(stringResource(R.string.restore_defaults))
-                }
-                TextButton(onClick = onDismissFsrsOptimize) {
-                    Text(stringResource(R.string.ok))
-                }
-            }
-        }
-        is FsrsOptimizeState.Failed -> {
-            Text(
-                stringResource(R.string.optimize_fsrs_failed, state.message),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-            TextButton(onClick = onDismissFsrsOptimize) {
-                Text(stringResource(R.string.ok))
-            }
-        }
-        else -> Unit
-    }
-    if (showRestoreDefaultsConfirm) {
-        AlertDialog(
-            onDismissRequest = { showRestoreDefaultsConfirm = false },
-            title = { Text(stringResource(R.string.restore_defaults)) },
-            text = { Text(stringResource(R.string.restore_fsrs_defaults_confirm)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showRestoreDefaultsConfirm = false
-                    onRestoreFsrsDefaults()
-                }) { Text(stringResource(R.string.restore_defaults)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRestoreDefaultsConfirm = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
-        )
-    }
-    Spacer(Modifier.height(12.dp))
     Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.height(4.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -418,6 +313,134 @@ private fun AnkiSchedulerBody(
         )
         Spacer(Modifier.height(12.dp))
     }
+
+    // --- optimizer: Anki's "Optimize FSRS parameters" button ---
+
+    if (fsrs7Notice) {
+        Text(
+            stringResource(R.string.fsrs7_upgrade_notice),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.tertiary
+        )
+        TextButton(onClick = onDismissFsrs7Notice) {
+            Text(stringResource(R.string.ok))
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    Text(
+        stringResource(R.string.optimize_fsrs_parameters),
+        style = MaterialTheme.typography.bodyMedium
+    )
+    Text(
+        stringResource(
+            R.string.optimize_fsrs_parameters_help,
+            FsrsOptimizer.MIN_REVIEWS
+        ),
+        style = MaterialTheme.typography.bodySmall
+    )
+    Spacer(Modifier.height(4.dp))
+    val optimizing = fsrsOptimizeState is FsrsOptimizeState.Running
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Button(
+            onClick = onOptimizeFsrs,
+            enabled = fsrsReviewCount >= FsrsOptimizer.MIN_REVIEWS && !optimizing,
+            modifier = Modifier.weight(1f)
+        ) {
+            if (optimizing) {
+                val running = fsrsOptimizeState as FsrsOptimizeState.Running
+                Text(
+                    // The schedule size lands with the fit's first
+                    // progress report; until then there is no honest
+                    // denominator to show.
+                    if (running.total == 0) {
+                        stringResource(R.string.optimizing_fsrs_start)
+                    } else {
+                        stringResource(
+                            R.string.optimizing_fsrs,
+                            running.step,
+                            running.total
+                        )
+                    }
+                )
+            } else {
+                Text(stringResource(R.string.optimize_fsrs_parameters))
+            }
+        }
+        if (optimizing) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+        }
+    }
+    if (!optimizing && fsrsReviewCount < FsrsOptimizer.MIN_REVIEWS) {
+        Text(
+            stringResource(
+                R.string.optimize_fsrs_needs_reviews,
+                fsrsReviewCount,
+                FsrsOptimizer.MIN_REVIEWS
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    when (val state = fsrsOptimizeState) {
+        is FsrsOptimizeState.Done -> {
+            // `stored` is the tuner's decision, not a loss comparison made
+            // here: a degenerate result (the defaults returned unchanged, so
+            // never trained) can score better and still be refused.
+            Text(
+                stringResource(
+                    if (state.stored) R.string.optimize_fsrs_done
+                    else R.string.optimize_fsrs_done_kept,
+                    state.result.predictions,
+                    state.result.cards,
+                    String.format(Locale.US, "%.4f", state.result.lossBefore),
+                    String.format(Locale.US, "%.4f", state.result.lossAfter)
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row {
+                TextButton(onClick = { showRestoreDefaultsConfirm = true }) {
+                    Text(stringResource(R.string.restore_defaults))
+                }
+                TextButton(onClick = onDismissFsrsOptimize) {
+                    Text(stringResource(R.string.ok))
+                }
+            }
+        }
+        is FsrsOptimizeState.Failed -> {
+            Text(
+                stringResource(R.string.optimize_fsrs_failed, state.message),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+            TextButton(onClick = onDismissFsrsOptimize) {
+                Text(stringResource(R.string.ok))
+            }
+        }
+        else -> Unit
+    }
+    if (showRestoreDefaultsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreDefaultsConfirm = false },
+            title = { Text(stringResource(R.string.restore_defaults)) },
+            text = { Text(stringResource(R.string.restore_fsrs_defaults_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestoreDefaultsConfirm = false
+                    onRestoreFsrsDefaults()
+                }) { Text(stringResource(R.string.restore_defaults)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreDefaultsConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+    Spacer(Modifier.height(12.dp))
     Row(
         modifier = Modifier
             .fillMaxWidth()

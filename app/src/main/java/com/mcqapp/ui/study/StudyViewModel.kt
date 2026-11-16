@@ -94,6 +94,12 @@ data class StudyUiState(
     val passage: com.mcqapp.domain.Passage? = null,
     /** Formatted delay per grade for the card on screen, shown on the buttons. */
     val previews: Map<ReviewGrade, String> = emptyMap(),
+    /**
+     * The card's presentation number in the current study day (1-based).
+     * Loaded with the card so the button labels honour the same exposure budget
+     * the grading path applies.
+     */
+    val exposuresInStudyDay: Int = 1,
     val selection: Set<String> = emptySet(),
     val revealed: Boolean = false,
     val grading: Boolean = false,
@@ -519,9 +525,23 @@ class StudyViewModel(
             // pair, so the two can never disagree about where the card sits.
             val schedulerConfig = config ?: SchedulerConfig()
             val now = SystemClock.elapsedRealtime()
+            // Fetched before the card is shown: the answer buttons and the grade
+            // they produce must agree on how many exposures today the card has
+            // already had, or a capped relearn would be previewed as 10 minutes.
+            val exposures = try {
+                repository.exposureInStudyDay(
+                    paperId = paperId,
+                    questionId = card.questionId,
+                    config = config ?: SchedulerConfig()
+                )
+            } catch (e: Exception) {
+                Logger.e("STUDY", "exposureInStudyDay(${card.questionId}) failed", e)
+                1
+            }
             _state.update {
                 it.copy(
                     current = card,
+                    exposuresInStudyDay = exposures,
                     question = question,
                     passage = passage,
                     dwellEasySeconds = schedulerConfig.fastSeconds,
@@ -549,7 +569,7 @@ class StudyViewModel(
                 )
             }
             clockPausedByUser = false
-            refreshPreviews()
+            refreshPreviews(exposures)
             publishDwell()
             // Re-anchor the ticker on the card's own start: a ticker launched
             // once at construction ticks on the ViewModel's phase, so the
@@ -853,7 +873,8 @@ class StudyViewModel(
             config = schedulerConfig
         )
         val delay = com.mcqapp.domain.Study
-            .previewDelays(scheduler, card, now)[grade] ?: return null
+            .previewDelays(scheduler, card, now, _state.value.exposuresInStudyDay)[grade]
+            ?: return null
         return StudyResult(
             correct = isCorrect(question, selection),
             grade = grade,
@@ -1232,7 +1253,7 @@ class StudyViewModel(
      * the label is a preview, not a promise. Nothing is persisted, and a card
      * whose schedule is unknown gets no labels rather than a guess.
      */
-    private fun refreshPreviews() {
+    private fun refreshPreviews(exposureInStudyDay: Int = _state.value.exposuresInStudyDay) {
         val cfg = config ?: return
         val scheduler = com.mcqapp.domain.FsrsScheduler(
             desiredRetention = cfg.desiredRetention,
@@ -1245,7 +1266,12 @@ class StudyViewModel(
                     emptyMap()
                 } else {
                     com.mcqapp.domain.Study
-                        .previewDelays(scheduler, card, System.currentTimeMillis())
+                        .previewDelays(
+                            scheduler,
+                            card,
+                            System.currentTimeMillis(),
+                            exposureInStudyDay
+                        )
                         .mapValues { (_, delay) -> IntervalFormat.format(delay) }
                 }
             )

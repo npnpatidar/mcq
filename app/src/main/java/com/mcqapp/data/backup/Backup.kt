@@ -141,6 +141,8 @@ object McqBackupFormat {
         val contentHash: String,
         val difficulty: Double = 0.0,
         val stability: Double = 0.0,
+        /** FSRS-7's fast trace; backups written before v27 decode this as 0. */
+        val stabilityFast: Double = 0.0,
         val cardState: String = "NEW",
         val reviewCount: Int = 0
     )
@@ -156,6 +158,8 @@ object McqBackupFormat {
         val stateBefore: String? = null,
         val stabilityAfter: Double? = null,
         val difficultyAfter: Double? = null,
+        /** FSRS-7's fast trace after the review; null on pre-v27 rows. */
+        val stabilityFastAfter: Double? = null,
         val intervalDaysAfter: Int? = null,
         // Added with the v19 columns. Defaults keep older backups readable;
         // null means the row predates guess tracking.
@@ -555,6 +559,7 @@ object McqBackupFormat {
         contentHash = entity.contentHash,
         difficulty = entity.difficulty,
         stability = entity.stability,
+        stabilityFast = entity.stabilityFast,
         cardState = entity.cardState.name,
         reviewCount = entity.reviewCount
     )
@@ -569,6 +574,7 @@ object McqBackupFormat {
         stateBefore = entity.stateBefore,
         stabilityAfter = entity.stabilityAfter,
         difficultyAfter = entity.difficultyAfter,
+        stabilityFastAfter = entity.stabilityFastAfter,
         intervalDaysAfter = entity.intervalDaysAfter,
         wasGuess = entity.wasGuess,
         wasCorrect = entity.wasCorrect,
@@ -911,6 +917,7 @@ class BackupSource(private val db: AppDatabase) {
         contentHash = contentHash,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         cardState = cardState.name,
         reviewCount = reviewCount
     )
@@ -925,6 +932,7 @@ class BackupSource(private val db: AppDatabase) {
         stateBefore = stateBefore,
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
+        stabilityFastAfter = stabilityFastAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
         wasCorrect = wasCorrect,
@@ -1293,6 +1301,7 @@ class BackupRestorer(private val db: AppDatabase) {
         contentHash = contentHash,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         cardState = com.mcqapp.domain.CardStateKind.valueOf(cardState),
         reviewCount = reviewCount
     )
@@ -1334,6 +1343,7 @@ class BackupRestorer(private val db: AppDatabase) {
         stateBefore = stateBefore,
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
+        stabilityFastAfter = stabilityFastAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
         wasCorrect = wasCorrect,

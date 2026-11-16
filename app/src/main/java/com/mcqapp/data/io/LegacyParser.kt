@@ -56,6 +56,7 @@ object LegacyParser {
             lastReviewedAt = entry["lastReviewedAt"]?.jsonPrimitive?.longOrNull ?: 0L,
             difficulty = entry["difficulty"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             stability = entry["stability"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+            stabilityFast = entry["stabilityFast"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             cardState = entry["cardState"]?.jsonPrimitive
                 ?.takeIf { it.isString }?.content
                 ?.let { name ->

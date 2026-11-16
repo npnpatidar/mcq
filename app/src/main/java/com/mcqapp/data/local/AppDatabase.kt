@@ -37,7 +37,7 @@ import kotlinx.coroutines.withContext
         GradingVersionEntity::class,
         StudySessionEntity::class
     ],
-    version = 27,
+    version = 28,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -850,48 +850,12 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * The adaptive ladder goes away (v27). Its version table becomes
-         * [GradingVersionEntity]: the cut pair each review was graded under,
-         * with the evidence blocks and the policy metadata dropped. Existing
-         * version rows are copied with their ids, so every pre-v27 review's
-         * `ladderVersion` still resolves to the pair that graded it.
-         *
-         * `review_log` itself is untouched: it is append-only history, and its
-         * `ladderVersion` column now names a grading version. A pre-v26 file
-         * runs 25->26 first, so the source table always exists here.
-         */
-        val MIGRATION_26_27 = object : Migration(26, 27) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `grading_versions` (" +
-                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
-                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
-                        "`correctnessOnly` INTEGER NOT NULL DEFAULT 0)"
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
-                        "ON `grading_versions` (`effectiveFrom`)"
-                )
-                db.execSQL(
-                    "INSERT INTO `grading_versions` " +
-                        "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
-                        "`correctnessOnly`) " +
-                        "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, 0 " +
-                        "FROM `ladder_versions`"
-                )
-                db.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")
-                db.execSQL("DROP TABLE IF EXISTS `ladder_versions`")
-            }
-        }
-
-        /**
          * Grade provenance (v26): seven additive review columns, the ladder's
          * version/block audit tables, the study-session timing table, and the
          * per-card pairing index. All columns are nullable (or defaulted) so
          * every pre-v26 row survives verbatim, with `ladderVersion = 0` and no
-         * provenance claims. 26->27 then keeps the version table (renamed) and
-         * drops the blocks.
+         * provenance claims. 26->27 then adds the FSRS-7 traces, and 27->28
+         * keeps the version table (renamed) and drops the blocks.
          */
         val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -955,6 +919,65 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_study_sessions_paperId_startedAt` " +
                         "ON `study_sessions` (`paperId`, `startedAt`)"
                 )
+            }
+        }
+
+        /**
+         * FSRS-7's second stability trace (v27): a defaulted fast trace on
+         * every card row, and the post-review fast trace on new log rows.
+         *
+         * Both are additive and backwards compatible. Existing cards get
+         * `stabilityFast = 0.0`, which the scheduler reads as "unknown" and
+         * collapses onto the slow trace; the resumable history rebuild
+         * ([com.mcqapp.data.repository.Fsrs7Upgrade]) later fills in the real
+         * value. Existing review rows keep a null fast trace for the same
+         * reason.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `card_state` ADD COLUMN `stabilityFast` " +
+                        "REAL NOT NULL DEFAULT 0.0"
+                )
+                db.execSQL(
+                    "ALTER TABLE `review_log` ADD COLUMN `stabilityFastAfter` REAL"
+                )
+            }
+        }
+
+        /**
+         * The adaptive ladder goes away (v28). Its version table becomes
+         * [GradingVersionEntity]: the cut pair each review was graded under,
+         * with the evidence blocks and the policy metadata dropped. Existing
+         * version rows are copied with their ids, so every pre-v28 review's
+         * `ladderVersion` still resolves to the pair that graded it.
+         *
+         * `review_log` itself is untouched: it is append-only history, and its
+         * `ladderVersion` column now names a grading version. A pre-v26 file
+         * runs 25->26 first, so the source table always exists here.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `grading_versions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
+                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
+                        "`correctnessOnly` INTEGER NOT NULL DEFAULT 0)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
+                        "ON `grading_versions` (`effectiveFrom`)"
+                )
+                db.execSQL(
+                    "INSERT INTO `grading_versions` " +
+                        "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
+                        "`correctnessOnly`) " +
+                        "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, 0 " +
+                        "FROM `ladder_versions`"
+                )
+                db.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")
+                db.execSQL("DROP TABLE IF EXISTS `ladder_versions`")
             }
         }
 
@@ -1162,7 +1185,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                     MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                    MIGRATION_25_26, MIGRATION_26_27
+                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

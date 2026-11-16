@@ -45,12 +45,18 @@ data class CardState(
     val leech: Boolean = false,
     val lastReviewedAt: Long = 0L,
     /**
-     * FSRS memory state. [difficulty] is the 1..10 ease-of-recall estimate and
-     * [stability] the days until recall probability drops to the benchmark
-     * retention; both are zero for a card never studied.
+     * FSRS memory state (v27). [difficulty] is the 1..10 ease-of-recall
+     * estimate; [stability] and [stabilityFast] are the slow and fast
+     * forgetting traces, in days of model time — neither is the card's
+     * interval, which has to be solved from the mixed curve. All three are
+     * zero for a card never studied, and [stabilityFast] is also zero when it
+     * is simply unknown (an imported card, or one written before the FSRS-7
+     * rebuild finished); the scheduler then treats the fast trace as equal to
+     * the slow one.
      */
     val difficulty: Double = 0.0,
     val stability: Double = 0.0,
+    val stabilityFast: Double = 0.0,
     val state: CardStateKind = CardStateKind.NEW,
     /** Total grades ever applied, including failures. Mirrored into [reps]. */
     val reviewCount: Int = 0
@@ -136,6 +142,19 @@ interface Scheduler {
     /** Applies one grade and returns the next state. */
     fun next(state: CardState, grade: ReviewGrade, now: Long): CardState
 
+    /**
+     * [next] with the card's presentation number inside the current study day
+     * (1-based). The scheduling interface exposes it because the answer-button
+     * preview and the grade it produces have to agree on the exposure budget
+     * that bounds a relearn loop. Callers with no study-day count pass 1.
+     */
+    fun next(
+        state: CardState,
+        grade: ReviewGrade,
+        now: Long,
+        exposureInStudyDay: Int
+    ): CardState
+
     /** Estimated probability of recall, 0..1, for display only. */
     fun retention(state: CardState, now: Long): Double
 
@@ -146,7 +165,7 @@ interface Scheduler {
 /**
  * Every tunable number the FSRS scheduler uses, in one place.
  *
- * The memory model itself is fixed (the FSRS-6 formulas with the official
+ * The memory model itself is fixed (the FSRS-7 formulas with the official
  * unoptimized weights); what remains configurable is the pacing around it —
  * how hard intervals target recall, when the study day rolls over, how fast a
  * failed card returns, and where the grade-inference thresholds sit. They are
@@ -162,7 +181,9 @@ data class SchedulerConfig(
     val leechThreshold: Int = 8,
     /**
      * Recall probability future intervals target (FSRS), clamped 0.75..0.97.
-     * 0.9 is the FSRS default: at it, a card's interval equals its stability.
+     * 0.9 is the FSRS default. The interval is *solved* for that target from
+     * the difficulty-modulated mixture curve: it is not the stability, and
+     * `R(t = S)` is not 0.9 (FSRS-6's identity is gone).
      */
     val desiredRetention: Double = 0.9,
     /** How the next card is picked: memory first, or new cards explored. */
@@ -198,7 +219,7 @@ data class SchedulerConfig(
      */
     val correctnessOnlyGrading: Boolean = false,
     /**
-     * The 21 FSRS-6 weights scheduling runs on, in reference order. Defaults
+     * The 34 FSRS-7 weights scheduling runs on, in reference order. Defaults
      * to the official unoptimized set; "Optimize FSRS parameters" in Settings
      * replaces them with [FsrsOptimizer]'s fit to this learner's own review
      * history. A malformed list (wrong length, non-finite values) falls back
@@ -635,9 +656,11 @@ object Study {
     fun previewDelays(
         scheduler: Scheduler,
         state: CardState,
-        now: Long
+        now: Long,
+        /** The card's presentation number in the study day; 1 when unknown. */
+        exposureInStudyDay: Int = 1
     ): Map<ReviewGrade, Long> = ReviewGrade.entries.associateWith { grade ->
-        scheduler.next(state, grade, now).dueAt - now
+        scheduler.next(state, grade, now, exposureInStudyDay).dueAt - now
     }
 
     /**

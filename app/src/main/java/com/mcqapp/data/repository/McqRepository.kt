@@ -24,7 +24,6 @@ import com.mcqapp.data.local.bookmarkedIdsInScopeChunked
 import com.mcqapp.data.local.dwellSamplesInScopeChunked
 import com.mcqapp.data.local.questionIdsForTagChunked
 import com.mcqapp.data.local.tagCountsChunked
-import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.domain.Blueprint
 import com.mcqapp.domain.BlueprintSection
 import com.mcqapp.domain.BlueprintSectionView
@@ -61,7 +60,13 @@ import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
+import com.mcqapp.util.Logger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -98,7 +103,26 @@ private const val SCHEDULER_CONFIG_READ_ATTEMPTS = 3
 class McqRepository internal constructor(
     private val db: AppDatabase,
     private val context: Context,
-    internal val installFreshness: InstallFreshness
+    internal val installFreshness: InstallFreshness,
+    /**
+     * Where work that outlives its caller runs — today the FSRS-7 rebuild a
+     * restore starts. [com.mcqapp.McqApplication] passes its process scope so
+     * the rebuild survives the Settings screen; a test passes one it controls.
+     *
+     * The default is a per-instance `SupervisorJob` on IO, so the two-argument
+     * construction every test uses keeps working and one failed child cannot
+     * cancel its siblings.
+     */
+    private val backgroundScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /**
+     * The rebuild a restore starts. Null runs the real [Fsrs7Upgrade].
+     *
+     * **Test-only seam.** Nothing in production may pass this: it exists so a
+     * test can substitute a rebuild that fails, proving the failure cannot
+     * decide the restore's outcome without having to close the database
+     * mid-restore.
+     */
+    private val rebuildAfterRestore: (suspend () -> Unit)? = null
 ) {
 
     /** The production wiring: a new install is one whose database is empty. */
@@ -119,6 +143,40 @@ class McqRepository internal constructor(
         InstallFreshness.fixed(context, freshInstall)
     )
 
+    /**
+     * The production wiring with the process scope: freshness comes from the
+     * database's own content, and post-restore rebuilding outlives the screen
+     * that started the restore.
+     */
+    constructor(
+        db: AppDatabase,
+        context: Context,
+        backgroundScope: CoroutineScope
+    ) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() },
+        backgroundScope
+    )
+
+    /**
+     * The restore tests' seam: a scope they control and a rebuild they can make
+     * fail on purpose. Production passes neither.
+     */
+    @VisibleForTesting
+    internal constructor(
+        db: AppDatabase,
+        context: Context,
+        backgroundScope: CoroutineScope,
+        rebuildAfterRestore: (suspend () -> Unit)?
+    ) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() },
+        backgroundScope,
+        rebuildAfterRestore
+    )
+
     private val settings = SettingsStore(context, installFreshness)
     private val gradingRules = GradingRulesStore(db, settings)
     private val mapper = QuestionContentMapper(db)
@@ -127,10 +185,11 @@ class McqRepository internal constructor(
     private val paperStore = PaperStore(db, settings)
     private val studyStore = StudyStore(db, mapper, questionStore, settings)
     private val historyStore = HistoryStore(db, mapper, questionStore)
-    private val signalStore = SignalStore(db)
+    private val signalStore = SignalStore(db, settings)
     private val fsrsTuner = FsrsTuner(db, settings)
     private val statsStore = StatsStore(db, settings, gradingRules)
     private val testProgress = TestProgressStore(db, settings)
+    private val fsrs7Upgrade = Fsrs7Upgrade(db, settings)
 
     fun db(): AppDatabase = db
 
@@ -304,16 +363,40 @@ class McqRepository internal constructor(
     fun fsrsReviewCount(): Flow<Int> = fsrsTuner.observeReviewCount()
 
     /**
-     * Fits the 21 weights to the whole review log and stores them; nothing
-     * else is touched. @throws com.mcqapp.domain.FsrsFitInsufficientData
-     * when the log is too thin to fit.
+     * Fits the 34 weights to the whole review log and stores them when the fit
+     * is strictly better than the current set; nothing else is touched. A log
+     * too thin to train returns the official defaults with `steps = 0`.
+     *
+     * The [FsrsOptimizeOutcome] carries the tuner's own storage decision, so
+     * the screen reports what was stored instead of re-deriving it from the
+     * losses.
      */
     suspend fun optimizeFsrsParameters(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
-    ): FsrsFitResult = fsrsTuner.optimize(onProgress)
+    ): FsrsOptimizeOutcome = fsrsTuner.optimize(onProgress)
 
     /** Drops fitted weights; scheduling returns to the official defaults. */
     suspend fun restoreFsrsDefaults() = fsrsTuner.restoreDefaults()
+
+    /**
+     * The FSRS-7 model migration: retires an FSRS-6 weight set that cannot be
+     * converted, resets its fit provenance, and raises the one-shot notice when
+     * there was a fit to lose. Idempotent.
+     */
+    suspend fun ensureFsrs7() = settings.ensureFsrs7()
+
+    /** The one-shot "your FSRS-6 fit was retired" notice, until dismissed. */
+    fun fsrs7Notice(): Flow<Boolean> = settings.fsrs7Notice()
+
+    suspend fun dismissFsrs7Notice() = settings.dismissFsrs7Notice()
+
+    /**
+     * Rebuilds every card's dual-trace memory from its review log. Runs from
+     * [com.mcqapp.McqApplication]; a completed run returns immediately.
+     */
+    internal suspend fun rebuildFsrs7Memory(
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ) = fsrs7Upgrade.runIfNeeded(onProgress)
 
     // --- statistics ---
 
@@ -528,6 +611,49 @@ class McqRepository internal constructor(
             } finally {
                 statsStore.invalidateCalibrationCache()
                 installFreshness.invalidate()
+            }
+        }
+        // A restored install can carry pre-FSRS-7 card rows — a v26 backup, or
+        // one taken before the rebuild finished — and the restore itself
+        // clears the done flag. Start the rebuild right after the settings
+        // write instead of leaving `Sf = 0` (read as `Sf = S`) until the next
+        // process start, but off the restore's path: the restore is already
+        // committed, and this must not be able to fail it. `runIfNeeded` is
+        // idempotent, so a backup that already carries FSRS-7 rows returns
+        // after the one-shot fast-trace repair.
+        scheduleFsrs7Rebuild()
+    }
+
+    /**
+     * Starts the post-restore FSRS-7 rebuild and returns without waiting.
+     *
+     * The restore's outcome is already decided by the data (committed) and the
+     * settings write by the time this runs, so the rebuild must not be able to
+     * turn it into "Restore failed": a failure here is logged, and the
+     * resumable cursor and the not-done flag [Fsrs7Upgrade] leaves behind pick
+     * it up on the next launch. Running it off the restore path also keeps a
+     * large backup from spending its "restoring…" phase rebuilding memory
+     * state.
+     *
+     * The learner can study while it runs: `runIfNeeded` never holds a lock
+     * across the replay and its write is a compare-and-set on the last logged
+     * review, so a review that lands mid-rebuild wins. Rows it has not reached
+     * yet read `Sf = 0` as `Sf = S` for that window, exactly as they did before
+     * the restore did this at all.
+     */
+    private fun scheduleFsrs7Rebuild() {
+        backgroundScope.launch {
+            try {
+                if (rebuildAfterRestore != null) rebuildAfterRestore.invoke()
+                else rebuildFsrs7Memory()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Deliberately broad: this is a user-initiated restore's
+                // background follow-up, and no rebuild failure (including an
+                // OOM or a link error) may take the process down after the
+                // restore already committed. Cancellation is rethrown above.
+                Logger.e("FSRS7", "rebuild after a restore failed; resumes next launch", e)
             }
         }
     }
@@ -1629,6 +1755,24 @@ class McqRepository internal constructor(
         Map<String, com.mcqapp.domain.CategoryCounts> = studyStore.categoryCounts(paperId, now)
     suspend fun cardState(paperId: String, questionId: String): com.mcqapp.domain.CardState? =
         studyStore.cardState(paperId, questionId)
+
+    /**
+     * The card's presentation number in the study day containing [now]. The
+     * study screen needs it before grading to label the answer buttons: from
+     * `FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY` exposures on, `Again` is
+     * spaced by the model instead of the relearn delay.
+     */
+    suspend fun exposureInStudyDay(
+        paperId: String,
+        questionId: String,
+        config: com.mcqapp.domain.SchedulerConfig? = null,
+        now: Long = System.currentTimeMillis()
+    ): Int = studyStore.exposureInStudyDay(
+        paperId,
+        questionId,
+        config ?: schedulerConfigNow(),
+        now
+    )
     suspend fun recordStudyReview(
         paperId: String,
         questionId: String,

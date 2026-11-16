@@ -41,7 +41,13 @@ object FsrsReplay {
         /** Declared guess; null for rows that predate v19. */
         val wasGuess: Boolean? = null,
         /** Chosen options matched the key; null for rows that predate v19. */
-        val wasCorrect: Boolean? = null
+        val wasCorrect: Boolean? = null,
+        /**
+         * The fast stability trace after this review (v27). Null on rows
+         * written before FSRS-7; [seedState] then collapses it onto
+         * [stabilityAfter], the same rule the scheduler applies.
+         */
+        val stabilityFastAfter: Double? = null
     )
 
     /**
@@ -70,6 +76,12 @@ object FsrsReplay {
             val seeded = isSeeded(ordered.first())
             var state: CardState? = null
             var previousInterval: Int? = null
+            // The relearn loop is bounded per study day, so the replay counts
+            // exposures the same way the grading path does. Without it a capped
+            // failure reconstructs interval 0 instead of the day it was given,
+            // and the next row lands in the wrong interval band.
+            var exposureDayStart = Long.MIN_VALUE
+            var exposureInDay = 0
             ordered.forEachIndexed { index, row ->
                 val pre = state
                 // Only a graduated card carries a knowable recall prediction:
@@ -90,13 +102,20 @@ object FsrsReplay {
                     knownPreState = !(index == 0 && seeded),
                     scheduler = scheduler
                 )
+                val dayStart = scheduler.studyDayStart(row.reviewedAt)
+                if (dayStart != exposureDayStart) {
+                    exposureDayStart = dayStart
+                    exposureInDay = 0
+                }
+                exposureInDay += 1
                 val post = if (index == 0 && seeded) {
                     seedState(row)
                 } else {
                     scheduler.next(
                         pre ?: scheduler.initial(row.questionId),
                         gradeOf(row.rating),
-                        row.reviewedAt
+                        row.reviewedAt,
+                        exposureInDay
                     )
                 }
                 state = post
@@ -123,7 +142,8 @@ object FsrsReplay {
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
                 wouldBeGoodIntervalDays =
-                    counterfactual[Triple(row.paperId, row.questionId, row.id)]
+                    counterfactual[Triple(row.paperId, row.questionId, row.id)],
+                stabilityFastAfter = row.stabilityFastAfter
             )
         }
     }
@@ -135,7 +155,8 @@ object FsrsReplay {
      * card's own append order.
      *
      * This keeps only per-card state — [CardState] plus the interval carried
-     * out of the last review, one entry per card — instead of the two
+     * out of the last review and the day's exposure count, one entry per card —
+     * instead of the two
      * row-keyed maps [replay] needs for an arbitrarily ordered list: a
      * quarter of the size for the 1M-review/250k-card target, and it never
      * holds a whole page's enriched rows.
@@ -154,6 +175,9 @@ object FsrsReplay {
         // scheduled independently, so it must replay independently too.
         private val states = HashMap<Pair<String, String>, CardState>()
         private val previousIntervals = HashMap<Pair<String, String>, Int>()
+        // (study day start, exposures so far) per card, mirroring the grading
+        // path's count from `review_log` so a capped relearn replays as capped.
+        private val exposures = HashMap<Pair<String, String>, Pair<Long, Int>>()
 
         fun accept(row: RawReview): ReplayReview {
             val card = row.paperId to row.questionId
@@ -175,13 +199,19 @@ object FsrsReplay {
                 knownPreState = !seededFirst,
                 scheduler = scheduler
             )
+            val dayStart = scheduler.studyDayStart(row.reviewedAt)
+            val (lastDayStart, countedToday) =
+                exposures[card] ?: (dayStart to 0)
+            val exposureInDay = (if (lastDayStart == dayStart) countedToday else 0) + 1
+            exposures[card] = dayStart to exposureInDay
             val post = if (seededFirst) {
                 seedState(row)
             } else {
                 scheduler.next(
                     pre ?: scheduler.initial(row.questionId),
                     gradeOf(row.rating),
-                    row.reviewedAt
+                    row.reviewedAt,
+                    exposureInDay
                 )
             }
             states[card] = post
@@ -200,7 +230,8 @@ object FsrsReplay {
                 intervalBeforeDays = intervalBefore,
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
-                wouldBeGoodIntervalDays = wouldBeGood
+                wouldBeGoodIntervalDays = wouldBeGood,
+                stabilityFastAfter = row.stabilityFastAfter
             )
         }
     }
@@ -231,15 +262,21 @@ object FsrsReplay {
             row.difficultyAfter != null
 
     /** The memory state the seeded first row records as its result. */
-    private fun seedState(row: RawReview): CardState = CardState(
-        questionId = row.questionId,
-        stability = row.stabilityAfter ?: 0.0,
-        difficulty = row.difficultyAfter ?: 0.0,
-        intervalDays = row.intervalDaysAfter ?: 0,
-        lastReviewedAt = row.reviewedAt,
-        state = CardStateKind.REVIEW,
-        reviewCount = 1
-    )
+    private fun seedState(row: RawReview): CardState {
+        val stability = row.stabilityAfter ?: 0.0
+        return CardState(
+            questionId = row.questionId,
+            stability = stability,
+            // A pre-v27 row has no fast trace; read it as the slow one, exactly
+            // as [FsrsScheduler] does for an unknown fast trace.
+            stabilityFast = row.stabilityFastAfter ?: stability,
+            difficulty = row.difficultyAfter ?: 0.0,
+            intervalDays = row.intervalDaysAfter ?: 0,
+            lastReviewedAt = row.reviewedAt,
+            state = CardStateKind.REVIEW,
+            reviewCount = 1
+        )
+    }
 
     // An out-of-range rating (corrupt or hand-edited rows only) folds into
     // GOOD rather than dropping the row: the log stays total

@@ -793,7 +793,8 @@ internal class StatsStore(
         difficultyAfter = difficultyAfter,
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
-        wasCorrect = wasCorrect
+        wasCorrect = wasCorrect,
+        stabilityFastAfter = stabilityFastAfter
     )
 
     private fun ReviewLogEntity.toHistoryEntry() = ReviewHistoryEntry(
@@ -803,7 +804,8 @@ internal class StatsStore(
         stateBefore = stateBefore.toCardStateKind(),
         stabilityAfter = stabilityAfter,
         difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter
+        intervalDaysAfter = intervalDaysAfter,
+        stabilityFastAfter = stabilityFastAfter
     )
 
     /** The stored enum name; an unknown name (old build's value) reads as null. */
@@ -821,6 +823,7 @@ internal class StatsStore(
         lastReviewedAt = lastReviewedAt,
         difficulty = difficulty,
         stability = stability,
+        stabilityFast = stabilityFast,
         state = cardState,
         reviewCount = reviewCount
     )

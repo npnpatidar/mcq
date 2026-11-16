@@ -697,7 +697,9 @@ class StatsAggregatorTest {
 
     @Test
     fun fsrsStatusReportsFittedWeightsAndReviewCount() {
-        val fitted = SchedulerConfig(fsrsParameters = List(21) { 0.5 })
+        val fitted = SchedulerConfig(
+            fsrsParameters = List(FsrsScheduler.PARAMETER_COUNT) { 0.5 }
+        )
         val bundle = StatsAggregator.build(
             input(reviews = listOf(review("q1", 3, now - hour)), config = fitted),
             null, StatsAggregator.Range.ALL

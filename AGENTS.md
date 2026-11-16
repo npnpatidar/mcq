@@ -158,11 +158,18 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 
 - The engine is FSRS-7: **34 weights**, two stability traces (`stability` slow,
   `stabilityFast` fast) and a difficulty-modulated *mixture* forgetting curve.
-  The defaults and the parity vector are pinned in `FsrsSchedulerTest`.
+  It is a published upstream model, not ours: the constants and the parity vector
+  track `open-spaced-repetition/fsrs-rs` tag `v7.0.0` (`model_v7.rs`,
+  `parameter_initialization_fsrs7.rs`, `parameter_clipper_v7.rs`) and
+  `ts-fsrs` `packages/fsrs/src/models/fsrs-7/`. Both are pinned in
+  `FsrsSchedulerTest`; verify any change against those sources, not against an
+  in-repo plan.
 - **`stabilityFast == 0` means "unknown", not "zero".** Imported cards and rows
   the rebuild has not reached carry it; `FsrsScheduler.fastStabilityOf` collapses
-  those onto `stability`. Never write a fabricated `Sf` (the reference's 0.8×
-  ratio is legitimate only for a first exposure or an `Again`).
+  those onto `stability`. Never write a fabricated `Sf` — with three legitimate
+  exceptions: a first exposure, an `Again`, and the Anki SM-2 import bridge,
+  which mirrors upstream's `memory_state_from_sm2_scalar` (`Sf = 0.8·S`,
+  `D = 5`, ease ignored). Those three are upstream behaviour; do not "fix" them.
 - **Stability is not an interval.** `R(t = S)` is not the target retention, so
   every due date comes from `intervalForRetention`'s numerical solve. Do not
   render `S` with a `d` suffix, and do not set `S = interval` on import (the
@@ -172,11 +179,13 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 - **A failed card relearns in the sitting, but only three times a study day.**
   `FsrsScheduler.MAX_EXPOSURES_PER_STUDY_DAY` bounds the loop: from the third
   exposure a failure takes the model's interval (≥ 1 day) and is due on a day
-  boundary. That row is therefore `RELEARNING` **with** a positive
-  `intervalDays` — deliberate, not a bug. The exposure count comes from
+  boundary. An in-progress card's third exposure is therefore `RELEARNING`
+  **with** a positive `intervalDays` — deliberate, not a bug; a *new* card's
+  third exposure is `LEARNING` instead. The exposure count comes from
   `review_log` for the `(paperId, questionId)` since `DayBoundary.startOfDay`
   (no counter column), and `FsrsReplay` counts the same way so the statistics
-  reconstruct the stored schedule.
+  reconstruct the stored schedule. `StudyStore.exposureInStudyDay` is the live
+  source of that count and is covered by `ExposureInStudyDayTest`.
 - **21 FSRS-6 weights cannot be converted** to 34 FSRS-7 weights. An upgraded
   install falls back to the defaults with `fsrs_fit_version = 0` and a one-shot
   Settings notice (`SettingsStore.ensureFsrs7`).
@@ -199,3 +208,36 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 - Options go on the **front** of the card, the correct answer(s) and explanation on the back.
 - Media in fields is referenced by **filename** (`mcqapp-0.png`), never by the numeric zip
   entry name. Anki keys its import media map by filename, so a numeric `src` never resolves.
+- **The SM-2 import bridge solves at Anki's historical retention, not the learner's target.**
+  `AnkiScheduling.HISTORICAL_RETENTION = 0.9` feeds
+  `FsrsScheduler.stateForInterval`, mirroring upstream's
+  `memory_state_from_sm2_scalar(w, interval, sm2_retention)` and Anki's
+  `historical_retention` deck option (default 0.9). The learner's desired retention
+  deliberately does **not** influence an import: moving that slider must never reinterpret
+  cards imported yesterday. `fromAnki` takes no retention argument and solves at
+  `HISTORICAL_RETENTION` unconditionally.
+- **Known limitation: an `.apkg` deck's stored FSRS state is ignored.** Importers do not read
+  `cards.data` (`{"s","d","dr","decay","lrt"}`, `anki/rslib/src/storage/card/data.rs`), so a
+  deck that itself uses FSRS is re-derived from the interval through the SM-2 bridge — always
+  `D = 5`, and a stability the source deck already knew is lost. The column's key names are a
+  serde detail rather than a documented format, which is why this is deferred, not done. If it
+  is ever implemented, fall back to the bridge whenever `data` is absent or unparsable.
+
+## Plain-JSON export format
+
+- `version` is load-bearing, not decorative: it decides how `scheduling` keys resolve.
+  This build writes **2**; a file without the field reads as **1**. Never change the key
+  shape without bumping it, and never write a version the reader does not branch on.
+- Version 2 keys `scheduling` `"<paperId>\u0000<questionId>"` and additionally writes the
+  bare question id **only** when that id has a studied row in exactly one paper
+  (`reps > 0 || dueAt > 0`, the exporter's own skip rule). The alias is what lets a build
+  from before version 2 restore progress; without it an old install restores nothing and
+  says nothing.
+- Both readers resolve keys through `CardScheduleMapping.lookupCardSchedule` — one helper,
+  because two orderings drifted apart once already. v2 tries composite then bare; v1 tries
+  bare then composite. A future version keeps v2 precedence unless a bump says otherwise.
+- Accepted costs: the alias roughly doubles the `scheduling` payload for a fully studied
+  bank, and compatibility is one-directional — an old reader gets the unambiguous ids and
+  silently gets *nothing* for a colliding id, never another card's schedule. The separator
+  is a NUL and ids are not sanitised, so a hand-edited id containing a NUL could collapse
+  that distinction; that is a crafted-file scenario, not an honest one.

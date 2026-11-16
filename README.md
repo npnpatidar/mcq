@@ -874,7 +874,13 @@ R      = (ω_f · R_fast + ω_s · R_slow) / (ω_f + ω_s)
 ```
 
 with `ω_f = w27 · Sf^(-w29)` and `ω_s = w28 · S^w30 · e^((D-5)(w31-0.5))`, and
-`t` = days since the last review (fractional — see below).
+`t` = days since the last review (fractional — see below). The two scale factors
+`f_f`/`f_s` and the two decays are themselves weight-derived: `d_f = -w23·Sf^(w33-0.3)`
+and `d_s = -w24` are clamped to `[MIN_DECAY, MAX_DECAY]`, `f_f` is solved from `w25` at
+`t = Sf`, and `f_s` from `w26` at `t = S` with the extra difficulty term
+`e^((D−5)(w32−0.3))`. The mixture is finally scaled into `[1e-5, 1−1e-5]` so that no
+retention reading is ever exactly 0 or 1. Read `FsrsScheduler.forgettingCurve` for the
+authoritative form; the block above is the shape, not the full arithmetic.
 
 Two consequences matter and are easy to get wrong:
 
@@ -1348,6 +1354,7 @@ schedules. Option ids are assigned `a`, `b`, `c`, … in order.
 ```kotlin
 @Serializable
 data class McqFileDto(
+    // 2 when this build exports; a file without the field reads as 1.
     val version: Int = 1,
     val papers: List<PaperDto> = emptyList(),
     val bookmarks: List<String> = emptyList(),
@@ -1357,6 +1364,27 @@ data class McqFileDto(
     val passages: List<PassageDto> = emptyList()
 )
 ```
+
+**`version` decides how `scheduling` keys resolve.** Version 2 keys each entry by
+`"<paperId>\u0000<questionId>"` and, for a question id that has a **studied row in
+exactly one paper**, *also* writes the bare question id as a compatibility alias — so a
+reader from before version 2, which looks up the bare id only, still finds the schedule.
+Where the same question id has studied rows under two papers, only the composite keys are
+written, because a bare key would be ambiguous. Version 1 (and a file with no `version`
+field) has bare keys only. An untouched `card_state` row in another paper does not count:
+the uniqueness test is the exporter's own skip rule (`reps > 0 || dueAt > 0`).
+
+Two consequences worth knowing. The alias makes the `scheduling` object **about twice as
+large** for a fully studied bank, which is the deliberate price of old-reader
+compatibility. And the compatibility is **one-directional**: an older build reading a v2
+file restores the unambiguous question ids and silently restores nothing for a colliding
+id — progress is absent, never another card's schedule. The key separator is a NUL, so a
+question id containing a NUL byte would collapse that distinction; ids are not sanitised,
+and a hand-edited file is the only way to produce one.
+
+Reader precedence follows the declared version: version 2 tries the composite key then the
+bare one; version 1 tries the bare one then the composite. Both the whole-file importer and
+the streaming importer resolve through one helper, so the two cannot drift apart again.
 
 ### Paper Schema (`PaperDto`)
 
@@ -1462,7 +1490,7 @@ dropped without warning.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "papers": [
     {
       "id": "paper-physics-1",
@@ -1561,6 +1589,20 @@ dropped without warning.
   ],
   "warnings": [],
   "scheduling": {
+    "paper-physics-1\u0000q-001": {
+      "ease": 2.31,
+      "intervalDays": 9,
+      "dueAt": 1800000000000,
+      "reps": 7,
+      "lapses": 1,
+      "leech": false,
+      "lastReviewedAt": 1750000000000,
+      "difficulty": 5.5,
+      "stability": 21.0,
+      "stabilityFast": 8.4,
+      "cardState": "REVIEW",
+      "reviewCount": 7
+    },
     "q-001": {
       "ease": 2.31,
       "intervalDays": 9,
@@ -1584,7 +1626,7 @@ dropped without warning.
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `version` | `1` | Only version; future bumps this. |
+| `version` | `1` | File-format version. This build writes `2`; a file without the field reads as `1`. Decides how `scheduling` keys resolve (see above). |
 | `PaperDto.description` | `""` | |
 | `PaperDto.durationMinutes` | `0` | Untimed. |
 | `PaperDto.negativeMarking` | `0.0` | Sanitized ≥ 0. |
@@ -2092,6 +2134,15 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 
 #### 3.3 Optimize FSRS Parameters
 Static text + help `Fits the scheduling weights to your own review history, the way Anki's Optimize does. Unlocks after 1000 reviews.` (`FsrsOptimizer.MIN_REVIEWS = 1000`).
+
+The copy compares the objective, not the exact loop: the fit minimises the same
+weighted BCE with the same L2-toward-defaults and Adam setup as upstream, but it runs
+`fsrs-rs`'s *library* schedule (`EPOCHS = 9`, `MAX_SEQ_LEN = 1024`) where Anki's Optimize
+button passes `num_epochs: 8` and leaves `max_seq_len` at 256. The same reviews can
+therefore land on marginally different weights than Anki would produce. Sequence capping
+matches upstream: a training item is a *prefix* of one card and prefixes longer than
+`MAX_SEQ_LEN` are excluded (`fsrs-rs` `dataset.rs`, `training.rs`), so a card with a very
+long history still contributes its shorter prefixes rather than being dropped whole.
 
 Button `Optimize FSRS parameters`:
 - Disabled when `fsrsReviewCount < 1000` or fit running.

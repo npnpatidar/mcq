@@ -116,7 +116,7 @@ different paper, then asserts `exposureInStudyDay(...) == 2`.
 | m8 | `ui/stats/StatsViewModel.kt:125` → `McqRepository.kt:356` → `StatsStore.kt:591` → `Daos.kt:2069` | The drill-down loads history by `questionId` alone while every other surface is keyed `(paperId, questionId)`. A question shared by two papers mixes two independently scheduled cards: wrong stability line, wrong attempt list, a sawtooth trend that never happened. Needs `historyForCard(paperId, questionId)`. |
 | m9 | `data/repository/StudyStore.kt:273-290` | `bestDueReview` materialises the entire due backlog and ranks it in Kotlin, per card served. `StudyPullQueryCountTest` pins query *count*, not rows, so an unbounded scan is invisible. Push the ranking into SQL or `LIMIT` a candidate window before the Kotlin tie-break. |
 | m10 | `app/src/test/java/com/mcqapp/FsrsOptimizerTest.kt:253,281,474` | The objective sum, the 34-entry gradient and the fitted-parameter goldens are **self-generated**; the finite-difference test at `:315` validates the gradient against the implementation's own loss. Add one `fsrs-rs training.rs` fit vector, or state "self-generated, no upstream anchor" in the header. |
-| m11 | `domain/FsrsOptimizer.kt` seq cap; `FsrsOptimizerTest.kt:425` | Upstream `training.rs` *drops* histories longer than `max_seq_len` (`retain(|i| i.reviews.len() <= config.max_seq_len)`); the app truncates by position, and the test names that truncation "the reference's cap". Adopt `retain`, or rename the test and cite upstream. |
+| m11 | `FsrsOptimizerTest.kt:425` | **Withdrawn — the audit was wrong, the code is right.** A training item is a `CardPrefix`, not a whole card (`fsrs-rs v7.0.0` `dataset.rs:47-69` returns `reviews[..prefix.len]`), and `training.rs:873` / `training_card_prefixes.rs:77` filter *prefix length* `<= max_seq_len`. A long card therefore keeps its prefixes up to the cap, which is exactly what filtering `pos + 1 <= MAX_SEQ_LEN` does. Only the test's claim of parity was ambiguous; it now cites the three upstream locations. No behaviour change. |
 | m12 | `data/io/Backup.kt:1142` | The restore path's `"partial"` outcome is untested — only success and hard failure are. A restore that silently drops half the rows reports success. Add a truncated-zip-member test. |
 | m13 | `app/src/test/java/com/mcqapp/Fsrs7UpgradeTest.kt:76` | `setUp` calls `ensureFsrs7()` before touching the store, an ordering production does not guarantee (it runs in an `onCreate` coroutine), so the first-launch race is untestable as written. Drive upgrade and a concurrent read from two coroutines, or document the assumption. |
 | m14 | `AGENTS.md:162-165` | The `Sf` invariant is too narrow — see §8.1. |
@@ -248,19 +248,56 @@ diverges from upstream — and the code tracks **upstream** in all four:
 No local document's error has propagated into the engine. The `Sf` sentence is
 the one place a local document still instructs otherwise.
 
-## 9. Owner decisions outstanding
+## 9. Owner rulings (2026-11-16)
 
-1. **m1** — pass Anki's `historical_retention` (0.9 default) to the bridge, or
-   record the deliberate simplification in code and `AGENTS.md`.
-2. **m7** — read `cards.data` to keep a real FSRS state on import, or accept the
-   SM-2 re-derivation as a documented limitation.
-3. **m11** — adopt upstream's `retain`-not-truncate sequence cap, or keep
-   truncation and rename the test.
-4. **m14** — approve the widened `Sf` invariant wording.
-5. **M1** — confirm that emitting a bare key alongside the composite key is
-   acceptable, rather than only bumping `version`.
+All five were accepted as recommended:
 
-## 10. Reference basis
+| # | Ruling | Landed as |
+|---|---|---|
+| m1 | Anki's historical retention drives the import bridge | `AnkiScheduling.HISTORICAL_RETENTION = 0.9`, passed to `stateForInterval`; `fromAnki`'s retention parameter is deliberately inert, documented; `AnkiSchedulingTest` proves the bridged state no longer moves with the desired-retention slider |
+| m7 | Read Anki's stored FSRS state: deferred | Recorded as a known limitation in `AGENTS.md` (Anki interoperability), with the fallback rule for any future implementation |
+| m11 | Match upstream on the sequence cap | **No code change** — the audit premise was wrong; the code already matches upstream's prefix semantics. The test now cites `dataset.rs`/`training.rs`/`training_card_prefixes.rs` |
+| m14 | Widen the `Sf` invariant | `AGENTS.md` now names first exposure, `Again` and the SM-2 import bridge as the three legitimate 0.8× cases, with the upstream citation |
+| M1 | Emit a bare key alongside the composite one | `"version":2`, dual-key export for unique question ids, one shared precedence helper, v1 fixture, version and alias tests |
+
+## 10. Implementation status
+
+Code (uncommitted at the time of writing, pending review): `AnkiScheduling`,
+`CardScheduleMapping`, `Exporter`, `Importer`, `JsonDto`, `StreamingImportSession`,
+`Daos`, `ImportViewModel`, plus `AnkiSchedulingTest`, `BackupSchedulingTest`,
+`FsrsOptimizerTest` (comment only) and the new `ExposureInStudyDayTest`.
+
+Docs: `AGENTS.md` (upstream anchor on the FSRS-7 section, widened `Sf` rule,
+`LEARNING`/`RELEARNING` distinction, import-retention rule, `cards.data`
+limitation) and `README.md` (format v2 and its alias rule, the annotated example,
+the version row, the Optimise-vs-Anki caveat, the full curve arithmetic).
+
+Deliberately **not** changed: the Optimize button's user-facing copy still says
+"the way Anki's Optimize does", because user-facing copy is the owner's call; the
+technical difference is documented in `README.md` §3.3 and nit n2 instead.
+
+Still open from the audit: m2, m3, m4, m5, m6, m8, m9, m10, m12, m13, m15 and
+every nit except n2/n4/n8.
+
+### Accepted limitations (recorded, not fixed)
+
+1. v2 compatibility is one-directional: an older build restores the unambiguous
+   question ids and silently restores nothing for a colliding id — never another
+   card's schedule.
+2. The alias roughly doubles the `scheduling` payload for a fully studied bank.
+3. The alias is suppressed for an id with studied rows in two papers; the app's
+   own sweeps make that state unreachable in normal use, so the guard is
+   defence-in-depth and the export test seeds the collision directly.
+4. `cardScheduleKey` assumes ids contain no `\u0000`; imported ids are not
+   sanitised, so a crafted file could collide a bare alias with a composite key.
+   Pre-existing property of the separator.
+5. Import retention is frozen at 0.9, so a deck genuinely studied at another
+   historical retention imports with a slightly wrong `(S, Sf)`.
+6. Robolectric evidence is deferred: the format proof and the exposure-count
+   guard can only run on x86_64, so the first green CI run is their first real
+   evidence.
+
+## 11. Reference basis
 
 Upstream source read at the pinned tag:
 
@@ -302,7 +339,7 @@ Marked unverified against upstream:
 - The app's own Optimize fidelity (m10, m11) was checked against `training.rs`
   but not numerically reproduced.
 
-## 11. How this audit was run
+## 12. How this audit was run
 
 - Three reviewer subagents, strictly sequential, read-only, each with its own
   scope: design/domain, implementation/integration, tests/docs.
@@ -319,20 +356,17 @@ Marked unverified against upstream:
 - No production code was modified during the audit. The only working-tree
   changes were the owner's `AGENTS.md` supervisor-rule additions.
 
-## 12. Suggested order of work
+## 13. Suggested order of work
 
-1. **M1** — versioned export plus a v1 fixture (the only defect that loses user
-   data on a real, if old, install).
-2. **M2** — the exposure-count test (cheapest guard against the worst silent
-   regression in the scheduler).
-3. **m2, m6, m8, m9** — the four defects with a concrete learner-visible
+1. ~~**M1** — versioned export plus a v1 fixture~~ — done (§10).
+2. ~~**M2** — the exposure-count test~~ — written, CI-authoritative.
+3. ~~**m1, m14, m7, m11** — the owner rulings~~ — done (§9); m11 needed no
+   code change because the audit premise was wrong.
+4. **m2, m6, m8, m9** — the four defects with a concrete learner-visible
    consequence: a fit that can be lost to a no-op, a restore misreported as
    failed, mixed drill-down history, and an unbounded per-pull scan.
-4. **m3, m4, m5** — state consistency after a refit, one log ordering, and the
+5. **m3, m4, m5** — state consistency after a refit, one log ordering, and the
    swallowed upgrade notice.
-5. **Docs, one commit** — m14 (widened `Sf`), m15 (README export example),
-   n2 (Optimize claim), n4 (third-exposure wording), n8 (formula caveat),
-   plus the upstream anchor on the FSRS-7 section.
-6. **Test hardening** — m10, m12, m13, n5.
-7. **m1, m7, m11** — owner decisions, then either implementation or a recorded
-   rationale in `AGENTS.md`.
+6. ~~**Docs, one commit**~~ — done: m14, m15, n2, n4, n8 and the upstream anchor
+   are in `AGENTS.md` and `README.md` (§10).
+7. **Test hardening** — m10, m12, m13, n5.

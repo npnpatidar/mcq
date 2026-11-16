@@ -6,7 +6,13 @@ import com.mcqapp.domain.SchedulerConfig
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** Why a grading version exists, as stored in `grading_versions.reason`. */
+/**
+ * Why a grading version exists, as written by this build.
+ *
+ * These are the only values this build writes. A migrated v26 row can carry
+ * the legacy values `proposal`, `automatic` or `rollback`; a stored reason is
+ * history, not a value that may be parsed against this enum.
+ */
 enum class GradingReason(val stored: String) {
     /** Seeded from the cuts already on disk; no change was made. */
     PRIOR("prior"),
@@ -19,7 +25,7 @@ enum class GradingReason(val stored: String) {
 }
 
 /**
- * The only writer of the grade-inference cut points (v27).
+ * The only writer of the grade-inference cut points (v28).
  *
  * The cuts live in DataStore because the scheduler reads them on every pull;
  * this store is the one path that changes them, so every change also owns a

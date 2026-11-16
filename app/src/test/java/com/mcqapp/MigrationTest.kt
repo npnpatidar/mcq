@@ -1448,6 +1448,197 @@ class MigrationTest {
         }
     }
 
+    /**
+     * A v27 written by the pre-merge branch: its own 26->27 body had already
+     * copied the ladder into `grading_versions` and dropped the ladder, and it
+     * predated FSRS-7's fast-trace columns.
+     *
+     * The ladder row deliberately has neither id 1 nor the shipped 6/60 pair,
+     * so a later step that silently rebuilt the history cannot pass by
+     * mistaking it for a current row. The old branch body is replayed
+     * statement for statement because that is the schema this fixture has to
+     * survive.
+     */
+    private fun createV27PreMerge() {
+        createV26WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(26) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            raw.execSQL(
+                "INSERT INTO ladder_versions " +
+                    "(id,easySeconds,slowSeconds,effectiveFrom,reason,previousId,blockId,policyVersion) " +
+                    "VALUES (42,9,45,4000,'proposal',NULL,NULL,1)"
+            )
+            raw.execSQL(
+                "CREATE TABLE IF NOT EXISTS grading_versions (" +
+                    "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
+                    "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
+                    "`correctnessOnly` INTEGER NOT NULL DEFAULT 0)"
+            )
+            raw.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
+                    "ON `grading_versions` (`effectiveFrom`)"
+            )
+            raw.execSQL(
+                "INSERT INTO `grading_versions` " +
+                    "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
+                    "`correctnessOnly`) " +
+                    "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, 0 " +
+                    "FROM `ladder_versions`"
+            )
+            raw.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")
+            raw.execSQL("DROP TABLE IF EXISTS `ladder_versions`")
+            // The seeded review was graded by the copied row, not by a
+            // synthetic default id.
+            raw.execSQL("UPDATE review_log SET ladderVersion = 42 WHERE id = 1")
+            raw.version = 27
+        }
+    }
+
+    @Test
+    fun `a pre-merge branch v27 without the ladder tables still reaches 28`() {
+        runBlocking {
+            createV27PreMerge()
+            val db = openMigrated()
+            try {
+                // Opening ran 27->28; Room's identity check proves that the
+                // conditional ALTERs brought this incompatible v27 to the v28
+                // schema.
+                val version = db.gradingRulesDao().version(42L)
+                assertNotNull("the pre-merge grading history must survive", version)
+                assertEquals(42L, version!!.id)
+                assertEquals(9L, version.easySeconds)
+                assertEquals(45L, version.slowSeconds)
+                assertEquals(4000L, version.effectiveFrom)
+                assertEquals("proposal", version.reason)
+                assertFalse(version.correctnessOnly)
+
+                val card = db.cardStateDao().get("p1", "q1")!!
+                assertEquals(3, card.intervalDays)
+                assertEquals(1234L, card.dueAt)
+                assertEquals(0.0, card.stabilityFast, 0.0)
+
+                val review = db.reviewLogDao().historyForQuestion("q1").single()
+                assertEquals(42, review.gradingVersion)
+                assertNull(review.stabilityFastAfter)
+
+                val ladderTables = db.openHelper.readableDatabase.query(
+                    "SELECT name FROM sqlite_master WHERE type='table' " +
+                        "AND name IN ('ladder_versions','ladder_blocks')"
+                ).use { cursor ->
+                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                }
+                assertTrue("ladder tables still present: $ladderTables", ladderTables.isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * A main-shaped v27: FSRS-7's columns are present and the ladder still
+     * owns two version rows. The second row and review make sure 27->28
+     * copies the whole history rather than only the latest id, while the
+     * non-default fast traces prove that it neither rebuilds the card row nor
+     * the review log.
+     */
+    private fun createV27WithBothHistories() {
+        createV26WithBothHistories()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(26) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_26_27.migrate(raw)
+            raw.execSQL(
+                "UPDATE card_state SET stabilityFast = 11.2 " +
+                    "WHERE paperId = 'p1' AND questionId = 'q1'"
+            )
+            raw.execSQL(
+                "UPDATE review_log SET stabilityFastAfter = 9.4 WHERE id = 2"
+            )
+            raw.execSQL("UPDATE ladder_versions SET reason = 'rollback' WHERE id = 7")
+            raw.execSQL(
+                "INSERT INTO ladder_versions " +
+                    "(id,easySeconds,slowSeconds,effectiveFrom,reason,previousId,blockId,policyVersion) " +
+                    "VALUES (3,5,45,9000,'automatic',NULL,NULL,2)"
+            )
+            raw.execSQL(
+                "INSERT INTO review_log (id,paperId,questionId,rating,reviewedAt," +
+                    "elapsedSeconds,wasGuess,wasCorrect,ladderVersion) VALUES " +
+                    "(3,'p1','q3',3,7000,9,0,1,3)"
+            )
+            raw.version = 27
+        }
+    }
+
+    @Test
+    fun `migration 27 to 28 keeps the fast traces, every version row and its epoch`() {
+        runBlocking {
+            createV27WithBothHistories()
+            val db = openMigrated()
+            try {
+                // Opening ran 27->28; Room's identity check proves the schema.
+                val card = db.cardStateDao().get("p1", "q1")!!
+                assertEquals(3, card.intervalDays)
+                assertEquals(1234L, card.dueAt)
+                assertEquals(11.2, card.stabilityFast, 0.0)
+
+                val stamped = db.reviewLogDao().historyForQuestion("q2").single()
+                assertEquals(7, stamped.gradingVersion)
+                assertEquals(9.4, stamped.stabilityFastAfter!!, 0.0)
+
+                val versions = db.gradingRulesDao().allVersions()
+                assertEquals("every ladder version row must be copied", 2, versions.size)
+                val byId = versions.associateBy { it.id }
+                val first = byId.getValue(7L)
+                assertEquals(8L, first.easySeconds)
+                assertEquals(30L, first.slowSeconds)
+                assertEquals(4000L, first.effectiveFrom)
+                assertEquals("rollback", first.reason)
+                assertFalse(first.correctnessOnly)
+                val second = byId.getValue(3L)
+                assertEquals(5L, second.easySeconds)
+                assertEquals(45L, second.slowSeconds)
+                assertEquals(9000L, second.effectiveFrom)
+                assertEquals("automatic", second.reason)
+                assertFalse(second.correctnessOnly)
+
+                val secondReview = db.reviewLogDao().historyForQuestion("q3").single()
+                assertEquals(3, secondReview.gradingVersion)
+                assertNotNull(
+                    "the first stamped review must still resolve",
+                    db.gradingRulesDao().version(7L)
+                )
+                assertNotNull(
+                    "the second stamped review must still resolve",
+                    db.gradingRulesDao().version(3L)
+                )
+
+                val ladderTables = db.openHelper.readableDatabase.query(
+                    "SELECT name FROM sqlite_master WHERE type='table' " +
+                        "AND name IN ('ladder_versions','ladder_blocks')"
+                ).use { cursor ->
+                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                }
+                assertTrue("ladder tables still present: $ladderTables", ladderTables.isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
     @Test
     fun `migration 26 to 27 adds the fast stability trace`() {
         runBlocking {

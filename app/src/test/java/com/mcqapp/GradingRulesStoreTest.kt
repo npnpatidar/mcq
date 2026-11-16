@@ -40,7 +40,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.junit.rules.TimeoutRule
 
 /**
- * The cut points' single writer (v27): every cut change owns a version row, the
+ * The cut points' single writer (v28): every cut change owns a version row, the
  * seed happens once, a crash between the value and the row is repaired, and a
  * pair saved under the old reading-allowance rule starts a new epoch instead of
  * reusing a version id whose `effectiveFrom` predates the rule change.

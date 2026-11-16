@@ -342,7 +342,7 @@ data class ReviewLogEntity(
      * The reading allowance that was subtracted, in seconds (v26).
      *
      * Legacy only: the absolute 6/60 rule adds nothing for reading, so every
-     * row written from v27 on leaves this null. Rows written by a v26 build
+     * row written from v28 on leaves this null. Rows written by a v26 build
      * keep their recorded value, which is why the column is not rebuilt away.
      */
     val readingAllowanceSeconds: Int? = null,
@@ -351,7 +351,7 @@ data class ReviewLogEntity(
 )
 
 /**
- * One row per change of the grade-inference cut points (v27).
+ * One row per change of the grade-inference cut points (v28).
  *
  * The cuts themselves live in DataStore, where the scheduler reads them; this
  * table is the audit trail that lets a review row say which pair graded it.
@@ -367,11 +367,16 @@ data class GradingVersionEntity(
     val easySeconds: Long,
     val slowSeconds: Long,
     val effectiveFrom: Long,
-    /** prior, manual or rule. */
+    /**
+     * Why this version exists. This build writes only `prior`, `manual` or
+     * `rule`; a migrated v26 row can carry the legacy values `proposal`,
+     * `automatic` or `rollback`. Stored reasons are history, not a value that
+     * callers may parse against this build's write vocabulary.
+     */
     val reason: String,
     /**
      * Whether this version's reviews were graded by correctness alone, with the
-     * clock ignored (v27). False on every row copied from v26, which never had
+     * clock ignored (v28). False on every row copied from v26, which never had
      * the mode, and on rows written while the switch is off.
      */
     @ColumnInfo(defaultValue = "0")

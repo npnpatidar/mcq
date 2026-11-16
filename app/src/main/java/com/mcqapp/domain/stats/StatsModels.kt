@@ -637,7 +637,7 @@ data class RetentionData(
      */
     val calibrationReport: Calibration.Report? = null,
     /**
-     * The read-only pair the calibration report's direction implies (v27).
+     * The read-only pair the calibration report's direction implies (v28).
      * Null when the surface did not ask for a report; present but
      * `NEEDS_EVIDENCE` while the gates are closed, because "not yet" is an
      * answer the learner should see.
@@ -652,7 +652,7 @@ data class RetentionData(
      */
     val dwellSuggestion: Calibration.CutSuggestion? = null,
     /**
-     * Whether the grade came from the answer clock (v27). False under
+     * Whether the grade came from the answer clock (v28). False under
      * correctness-only grading, where no Easy or Hard label exists: the
      * calibration card is still shown, with its forecast/Brier chart, but its
      * cut evidence is hidden because it measures the two cuts.

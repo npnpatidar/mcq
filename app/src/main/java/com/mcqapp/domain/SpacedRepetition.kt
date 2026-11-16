@@ -209,7 +209,7 @@ data class SchedulerConfig(
     val slowSeconds: Long = 60L,
     /**
      * Grade every correct answer Good and everything else Again, ignoring the
-     * clock entirely (v27). The cuts still exist because they are the fallback
+     * clock entirely (v28). The cuts still exist because they are the fallback
      * when the switch is off, but nothing reads them while this is on: no Easy
      * and no Hard label is ever inferred, and the clock stops colouring itself.
      *

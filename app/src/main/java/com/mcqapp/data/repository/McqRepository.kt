@@ -571,7 +571,7 @@ class McqRepository internal constructor(
      * Full replace of every preference from a backup, with the restored
      * grading version resolved after it.
      *
-     * A full v27 restore has already replayed its `grading_versions` rows, so
+     * A full v28 restore has already replayed its `grading_versions` rows, so
      * the restored `ladder_version` names a row that graded exactly the reviews
      * being restored. `gradingRules.currentVersion()` keeps that id and its
      * `effectiveFrom` and writes nothing, so the calibration epoch continues

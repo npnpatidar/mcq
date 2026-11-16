@@ -286,7 +286,7 @@ internal class SettingsStore(
     private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
     /**
-     * Grade on correctness alone, ignoring the clock (v27). Unprefixed like the
+     * Grade on correctness alone, ignoring the clock (v28). Unprefixed like the
      * other FSRS-era keys: it is this app's grading rule, not an Anki knob.
      */
     private val correctnessOnlyKey = booleanPreferencesKey("correctness_only")
@@ -335,7 +335,7 @@ internal class SettingsStore(
     private val retiredSlowKey = longPreferencesKey("retired_slow_seconds")
 
     /**
-     * Which build of the cut rule the stored pair was calibrated for (v27).
+     * Which build of the cut rule the stored pair was calibrated for (v28).
      * Bumped whenever the rule itself changes, so the pair does not outlive the
      * model it was tuned against.
      */
@@ -640,7 +640,7 @@ internal class SettingsStore(
     internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
 
-    /** Which build of the cut rule the stored pair was saved under (v27). */
+    /** Which build of the cut rule the stored pair was saved under (v28). */
     internal suspend fun gradingRulesVersionNow(): Int =
         context.dataStore.data.map { it[gradingRulesVersionKey] ?: 0 }.first()
 

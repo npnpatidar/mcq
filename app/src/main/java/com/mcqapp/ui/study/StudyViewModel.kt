@@ -139,7 +139,7 @@ data class StudyUiState(
     val dwellEasySeconds: Long = Study.FAST_SECONDS,
     val dwellHardSeconds: Long = Study.SLOW_SECONDS,
     /**
-     * Grade on correctness alone (v27). The clock keeps counting and the dwell
+     * Grade on correctness alone (v28). The clock keeps counting and the dwell
      * is still stored for later analysis, but it no longer colours itself or
      * decides the grade: the cuts above are unused while this is true.
      */

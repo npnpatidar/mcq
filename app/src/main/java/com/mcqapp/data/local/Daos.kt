@@ -2157,7 +2157,7 @@ interface ReviewLogDao {
 }
 
 /**
- * The cut points' audit trail (v27). Written by
+ * The cut points' audit trail (v28). Written by
  * [com.mcqapp.data.repository.GradingRulesStore], read by the calibration
  * report so an epoch can start where the cuts last moved.
  */

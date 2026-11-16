@@ -3,7 +3,6 @@ package com.mcqapp
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -94,7 +93,9 @@ class RepositorySettingsTest {
      * classes write. Clear them before a whole-config comparison, not only
      * after this class, or a neighbour's version leaks in. The grading rule is
      * cleared too: a reset no longer rewrites it, so one test's switch would
-     * otherwise drive every later test in the run.
+     * otherwise drive every later test in the run. The cross-class haptics and
+     * last-test-length preferences are cleared here as well, so this class's
+     * first test starts from the same blank slate as every later one.
      */
     @Before
     fun resetGenerationKeys() {
@@ -107,6 +108,8 @@ class RepositorySettingsTest {
                 prefs.remove(longPreferencesKey("fsrs_rebuild_cursor"))
                 prefs.remove(booleanPreferencesKey("fsrs_rebuild_done"))
                 prefs.remove(intPreferencesKey("ladder_version"))
+                prefs.remove(booleanPreferencesKey("haptics_enabled"))
+                prefs.remove(intPreferencesKey("last_test_length"))
             }
         }
     }

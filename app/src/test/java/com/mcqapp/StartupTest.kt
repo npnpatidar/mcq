@@ -30,15 +30,16 @@ import org.robolectric.junit.rules.TimeoutRule
 
 /**
  * §5.8 of the scaling plan: a cold start must not do database work on the main
- * thread. It *may* decide the first-start grading rule in the background — the
- * answer has to be taken before the learner can import a paper — so "the
- * database file must not exist after `onCreate`" is no longer an invariant.
+ * thread. It *may* decide the first-start grading rule and run the FSRS-7 jobs
+ * in the background, so "the database file must not exist after `onCreate`" is
+ * not an invariant on the production path.
  *
  * This is the one class that runs the production application, because the
  * startup path itself is the subject. The rest of the suite gets
- * [TestMcqApplication] from `robolectric.properties`, which skips the probe.
+ * [TestMcqApplication] from `robolectric.properties`, which disables both the
+ * probe and the FSRS-7 startup jobs.
  *
- * Three things are pinned here:
+ * The startup path is pinned here:
  *  - `onCreate` returns without opening Room on the main thread. The probe's
  *    caller thread is recorded by [AppDatabase.hasNoPapersOrReviews]; a
  *    synchronous startup job would put the main thread's name there.
@@ -46,6 +47,9 @@ import org.robolectric.junit.rules.TimeoutRule
  *    correctness-only seed, from the real probe.
  *  - an install that already holds a paper ends with neither. Deleting the
  *    probe launch makes both of the last two fail.
+ *  - with every startup job disabled, `onCreate` alone leaves the database
+ *    file absent. The production path's probe-thread assertion, not file
+ *    existence, proves that its database work stayed off the main thread.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = FreshStartupApplication::class)
@@ -84,13 +88,10 @@ class StartupTest {
             awaitStored(context, CORRECTNESS_ONLY, true)
         )
 
-        // The probe opened the database — but from the startup job, not from
-        // `onCreate` on the main thread. Without this the file test alone
-        // would pass even if the job were made synchronous.
-        assertTrue(
-            "the background probe never opened the database",
-            context.getDatabasePath(AppDatabase.NAME).exists()
-        )
+        // The probe's caller thread is the proof: it opened the database from
+        // the startup job, not from `onCreate` on the main thread. File
+        // existence would not distinguish those paths because the FSRS-7 jobs
+        // also open Room.
         val probeThread = AppDatabase.freshnessProbeThread
         assertNotNull("the startup job never ran the freshness probe", probeThread)
         assertNotEquals(
@@ -131,11 +132,11 @@ class StartupTest {
      */
     @Test
     @Config(application = TestMcqApplication::class)
-    fun applicationOnCreateOpensNothingWhenTheProbeIsDisabled() {
+    fun applicationOnCreateOpensNothingWhenTheStartupJobsAreDisabled() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         assertTrue("the test application did not come up", context is McqApplication)
         assertFalse(
-            "Application.onCreate opened the database; only the startup job may",
+            "Application.onCreate opened the database; only a startup job may open it",
             context.getDatabasePath(AppDatabase.NAME).exists()
         )
     }

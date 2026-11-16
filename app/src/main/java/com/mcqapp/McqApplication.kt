@@ -47,6 +47,15 @@ open class McqApplication : Application() {
     @VisibleForTesting
     internal open val seedsInstallFreshnessAtStartup: Boolean = true
 
+    /**
+     * Whether `onCreate` launches the FSRS-7 migration and memory rebuild.
+     *
+     * Both jobs open Room, so a test that owns its database fixtures opts out
+     * for the same reason as the install-freshness probe.
+     */
+    @VisibleForTesting
+    internal open val runsFsrs7StartupJobs: Boolean = true
+
     /** The production wiring: a new install is one whose database is empty. */
     val repository: McqRepository by lazy {
         McqRepository(AppDatabase.get(this), this, startupScope)
@@ -69,16 +78,18 @@ open class McqApplication : Application() {
                 ?: Log.e("APP", "No previous uncaught exception handler", throwable)
         }
 
-        startupScope.launch {
-            try {
-                repository.ensureFsrs7()
-            } catch (e: Exception) {
-                Logger.e("FSRS7", "model migration failed", e)
-            }
-            try {
-                repository.rebuildFsrs7Memory()
-            } catch (e: Exception) {
-                Logger.e("FSRS7", "card-state rebuild failed; will resume next launch", e)
+        if (runsFsrs7StartupJobs) {
+            startupScope.launch {
+                try {
+                    repository.ensureFsrs7()
+                } catch (e: Exception) {
+                    Logger.e("FSRS7", "model migration failed", e)
+                }
+                try {
+                    repository.rebuildFsrs7Memory()
+                } catch (e: Exception) {
+                    Logger.e("FSRS7", "card-state rebuild failed; will resume next launch", e)
+                }
             }
         }
 

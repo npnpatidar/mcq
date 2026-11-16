@@ -121,7 +121,7 @@ abstract class AppDatabase : RoomDatabase() {
     }
 
     /**
-     * The app's single definition of a new install (v27): this database has
+     * The app's single definition of a new install (v28): this database has
      * never held a paper or a review row.
      *
      * The first-launch grading-rule seed asks this instead of probing for the
@@ -952,9 +952,28 @@ abstract class AppDatabase : RoomDatabase() {
          * version rows are copied with their ids, so every pre-v28 review's
          * `ladderVersion` still resolves to the pair that graded it.
          *
+         * What the step discards: `ladder_blocks` in full. The pair and card
+         * counters, the deltas, `outcome` and `decidedAt` behind a v26
+         * automatic or proposal cut change have no successor here. A version
+         * row keeps its `id`, the cut pair, `effectiveFrom` and `reason`;
+         * `previousId` is reconstructable from `id` ordering, `policyVersion`
+         * is not. Copied `reason` values keep v26's vocabulary (`proposal`,
+         * `automatic`, `rollback`), so nothing may parse a stored `reason`
+         * against this build's three values — see [GradingVersionEntity.reason].
+         *
          * `review_log` itself is untouched: it is append-only history, and its
-         * `ladderVersion` column now names a grading version. A pre-v26 file
-         * runs 25->26 first, so the source table always exists here.
+         * `ladderVersion` column now names a grading version.
+         *
+         * Two incompatible v27 shapes reach this step, because both parents of
+         * the merge that renumbered Room to 28 called themselves 27. A `main`
+         * v27 has `ladder_versions` (with FSRS-7's fast-trace columns already
+         * on `card_state` and `review_log`); a v27 written by the pre-merge
+         * branch (head `ef2ffa5`) had already copied the ladder into
+         * `grading_versions`, dropped both ladder tables and never had the
+         * fast traces. The guards below make this step correct for both: the
+         * copy runs only when its source exists, and each fast-trace column is
+         * added only when missing. Both are no-ops on a `main` v27, so the
+         * released path is unchanged.
          */
         val MIGRATION_27_28 = object : Migration(27, 28) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -969,17 +988,67 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
                         "ON `grading_versions` (`effectiveFrom`)"
                 )
-                db.execSQL(
-                    "INSERT INTO `grading_versions` " +
-                        "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
-                        "`correctnessOnly`) " +
-                        "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, 0 " +
-                        "FROM `ladder_versions`"
-                )
+                if (hasTable(db, "ladder_versions")) {
+                    db.execSQL(
+                        "INSERT INTO `grading_versions` " +
+                            "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
+                            "`correctnessOnly`) " +
+                            "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, " +
+                            "`reason`, 0 FROM `ladder_versions`"
+                    )
+                }
                 db.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")
                 db.execSQL("DROP TABLE IF EXISTS `ladder_versions`")
+                // A pre-merge branch v27 was stamped before FSRS-7's columns
+                // existed, and Room rejects the open without them. Each is
+                // checked on its own: they were added by two separate
+                // statements, so one present never implies the other.
+                if (!hasColumn(db, "card_state", "stabilityFast")) {
+                    db.execSQL(
+                        "ALTER TABLE `card_state` ADD COLUMN `stabilityFast` " +
+                            "REAL NOT NULL DEFAULT 0.0"
+                    )
+                }
+                if (!hasColumn(db, "review_log", "stabilityFastAfter")) {
+                    db.execSQL(
+                        "ALTER TABLE `review_log` ADD COLUMN `stabilityFastAfter` REAL"
+                    )
+                }
             }
         }
+
+        /**
+         * Whether this file has a table called [name].
+         *
+         * It exists because 27->28 must run on a pre-merge branch v27 that has
+         * no ladder left. A SQL `WHERE EXISTS` cannot do this job: SQLite
+         * resolves the `FROM ladder_versions` reference when the INSERT is
+         * prepared, before any WHERE is evaluated, so the guard has to run
+         * first in Kotlin.
+         */
+        private fun hasTable(db: SupportSQLiteDatabase, name: String): Boolean =
+            db.query(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                arrayOf(name)
+            ).use { it.moveToFirst() }
+
+        /**
+         * Whether [table] already has a column called [column].
+         *
+         * The fast-trace columns belong to a `main` v27 only, and an
+         * unconditional `ALTER` fails with "duplicate column name" there.
+         * `PRAGMA table_info` is the only portable way to ask; Room offers no
+         * version-independent API for it inside a migration.
+         */
+        private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean =
+            db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (!found && cursor.moveToNext()) {
+                    found = cursor.getString(nameIndex) == column
+                }
+                found
+            }
 
         /**
          * Keys `question_tags` off the stored CSV in the same normalisation as

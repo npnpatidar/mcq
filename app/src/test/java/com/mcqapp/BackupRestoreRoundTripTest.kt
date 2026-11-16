@@ -267,7 +267,7 @@ class BackupRestoreRoundTripTest {
         assertEquals(7L, study.gradingVersions.first().id)
         assertEquals(8L, study.gradingVersions.first().easySeconds)
         assertEquals(
-            "a pre-v27 row was graded with the clock, so it is not correctness-only",
+            "a row graded under the old rule was graded with the clock, so it is not correctness-only",
             false,
             study.gradingVersions.first().correctnessOnly
         )

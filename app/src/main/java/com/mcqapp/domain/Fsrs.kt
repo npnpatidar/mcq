@@ -634,9 +634,6 @@ class FsrsScheduler private constructor(
         const val EASE_FLOOR = 1.3
         const val EASE_CEIL = 3.0
 
-        /** The retention the reference's published vectors are quoted at. */
-        const val BENCHMARK_RETENTION = 0.9
-
         const val DEFAULT_DESIRED_RETENTION = 0.9
 
         /** The model's lower stability bound; also the init clamp. */

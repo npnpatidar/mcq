@@ -31,8 +31,8 @@ class AnkiApkgImporter(
     private val batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
     /**
      * The model the app will grade imported cards with. The Anki bridge uses
-     * its weights and target retention, so a card due today in the package is
-     * due today here too.
+     * its weights; the retention is not part of the bridge at all, which solves
+     * at Anki's historical retention (see `AnkiScheduling.HISTORICAL_RETENTION`).
      */
     private val schedulerConfig: com.mcqapp.domain.SchedulerConfig =
         com.mcqapp.domain.SchedulerConfig()
@@ -77,8 +77,7 @@ class AnkiApkgImporter(
         val tail = source().use {
             AnkiPackageReader.stream(
                 it, sink, batchSize, nowMillis,
-                parameters = schedulerConfig.fsrsParameters,
-                desiredRetention = schedulerConfig.desiredRetention
+                parameters = schedulerConfig.fsrsParameters
             )
         }
         session.finish(

@@ -5,6 +5,7 @@ import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.domain.CardStateKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,7 +49,7 @@ class AnkiSchedulingTest {
         // the kind follows Anki's type; difficulty is fixed at 5 because
         // FSRS-7 has no scalar difficulty bridge; the fast trace is 0.8× the
         // slow one; and the stability is solved *backwards* from Anki's one
-        // stored number, so the card's mixed curve reaches the benchmark
+        // stored number, so the card's mixed curve reaches Anki's historical
         // retention at exactly the interval Anki records.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
         assertEquals(
@@ -63,7 +64,7 @@ class AnkiSchedulingTest {
                     lastReviewedAt = state.lastReviewedAt,
                     state = CardStateKind.REVIEW
                 ),
-                com.mcqapp.domain.FsrsScheduler.BENCHMARK_RETENTION
+                AnkiScheduling.HISTORICAL_RETENTION
             ),
             0.02
         )
@@ -76,6 +77,44 @@ class AnkiSchedulingTest {
         assertTrue(
             "due in ${state.dueAt - crt * 1000L}ms",
             state.dueAt - crt * 1000L in (4 * day)..(6 * day)
+        )
+    }
+
+    /**
+     * The import bridge must not follow the retention slider: Anki infers an
+     * imported card's memory from the deck's `historical_retention` (0.9 by
+     * default), so the same stored interval has to land on the same
+     * `(S, Sf, D)` whatever target this app schedules at. The bridge used to
+     * take the target as a parameter, which made the imported state — though
+     * not the visible due date — depend on the slider; it no longer takes one,
+     * so this pins the value the bridge does read.
+     */
+    @Test
+    fun importedMemoryStateIsSolvedAtHistoricalRetentionOnly() {
+        val state = AnkiScheduling.fromAnki(
+            type = AnkiScheduling.TYPE_REVIEW,
+            queue = AnkiScheduling.QUEUE_REVIEW,
+            due = 12,
+            ivl = 12,
+            factor = 2500,
+            reps = 9,
+            lapses = 1,
+            crtSeconds = crt,
+            lastReviewedAtMillis = crt * 1000L
+        )!!
+
+        val scheduler = com.mcqapp.domain.FsrsScheduler()
+        val historical = scheduler.stateForInterval(12.0, AnkiScheduling.HISTORICAL_RETENTION)
+        // The state is the one Anki's own historical retention implies…
+        assertEquals(historical.stability, state.stability, 1e-12)
+        assertEquals(historical.stabilityFast, state.stabilityFast, 1e-12)
+        assertEquals(historical.difficulty, state.difficulty, 1e-12)
+        // …and another target *would* infer a different stability for the same
+        // interval, so the equality above is a statement about the bridge, not
+        // about the slider being unable to matter.
+        assertNotEquals(
+            scheduler.stateForInterval(12.0, 0.95).stability,
+            state.stability
         )
     }
 

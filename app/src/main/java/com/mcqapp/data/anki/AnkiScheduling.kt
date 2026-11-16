@@ -47,6 +47,22 @@ object AnkiScheduling {
     private const val MAX_EASE = 3.0
 
     /**
+     * The retention the SM-2 import bridge assumes, independent of the user's
+     * desired retention: Anki's `historical_retention` deck option, which
+     * defaults to 0.9.
+     *
+     * Upstream's bridge takes that retention as its own parameter —
+     * `memory_state_from_sm2_scalar(w, interval, sm2_retention)` in `fsrs-rs`
+     * `v7.0.0` `src/model_v7.rs` — because the interval Anki stored was graded
+     * under the deck's historical target, not under this app's target. Feeding
+     * it the user's [com.mcqapp.domain.FsrsScheduler.desiredRetention] would
+     * infer a different `(S, Sf)` than Anki itself infers, moving on every
+     * slider change. Ordinary scheduling still targets the user's retention;
+     * only this bridge is fixed.
+     */
+    const val HISTORICAL_RETENTION = 0.9
+
+    /**
      * One card's scheduling as Anki stores it, ready for an `cards` row.
      *
      * [due] is left in Anki's own unit, which only has meaning together with
@@ -70,9 +86,12 @@ object AnkiScheduling {
      * [lastReviewedAtMillis] comes from the review log, which a package may
      * omit; when it is absent the last review is inferred from the interval.
      *
-     * [parameters] and [desiredRetention] are the weights and target the
-     * scheduler will grade the card with; they default to the official set so
-     * a caller without settings still gets a valid bridge.
+     * [parameters] are the weights the scheduler will grade the card with, and
+     * default to the official set so a caller without settings still gets a
+     * valid bridge. There is deliberately no desired-retention argument: the
+     * memory state is solved at Anki's own [HISTORICAL_RETENTION]
+     * unconditionally (see that constant for why), so the user's target cannot
+     * reach it and cannot silently start to.
      */
     fun fromAnki(
         type: Int,
@@ -85,8 +104,7 @@ object AnkiScheduling {
         crtSeconds: Long,
         lastReviewedAtMillis: Long = 0L,
         nowMillis: Long = System.currentTimeMillis(),
-        parameters: List<Double>? = null,
-        desiredRetention: Double = com.mcqapp.domain.FsrsScheduler.DEFAULT_DESIRED_RETENTION
+        parameters: List<Double>? = null
     ): CardScheduleDto? {
         // Suspended and buried cards are not due, and this app has no such
         // state; a new card is already new here, so there is nothing to carry.
@@ -129,8 +147,9 @@ object AnkiScheduling {
         // FSRS-7 conversion: the card kind follows Anki's own type. The
         // memory state comes from the official `memory_state_from_sm2` bridge —
         // the interval is the one number Anki stores, so stability is the value
-        // whose mixed curve reaches the target retention at that interval,
-        // with difficulty fixed at 5 and the fast trace at 0.8× the slow one.
+        // whose mixed curve reaches Anki's historical retention at that
+        // interval, with difficulty fixed at 5 and the fast trace at 0.8× the
+        // slow one.
         // FSRS-7 has no scalar difficulty bridge, so Anki's ease factor does
         // not inform the memory state; it is still carried on the DTO for the
         // SM-2-facing surfaces and the export round trip.
@@ -141,10 +160,8 @@ object AnkiScheduling {
         }
         val ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE)
         val memory = if (intervalDays > 0) {
-            com.mcqapp.domain.FsrsScheduler(
-                parameters = parameters,
-                desiredRetention = desiredRetention
-            ).stateForInterval(intervalDays.toDouble(), desiredRetention)
+            com.mcqapp.domain.FsrsScheduler(parameters = parameters)
+                .stateForInterval(intervalDays.toDouble(), HISTORICAL_RETENTION)
         } else {
             null
         }

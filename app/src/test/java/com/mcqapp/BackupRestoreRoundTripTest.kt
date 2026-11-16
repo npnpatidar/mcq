@@ -213,7 +213,7 @@ class BackupRestoreRoundTripTest {
                 PanelQuestionEntity(panelId, "q-1", 1)
             )
         )
-        // v27: the cut pair that graded a span of reviews, plus a study
+        // v28: the cut pair that graded a span of reviews, plus a study
         // sitting. Both travel in study.json and must round-trip.
         // The rule flag travels with the cuts, and `true` is the value a new
         // install actually writes: a fixture that only ever seeds `false`
@@ -240,10 +240,11 @@ class BackupRestoreRoundTripTest {
     }
 
     /**
-     * A backup written before the ladder was removed carries `ladderVersions`
-     * and `ladderBlocks`. The wire key is kept and the blocks array is skipped,
-     * so such a file must still decode — and a v26 row has no rule flag, so it
-     * has to default to the timed rule rather than read as correctness-only.
+     * A legacy backup written before the ladder was removed carries
+     * `ladderVersions` and `ladderBlocks`. The wire key is kept and the blocks
+     * array is skipped, so such a file must still decode — and a row written
+     * under the old rule has no rule flag, so it has to default to the timed
+     * rule rather than read as correctness-only.
      */
     @Test
     fun aLegacyStudyFileDecodesItsLadderFields() {

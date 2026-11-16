@@ -101,8 +101,8 @@ class StatsRetentionStreamTest {
     @After
     fun tearDown() {
         db.close()
-        // This class writes real preference keys (the v26 upgrade fixture), so
-        // it must restore the process-wide store like GradingRulesStoreTest.
+        // This class writes real preference keys (the old-rule upgrade fixture),
+        // so it must restore the process-wide store like GradingRulesStoreTest.
         runOffMainWhilePumping(
             condition = "StatsRetentionStreamTest.tearDown DataStore clear"
         ) {
@@ -498,7 +498,10 @@ class StatsRetentionStreamTest {
         )
     }
 
-    /** A v27 settings file: the rule gate, the version id and the pair in force. */
+    /**
+     * A settings file with the absolute-rule gate, the version id and the pair
+     * in force.
+     */
     private fun v27Settings(version: Int) = McqBackupFormat.SettingsFile(
         mapOf(
             "grading_rules_version" to McqBackupFormat.PreferenceEntry(
@@ -525,16 +528,16 @@ class StatsRetentionStreamTest {
     )
 
     /**
-     * B1 regression: Statistics can be the first screen a v27 install reads.
+     * B1 regression: Statistics can be the first screen a v28 install reads.
      *
-     * This models the real v26 → v27 migration, not an empty history: the
-     * migration copied `ladder_versions` into `grading_versions`, so the old
-     * version row (id 1) is already there, `ladder_version` still names it,
-     * and the stored pair was tuned for the retired reading allowance. The
-     * seed must mint id 2 with a NEW `effectiveFrom`, not reuse id 1's old
-     * epoch. Reviews carry version 1 and sit after that old epoch but before
-     * the seed, so a regression that stamps the new row with the old time
-     * would count them (`pairs > 0`).
+     * This models the real v26 → v27 → v28 migration chain, not an empty
+     * history: the 27→28 step copied `ladder_versions` into `grading_versions`,
+     * so the old version row (id 1) is already there, `ladder_version` still
+     * names it, and the stored pair was tuned for the retired reading
+     * allowance. The seed must mint id 2 with a NEW `effectiveFrom`, not reuse
+     * id 1's old epoch. Reviews carry version 1 and sit after that old epoch
+     * but before the seed, so a regression that stamps the new row with the
+     * old time would count them (`pairs > 0`).
      */
     @Test
     fun openingStatisticsOnAMigratedV27InstallSeedsANewEpoch() = dbBlocking {
@@ -550,16 +553,17 @@ class StatsRetentionStreamTest {
                 correctnessOnly = false
             )
         )
-        // The v26 state a v27 install upgrades from: the old pair and its
+        // The old-rule state a v28 install upgrades from: the old pair and its
         // version id in DataStore, the retired rule's gate absent.
         context.dataStore.edit { prefs ->
             prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
             prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
             prefs[intPreferencesKey("ladder_version")] = 1
-            // No grading_rules_version: this store was last written by v26.
+            // No grading_rules_version: this store was last written under the
+            // retired rule.
         }
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
-        // One usable label→outcome pair, both rows graded under the v26 rule.
+        // One usable label→outcome pair, both rows graded under the retired rule.
         val labelAt = todayStart - 10 * day + 2 * hour
         val lastReviewAt = labelAt + hour
         db.reviewLogDao().insertAll(

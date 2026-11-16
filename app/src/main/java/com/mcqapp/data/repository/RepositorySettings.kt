@@ -325,11 +325,12 @@ internal class SettingsStore(
     private val ladderVersionKey = intPreferencesKey("ladder_version")
 
     /**
-     * The cut pair a pre-v27 build stored, kept when the absolute rule retires
-     * it. It cannot be reinterpreted under the new rule (it was tuned against
-     * the reading allowance), but a rule change that silently replaces a
-     * hand-tuned pair should still leave the old value recoverable, so two
-     * inert preferences hold it. Nothing reads them for grading.
+     * The cut pair a build from before the absolute rule stored, kept when the
+     * absolute rule retires it. It cannot be reinterpreted under the new rule
+     * (it was tuned against the reading allowance), but a rule change that
+     * silently replaces a hand-tuned pair should still leave the old value
+     * recoverable, so two inert preferences hold it. Nothing reads them for
+     * grading.
      */
     private val retiredEasyKey = longPreferencesKey("retired_easy_seconds")
     private val retiredSlowKey = longPreferencesKey("retired_slow_seconds")
@@ -352,7 +353,7 @@ internal class SettingsStore(
         emitAll(
             context.dataStore.data.map { prefs ->
                 val d = com.mcqapp.domain.SchedulerConfig()
-                // v27 fixed the cuts at absolute 6 s / 60 s and deleted the reading
+                // v28 fixed the cuts at absolute 6 s / 60 s and deleted the reading
                 // allowance, so a pair stored by an older build is measured against
                 // a rule that no longer exists: keep it is to grade every answer
                 // under a ladder the code no longer implements. Until the learner
@@ -661,7 +662,7 @@ internal class SettingsStore(
      *   calibration epoch does not move — moving a pacing knob cannot end the
      *   sample.
      *
-     *   The first reset of a *retired* pre-v27 pair is the exception. That pair
+     *   The first reset of a *retired* old-rule pair is the exception. That pair
      *   was never in force ([schedulerConfig] had already replaced it with the
      *   shipped 6/60), so it also returns `false` and writes no `manual` row,
      *   but its stale version id is dropped and the pair itself is copied into
@@ -719,7 +720,7 @@ internal class SettingsStore(
                 // Either the reset changed the pair (the old id names cuts
                 // that no longer grade, and the repository records the
                 // defaults under a fresh `manual` version) or the id names a
-                // retired pre-v27 pair. In both cases the next version read
+                // retired old-rule pair. In both cases the next version read
                 // must not resurrect it; an unchanged current pair keeps its
                 // id, and with it the epoch.
                 prefs.remove(ladderVersionKey)

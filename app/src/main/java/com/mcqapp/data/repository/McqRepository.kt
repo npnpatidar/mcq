@@ -571,8 +571,8 @@ class McqRepository internal constructor(
      * Full replace of every preference from a backup, with the restored
      * grading version resolved after it.
      *
-     * A full v28 restore has already replayed its `grading_versions` rows, so
-     * the restored `ladder_version` names a row that graded exactly the reviews
+     * A restore that replayed its `grading_versions` rows has already resolved
+     * the restored `ladder_version` to a row that graded exactly the reviews
      * being restored. `gradingRules.currentVersion()` keeps that id and its
      * `effectiveFrom` and writes nothing, so the calibration epoch continues
      * where the backup left off instead of restarting at "now" and excluding
@@ -592,9 +592,10 @@ class McqRepository internal constructor(
      * backup's own; the mismatch branch is defence in depth against a backup
      * whose settings and log disagree, not a settings-only path.
      *
-     * A pre-v27 backup carries no `grading_rules_version`, so its pair cannot
-     * be reinterpreted under the absolute rule: the old pair is retired, the
-     * shipped 6/60 takes over, and one new `prior` version opens a fresh epoch.
+     * A backup without `grading_rules_version` carries no rule gate, so its pair
+     * cannot be reinterpreted under the absolute rule: the old pair is retired,
+     * the shipped 6/60 takes over, and one new `prior` version opens a fresh
+     * epoch.
      *
      * The `finally` invalidates the first-start answer and the cached
      * calibration report even if the settings or version write throws: the

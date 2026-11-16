@@ -55,11 +55,11 @@ class RepositorySettingsTest {
 
     @Test
     fun `a cut pair stored before the absolute rule is ignored`() = runBlocking {
-        // A v26 build wrote 8/30; those cuts were measured against the reading
-        // allowance the rule no longer has, so they must not outlive it. The
-        // gate is cleared here on purpose: the DataStore is process-wide and
-        // another test's reset stamps the current rule, which would make this
-        // stale pair look current.
+        // A build from before the absolute rule wrote 8/30; those cuts were
+        // measured against the reading allowance the rule no longer has, so
+        // they must not outlive it. The gate is cleared here on purpose: the
+        // DataStore is process-wide and another test's reset stamps the current
+        // rule, which would make this stale pair look current.
         ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
             prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
             prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
@@ -571,8 +571,9 @@ class RepositorySettingsTest {
      * The first-start marker is install state, not a learner preference: it
      * must not travel in a backup, and a hand-made archive that carries it
      * must not overwrite this install's answer. After a restore the next read
-     * re-probes the restored database instead, which is what keeps a pre-v27
-     * backup from inheriting a formerly-fresh install's correctness-only rule.
+     * re-probes the restored database instead, which is what keeps a backup
+     * from before the absolute grading rule from inheriting a formerly-fresh
+     * install's correctness-only rule.
      */
     @Test
     fun `the install marker is neither exported nor restored`() = runBlocking {

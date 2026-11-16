@@ -50,10 +50,10 @@ internal class StatsStore(
      * the grading version guaranteed to exist first.
      *
      * [gradingRules] is not an alternative source of the cuts; it is the
-     * seed. A stats read can be the first thing a v27 install does (Statistics
+     * seed. A stats read can be the first thing a v28 install does (Statistics
      * opened before any study session or Settings save), and without this call
      * `gradingVersion` is 0 -> [loadCalibration]'s `epochStart` falls back to
-     * 0 -> pre-v27 rows graded under the retired reading allowance are pooled
+     * 0 -> rows graded under the retired reading-allowance rule are pooled
      * with rows graded under absolute 6/60. Once the `prior` row exists this
      * is a no-op read, so the read path writes only on the first pass.
      *
@@ -71,7 +71,7 @@ internal class StatsStore(
      * fallback: it ignores the rule gate and could name a pair retired on
      * upgrade. With no usable id the method returns null: callers must fail
      * loudly and let `StatsViewModel.loadError` render the tab, rather than
-     * building a version-0 report that pools the pre-v27 history this feature
+     * building a version-0 report that pools the old-rule history this feature
      * exists to exclude. That is the one failure shape worse than an error
      * screen.
      */

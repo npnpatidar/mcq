@@ -955,9 +955,13 @@ abstract class AppDatabase : RoomDatabase() {
          * What the step discards: `ladder_blocks` in full. The pair and card
          * counters, the deltas, `outcome` and `decidedAt` behind a v26
          * automatic or proposal cut change have no successor here. A version
-         * row keeps its `id`, the cut pair, `effectiveFrom` and `reason`;
-         * `previousId` is reconstructable from `id` ordering, `policyVersion`
-         * is not. Copied `reason` values keep v26's vocabulary (`proposal`,
+         * row keeps its `id`, the cut pair, `effectiveFrom` and `reason`; the
+         * `previousId` chain is discarded. `id` ordering reconstructs that chain
+         * only for ordinary edits, not after a rollback: the released v26
+         * `LadderStore.rollback()` gave the rollback row the restored version's
+         * predecessor, so that row's parent skips the row it undid;
+         * `policyVersion` is not reconstructable at all. Copied `reason` values
+         * keep v26's vocabulary (`proposal`,
          * `automatic`, `rollback`), so nothing may parse a stored `reason`
          * against this build's three values — see [GradingVersionEntity.reason].
          *

@@ -9,9 +9,10 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Why a grading version exists, as written by this build.
  *
- * These are the only values this build writes. A migrated v26 row can carry
- * the legacy values `proposal`, `automatic` or `rollback`; a stored reason is
- * history, not a value that may be parsed against this enum.
+ * The live grading-rule writer emits only `prior`, `manual` or `rule`. Rows
+ * migrated or restored from an older build may carry the legacy values
+ * `proposal`, `automatic` or `rollback`. A stored reason is opaque history,
+ * not a value that may be parsed against this enum.
  */
 enum class GradingReason(val stored: String) {
     /** Seeded from the cuts already on disk; no change was made. */
@@ -34,10 +35,10 @@ enum class GradingReason(val stored: String) {
  * ran. A row is written when the learner edits a cut or switches the rule,
  * when Reset puts the defaults back, when a restore leaves a version whose row
  * cannot describe the pair it restored, when a stored version number has no
- * row or a row whose epoch is unusable, and once on the first read after a
- * pre-v27 upgrade — that branch retires the old pair and seeds the shipped
- * one, and rewrites the upgrade gate in the same edit, so it runs at most once
- * per install.
+ * row or a row whose epoch is unusable, and once on the first read after an
+ * upgrade from before the absolute rule — that upgrade retires the old pair
+ * and seeds the shipped one, and rewrites the upgrade gate in the same edit,
+ * so it runs at most once per install.
  *
  * The write order is deliberate: the cuts and the version number land in one
  * DataStore edit, then the history row is inserted. A crash between the two

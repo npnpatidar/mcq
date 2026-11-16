@@ -186,7 +186,7 @@ object McqBackupFormat {
         val slowSeconds: Long,
         val effectiveFrom: Long,
         val reason: String,
-        /** v27: reviews under this version were graded by correctness alone. */
+        /** (v28): reviews under this version were graded by correctness alone. */
         val correctnessOnly: Boolean = false
     )
 
@@ -449,7 +449,7 @@ object McqBackupFormat {
                 "ladderVersions" -> stream.readArray {
                     sink.gradingVersion(row(GradingVersionRow.serializer(), it))
                 }
-                // A pre-v27 backup's evidence blocks have no table any more;
+                // A legacy backup's evidence blocks have no table any more;
                 // skipping them keeps the rest of the archive importable.
                 "ladderBlocks" -> stream.readArray { }
                 "studySessions" -> stream.readArray {

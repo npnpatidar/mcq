@@ -627,7 +627,7 @@ class CalibrationTest {
             repeat(30) { add(timedRow("wrong-$it", 4, t0 + day, correct = false)) }
             repeat(20) { add(timedRow("guess-$it", 4, t0 + day, guess = true)) }
             repeat(10) { add(timedRow("skip-$it", 4, t0 + day, skipped = true)) }
-            // A row with no measurement at all (pre-v27): the one value that
+            // A row with no measurement at all: the one value that
             // says "not timed" rather than "answered fast". Sub-second rows are
             // stored as 0 and are counted instead — see the test below.
             repeat(5) { add(timedRow("null-$it", null, t0 + day)) }

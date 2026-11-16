@@ -354,7 +354,7 @@ object Calibration {
      *
      * Timing convention: `elapsedSeconds == null` means "not measured" — the
      * caller had no trustworthy measurement for that row — and is excluded
-     * everywhere. It is not "pre-v27": the column has existed for many
+     * everywhere. It is not an old-row marker; the column has existed for many
      * versions, so an old row can carry a value like any other. A stored 0 is
      * a measurement — every answer inside the first second is stored as 0 —
      * so it counts toward all three gates and enters the percentile as 1 s.

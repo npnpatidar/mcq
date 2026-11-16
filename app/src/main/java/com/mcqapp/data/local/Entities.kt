@@ -341,9 +341,11 @@ data class ReviewLogEntity(
     /**
      * The reading allowance that was subtracted, in seconds (v26).
      *
-     * Legacy only: the absolute 6/60 rule adds nothing for reading, so every
-     * row written from v28 on leaves this null. Rows written by a v26 build
-     * keep their recorded value, which is why the column is not rebuilt away.
+     * Legacy only: live review writes under the absolute 6/60 rule leave this
+     * null. Migrated and restored historical rows keep whatever value they
+     * recorded — the 27-to-28 migration leaves `review_log` untouched and a
+     * restore copies the value verbatim — which is why the column is not
+     * rebuilt away.
      */
     val readingAllowanceSeconds: Int? = null,
     /** The attempt was submitted with an empty selection, not answered (v26). */
@@ -368,10 +370,11 @@ data class GradingVersionEntity(
     val slowSeconds: Long,
     val effectiveFrom: Long,
     /**
-     * Why this version exists. This build writes only `prior`, `manual` or
-     * `rule`; a migrated v26 row can carry the legacy values `proposal`,
-     * `automatic` or `rollback`. Stored reasons are history, not a value that
-     * callers may parse against this build's write vocabulary.
+     * Why this version exists. The live grading-rule writer emits only
+     * `prior`, `manual` or `rule`. Rows migrated or restored from an older
+     * build may carry `proposal`, `automatic` or `rollback`. A stored reason
+     * is opaque history that callers may not parse against this build's write
+     * vocabulary.
      */
     val reason: String,
     /**

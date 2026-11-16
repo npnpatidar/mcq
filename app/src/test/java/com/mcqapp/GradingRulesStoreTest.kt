@@ -255,7 +255,7 @@ class GradingRulesStoreTest {
         }
 
     /**
-     * The two inert preferences that keep a retired pre-v27 pair. They are
+     * The two inert preferences that keep a retired old-rule pair. They are
      * outside [SettingsResetRule]'s key set, so a test that asserts them has to
      * own their starting state.
      */
@@ -465,11 +465,11 @@ class GradingRulesStoreTest {
     }
 
     /**
-     * F1: a v27 backup already carries the row its `ladder_version` names, and
-     * that row graded exactly the reviews the backup restores. Keeping the id
-     * and its `effectiveFrom` is what lets the calibration epoch continue
-     * across a restore instead of restarting at "now" and excluding the
-     * restored history. Nothing is inserted.
+     * F1: a backup carrying the absolute-rule gate already carries the row its
+     * `ladder_version` names, and that row graded exactly the reviews the
+     * backup restores. Keeping the id and its `effectiveFrom` is what lets the
+     * calibration epoch continue across a restore instead of restarting at
+     * "now" and excluding the restored history. Nothing is inserted.
      */
     @Test
     fun aRestoreKeepsTheRestoredVersionAndItsEpoch() = dbBlocking {
@@ -608,10 +608,10 @@ class GradingRulesStoreTest {
     }
 
     /**
-     * F1: a pre-v27 backup carries no `grading_rules_version`, so its pair
-     * cannot be reinterpreted under the absolute rule. The upgrade path runs:
-     * the old pair is retired, the shipped 6/60 takes over, and one new `prior`
-     * row opens a fresh epoch.
+     * F1: a backup without `grading_rules_version` carries no rule gate, so its
+     * pair cannot be reinterpreted under the absolute rule. The upgrade path
+     * runs: the old pair is retired, the shipped 6/60 takes over, and one new
+     * `prior` row opens a fresh epoch.
      */
     @Test
     fun aPreV27RestoreStillMintsAPriorVersion() = dbBlocking {
@@ -654,7 +654,10 @@ class GradingRulesStoreTest {
         )
     }
 
-    /** A v27 settings file: the rule gate, the version id and the cut pair. */
+    /**
+     * A settings file with the absolute-rule gate, the version id and the cut
+     * pair.
+     */
     private fun v27Settings(version: Int, fast: Long, slow: Long) =
         McqBackupFormat.SettingsFile(
             mapOf(
@@ -682,9 +685,10 @@ class GradingRulesStoreTest {
         )
 
     /**
-     * The upgrade case: v26 left a version id and a pair tuned for the reading
-     * allowance. The id's `effectiveFrom` predates the absolute rule, so reusing
-     * it would pool two grading rules in one calibration epoch.
+     * The upgrade case: a build from before the absolute rule left a version id
+     * and a pair tuned for the reading allowance. The id's `effectiveFrom`
+     * predates the absolute rule, so reusing it would pool two grading rules in
+     * one calibration epoch.
      */
     @Test
     fun aPairSavedUnderAnOlderRuleStartsANewEpoch() = dbBlocking {
@@ -701,7 +705,8 @@ class GradingRulesStoreTest {
             prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
             prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
             prefs[intPreferencesKey("ladder_version")] = 1
-            // No grading_rules_version: this store was last written by v26.
+            // No grading_rules_version: this store was last written under the
+            // retired rule.
         }
 
         // Before the first versioned read the stale pair is already ignored.
@@ -712,17 +717,17 @@ class GradingRulesStoreTest {
         assertEquals(2, fresh)
         assertEquals(6L, db.gradingRulesDao().version(2L)!!.easySeconds)
         assertEquals(60L, db.gradingRulesDao().version(2L)!!.slowSeconds)
-        // The old row keeps its pair, so every pre-v27 review still resolves it.
+        // The old row keeps its pair, so every old-rule review still resolves it.
         assertEquals(8L, db.gradingRulesDao().version(1L)!!.easySeconds)
         assertEquals(fresh, store().schedulerConfigNow().gradingVersion)
         assertEquals(6L, store().schedulerConfigNow().fastSeconds)
     }
 
     /**
-     * C: a pre-v27 backup has no `correctness_only`, and it is restored into an
-     * install that started fresh. The startup answer must not survive the
-     * restore — the backup brought history, so the restored install is no
-     * longer new, and the seed must not write correctness-only over it.
+     * C: a backup without `correctness_only` is restored into an install that
+     * started fresh. The startup answer must not survive the restore — the
+     * backup brought history, so the restored install is no longer new, and
+     * the seed must not write correctness-only over it.
      */
     @Test
     fun restoringAPreV27BackupOverRestoredHistoryDoesNotSeedCorrectnessOnly() = dbBlocking {
@@ -765,9 +770,9 @@ class GradingRulesStoreTest {
     }
 
     /**
-     * C: a stored rule wins, including a v27 backup's explicit `false`, even
-     * on an install whose start was fresh and whose database has no content
-     * to contradict it.
+     * C: a stored rule wins, including an explicit `false` from a backup that
+     * carries the absolute-rule gate, even on an install whose start was fresh
+     * and whose database has no content to contradict it.
      */
     @Test
     fun aRestoredV27RuleWinsOverTheFreshInstallSeed() = dbBlocking {
@@ -798,8 +803,8 @@ class GradingRulesStoreTest {
 
     /**
      * B1: the config a caller grades under must name the row the seed wrote,
-     * not an id re-read before the seed. Here the retired v26 pair and its id
-     * sit in preferences; the seed writes 6/60 under a new id, and the config
+     * not an id re-read before the seed. Here the retired old-rule pair and its
+     * id sit in preferences; the seed writes 6/60 under a new id, and the config
      * must come back with that id and pair together.
      */
     @Test
@@ -817,7 +822,7 @@ class GradingRulesStoreTest {
             prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
             prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
             prefs[intPreferencesKey("ladder_version")] = 1
-            // No grading_rules_version: this is the v26 state.
+            // No grading_rules_version: this is the old-rule state.
         }
 
         val config = upgradeRepository().schedulerConfigNow()
@@ -834,7 +839,7 @@ class GradingRulesStoreTest {
     }
 
     /**
-     * Item 6 / F2: the first Reset of a retired pre-v27 pair is not a change.
+     * Item 6 / F2: the first Reset of a retired old-rule pair is not a change.
      * The effective pair was already the shipped 6/60, so no `manual` row is
      * minted — but the stale id still has to go, and unlike an unchanged
      * *current* pair the epoch does move: the next read mints a fresh `prior`

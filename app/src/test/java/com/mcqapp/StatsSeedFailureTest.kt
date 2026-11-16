@@ -28,8 +28,8 @@ import org.robolectric.junit.rules.TimeoutRule
 /**
  * B1's failure edge: when the grading-version seed cannot run, Statistics must
  * never fall back to version 0 — that is the contaminated report (`epochStart
- * = 0`, pre-v27 rows pooled with the absolute-rule rows) the feature exists to
- * prevent.
+ * = 0`, rows graded under the retired reading-allowance rule pooled with the
+ * absolute-rule rows) the feature exists to prevent.
  *
  * A positive stored id is still usable (the row repair happens on the next
  * write path), so the tab builds against it. With no id at all the store

@@ -136,8 +136,12 @@ class DayBoundaryTest {
     fun `the scheduler aligns a graded card to the boundary`() {
         val sched = scheduler(boundaryHour = 4)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, lateEvening)
-        // FSRS's first Good schedules 2 days out, snapped to the study day.
-        assertEquals(2, next.intervalDays)
+        // The boundary *rule* is under test, not the value of S₀(Good): whatever
+        // interval the model picks is counted from the start of the study day.
+        assertEquals(
+            DayBoundary.startOfDay(lateEvening, 4, 0) + next.intervalDays * day,
+            next.dueAt
+        )
         assertEquals(4 * hour, Math.floorMod(next.dueAt, day))
     }
 
@@ -157,9 +161,12 @@ class DayBoundaryTest {
     fun `a midnight boundary is respected by the scheduler`() {
         val sched = scheduler(boundaryHour = 0)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, lateEvening)
-        // Two whole days from the start of the study day: local midnight, so
-        // the due instant sits exactly on a local midnight.
-        assertEquals(midnightUtc + 2 * day, next.dueAt)
+        // Whatever the interval, it counts whole days from local midnight, so
+        // the due instant sits exactly on one.
+        assertEquals(
+            DayBoundary.startOfDay(lateEvening, 0, 0) + next.intervalDays * day,
+            next.dueAt
+        )
         assertEquals(0L, Math.floorMod(next.dueAt, day))
     }
 
@@ -181,8 +188,13 @@ class DayBoundaryTest {
     fun `the boundary hour is configurable end to end`() {
         val sched = scheduler(boundaryHour = 5)
         val next = sched.next(CardState("q1"), ReviewGrade.GOOD, midnightUtc)
-        // Two days from the study day that began at 05:00 the morning before.
-        assertEquals(midnightUtc + 29 * hour, next.dueAt)
+        // Whatever the interval, it counts from the study day that began at
+        // 05:00 the morning before a midnight review.
+        assertEquals(
+            DayBoundary.startOfDay(midnightUtc, 5, 0) + next.intervalDays * day,
+            next.dueAt
+        )
+        assertEquals(5 * hour, Math.floorMod(next.dueAt, day))
     }
 
     @Test

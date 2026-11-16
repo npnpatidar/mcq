@@ -85,12 +85,98 @@ class BackupSchedulingTest {
         studyOnce()
         val json = exportAllJson()
         val file = LegacyParser.parse(json)
+        val key = com.mcqapp.data.io.cardScheduleKey("p1", "q1")
         assertTrue(
             "the backup should carry q1's schedule",
-            file.scheduling.containsKey("q1")
+            file.scheduling.containsKey(key)
         )
-        val schedule = file.scheduling.getValue("q1")
+        val schedule = file.scheduling.getValue(key)
         assertTrue("reps should have been exported", schedule.reps > 0)
+    }
+
+    /**
+     * The written format must say which format it is, and a question that
+     * belongs to one paper must stay reachable by the bare question-id key
+     * every build before format version 2 looks up. Without that alias a new
+     * export restored no review progress at all on an older install — and
+     * silently, because the library screen reports a restored count only when
+     * it is greater than zero.
+     */
+    @Test
+    fun theExportDeclaresVersionTwoAndAliasesAUniqueQuestionsSchedule() = runBlocking {
+        studyOnce()
+        val json = exportAllJson()
+        assertTrue(
+            "the streamed export must declare the format it writes",
+            json.contains("\"version\":2")
+        )
+        val streamed = LegacyParser.parse(json)
+        assertEquals(2, streamed.version)
+        val composite = com.mcqapp.data.io.cardScheduleKey("p1", "q1")
+        assertTrue("the composite key the reader resolves first", composite in streamed.scheduling)
+        assertTrue("the bare alias an older reader resolves", "q1" in streamed.scheduling)
+        assertEquals(
+            "both keys must name the same schedule",
+            streamed.scheduling.getValue(composite),
+            streamed.scheduling.getValue("q1")
+        )
+
+        // The DTO builder (the backup zip's `content.json`) writes that shape
+        // too, through its own code path.
+        val dto = Exporter(db).exportAllDto()
+        assertEquals(2, dto.version)
+        assertEquals(dto.scheduling.getValue(composite), dto.scheduling.getValue("q1"))
+    }
+
+    /**
+     * A version-1 file — bare keys only, the shape every export before format
+     * version 2 wrote — must keep restoring exactly as it did. Both readers
+     * resolve through one precedence helper now, so the same fixture has to
+     * land on the same rows through the whole-file importer and the streaming
+     * one.
+     */
+    @Test
+    fun aVersionOneFileRestoresItsBareKeyedSchedule() = runBlocking {
+        val v1 = """
+            {"version": 1,
+             "papers": [{"id": "p1", "title": "Paper", "description": "",
+               "duration": 30, "negative": 0.0, "categories": [
+                 {"id": "c1", "title": "Cat", "questions": [
+                   {"id": "q1", "text": "2 + 2?", "options": ["3", "4"],
+                    "correctOptionIds": ["b"]}]}]}],
+             "scheduling": {"q1": {"ease": 2.4, "intervalDays": 11,
+               "dueAt": 1700009000000, "reps": 9, "lapses": 2, "leech": false,
+               "lastReviewedAt": 1700000000000, "difficulty": 5.5,
+               "stability": 13.5, "stabilityFast": 10.8,
+               "cardState": "REVIEW", "reviewCount": 9}}}
+        """.trimIndent()
+        assertEquals(1, LegacyParser.parse(v1).version)
+
+        // setUp() already saved q1, and a duplicate rightly skips the file's
+        // schedule, so each reader gets a fresh database.
+        rebuildFreshDb()
+        Importer(db).import(LegacyParser.parse(v1))
+        val whole = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(11, whole.intervalDays)
+        assertEquals(9, whole.reps)
+        assertEquals(2, whole.lapses)
+        assertEquals(2.4, whole.ease, 0.0001)
+        assertEquals(5.5, whole.difficulty, 0.0001)
+        assertEquals(13.5, whole.stability, 0.0001)
+        assertEquals(10.8, whole.stabilityFast, 0.0001)
+
+        rebuildFreshDb()
+        val report = StreamingImporter(db, captureSchedules = true)
+            .import({ java.io.ByteArrayInputStream(v1.toByteArray()) })
+        assertEquals(1, report.restoredSchedules)
+        val streamed = db.cardStateDao().get("p1", "q1")!!
+        assertEquals(whole.intervalDays, streamed.intervalDays)
+        assertEquals(whole.reps, streamed.reps)
+        assertEquals(whole.lapses, streamed.lapses)
+        assertEquals(whole.ease, streamed.ease, 1e-9)
+        assertEquals(whole.difficulty, streamed.difficulty, 1e-9)
+        assertEquals(whole.stability, streamed.stability, 1e-9)
+        assertEquals(whole.stabilityFast, streamed.stabilityFast, 1e-9)
     }
 
     @Test
@@ -156,6 +242,62 @@ class BackupSchedulingTest {
         assertEquals(before.reviewCount, after.reviewCount)
     }
 
+    /**
+     * The JSON schedule map is keyed by `(paperId, questionId)`. Two card rows
+     * can share a question id across papers (a question moved between papers
+     * leaves the old paper's schedule behind), and a bare question-id key used
+     * to collapse them into one entry — silently dropping the other schedule.
+     * Both entries must be written, each under its own paper.
+     *
+     * Neither may get the version-2 compatibility alias: a reader that looks up
+     * the bare id only cannot tell the two schedules apart, so it would apply
+     * one paper's schedule to both. Composite keys only, and the collision
+     * resolves exactly on a version-2 reader.
+     *
+     * (The rows are seeded directly: `questions.id` is a global primary key, so
+     * two live question rows cannot share an id and the schedule map is the
+     * only place the collision exists.)
+     */
+    @Test
+    fun theSameQuestionInTwoPapersKeepsBothSchedulesInTheExport() = runBlocking {
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        studyOnce()
+        db.cardStateDao().upsert(
+            CardStateEntity(
+                paperId = "p2",
+                questionId = "q1",
+                ease = 2.5,
+                intervalDays = 9,
+                dueAt = 1_700_100_000_000L,
+                reps = 2,
+                lapses = 0,
+                leech = false,
+                lastReviewedAt = 1_700_100_000_000L,
+                contentHash = "hash2",
+                difficulty = 5.5,
+                stability = 12.5,
+                stabilityFast = 4.5,
+                cardState = com.mcqapp.domain.CardStateKind.REVIEW,
+                reviewCount = 2
+            )
+        )
+        val file = LegacyParser.parse(exportAllJson())
+        val first = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p1", "q1")]
+        val second = file.scheduling[com.mcqapp.data.io.cardScheduleKey("p2", "q1")]
+        assertTrue("the first paper's schedule must be exported", first != null)
+        assertTrue("the second paper's schedule must be exported", second != null)
+        assertTrue(first!!.lastReviewedAt != second!!.lastReviewedAt)
+        assertEquals(12.5, second.stability, 0.0)
+        assertEquals(
+            "a shared question id must get no bare alias",
+            setOf(
+                com.mcqapp.data.io.cardScheduleKey("p1", "q1"),
+                com.mcqapp.data.io.cardScheduleKey("p2", "q1")
+            ),
+            file.scheduling.keys
+        )
+    }
+
     @Test
     fun anUntouchedQuestionIsNotGivenASchedule() = runBlocking {
         repository.saveQuestion(
@@ -169,7 +311,15 @@ class BackupSchedulingTest {
         )
         studyOnce()
         val file = LegacyParser.parse(exportAllJson())
-        assertEquals(setOf("q1"), file.scheduling.keys)
+        assertEquals(
+            // The composite key plus the version-2 alias: q2 is untouched, so
+            // it gets neither.
+            setOf(
+                com.mcqapp.data.io.cardScheduleKey("p1", "q1"),
+                "q1"
+            ),
+            file.scheduling.keys
+        )
     }
 
     @Test

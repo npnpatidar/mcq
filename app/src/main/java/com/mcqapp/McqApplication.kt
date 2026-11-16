@@ -7,11 +7,25 @@ import com.mcqapp.data.anki.AnkiTempFiles
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class McqApplication : Application() {
 
+    /**
+     * Process-scoped work that must finish eventually but must never block
+     * startup or decide a caller's outcome. The FSRS-7 migration and card
+     * rebuild live here (AGENTS.md: no WorkManager dependency), as does the
+     * rebuild a backup restore starts — that one must never turn a committed
+     * restore into "Restore failed". All of it is idempotent and resumable, so
+     * a killed process simply resumes next launch.
+     */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     val repository: McqRepository by lazy {
-        McqRepository(AppDatabase.get(this), this)
+        McqRepository(AppDatabase.get(this), this, applicationScope)
     }
 
     override fun onCreate() {
@@ -19,6 +33,19 @@ class McqApplication : Application() {
         Logger.init(this)
         AnkiTempFiles.cleanup(this)
         Logger.i("APP", "Application onCreate (pid=${Process.myPid()})")
+
+        applicationScope.launch {
+            try {
+                repository.ensureFsrs7()
+            } catch (e: Exception) {
+                Logger.e("FSRS7", "model migration failed", e)
+            }
+            try {
+                repository.rebuildFsrs7Memory()
+            } catch (e: Exception) {
+                Logger.e("FSRS7", "card-state rebuild failed; will resume next launch", e)
+            }
+        }
 
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

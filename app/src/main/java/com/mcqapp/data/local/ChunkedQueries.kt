@@ -54,8 +54,11 @@ suspend fun QuestionDao.getSignalRowsByCategoriesChunked(
 suspend fun QuestionStatsDao.getCountersByIdsChunked(ids: List<String>): List<QuestionCounterRow> =
     ids.chunks().flatMap { getCountersByIds(it) }
 
-suspend fun CardStateDao.getSignalsByIdsChunked(ids: List<String>): List<CardSignalRow> =
-    ids.chunks().flatMap { getSignalsByIds(it) }
+suspend fun CardStateDao.getSignalsByPaperChunked(
+    paperId: String,
+    ids: List<String>
+): List<CardSignalRow> =
+    ids.chunks().flatMap { getSignalsByPaper(paperId, it) }
 
 suspend fun ReviewLogDao.getGuessCountsByIdsChunked(ids: List<String>): List<GuessCountRow> =
     ids.chunks().flatMap { getGuessCountsByIds(it) }
@@ -265,6 +268,18 @@ internal suspend fun CardStateDao.dueForCategoriesChunked(
     now: Long
 ): List<CardStateEntity> =
     categoryIds.chunks().flatMap { dueForCategories(paperId, it, now) }
+
+/**
+ * Every due review row of the scope, concatenated. The caller ranks the whole
+ * set itself (`Study.bestReview`), so no chunk boundary can discard the real
+ * winner.
+ */
+internal suspend fun CardStateDao.dueReviewsForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    now: Long
+): List<CardStateEntity> =
+    categoryIds.chunks().flatMap { dueReviewsForCategories(paperId, it, now) }
 
 /**
  * The first due learning card in serving order: the first row of the first

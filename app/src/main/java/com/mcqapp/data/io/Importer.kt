@@ -582,8 +582,21 @@ class Importer(
                         // re-importing a deck does not overwrite a schedule
                         // the user has since moved on with. A question whose
                         // content changed gets no schedule either: the file's
-                        // progress describes the old content.
-                        if (!contentChanged) restoreScheduling[questionDto.id]?.let { schedule ->
+                        // progress describes the old content. Which key names
+                        // the card depends on the format the file declares;
+                        // [lookupCardSchedule] is the one rule, shared with the
+                        // streaming importer.
+                        val schedule = if (contentChanged) {
+                            null
+                        } else {
+                            lookupCardSchedule(
+                                restoreScheduling,
+                                paperDto.id,
+                                questionDto.id,
+                                file.version
+                            )
+                        }
+                        schedule?.let { schedule ->
                             // The hash of the bytes as stored, because that is
                             // what the study session recomputes it from: a
                             // mismatch reads as edited content and would reset
@@ -601,6 +614,7 @@ class Importer(
                                     lastReviewedAt = schedule.lastReviewedAt,
                                     difficulty = schedule.difficulty,
                                     stability = schedule.stability,
+                                    stabilityFast = schedule.stabilityFast,
                                     cardState = runCatching {
                                         com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
                                     }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),

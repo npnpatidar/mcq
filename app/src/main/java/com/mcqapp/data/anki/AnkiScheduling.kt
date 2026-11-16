@@ -47,6 +47,22 @@ object AnkiScheduling {
     private const val MAX_EASE = 3.0
 
     /**
+     * The retention the SM-2 import bridge assumes, independent of the user's
+     * desired retention: Anki's `historical_retention` deck option, which
+     * defaults to 0.9.
+     *
+     * Upstream's bridge takes that retention as its own parameter —
+     * `memory_state_from_sm2_scalar(w, interval, sm2_retention)` in `fsrs-rs`
+     * `v7.0.0` `src/model_v7.rs` — because the interval Anki stored was graded
+     * under the deck's historical target, not under this app's target. Feeding
+     * it the user's [com.mcqapp.domain.FsrsScheduler.desiredRetention] would
+     * infer a different `(S, Sf)` than Anki itself infers, moving on every
+     * slider change. Ordinary scheduling still targets the user's retention;
+     * only this bridge is fixed.
+     */
+    const val HISTORICAL_RETENTION = 0.9
+
+    /**
      * One card's scheduling as Anki stores it, ready for an `cards` row.
      *
      * [due] is left in Anki's own unit, which only has meaning together with
@@ -69,6 +85,13 @@ object AnkiScheduling {
      *
      * [lastReviewedAtMillis] comes from the review log, which a package may
      * omit; when it is absent the last review is inferred from the interval.
+     *
+     * [parameters] are the weights the scheduler will grade the card with, and
+     * default to the official set so a caller without settings still gets a
+     * valid bridge. There is deliberately no desired-retention argument: the
+     * memory state is solved at Anki's own [HISTORICAL_RETENTION]
+     * unconditionally (see that constant for why), so the user's target cannot
+     * reach it and cannot silently start to.
      */
     fun fromAnki(
         type: Int,
@@ -80,7 +103,8 @@ object AnkiScheduling {
         lapses: Int,
         crtSeconds: Long,
         lastReviewedAtMillis: Long = 0L,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        parameters: List<Double>? = null
     ): CardScheduleDto? {
         // Suspended and buried cards are not due, and this app has no such
         // state; a new card is already new here, so there is nothing to carry.
@@ -120,16 +144,27 @@ object AnkiScheduling {
                 max(0L, dueAt - intervalDays * DAY_MS)
             ).coerceAtMost(nowMillis)
         }
-        // FSRS conversion (spec §6): the card kind follows Anki's own type, the
-        // interval doubles as the stability (at the benchmark retention a
-        // card's interval equals its stability), and the ease mirrors back onto
-        // the 1..10 difficulty scale — an estimate, not a claim.
+        // FSRS-7 conversion: the card kind follows Anki's own type. The
+        // memory state comes from the official `memory_state_from_sm2` bridge —
+        // the interval is the one number Anki stores, so stability is the value
+        // whose mixed curve reaches Anki's historical retention at that
+        // interval, with difficulty fixed at 5 and the fast trace at 0.8× the
+        // slow one.
+        // FSRS-7 has no scalar difficulty bridge, so Anki's ease factor does
+        // not inform the memory state; it is still carried on the DTO for the
+        // SM-2-facing surfaces and the export round trip.
         val kind = when {
             type == TYPE_REVIEW || queue == QUEUE_REVIEW -> com.mcqapp.domain.CardStateKind.REVIEW
             type == TYPE_RELEARN -> com.mcqapp.domain.CardStateKind.RELEARNING
             else -> com.mcqapp.domain.CardStateKind.LEARNING
         }
         val ease = (factor / 1000.0).coerceIn(MIN_EASE, MAX_EASE)
+        val memory = if (intervalDays > 0) {
+            com.mcqapp.domain.FsrsScheduler(parameters = parameters)
+                .stateForInterval(intervalDays.toDouble(), HISTORICAL_RETENTION)
+        } else {
+            null
+        }
         return CardScheduleDto(
             ease = ease,
             intervalDays = intervalDays,
@@ -138,17 +173,9 @@ object AnkiScheduling {
             lapses = max(0, lapses),
             leech = lapses >= LEECH_THRESHOLD,
             lastReviewedAt = inferred,
-            difficulty = if (intervalDays > 0) {
-                (com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY +
-                    (MAX_EASE - ease) / (MAX_EASE - MIN_EASE) * 9.0)
-                    .coerceIn(
-                        com.mcqapp.domain.FsrsScheduler.MIN_DIFFICULTY,
-                        com.mcqapp.domain.FsrsScheduler.MAX_DIFFICULTY
-                    )
-            } else {
-                0.0
-            },
-            stability = intervalDays.toDouble(),
+            difficulty = memory?.difficulty ?: 0.0,
+            stability = memory?.stability ?: 0.0,
+            stabilityFast = memory?.stabilityFast ?: 0.0,
             cardState = kind.name,
             reviewCount = max(0, reps)
         )

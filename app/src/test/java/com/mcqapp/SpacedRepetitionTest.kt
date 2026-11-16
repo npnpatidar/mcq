@@ -198,16 +198,19 @@ class SpacedRepetitionTest {
 
     @Test
     fun `equal recall risk breaks the tie by oldest due date`() {
-        // Both cards sit at exactly the same predicted recall (overdue divided
-        // by stability is equal), so the one that has waited longer goes first.
+        // Identical memory and identical elapsed time, so predicted recall is
+        // exactly equal. (FSRS-7's mixture weights depend on the absolute
+        // stability, so the old "equal overdue ratio" construction no longer
+        // produces equal risk.) What breaks the tie is the card that has been
+        // waiting longer.
         val states = mapOf(
             "a" to CardState(
-                questionId = "a", intervalDays = 2, dueAt = now - 4 * day, reps = 2,
-                stability = 1.0, lastReviewedAt = now - 4 * day
+                questionId = "a", intervalDays = 4, dueAt = now - 4 * day, reps = 2,
+                stability = 1.0, difficulty = 5.0, lastReviewedAt = now - 4 * day
             ),
             "b" to CardState(
                 questionId = "b", intervalDays = 4, dueAt = now - 8 * day, reps = 2,
-                stability = 2.0, lastReviewedAt = now - 8 * day
+                stability = 1.0, difficulty = 5.0, lastReviewedAt = now - 4 * day
             )
         )
         val pools = Study.pools(sched, listOf("a", "b"), states, now)
@@ -796,11 +799,12 @@ class SpacedRepetitionTest {
         )
     }
 
-    /** Well-formed lists are clipped into the official FSRS-6 bounds. */
+    /** Well-formed lists are clipped into the official FSRS-7 bounds. */
     @Test
     fun `sanitized clips weights into the official bounds`() {
-        val clipped = SchedulerConfig(fsrsParameters = List(21) { 1_000_000.0 })
-            .sanitized().fsrsParameters
+        val clipped = SchedulerConfig(
+            fsrsParameters = List(FsrsScheduler.PARAMETER_COUNT) { 1_000_000.0 }
+        ).sanitized().fsrsParameters
         clipped.forEachIndexed { index, value ->
             assertTrue(value <= FsrsOptimizer.UPPER_BOUNDS[index] + 1e-9)
             assertTrue(value >= FsrsOptimizer.LOWER_BOUNDS[index] - 1e-9)

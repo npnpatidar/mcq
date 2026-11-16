@@ -204,7 +204,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_22_23,
         AppDatabase.MIGRATION_23_24,
         AppDatabase.MIGRATION_24_25,
-        AppDatabase.MIGRATION_25_26
+        AppDatabase.MIGRATION_25_26,
+        AppDatabase.MIGRATION_26_27
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1339,6 +1340,78 @@ class MigrationTest {
                 // library cannot leave orphan hours in the denominator.
                 db.paperDao().deleteById("p1")
                 assertTrue(db.studySessionDao().getAll().isEmpty())
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * A genuine v26 file: the v25 seed plus one review and one FSRS-6 card
+     * state. The 26→27 migration must keep both rows, add the fast trace as a
+     * defaulted zero (the scheduler reads that as "unknown") and leave the
+     * old log row's fast trace null.
+     */
+    private fun createV26WithSeed() {
+        createV25WithSeed()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(25) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_25_26.migrate(raw)
+            raw.execSQL(
+                "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt,reps," +
+                    "lapses,leech,lastReviewedAt,contentHash,difficulty,stability," +
+                    "cardState,reviewCount) VALUES " +
+                    "('p1','q1',2.5,3,1234,2,0,0,1000,'h1',5.5,12.0,'REVIEW',2)"
+            )
+            raw.version = 26
+        }
+    }
+
+    @Test
+    fun `migration 26 to 27 adds the fast stability trace`() {
+        runBlocking {
+            createV26WithSeed()
+            val db = openMigrated()
+            try {
+                // Opening ran 26->27; Room's identity check proves the schema.
+                val old = db.cardStateDao().get("p1", "q1")!!
+                // The schedule the learner sees is untouched...
+                assertEquals(3, old.intervalDays)
+                assertEquals(1234L, old.dueAt)
+                assertEquals(2, old.reps)
+                assertEquals(12.0, old.stability, 0.0)
+                assertEquals(5.5, old.difficulty, 0.0)
+                // ...and the new trace defaults to "unknown", not to a guess.
+                assertEquals(0.0, old.stabilityFast, 0.0)
+
+                // The pre-v27 log row keeps a null fast trace.
+                assertNull(db.reviewLogDao().historyForQuestion("q1").single().stabilityFastAfter)
+
+                // Both new columns round-trip.
+                db.reviewLogDao().insert(
+                    com.mcqapp.data.local.ReviewLogEntity(
+                        paperId = "p1",
+                        questionId = "q1",
+                        rating = 3,
+                        reviewedAt = 6000,
+                        stabilityAfter = 14.0,
+                        stabilityFastAfter = 11.2
+                    )
+                )
+                assertEquals(
+                    11.2,
+                    db.reviewLogDao().historyForQuestion("q1").last().stabilityFastAfter!!,
+                    0.0
+                )
+                db.cardStateDao().upsert(old.copy(stabilityFast = 11.2))
+                assertEquals(11.2, db.cardStateDao().get("p1", "q1")!!.stabilityFast, 0.0)
             } finally {
                 db.close()
             }

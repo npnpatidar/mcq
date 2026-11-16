@@ -65,7 +65,11 @@ object AnkiPackageReader {
     private const val DEFAULT_DECK_ID = 1L
     private const val SEPARATOR = AnkiPackageWriter.FIELD_SEPARATOR
 
-    fun read(bytes: ByteArray, nowMillis: Long = System.currentTimeMillis()): AnkiReadResult {
+    fun read(
+        bytes: ByteArray,
+        nowMillis: Long = System.currentTimeMillis(),
+        parameters: List<Double>? = null
+    ): AnkiReadResult {
         val entries = unzip(bytes)
         val collectionName = entries.keys.firstOrNull { it in COLLECTION_NAMES }
             ?: throw AnkiPackageException(
@@ -86,7 +90,7 @@ object AnkiPackageReader {
             file.writeBytes(collectionBytes)
             val db = SQLiteDatabase.openOrCreateDatabase(file, null)
             try {
-                readCollection(db, media, nowMillis)
+                readCollection(db, media, nowMillis, parameters)
             } finally {
                 db.close()
             }
@@ -115,7 +119,8 @@ object AnkiPackageReader {
     private fun readCollection(
         db: SQLiteDatabase,
         media: MediaIndex,
-        nowMillis: Long
+        nowMillis: Long,
+        parameters: List<Double>?
     ): AnkiReadResult {
         val col = readColMeta(db)
         val ver = col.version
@@ -161,7 +166,8 @@ object AnkiPackageReader {
                         lapses = card.lapses,
                         crtSeconds = col.crtSeconds,
                         lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
-                        nowMillis = nowMillis
+                        nowMillis = nowMillis,
+                        parameters = parameters
                     )
                     if (state == null) unscheduled++ else scheduling[parsed.question.id] = state
                 }
@@ -244,7 +250,8 @@ object AnkiPackageReader {
         input: InputStream,
         sink: StreamSink,
         batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        parameters: List<Double>? = null
     ): AnkiStreamTail {
         require(batchSize > 0) { "batchSize must be positive" }
         val work = AnkiImportWork()
@@ -266,7 +273,9 @@ object AnkiPackageReader {
                 throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
             }
             try {
-                return streamCollection(db, work.mediaIndex(), sink, batchSize, nowMillis)
+                return streamCollection(
+                    db, work.mediaIndex(), sink, batchSize, nowMillis, parameters
+                )
             } catch (e: AnkiPackageException) {
                 throw e
             } catch (e: OutOfMemoryError) {
@@ -286,7 +295,8 @@ object AnkiPackageReader {
         media: MediaIndex,
         sink: StreamSink,
         batchSize: Int,
-        nowMillis: Long
+        nowMillis: Long,
+        parameters: List<Double>?
     ): AnkiStreamTail {
         val col = readColMeta(db)
         Logger.i("IMPORT", "Streaming Anki collection, schema version ${col.version}")
@@ -338,14 +348,20 @@ object AnkiPackageReader {
                 // importer synthesises "Uncategorized" for it.
                 val categoryId = "$paperId-uncat"
                 sink.onCategory(CategoryDto(id = categoryId, title = "Uncategorized"))
-                val counts = streamDeck(db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId, sink, batchSize, nowMillis)
+                val counts = streamDeck(
+                    db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId,
+                    sink, batchSize, nowMillis, parameters
+                )
                 noteCount += counts.total
                 recallCount += counts.recall
             } else {
                 for (node in nodes) {
                     // A level with no deck row of its own holds no questions.
                     sink.onCategory(node.dto)
-                    val counts = streamDeck(db, notetypes, media, col, revlog, passages, node.deck?.id, node.dto.id, sink, batchSize, nowMillis)
+                    val counts = streamDeck(
+                        db, notetypes, media, col, revlog, passages, node.deck?.id, node.dto.id,
+                        sink, batchSize, nowMillis, parameters
+                    )
                     noteCount += counts.total
                     recallCount += counts.recall
                 }
@@ -360,7 +376,10 @@ object AnkiPackageReader {
                 if (rootDeck != null && (scan.counts[rootDeck.id] ?: 0) > 0) {
                     val rootCategoryId = "$paperId-root"
                     sink.onCategory(CategoryDto(id = rootCategoryId, title = "Uncategorized"))
-                    val counts = streamDeck(db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId, sink, batchSize, nowMillis)
+                    val counts = streamDeck(
+                        db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId,
+                        sink, batchSize, nowMillis, parameters
+                    )
                     noteCount += counts.total
                     recallCount += counts.recall
                 }
@@ -396,7 +415,8 @@ object AnkiPackageReader {
         categoryId: String,
         sink: StreamSink,
         batchSize: Int,
-        nowMillis: Long
+        nowMillis: Long,
+        parameters: List<Double>?
     ): DeckCounts {
         if (deckId == null) return DeckCounts(0, 0)
         var total = 0
@@ -436,7 +456,8 @@ object AnkiPackageReader {
                             lapses = card.lapses,
                             crtSeconds = col.crtSeconds,
                             lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
-                            nowMillis = nowMillis
+                            nowMillis = nowMillis,
+                            parameters = parameters
                         )?.let { schedules[parsed.question.id] = it }
                     }
                     batch += parsed.question

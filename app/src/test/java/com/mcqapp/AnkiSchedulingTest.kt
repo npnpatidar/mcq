@@ -5,6 +5,7 @@ import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.domain.CardStateKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,21 +45,76 @@ class AnkiSchedulingTest {
         assertEquals(7, state.reps)
         assertEquals(1, state.lapses)
         assertEquals(2.5, state.ease, 0.0001)
-        // FSRS conversion: the kind follows Anki's type, the interval doubles
-        // as the stability, and the ease mirrors onto the difficulty scale.
+        // FSRS-7 conversion follows upstream's `memory_state_from_sm2`:
+        // the kind follows Anki's type; difficulty is fixed at 5 because
+        // FSRS-7 has no scalar difficulty bridge; the fast trace is 0.8× the
+        // slow one; and the stability is solved *backwards* from Anki's one
+        // stored number, so the card's mixed curve reaches Anki's historical
+        // retention at exactly the interval Anki records.
         assertEquals(CardStateKind.REVIEW, state.cardStateKind())
-        assertEquals(5.0, state.stability, 0.0001)
-        assertEquals(7, state.reviewCount)
         assertEquals(
-            1.0 + (3.0 - 2.5) / (3.0 - 1.3) * 9.0,
-            state.difficulty,
-            0.0001
+            5.0,
+            com.mcqapp.domain.FsrsScheduler().intervalForRetention(
+                com.mcqapp.domain.CardState(
+                    questionId = "q",
+                    stability = state.stability,
+                    stabilityFast = state.stabilityFast,
+                    difficulty = state.difficulty,
+                    intervalDays = state.intervalDays,
+                    lastReviewedAt = state.lastReviewedAt,
+                    state = CardStateKind.REVIEW
+                ),
+                AnkiScheduling.HISTORICAL_RETENTION
+            ),
+            0.02
         )
+        assertEquals(0.8 * state.stability, state.stabilityFast, 1e-9)
+        assertEquals(7, state.reviewCount)
+        // FSRS-7 ignores Anki's ease factor for the memory state.
+        assertEquals(5.0, state.difficulty, 0.0)
         assertTrue(state.dueAt > crt * 1000L)
         // Five days out, within a day of slack for Anki's 04:00 rollover.
         assertTrue(
             "due in ${state.dueAt - crt * 1000L}ms",
             state.dueAt - crt * 1000L in (4 * day)..(6 * day)
+        )
+    }
+
+    /**
+     * The import bridge must not follow the retention slider: Anki infers an
+     * imported card's memory from the deck's `historical_retention` (0.9 by
+     * default), so the same stored interval has to land on the same
+     * `(S, Sf, D)` whatever target this app schedules at. The bridge used to
+     * take the target as a parameter, which made the imported state — though
+     * not the visible due date — depend on the slider; it no longer takes one,
+     * so this pins the value the bridge does read.
+     */
+    @Test
+    fun importedMemoryStateIsSolvedAtHistoricalRetentionOnly() {
+        val state = AnkiScheduling.fromAnki(
+            type = AnkiScheduling.TYPE_REVIEW,
+            queue = AnkiScheduling.QUEUE_REVIEW,
+            due = 12,
+            ivl = 12,
+            factor = 2500,
+            reps = 9,
+            lapses = 1,
+            crtSeconds = crt,
+            lastReviewedAtMillis = crt * 1000L
+        )!!
+
+        val scheduler = com.mcqapp.domain.FsrsScheduler()
+        val historical = scheduler.stateForInterval(12.0, AnkiScheduling.HISTORICAL_RETENTION)
+        // The state is the one Anki's own historical retention implies…
+        assertEquals(historical.stability, state.stability, 1e-12)
+        assertEquals(historical.stabilityFast, state.stabilityFast, 1e-12)
+        assertEquals(historical.difficulty, state.difficulty, 1e-12)
+        // …and another target *would* infer a different stability for the same
+        // interval, so the equality above is a statement about the bridge, not
+        // about the slider being unable to matter.
+        assertNotEquals(
+            scheduler.stateForInterval(12.0, 0.95).stability,
+            state.stability
         )
     }
 

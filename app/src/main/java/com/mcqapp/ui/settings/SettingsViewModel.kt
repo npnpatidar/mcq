@@ -37,7 +37,12 @@ import java.io.OutputStream
 sealed interface FsrsOptimizeState {
     data object Idle : FsrsOptimizeState
     data class Running(val step: Int, val total: Int) : FsrsOptimizeState
-    data class Done(val result: FsrsFitResult) : FsrsOptimizeState
+    /**
+     * [stored] is the tuner's own decision, carried through unchanged: the
+     * screen must not re-derive it from the two losses, which disagrees for a
+     * degenerate result whose defaults beat the fitted set.
+     */
+    data class Done(val result: FsrsFitResult, val stored: Boolean) : FsrsOptimizeState
     data class Failed(val message: String) : FsrsOptimizeState
 }
 
@@ -379,6 +384,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _fsrsOptimize = MutableStateFlow<FsrsOptimizeState>(FsrsOptimizeState.Idle)
     val fsrsOptimize: StateFlow<FsrsOptimizeState> = _fsrsOptimize.asStateFlow()
 
+    /** The one-shot FSRS-7 migration notice, until the learner dismisses it. */
+    private val _fsrs7Notice = MutableStateFlow(false)
+    val fsrs7Notice: StateFlow<Boolean> = _fsrs7Notice.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.fsrs7Notice().collect { _fsrs7Notice.value = it }
+        }
+    }
+
+    fun dismissFsrs7Notice() {
+        viewModelScope.launch { repository.dismissFsrs7Notice() }
+    }
+
     init {
         viewModelScope.launch {
             repository.fsrsReviewCount().collect { _fsrsReviewCount.value = it }
@@ -395,10 +414,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _fsrsOptimize.value = FsrsOptimizeState.Running(step = 0, total = 0)
         viewModelScope.launch {
             try {
-                val result = repository.optimizeFsrsParameters { step, total ->
+                val outcome = repository.optimizeFsrsParameters { step, total ->
                     _fsrsOptimize.value = FsrsOptimizeState.Running(step, total)
                 }
-                _fsrsOptimize.value = FsrsOptimizeState.Done(result)
+                _fsrsOptimize.value = FsrsOptimizeState.Done(outcome.result, outcome.stored)
             } catch (e: CancellationException) {
                 // Leaving Settings cancels the fit; nothing was persisted
                 // (the tuner writes only after a successful fit), so let the

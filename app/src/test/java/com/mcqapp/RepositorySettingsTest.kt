@@ -2,8 +2,10 @@ package com.mcqapp
 
 import android.content.Context
 import androidx.datastore.preferences.core.doublePreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.backup.McqBackupFormat
@@ -63,6 +65,10 @@ class RepositorySettingsTest {
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
                 prefs.remove(stringPreferencesKey("fsrs_parameters"))
                 prefs.remove(intPreferencesKey("fsrs_fit_version"))
+                prefs.remove(intPreferencesKey("fsrs_model_version"))
+                prefs.remove(booleanPreferencesKey("fsrs7_upgrade_notice"))
+                prefs.remove(longPreferencesKey("fsrs_rebuild_cursor"))
+                prefs.remove(booleanPreferencesKey("fsrs_rebuild_done"))
                 prefs.remove(intPreferencesKey("ladder_version"))
             }
         }
@@ -87,12 +93,126 @@ class RepositorySettingsTest {
                 // are not pacing knobs and would otherwise leak a bump into
                 // the next test's whole-config comparison.
                 it.remove(intPreferencesKey("fsrs_fit_version"))
+                // The FSRS-7 migration bookkeeping is per-install state, not a
+                // setting: a leftover "done" flag would hide the rebuild from
+                // the next test, and a leftover notice would surface in it.
+                it.remove(intPreferencesKey("fsrs_model_version"))
+                it.remove(booleanPreferencesKey("fsrs7_upgrade_notice"))
+                it.remove(longPreferencesKey("fsrs_rebuild_cursor"))
+                it.remove(booleanPreferencesKey("fsrs_rebuild_done"))
                 it.remove(intPreferencesKey("ladder_version"))
                 // The last test length is a plain preference, not scheduler
                 // state: clear it too so one test's 60 cannot seed the next.
                 it.remove(intPreferencesKey("last_test_length"))
             }
         }
+    }
+
+    /**
+     * Plan §5.4: a fitted FSRS-6 set cannot be converted, so the migration
+     * replaces it with the FSRS-7 defaults, resets the fit provenance (no
+     * review may claim a fit under a model that was never fitted) and raises
+     * the one-shot notice, because there was a fit to lose.
+     */
+    @Test
+    fun ensureFsrs7RetiresAFittedFsrs6SetAndRaisesTheNotice() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val fsrs6Fit = listOf(
+            0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722,
+            0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729,
+            0.5425, 0.0912, 0.0658, 0.1542
+        ).map { it + 0.01 } // a *fitted* set, not the shipped defaults
+        context.dataStore.edit {
+            it[stringPreferencesKey("fsrs_parameters")] = fsrs6Fit.joinToString(",")
+            it[intPreferencesKey("fsrs_fit_version")] = 9
+        }
+
+        val store = store()
+        store.ensureFsrs7()
+
+        assertEquals(7, store.fsrsModelVersion())
+        assertEquals(
+            com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+            store.schedulerConfigNow().fsrsParameters
+        )
+        assertEquals(0, store.schedulerConfigNow().fsrsFitVersion)
+        assertTrue(store.fsrs7Notice().first())
+
+        // Idempotent: the notice stays until dismissed, and a second run is a
+        // no-op rather than a second retirement.
+        store.ensureFsrs7()
+        assertTrue(store.fsrs7Notice().first())
+        store.dismissFsrs7Notice()
+        assertFalse(store.fsrs7Notice().first())
+        store.ensureFsrs7()
+        assertFalse("a re-run must not resurrect the notice", store.fsrs7Notice().first())
+    }
+
+    /** A learner who never fitted anything has nothing to be told about. */
+    @Test
+    fun ensureFsrs7StaysSilentWhenTheOldSetWasNeverFitted() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit {
+            it[stringPreferencesKey("fsrs_parameters")] = listOf(
+                0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722,
+                0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729,
+                0.5425, 0.0912, 0.0658, 0.1542
+            ).joinToString(",")
+        }
+
+        val store = store()
+        store.ensureFsrs7()
+
+        assertEquals(7, store.fsrsModelVersion())
+        assertEquals(
+            com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+            store.schedulerConfigNow().fsrsParameters
+        )
+        assertFalse("the shipped FSRS-6 defaults were not a fit", store.fsrs7Notice().first())
+    }
+
+    /** A restored v27 backup already carries 34 weights; keep them verbatim. */
+    @Test
+    fun ensureFsrs7KeepsAnAlreadyFsrs7ShapedSet() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val fitted = com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList()
+            .also { it[0] = 0.25 }
+        context.dataStore.edit {
+            it[stringPreferencesKey("fsrs_parameters")] = fitted.joinToString(",")
+            it[intPreferencesKey("fsrs_fit_version")] = 4
+        }
+
+        val store = store()
+        store.ensureFsrs7()
+
+        assertEquals(7, store.fsrsModelVersion())
+        assertEquals(fitted, store.schedulerConfigNow().fsrsParameters)
+        assertEquals(4, store.schedulerConfigNow().fsrsFitVersion)
+        assertFalse(store.fsrs7Notice().first())
+    }
+
+    /**
+     * Plan §6: the rebuild's progress is its own flag. `ensureFsrs7` stamps the
+     * model version *before* the replay runs, so gating the replay on that
+     * number would skip it entirely.
+     */
+    @Test
+    fun theRebuildFlagIsIndependentOfTheModelVersion() = runBlocking {
+        val store = store()
+        assertFalse(store.fsrs7RebuildDone())
+        assertEquals(0L, store.fsrsRebuildCursor())
+
+        store.ensureFsrs7()
+        assertEquals(7, store.fsrsModelVersion())
+        assertFalse("the model stamp must not imply a finished rebuild", store.fsrs7RebuildDone())
+
+        store.setFsrsRebuildCursor(4242L)
+        assertEquals(4242L, store.fsrsRebuildCursor())
+        assertFalse(store.fsrs7RebuildDone())
+
+        store.completeFsrs7Rebuild()
+        assertTrue(store.fsrs7RebuildDone())
+        assertEquals("completion clears the cursor", 0L, store.fsrsRebuildCursor())
     }
 
     @Test

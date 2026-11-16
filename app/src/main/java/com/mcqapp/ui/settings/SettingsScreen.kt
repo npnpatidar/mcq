@@ -63,6 +63,7 @@ fun SettingsScreen(
     val schedulerConfig by viewModel.schedulerConfig.collectAsStateWithLifecycle()
     val fsrsReviewCount by viewModel.fsrsReviewCount.collectAsStateWithLifecycle()
     val fsrsOptimize by viewModel.fsrsOptimize.collectAsStateWithLifecycle()
+    val fsrs7Notice by viewModel.fsrs7Notice.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
 
@@ -242,6 +243,8 @@ fun SettingsScreen(
                 onAutomaticLadderChange = { viewModel.setAutomaticLadderAdaptation(it) },
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimize,
+                fsrs7Notice = fsrs7Notice,
+                onDismissFsrs7Notice = { viewModel.dismissFsrs7Notice() },
                 onOptimizeFsrs = { viewModel.optimizeFsrsParameters() },
                 onDismissFsrsOptimize = { viewModel.dismissFsrsOptimize() },
                 onRestoreFsrsDefaults = { viewModel.restoreFsrsDefaults() },

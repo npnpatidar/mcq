@@ -263,13 +263,32 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
     private val studyModeKey = stringPreferencesKey("study_mode")
     private val introduceNewCardsKey = booleanPreferencesKey("introduce_new_cards")
 
-    // CSV of the 21 weights rather than 21 numeric keys: the set is written
-    // and read as one value, and a malformed list (wrong length, junk
+    // CSV of the 34 FSRS-7 weights rather than 34 numeric keys: the set is
+    // written and read as one value, and a malformed list (wrong length, junk
     // tokens) falls back to the defaults in SchedulerConfig.sanitized.
     private val fsrsParametersKey = stringPreferencesKey("fsrs_parameters")
 
     /** Which weight set `fsrs_parameters` belongs to (v26). 0 = shipped defaults. */
     private val fsrsFitVersionKey = intPreferencesKey("fsrs_fit_version")
+
+    /** The FSRS model version the stored weights belong to (v27). 0 = FSRS-6. */
+    private val fsrsModelVersionKey = intPreferencesKey("fsrs_model_version")
+
+    /** One-shot "your fitted FSRS-6 weights were retired" flag (v27). */
+    private val fsrs7NoticeKey = booleanPreferencesKey("fsrs7_upgrade_notice")
+
+    /** The last `review_log.rowid` the FSRS-7 rebuild finished (v27). */
+    private val fsrsRebuildCursorKey = longPreferencesKey("fsrs_rebuild_cursor")
+
+    /** Whether the FSRS-7 card-state rebuild finished (v27). */
+    private val fsrsRebuildDoneKey = booleanPreferencesKey("fsrs_rebuild_done")
+
+    /**
+     * Whether the one-shot fast-trace repair ran (the write-side bug that
+     * dropped `stabilityFast`). Cleared by a restore, which is fine: the
+     * repair is idempotent and bounded by rows still at zero.
+     */
+    private val fsrsFastRepairDoneKey = booleanPreferencesKey("fsrs_fast_repair_done")
 
     /** The ladder version the cut points belong to (v26). */
     private val ladderVersionKey = intPreferencesKey("ladder_version")
@@ -337,6 +356,9 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
             .fsrsParameters
         val serialized = weights.joinToString(",")
         context.dataStore.edit { prefs ->
+            // Any set written from this build is FSRS-7 shaped, including the
+            // defaults written by a restore or a reset.
+            prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
             if (prefs[fsrsParametersKey] != serialized) {
                 prefs[fsrsParametersKey] = serialized
                 val current = prefs[fsrsFitVersionKey] ?: 0
@@ -349,6 +371,91 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
 
     /** A single-key write of the fitted weights; bumps the fit version. */
     suspend fun setFsrsParameters(parameters: List<Double>) = writeWeights(parameters)
+
+    // --- FSRS-7 model migration (v27) ---
+
+    /**
+     * One-time model migration, run before the first scheduler read on an
+     * upgraded install.
+     *
+     * FSRS-6's 21 weights cannot be converted: the parameterisation changed,
+     * not just the count (the two stability traces and the mixture curve reuse
+     * the slots differently). The only honest outcomes are the FSRS-7 defaults
+     * or a refit, so this stores the defaults, resets `fsrs_fit_version` to 0
+     * so no review claims a fit under a model that was never fitted, and raises
+     * the one-shot notice **only** when the learner actually had a fit to lose.
+     * A set that is already 34 values long (a restored v27 backup) is kept as
+     * is and only stamped with the model version.
+     */
+    suspend fun ensureFsrs7() {
+        context.dataStore.edit { prefs ->
+            if ((prefs[fsrsModelVersionKey] ?: 0) >= FSRS_MODEL_VERSION) return@edit
+            val parsed = prefs[fsrsParametersKey]
+                ?.split(',')
+                ?.mapNotNull { it.toDoubleOrNull() }
+            if (parsed != null &&
+                parsed.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT
+            ) {
+                prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
+                return@edit
+            }
+            // An absent or malformed set was already running defaults; only a
+            // well-formed, non-default 21-value set was a fit worth telling the
+            // learner about.
+            val hadFit = parsed != null && parsed.isNotEmpty() &&
+                parsed != FSRS6_DEFAULT_PARAMETERS
+            prefs[fsrsParametersKey] =
+                com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS.joinToString(",")
+            prefs[fsrsFitVersionKey] = 0
+            if (hadFit) prefs[fsrs7NoticeKey] = true
+            prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
+        }
+    }
+
+    /** The stored FSRS model version; 0 means the pre-FSRS-7 build. */
+    suspend fun fsrsModelVersion(): Int =
+        context.dataStore.data.map { it[fsrsModelVersionKey] ?: 0 }.first()
+
+    /**
+     * The last review-log id the FSRS-7 card rebuild finished, or 0 when it has
+     * not started. Persisted so a process kill resumes instead of restarting a
+     * million-row replay.
+     */
+    suspend fun fsrsRebuildCursor(): Long =
+        context.dataStore.data.map { it[fsrsRebuildCursorKey] ?: 0L }.first()
+
+    internal suspend fun setFsrsRebuildCursor(cursor: Long) {
+        context.dataStore.edit { it[fsrsRebuildCursorKey] = cursor }
+    }
+
+    /** Stamps the rebuild complete and clears its cursor in one edit. */
+    internal suspend fun completeFsrs7Rebuild() {
+        context.dataStore.edit { prefs ->
+            prefs[fsrsRebuildDoneKey] = true
+            prefs[fsrsRebuildCursorKey] = 0L
+            prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
+        }
+    }
+
+    /** Whether the card-state rebuild has already run to completion. */
+    internal suspend fun fsrs7RebuildDone(): Boolean =
+        context.dataStore.data.map { it[fsrsRebuildDoneKey] ?: false }.first()
+
+    /** Whether the one-shot fast-trace repair already ran. */
+    internal suspend fun fastTraceRepairDone(): Boolean =
+        context.dataStore.data.map { it[fsrsFastRepairDoneKey] ?: false }.first()
+
+    internal suspend fun completeFastTraceRepair() {
+        context.dataStore.edit { it[fsrsFastRepairDoneKey] = true }
+    }
+
+    /** Whether the one-shot FSRS-7 migration notice is still waiting. */
+    fun fsrs7Notice(): Flow<Boolean> =
+        context.dataStore.data.map { it[fsrs7NoticeKey] ?: false }
+
+    suspend fun dismissFsrs7Notice() {
+        context.dataStore.edit { it.remove(fsrs7NoticeKey) }
+    }
 
     /**
      * The atomic cut-point write LadderStore owns: the two cuts and the
@@ -464,6 +571,7 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         // straight replace.
         var restoredWeights: List<Double>? = null
         var restoredFitVersion: Int? = null
+        var restoredRetiredFit = false
         context.dataStore.edit { prefs ->
             // The resume snapshot is restored separately, and only after this
             // call. Clearing it here would destroy a live snapshot on a
@@ -476,8 +584,14 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
                 val value = entry.value
                 if (name == fsrsParametersKey.name) {
                     val text = (value as? JsonPrimitive)?.content ?: continue
-                    restoredWeights = text.split(',').mapNotNull { it.toDoubleOrNull() }
-                        .takeIf { it.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT }
+                    val parsed = text.split(',').mapNotNull { it.toDoubleOrNull() }
+                    if (parsed.size == com.mcqapp.domain.FsrsScheduler.PARAMETER_COUNT) {
+                        restoredWeights = parsed
+                    } else if (parsed.isNotEmpty() && parsed != FSRS6_DEFAULT_PARAMETERS) {
+                        // A fitted FSRS-6 set in the backup cannot be converted
+                        // either; the notice says so after the restore.
+                        restoredRetiredFit = true
+                    }
                     continue
                 }
                 if (name == fsrsFitVersionKey.name) {
@@ -509,9 +623,42 @@ internal class SettingsStore(private val context: Context) : TestProgressSlot {
         // A pre-v26 backup carries weights but no fit version. Version 0 is
         // the honest label there: the backup cannot say which fit produced
         // them, and claiming a bump would invent provenance.
+        //
+        // A retired FSRS-6 fit is the same story even when the backup recorded
+        // a version: the defaults written here were never fitted under FSRS-7,
+        // so carrying the old version over would claim provenance they do not
+        // have.
         writeWeights(
             restoredWeights ?: com.mcqapp.domain.FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
-            forceVersion = restoredFitVersion ?: 0
+            forceVersion = if (restoredRetiredFit) 0 else (restoredFitVersion ?: 0)
+        )
+        // The rebuild cursor names a `review_log` row id from the device the
+        // backup was taken on; the restored rows have their own ids, so a
+        // restored cursor cannot be trusted to resume. Start the rebuild from
+        // scratch (the caller runs it immediately after restoring).
+        context.dataStore.edit {
+            it.remove(fsrsRebuildCursorKey)
+            it.remove(fsrsRebuildDoneKey)
+            it.remove(fsrsFastRepairDoneKey)
+        }
+        if (restoredRetiredFit) {
+            context.dataStore.edit { it[fsrs7NoticeKey] = true }
+        }
+    }
+
+    private companion object {
+        /** FSRS-7 is model version 7; anything lower predates the two traces. */
+        const val FSRS_MODEL_VERSION = 7
+
+        /**
+         * The FSRS-6 weights this build shipped. Kept only to tell a learner's
+         * fit apart from a set that was never touched, so the migration can
+         * stay silent when there was nothing to lose.
+         */
+        val FSRS6_DEFAULT_PARAMETERS = listOf(
+            0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722,
+            0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729,
+            0.5425, 0.0912, 0.0658, 0.1542
         )
     }
 }

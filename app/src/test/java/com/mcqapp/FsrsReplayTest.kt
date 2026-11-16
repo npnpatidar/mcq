@@ -81,6 +81,62 @@ class FsrsReplayTest {
         assertTrue(FsrsReplay.replay(emptyList(), scheduler).isEmpty())
     }
 
+    /**
+     * An out-of-range rating only exists on a corrupt or hand-edited row. It
+     * folds into Good for the graded replay — the same rule the FSRS-7 rebuild
+     * applies — so one bad row cannot abort a whole history, while the enriched
+     * row still reports the stored rating for the screens that display it.
+     */
+    @Test
+    fun anOutOfRangeRatingReplaysAsGood() {
+        val t0 = 1_750_000_000_000L
+        val corrupt = FsrsReplay.replay(
+            listOf(row(1, rating = 0, reviewedAt = t0), row(2, rating = 9, reviewedAt = t0 + 3 * day)),
+            scheduler
+        )
+        val good = FsrsReplay.replay(
+            listOf(
+                row(1, rating = ReviewGrade.GOOD.ordinal + 1, reviewedAt = t0),
+                row(2, rating = ReviewGrade.GOOD.ordinal + 1, reviewedAt = t0 + 3 * day)
+            ),
+            scheduler
+        )
+        assertEquals(good.size, corrupt.size)
+        corrupt.zip(good).forEach { (actual, expected) ->
+            assertEquals(expected.predictedRetention, actual.predictedRetention)
+            assertEquals(expected.intervalBeforeDays, actual.intervalBeforeDays)
+            assertEquals(expected.wouldBeGoodIntervalDays, actual.wouldBeGoodIntervalDays)
+        }
+        assertEquals(listOf(0, 9), corrupt.map { it.rating })
+    }
+
+    /**
+     * Two rows written in the same millisecond — a double tap, or an import that
+     * kept second-resolution timestamps. The log's autoincrement `id` decides
+     * the order, so the second row predicts from the first row's post-state at
+     * zero elapsed rather than the two replaying in caller order.
+     */
+    @Test
+    fun rowsWithTheSameTimestampReplayInIdOrder() {
+        val t0 = 1_750_000_000_000L
+        // Fed the wrong way round on purpose.
+        val replayed = FsrsReplay.replay(
+            listOf(row(2, rating = 1, reviewedAt = t0), row(1, rating = 3, reviewedAt = t0)),
+            scheduler
+        )
+        val afterGood = scheduler.next(scheduler.initial("q1"), ReviewGrade.GOOD, t0)
+        val second = replayed.single { it.rating == ReviewGrade.AGAIN.ordinal + 1 }
+        assertEquals(
+            scheduler.retention(afterGood, t0),
+            second.predictedRetention!!,
+            1e-12
+        )
+        assertEquals(afterGood.intervalDays, second.intervalBeforeDays)
+        // Row 1 is the first exposure: nothing to predict from.
+        val first = replayed.single { it.rating == ReviewGrade.GOOD.ordinal + 1 }
+        assertNull(first.predictedRetention)
+    }
+
     @Test
     fun firstReviewHasNoPredictionAndSecondPredictsFromAdvancedState() {
         val t0 = 1_750_000_000_000L
@@ -168,5 +224,52 @@ class FsrsReplayTest {
         assertNull(replayed[0].predictedRetention)
         assertNull(replayed[1].predictedRetention)
         assertTrue(replayed[2].predictedRetention != null)
+    }
+
+    /**
+     * The relearn loop is capped per study day, so the replay has to count the
+     * same way. A per-review count would reconstruct the third failure as a
+     * zero-day interval and file the next review in the first interval band;
+     * the card was actually carrying the model's day.
+     */
+    @Test
+    fun replayCountsExposuresWithinTheStudyDay() {
+        val replayScheduler = FsrsScheduler(
+            config = com.mcqapp.domain.SchedulerConfig(dayStartHour = 0),
+            zoneOffset = { 0L }
+        )
+        // A study-day boundary under dayStartHour = 0 and a zero offset.
+        val t0 = 2 * day
+        val reviews = listOf(
+            row(1, rating = 1, reviewedAt = t0 + 60_000),
+            row(2, rating = 1, reviewedAt = t0 + 120_000),
+            row(3, rating = 1, reviewedAt = t0 + 180_000),
+            row(4, rating = 3, reviewedAt = t0 + day + 60_000)
+        )
+        val replayed = FsrsReplay.replay(reviews, replayScheduler)
+
+        // Exposures one and two relearn inside the sitting.
+        assertEquals(0, replayed[1].intervalBeforeDays)
+        assertEquals(0, replayed[2].intervalBeforeDays)
+        // The third is spaced by the model, so the next review carried a day.
+        assertEquals(1, replayed[3].intervalBeforeDays)
+        // And that is exactly what grading would have written.
+        val third = replayScheduler.next(
+            replayScheduler.next(
+                replayScheduler.next(replayScheduler.initial("q1"), ReviewGrade.AGAIN, t0 + 60_000),
+                ReviewGrade.AGAIN,
+                t0 + 120_000,
+                2
+            ),
+            ReviewGrade.AGAIN,
+            t0 + 180_000,
+            3
+        )
+        assertEquals(third.intervalDays, replayed[3].intervalBeforeDays)
+
+        // The streaming replay keeps the same per-day budget.
+        val stream = FsrsReplay.Stream(replayScheduler)
+        val streamed = reviews.map(stream::accept)
+        assertEquals(1, streamed[3].intervalBeforeDays)
     }
 }

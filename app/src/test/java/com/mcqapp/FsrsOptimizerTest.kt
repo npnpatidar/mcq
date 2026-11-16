@@ -417,9 +417,24 @@ class FsrsOptimizerTest {
 
     /**
      * A 1,100-review history: every review is a prediction target but the
-     * reference's 1,024-position sequence cap decides how many of them the loss
-     * and the gradient see. Counting them separately is what keeps the
-     * "thick enough to fit" gauge honest.
+     * 1,024-position sequence cap decides how many of them the loss and the
+     * gradient see. Counting them separately is what keeps the "thick enough
+     * to fit" gauge honest.
+     *
+     * The cap is upstream's, and it is a **prefix** cap, not a card filter.
+     * `fsrs-rs` v7.0.0 builds one training item per review prefix
+     * (`src/dataset.rs`: `CardPrefix` is "an item made of the first `len`
+     * reviews of the card") and then keeps the items whose prefix length is
+     * within the cap: `training.rs:873`
+     * `weighted_train_set.retain(|item| item.item.reviews.len() <= config.max_seq_len)`,
+     * with the same filter at `training_card_prefixes.rs:77`
+     * (`prefix.len as usize <= config.max_seq_len`). A 1,100-review card
+     * therefore keeps its first 1,024 prefixes and loses the rest — it is not
+     * dropped whole. This repo emits the same one-item-per-prefix set, so
+     * `pos + 1` *is* the prefix length and the filter above is exactly
+     * upstream's rule. Recency weights are assigned before the cap in both
+     * implementations. Do not "simplify" this into dropping an over-cap
+     * history: that would train on less data than upstream.
      */
     @Test
     fun aHistoryLongerThanTheSequenceCapIsCountedButCapped() = runBlocking {

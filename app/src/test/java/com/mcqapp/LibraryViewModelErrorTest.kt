@@ -28,7 +28,7 @@ import org.robolectric.annotation.Config
  * putting it back would hand the next test a closed database.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class LibraryViewModelErrorTest {
 
     private lateinit var viewModel: LibraryViewModel

@@ -1,6 +1,5 @@
 package com.mcqapp.domain
 
-import kotlin.math.ceil
 
 /**
  * Spaced repetition scheduling for a single question, Anki-style.
@@ -198,12 +197,27 @@ data class SchedulerConfig(
      */
     val dayStartHour: Int = DayBoundary.DEFAULT_DAY_START_HOUR,
     /**
-     * Minimum correct-answer seconds that still infers Easy. Long questions
-     * receive reading time on top of this floor.
+     * Correct answers faster than this (seconds) infer Easy. Absolute: the
+     * clock starts when the card appears, so reading time is inside the cut.
+     *
+     * Never below [MIN_FAST_SECONDS] ([sanitized]): a correct answer inside the
+     * first second is stored as 0 and graded Good, so a 1 s cut would leave the
+     * Easy band empty and the cut evidence unable to say anything at all.
      */
-    val fastSeconds: Long = 8L,
+    val fastSeconds: Long = 6L,
     /** Correct answer slower than this (seconds) infers Hard from history. */
-    val slowSeconds: Long = 30L,
+    val slowSeconds: Long = 60L,
+    /**
+     * Grade every correct answer Good and everything else Again, ignoring the
+     * clock entirely (v28). The cuts still exist because they are the fallback
+     * when the switch is off, but nothing reads them while this is on: no Easy
+     * and no Hard label is ever inferred, and the clock stops colouring itself.
+     *
+     * The setting is a rule change, not a tuning change: the writer starts a new
+     * grading version so rows graded under the cuts are never pooled with rows
+     * graded by correctness alone.
+     */
+    val correctnessOnlyGrading: Boolean = false,
     /**
      * The 34 FSRS-7 weights scheduling runs on, in reference order. Defaults
      * to the official unoptimized set; "Optimize FSRS parameters" in Settings
@@ -214,10 +228,10 @@ data class SchedulerConfig(
      */
     val fsrsParameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
     /**
-     * The ladder version the cut points belong to (v26). 0 means no version
-     * has been written yet — every pre-v26 review was graded without one.
+     * The grading version the cut points belong to. 0 means no version has
+     * been written yet — every pre-v26 review was graded without one.
      */
-    val ladderVersion: Int = 0,
+    val gradingVersion: Int = 0,
     /**
      * Which weight set [fsrsParameters] belongs to (v26). 0 is the shipped
      * default set; every refit bumps it, so a review cannot claim a forecast
@@ -225,6 +239,26 @@ data class SchedulerConfig(
      */
     val fsrsFitVersion: Int = 0
 ) {
+    companion object {
+        /**
+         * The lowest Easy cut [sanitized] accepts. Below it the Easy band is
+         * empty: a correct answer inside the first second is stored as 0 and
+         * graded Good, so a 1 s cut would leave no measured second below it to
+         * award Easy, the contrast would stay null forever and the cut
+         * suggestion could never advise again. The answer-time suggestion has
+         * its own floor and can still advise; it is not blocked by the Easy
+         * class. One constant, so the domain clamp, the Settings field range
+         * and `Calibration.MIN_EASY_SECONDS` cannot drift.
+         */
+        const val MIN_FAST_SECONDS = 2L
+
+        /**
+         * The highest Easy cut [sanitized] accepts: the largest cut that still
+         * leaves a second of room below the 3600 s Hard ceiling.
+         */
+        const val MAX_FAST_SECONDS = 3599L
+    }
+
     /** Guards against values that would break scheduling entirely. */
     fun sanitized(): SchedulerConfig = copy(
         maxIntervalDays = maxIntervalDays.coerceIn(1, 36500),
@@ -232,9 +266,21 @@ data class SchedulerConfig(
         leechThreshold = leechThreshold.coerceIn(1, 100),
         desiredRetention = desiredRetention.coerceIn(0.75, 0.97),
         dayStartHour = dayStartHour.coerceIn(0, 23),
-        fastSeconds = fastSeconds.coerceIn(1, 3600),
-        slowSeconds = slowSeconds.coerceIn(fastSeconds.coerceIn(1, 3600), 3600),
-        ladderVersion = ladderVersion.coerceAtLeast(0),
+        // A cut below [MIN_FAST_SECONDS] leaves no measured second below it:
+        // a correct answer inside the first second is stored as 0 and graded
+        // Good, so the Easy band (`dwell in 1 until fastSeconds`) would be
+        // empty.
+        fastSeconds = fastSeconds.coerceIn(MIN_FAST_SECONDS, MAX_FAST_SECONDS),
+        // The pair needs a one-second gap. With both cuts equal the Good class
+        // is empty, so the calibration contrast is null forever and the report
+        // can never say anything — a degenerate rule, not a preference. The
+        // floor is re-derived from the clamped fast cut so the gap holds for a
+        // stored pair of 1/2: 2/3, not 2/2.
+        slowSeconds = slowSeconds.coerceIn(
+            fastSeconds.coerceIn(MIN_FAST_SECONDS, MAX_FAST_SECONDS) + 1,
+            3600
+        ),
+        gradingVersion = gradingVersion.coerceAtLeast(0),
         fsrsFitVersion = fsrsFitVersion.coerceAtLeast(0),
         fsrsParameters = fsrsParameters
             .takeIf { list ->
@@ -265,8 +311,8 @@ enum class GradeSource(val stored: String) {
 
 /**
  * The provenance rules the calibration depends on, kept pure so they can be
- * tested without a database. They are deliberately small: the ladder measures
- * only AUTO labels, and a row that claims AUTO when it was edited would
+ * tested without a database. They are deliberately small: the calibration
+ * measures only AUTO labels, and a row that claims AUTO when it was edited would
  * contaminate every statistic downstream.
  */
 object GradeProvenance {
@@ -311,10 +357,10 @@ object Study {
     const val DAY_MS = DayBoundary.DAY_MS
 
     /** Correct answers faster than this read as effortless. */
-    const val FAST_SECONDS = 8L
+    const val FAST_SECONDS = 6L
 
     /** Correct answers slower than this read as a struggle. */
-    const val SLOW_SECONDS = 30L
+    const val SLOW_SECONDS = 60L
 
     /**
      * A due review whose predicted recall has fallen below this is pulled with
@@ -333,24 +379,29 @@ object Study {
     const val EXPLORE_NEW_EVERY = 3
 
     /**
-     * Infers a grade from an answered attempt. Untracked timing (0s) is a
-     * normal Good rather than effortless. Takes the timing thresholds from
-     * [config] so a user who retunes them also changes history reconstruction.
-     * [fastSeconds] and [slowSeconds] override one end each of the ladder;
-     * callers that extend one for reading time must extend the other by the
-     * same amount, or Good becomes unreachable on long questions.
+     * Infers a grade from an answered attempt. A zero-second dwell (0s) means
+     * the answer came inside the first second: a correct, non-skipped answer
+     * with it grades Good rather than Easy, while a wrong answer (a guess or
+     * not) or a skipped answer is Again as always. Takes the timing thresholds
+     * from [config] so a user who retunes them also changes history
+     * reconstruction.
+     * The cuts are absolute: nothing is added for reading the question, so the
+     * same pair grades every card regardless of length.
+     *
+     * With [SchedulerConfig.correctnessOnlyGrading] the clock is not consulted
+     * at all: a correct answer is Good whatever the dwell, so Easy and Hard only
+     * ever appear as a learner's manual edit.
      */
     fun inferGrade(
         isCorrect: Boolean,
         dwellSeconds: Long,
         skipped: Boolean = false,
-        config: SchedulerConfig = SchedulerConfig(),
-        fastSeconds: Long = config.fastSeconds,
-        slowSeconds: Long = config.slowSeconds
+        config: SchedulerConfig = SchedulerConfig()
     ): ReviewGrade {
         if (skipped || !isCorrect) return ReviewGrade.AGAIN
-        if (dwellSeconds in 1 until fastSeconds) return ReviewGrade.EASY
-        if (dwellSeconds >= slowSeconds) return ReviewGrade.HARD
+        if (config.correctnessOnlyGrading) return ReviewGrade.GOOD
+        if (dwellSeconds in 1 until config.fastSeconds) return ReviewGrade.EASY
+        if (dwellSeconds >= config.slowSeconds) return ReviewGrade.HARD
         return ReviewGrade.GOOD
     }
 
@@ -365,16 +416,14 @@ object Study {
      * a failed recall even though the chosen answer matched.
      *
      * Deliberation time on a random pick carries no information, so a guess
-     * bypasses the dwell ladder entirely.
+     * bypasses the dwell cuts entirely.
      */
     fun autoGrade(
         correctOptionIds: Set<String>,
         selection: Set<String>,
         dwellSeconds: Long,
         isGuess: Boolean,
-        config: SchedulerConfig = SchedulerConfig(),
-        fastSeconds: Long = config.fastSeconds,
-        slowSeconds: Long = config.slowSeconds
+        config: SchedulerConfig = SchedulerConfig()
     ): ReviewGrade {
         if (selection.isEmpty()) return ReviewGrade.AGAIN
         if (selection != correctOptionIds) return ReviewGrade.AGAIN
@@ -382,77 +431,20 @@ object Study {
         return inferGrade(
             isCorrect = true,
             dwellSeconds = dwellSeconds,
-            config = config,
-            fastSeconds = fastSeconds,
-            slowSeconds = slowSeconds
-        )
-    }
-
-    /** Assumed comfortable reading speed, in visible characters per second. */
-    private const val READ_CHARS_PER_SECOND = 20.0
-
-    /** Reading time added per image in the stem, options, or passage. */
-    private const val IMAGE_SECONDS = 3L
-
-    /**
-     * The Easy threshold for one card: the configured minimum plus the time
-     * needed to read the visible material. Counts the stem, every option, and
-     * the passage title/body because the learner must read all of it before
-     * answering.
-     */
-    fun easyThresholdSeconds(
-        config: SchedulerConfig,
-        question: Question,
-        passage: Passage?
-    ): Long {
-        val readableLength =
-            question.elements.searchableText.length +
-                question.options.sumOf { it.elements.searchableText.length } +
-                (passage?.elements?.searchableText?.length ?: 0) +
-                (passage?.title?.length ?: 0)
-        val imageCount =
-            (if (question.image != null) 1 else 0) +
-                question.options.count { it.image != null } +
-                (if (passage?.image != null) 1 else 0)
-        val readingBonus = ceil(
-            (readableLength / READ_CHARS_PER_SECOND) + (imageCount * IMAGE_SECONDS).toDouble()
-        ).toLong()
-        return config.fastSeconds + readingBonus
-    }
-
-    /**
-     * The two dwell thresholds a card is graded against: Easy below the first,
-     * Hard at or above the second, Good between them. Reading time lifts both
-     * ends by the same amount, so Good stays reachable on a long question.
-     *
-     * The Simplified-mode check grades from this pair and the header clock
-     * colours itself from the same pair, so the two can never disagree about
-     * where a card sits on the ladder.
-     */
-    data class DwellLadder(val easySeconds: Long, val hardSeconds: Long)
-
-    fun dwellLadder(
-        config: SchedulerConfig,
-        question: Question,
-        passage: Passage?
-    ): DwellLadder {
-        val easy = easyThresholdSeconds(config, question, passage)
-        return DwellLadder(
-            easySeconds = easy,
-            hardSeconds = config.slowSeconds + (easy - config.fastSeconds)
+            config = config
         )
     }
 
     /**
-     * The bands of the dwell ladder, for the study clock's colour. [NEUTRAL] is
-     * the first second only: no time is banked yet, so the clock makes no
-     * colour claim until it has something to claim.
+     * The bands of the dwell thresholds, for the study clock's colour.
+     * [NEUTRAL] is the first second only: no time is banked yet, so the clock
+     * makes no colour claim until it has something to claim.
      */
     enum class DwellBand { NEUTRAL, EASY, GOOD, HARD }
 
     /**
-     * Where [dwellSeconds] sits on the ladder described by [easySeconds] and
-     * [hardSeconds]. From one second up, the boundaries match [inferGrade]
+     * Where [dwellSeconds] sits between the absolute [easySeconds] and
+     * [hardSeconds] cuts. From one second up, the boundaries match [inferGrade]
      * exactly. At 0 the clock is neutral: grade inference treats 0 as untracked
      * timing and calls it Good, while a live clock that has not banked its first
      * second should not yet claim any band at all.
@@ -473,9 +465,24 @@ object Study {
      * source of truth, rounded half-up once, at the moment the grade is
      * proposed. The clock display truncates instead, because a clock reading
      * 3 s then 4 s is what a learner expects.
+     *
+     * An answer given before the clock has shown its first second is stored as
+     * 0, the untimed value. A correct answer that fast is a reflex or a
+     * mis-tap, not a recall measured in time, so it grades Good: [inferGrade]
+     * reads 0 as "no timing" and [dwellBand] calls it neutral. A wrong one is
+     * Again either way. Rounding 500-999 ms up to a second would instead hand
+     * out Easy for the fastest possible tap.
+     *
+     * The answer-time suggestion keeps these rows rather than dropping them —
+     * it counts 0 as one second, because a reflex is a real reading of the
+     * learner's fast end and the tenth percentile is exactly that tail. The
+     * grade is still Good; only the suggestion's percentile reinterprets the
+     * value (see `Calibration.suggestCutsFromDwell`).
      */
-    fun gradedDwellSeconds(elapsedMillis: Long): Long =
-        (elapsedMillis.coerceAtLeast(0L) + 500L) / 1000L
+    fun gradedDwellSeconds(elapsedMillis: Long): Long {
+        val millis = elapsedMillis.coerceAtLeast(0L)
+        return if (millis < 1_000L) 0L else (millis + 500L) / 1000L
+    }
 
     /** Every card eligible right now, split into the pull order's pools. */
     data class CandidatePools(

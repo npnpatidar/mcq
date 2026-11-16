@@ -34,7 +34,7 @@ import org.robolectric.annotation.Config
  * and what resuming it restores.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class TestSessionResumeTest {
 
     private lateinit var app: McqApplication

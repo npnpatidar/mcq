@@ -205,9 +205,9 @@ suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }
 }
 
-suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>) {
-    questionIds.toList().chunks().forEach { deleteByQuestions(it) }
-}
+/** Deletes in bind-safe chunks and returns the total number of rows removed. */
+suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>): Int =
+    questionIds.toList().chunks().sumOf { deleteByQuestions(it) }
 
 /**
  * Rewrites one question's exact-tag rows from its tag list (phase 3).

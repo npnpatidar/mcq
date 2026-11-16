@@ -114,6 +114,7 @@ fun StudyScreen(
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
     val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
+    val liveDwellMillis by viewModel.liveDwellMillis.collectAsStateWithLifecycle()
     val sessionSeconds by viewModel.sessionSeconds.collectAsStateWithLifecycle()
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -144,6 +145,7 @@ fun StudyScreen(
                 StudyStickyHeader(
                     state = state,
                     liveDwell = liveDwell,
+                    liveDwellMillis = liveDwellMillis,
                     sessionSeconds = sessionSeconds,
                     // The header's arrow is the same back gesture; both stop.
                     onBack = { viewModel.stop() },
@@ -492,6 +494,11 @@ private fun BackOnlyBar(onBack: () -> Unit) {
 private fun StudyStickyHeader(
     state: StudyUiState,
     liveDwell: Long,
+    /**
+     * The untruncated reading the tint is measured from: a band boundary falls
+     * on the same half-second the check's rounding uses.
+     */
+    liveDwellMillis: Long,
     sessionSeconds: Long,
     onBack: () -> Unit,
     onStop: () -> Unit,
@@ -508,13 +515,21 @@ private fun StudyStickyHeader(
         state.question?.id?.let { it in state.bookmarked } == true
     // The question clock doubles as a dwell gauge: green while the card is in
     // the Easy window, amber through Good, red once it reaches Hard. Thresholds
-    // are the card's own ladder (reading time included) from the same rule the
-    // check grades with, and the time itself stays the primary signal. The
-    // tints come from the active theme and are contrast-checked against its
+    // are the absolute cuts from the same rule the check grades with, and the
+    // time itself stays the primary signal. Under correctness-only grading the
+    // dwell is still recorded for later analysis, but it does not decide the
+    // grade, so the clock keeps the neutral tint instead of implying a band.
+    // The tints come from the active theme and are contrast-checked against its
     // surface, so the clock stays legible in light, dark and every palette.
     val clockColors = clockBandColors()
-    val clockColor = when (
-        Study.dwellBand(liveDwell, state.dwellEasySeconds, state.dwellHardSeconds)
+    val clockColor = if (state.correctnessOnlyGrading) {
+        MaterialTheme.colorScheme.onSurface
+    } else when (
+        Study.dwellBand(
+            Study.gradedDwellSeconds(liveDwellMillis),
+            state.dwellEasySeconds,
+            state.dwellHardSeconds
+        )
     ) {
         // The first second has banked no time, so it makes no colour claim.
         Study.DwellBand.NEUTRAL -> MaterialTheme.colorScheme.onSurface

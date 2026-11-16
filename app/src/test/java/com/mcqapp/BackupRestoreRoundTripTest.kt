@@ -17,6 +17,7 @@ import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import androidx.room.Room
+import kotlinx.serialization.decodeFromString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -212,32 +213,19 @@ class BackupRestoreRoundTripTest {
                 PanelQuestionEntity(panelId, "q-1", 1)
             )
         )
-        // v26: the ladder's history, a closed block that decided nothing and a
-        // study sitting. All three travel in study.json and must round-trip.
-        db.ladderDao().insertVersion(
-            com.mcqapp.data.local.LadderVersionEntity(
+        // v28: the cut pair that graded a span of reviews, plus a study
+        // sitting. Both travel in study.json and must round-trip.
+        // The rule flag travels with the cuts, and `true` is the value a new
+        // install actually writes: a fixture that only ever seeds `false`
+        // cannot fail if the column is dropped on the way through a backup.
+        db.gradingRulesDao().insertVersion(
+            com.mcqapp.data.local.GradingVersionEntity(
                 id = 2,
-                easySeconds = 9,
-                slowSeconds = 31,
+                easySeconds = 6,
+                slowSeconds = 60,
                 effectiveFrom = 1_700_000_000_100,
                 reason = "manual",
-                previousId = 1,
-                policyVersion = 1
-            )
-        )
-        db.ladderDao().insertBlock(
-            com.mcqapp.data.local.LadderBlockEntity(
-                id = 5,
-                startAt = 1_700_000_000_000,
-                endAt = 1_700_000_100_000,
-                ladderVersion = 2,
-                fsrsFitVersion = 0,
-                policyVersion = 1,
-                easyPairs = 12,
-                easyCards = 9,
-                goodPairs = 4,
-                goodCards = 4,
-                outcome = "no-change"
+                correctnessOnly = true
             )
         )
         db.studySessionDao().insert(
@@ -248,6 +236,40 @@ class BackupRestoreRoundTripTest {
                 endedAt = 1_700_000_600_000,
                 activeSeconds = 600
             )
+        )
+    }
+
+    /**
+     * A legacy backup written before the ladder was removed carries
+     * `ladderVersions` and `ladderBlocks`. The wire key is kept and the blocks
+     * array is skipped, so such a file must still decode — and a row written
+     * under the old rule has no rule flag, so it has to default to the timed
+     * rule rather than read as correctness-only.
+     */
+    @Test
+    fun aLegacyStudyFileDecodesItsLadderFields() {
+        val legacy = """
+            {
+              "cardState": [],
+              "reviewLog": [],
+              "ladderVersions": [
+                {"id": 7, "easySeconds": 8, "slowSeconds": 30,
+                 "effectiveFrom": 1700000000000, "reason": "prior"}
+              ],
+              "ladderBlocks": [{"id": 1, "start": 1700000000000}]
+            }
+        """.trimIndent()
+        val study = McqBackupFormat.json.decodeFromString(
+            McqBackupFormat.StudyFile.serializer(),
+            legacy
+        )
+        assertEquals(1, study.gradingVersions.size)
+        assertEquals(7L, study.gradingVersions.first().id)
+        assertEquals(8L, study.gradingVersions.first().easySeconds)
+        assertEquals(
+            "a row graded under the old rule was graded with the clock, so it is not correctness-only",
+            false,
+            study.gradingVersions.first().correctnessOnly
         )
     }
 
@@ -299,8 +321,7 @@ class BackupRestoreRoundTripTest {
             .flatMap { panel -> db.panelDao().questionIds(panel.id).map { "${panel.id}:$it" } }
             .sorted(),
         "passages" to db.passageDao().getAll().map { it.toString() }.sorted(),
-        "ladder_versions" to db.ladderDao().allVersions().map { it.toString() }.sorted(),
-        "ladder_blocks" to db.ladderDao().allBlocks().map { it.toString() }.sorted(),
+        "grading_versions" to db.gradingRulesDao().allVersions().map { it.toString() }.sorted(),
         "study_sessions" to db.studySessionDao().getAll().map { it.toString() }.sorted()
     )
 

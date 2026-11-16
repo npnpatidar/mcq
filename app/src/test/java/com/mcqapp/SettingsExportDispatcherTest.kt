@@ -32,7 +32,7 @@ import java.util.concurrent.Executors
  * is stated plainly in the commit message.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class SettingsExportDispatcherTest {
 
     @Test

@@ -1,14 +1,15 @@
 package com.mcqapp
 
 import android.content.Context
-import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.data.repository.InstallFreshness
 import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
@@ -16,11 +17,14 @@ import com.mcqapp.domain.StudyMode
 import com.mcqapp.domain.TestPlan
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -44,20 +48,54 @@ import org.robolectric.annotation.Config
 class RepositorySettingsTest {
 
     private fun store(): SettingsStore =
-        SettingsStore(ApplicationProvider.getApplicationContext<Context>())
+        SettingsStore(ApplicationProvider.getApplicationContext<Context>(), freshInstall = false)
+
+    @get:Rule
+    val settingsReset = SettingsResetRule()
 
     @Test
-    fun automaticLadderAdaptationStartsOffAndRoundTrips() = runBlocking {
-        assertFalse(store().automaticLadderAdaptationNow())
-        store().setAutomaticLadderAdaptation(true)
-        assertTrue(store().automaticLadderAdaptationNow())
+    fun `a cut pair stored before the absolute rule is ignored`() = runBlocking {
+        // A build from before the absolute rule wrote 8/30; those cuts were
+        // measured against the reading allowance the rule no longer has, so
+        // they must not outlive it. The gate is cleared here on purpose: the
+        // DataStore is process-wide and another test's reset stamps the current
+        // rule, which would make this stale pair look current.
+        ApplicationProvider.getApplicationContext<Context>().dataStore.edit { prefs ->
+            prefs[doublePreferencesKey("anki_fast_seconds")] = 8.0
+            prefs[doublePreferencesKey("anki_slow_seconds")] = 30.0
+            prefs.remove(intPreferencesKey("grading_rules_version"))
+            prefs.remove(intPreferencesKey("ladder_version"))
+        }
+        val config = store().schedulerConfigNow()
+        assertEquals(SchedulerConfig().fastSeconds, config.fastSeconds)
+        assertEquals(SchedulerConfig().slowSeconds, config.slowSeconds)
+    }
+
+    @Test
+    fun `correctness-only grading round-trips and survives a reset`() = runBlocking {
+        store().setSchedulerConfig(SchedulerConfig(correctnessOnlyGrading = true))
+        val stored = store().schedulerConfigNow()
+        assertTrue("the switch must survive the store", stored.correctnessOnlyGrading)
+        // The cuts stay put: they are the fallback rule for when it is off.
+        assertEquals(SchedulerConfig().fastSeconds, stored.fastSeconds)
+        assertEquals(SchedulerConfig().slowSeconds, stored.slowSeconds)
+
+        store().resetSchedulerConfig()
+        assertTrue(
+            "the rule is not a pacing knob: Reset must not switch it off",
+            store().schedulerConfigNow().correctnessOnlyGrading
+        )
     }
 
     /**
-     * The DataStore is process-wide, and v26 gave the scheduler config two
-     * generation fields (`ladderVersion`, `fsrsFitVersion`) that other test
+     * The DataStore is process-wide, and the scheduler config carries two
+     * generation fields (`ladder_version`, `fsrs_fit_version`) that other test
      * classes write. Clear them before a whole-config comparison, not only
-     * after this class, or a neighbour's version leaks in.
+     * after this class, or a neighbour's version leaks in. The grading rule is
+     * cleared too: a reset no longer rewrites it, so one test's switch would
+     * otherwise drive every later test in the run. The cross-class haptics and
+     * last-test-length preferences are cleared here as well, so this class's
+     * first test starts from the same blank slate as every later one.
      */
     @Before
     fun resetGenerationKeys() {
@@ -70,6 +108,8 @@ class RepositorySettingsTest {
                 prefs.remove(longPreferencesKey("fsrs_rebuild_cursor"))
                 prefs.remove(booleanPreferencesKey("fsrs_rebuild_done"))
                 prefs.remove(intPreferencesKey("ladder_version"))
+                prefs.remove(booleanPreferencesKey("haptics_enabled"))
+                prefs.remove(intPreferencesKey("last_test_length"))
             }
         }
     }
@@ -83,15 +123,11 @@ class RepositorySettingsTest {
             store().resetSchedulerConfig()
             store().clearTestProgress()
             store().setHapticsEnabled(true)
-            store().setAutomaticLadderAdaptation(false)
             // Fitted weights ride a separate key that resetSchedulerConfig
             // deliberately leaves alone; clear it here or one test's fit would
             // leak into every later assertion in the run.
             ApplicationProvider.getApplicationContext<Context>().dataStore.edit {
                 it.remove(stringPreferencesKey("fsrs_parameters"))
-                // The generation fields move with the weights/ladder; they
-                // are not pacing knobs and would otherwise leak a bump into
-                // the next test's whole-config comparison.
                 it.remove(intPreferencesKey("fsrs_fit_version"))
                 // The FSRS-7 migration bookkeeping is per-install state, not a
                 // setting: a leftover "done" flag would hide the rebuild from
@@ -215,6 +251,12 @@ class RepositorySettingsTest {
         assertEquals("completion clears the cursor", 0L, store.fsrsRebuildCursor())
     }
 
+    /**
+     * The legacy `anki_*` quota keys are inert by omission: nothing reads
+     * them. An install that still carries them reads exactly like a fresh
+     * one, which is what this asserts by round-tripping only the FSRS-era
+     * settings and confirming none of the removed fields reappear.
+     */
     @Test
     fun aFreshStoreYieldsTheDocumentedDefaults() = runBlocking {
         val config = store().schedulerConfigNow()
@@ -228,11 +270,59 @@ class RepositorySettingsTest {
     }
 
     /**
-     * The legacy `anki_*` quota keys are inert by omission: nothing reads
-     * them. An install that still carries them reads exactly like a fresh
-     * one, which is what this asserts by round-tripping only the FSRS-era
-     * settings and confirming none of the removed fields reappear.
+     * A new install starts on correctness-only grading. The rule is the
+     * measurement condition for the answer-time cuts: the dwell of a tinted
+     * clock is not free evidence, so a learner who starts on timing cannot
+     * produce that suggestion later without first spending weeks on
+     * correctness-only. Starting here makes the unbiased sample the default
+     * path.
      */
+    @Test
+    fun aFreshInstallStartsOnCorrectnessOnlyGrading() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertTrue("a new install starts on the unbiased rule", config.correctnessOnlyGrading)
+        // The seed is stored, not merely inferred: the rule survives a later
+        // read from a store that knows nothing about this install.
+        assertTrue(store().schedulerConfigNow().correctnessOnlyGrading)
+    }
+
+    /** An upgrade keeps the rule the learner had: the default stays timed. */
+    @Test
+    fun anUpgradeKeepsTheTimedRule() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        val config = SettingsStore(context, freshInstall = false).schedulerConfigNow()
+        assertFalse(config.correctnessOnlyGrading)
+    }
+
+    /**
+     * A preference is not a sign of an old install. The theme is written the
+     * moment the learner changes it, long before the first scheduler read, and
+     * the seed must still apply: freshness is decided by the database's
+     * content, not by whether DataStore is empty. (The database-backed form of
+     * this rule is pinned in [GradingRulesStoreTest].)
+     */
+    @Test
+    fun anUnrelatedPreferenceDoesNotVoidTheFreshInstallSeed() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        context.dataStore.edit { it[stringPreferencesKey("theme_mode")] = "dark" }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertTrue("a theme change must not turn a new install into an upgrade", config.correctnessOnlyGrading)
+    }
+
+    /** An explicit choice is never overwritten by the seed. */
+    @Test
+    fun anExplicitChoiceIsNeverOverwritten() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it.clear() }
+        context.dataStore.edit { it[booleanPreferencesKey("correctness_only")] = false }
+        val config = SettingsStore(context, freshInstall = true).schedulerConfigNow()
+        assertFalse(config.correctnessOnlyGrading)
+    }
+
     @Test
     fun hapticsAreOnByDefaultAndSurviveARoundTrip() = runBlocking {
         assertTrue("a fresh install starts with haptics on", store().hapticsEnabled().first())
@@ -298,7 +388,7 @@ class RepositorySettingsTest {
         // caller writes; writing a new parameter list bumps it.
         assertEquals(
             written.sanitized().copy(
-                ladderVersion = read.ladderVersion,
+                gradingVersion = read.gradingVersion,
                 fsrsFitVersion = read.fsrsFitVersion
             ),
             read
@@ -379,7 +469,7 @@ class RepositorySettingsTest {
         // therefore their generation — alone.
         assertEquals(
             SchedulerConfig().sanitized().copy(
-                ladderVersion = config.ladderVersion,
+                gradingVersion = config.gradingVersion,
                 fsrsFitVersion = config.fsrsFitVersion
             ),
             config
@@ -475,5 +565,45 @@ class RepositorySettingsTest {
         assertEquals(60, store.lastTestLength().first())
         store.setLastTestLength(20)
         assertEquals(20, store.lastTestLength().first())
+    }
+
+    /**
+     * The first-start marker is install state, not a learner preference: it
+     * must not travel in a backup, and a hand-made archive that carries it
+     * must not overwrite this install's answer. After a restore the next read
+     * re-probes the restored database instead, which is what keeps a backup
+     * from before the absolute grading rule from inheriting a formerly-fresh
+     * install's correctness-only rule.
+     */
+    @Test
+    fun `the install marker is neither exported nor restored`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.dataStore.edit { it[InstallFreshness.MARKER_KEY] = true }
+
+        val snapshot = store().snapshot()
+        assertFalse(
+            "install_first_start_new is this install's, not the backup's",
+            "install_first_start_new" in snapshot.preferences
+        )
+
+        // A hand-built archive that still carries the marker (an older build,
+        // or a tampered file) must not be allowed to set it on this install.
+        val tampered = McqBackupFormat.SettingsFile(
+            mapOf(
+                "install_first_start_new" to McqBackupFormat.PreferenceEntry(
+                    "boolean",
+                    JsonPrimitive(false)
+                ),
+                "theme_mode" to McqBackupFormat.PreferenceEntry(
+                    "string",
+                    JsonPrimitive("dark")
+                )
+            )
+        )
+        store().restore(tampered)
+
+        val stored = context.dataStore.data.first()
+        assertNull(stored[InstallFreshness.MARKER_KEY])
+        assertEquals("dark", stored[stringPreferencesKey("theme_mode")])
     }
 }

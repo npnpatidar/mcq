@@ -1,6 +1,7 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.chunks
@@ -66,6 +67,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * How many times a config read retries when it observes `gradingVersion == 0`.
+ * That state only exists between a Reset's id removal and its replacement
+ * row, both of which the retrying call itself writes, so three attempts is
+ * already generous; more would only hide a real write failure.
+ */
+private const val SCHEDULER_CONFIG_READ_ATTEMPTS = 3
 
 /**
  * Facade over the repository's collaborators, keeping the public API every
@@ -82,10 +93,17 @@ import kotlinx.coroutines.launch
  * Every method here is a one-line forward unless it belongs to no collaborator
  * (cross-paper search, the storage report), so this file stays a table of
  * contents rather than a second implementation.
+ *
+ * Freshness for the first-start grading-rule seed is always the database's
+ * answer: [InstallFreshness] probes `AppDatabase.hasNoPapersOrReviews` and
+ * persists its one-shot decision. There is deliberately no constructor that
+ * silently means "never seed"; tests that need a forced answer use the
+ * [VisibleForTesting] boolean or [InstallFreshness] seam.
  */
-class McqRepository(
+class McqRepository internal constructor(
     private val db: AppDatabase,
     private val context: Context,
+    internal val installFreshness: InstallFreshness,
     /**
      * Where work that outlives its caller runs — today the FSRS-7 rebuild a
      * restore starts. [com.mcqapp.McqApplication] passes its process scope so
@@ -107,8 +125,60 @@ class McqRepository(
     private val rebuildAfterRestore: (suspend () -> Unit)? = null
 ) {
 
-    private val settings = SettingsStore(context)
-    private val ladderStore = LadderStore(db, settings)
+    /** The production wiring: a new install is one whose database is empty. */
+    constructor(db: AppDatabase, context: Context) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() }
+    )
+
+    /**
+     * Pins the first-start answer for a test without a database (or one whose
+     * content cannot express the desired answer). Production must not use it.
+     */
+    @VisibleForTesting
+    internal constructor(db: AppDatabase, context: Context, freshInstall: Boolean) : this(
+        db,
+        context,
+        InstallFreshness.fixed(context, freshInstall)
+    )
+
+    /**
+     * The production wiring with the process scope: freshness comes from the
+     * database's own content, and post-restore rebuilding outlives the screen
+     * that started the restore.
+     */
+    constructor(
+        db: AppDatabase,
+        context: Context,
+        backgroundScope: CoroutineScope
+    ) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() },
+        backgroundScope
+    )
+
+    /**
+     * The restore tests' seam: a scope they control and a rebuild they can make
+     * fail on purpose. Production passes neither.
+     */
+    @VisibleForTesting
+    internal constructor(
+        db: AppDatabase,
+        context: Context,
+        backgroundScope: CoroutineScope,
+        rebuildAfterRestore: (suspend () -> Unit)?
+    ) : this(
+        db,
+        context,
+        InstallFreshness(context) { db.hasNoPapersOrReviews() },
+        backgroundScope,
+        rebuildAfterRestore
+    )
+
+    private val settings = SettingsStore(context, installFreshness)
+    private val gradingRules = GradingRulesStore(db, settings)
     private val mapper = QuestionContentMapper(db)
     private val questionStore = QuestionStore(db, mapper)
     private val passageStore = PassageStore(db, mapper, questionStore)
@@ -117,8 +187,7 @@ class McqRepository(
     private val historyStore = HistoryStore(db, mapper, questionStore)
     private val signalStore = SignalStore(db, settings)
     private val fsrsTuner = FsrsTuner(db, settings)
-    private val statsStore = StatsStore(db, settings)
-    private val ladderController = LadderController(db, settings, ladderStore, statsStore)
+    private val statsStore = StatsStore(db, settings, gradingRules)
     private val testProgress = TestProgressStore(db, settings)
     private val fsrs7Upgrade = Fsrs7Upgrade(db, settings)
 
@@ -139,11 +208,6 @@ class McqRepository(
 
     fun simplifiedStudy(): Flow<Boolean> = settings.simplifiedStudy()
     suspend fun setSimplifiedStudy(enabled: Boolean) = settings.setSimplifiedStudy(enabled)
-
-    /** Phase 5: run the ladder policy automatically at the end of a sitting. */
-    fun automaticLadderAdaptation(): Flow<Boolean> = settings.automaticLadderAdaptation()
-    suspend fun setAutomaticLadderAdaptation(enabled: Boolean) =
-        settings.setAutomaticLadderAdaptation(enabled)
 
     fun shuffleOptions(): Flow<Boolean> = settings.shuffleOptions()
     suspend fun setShuffleOptions(enabled: Boolean) = settings.setShuffleOptions(enabled)
@@ -185,55 +249,113 @@ class McqRepository(
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = settings.schedulerConfig()
 
     /**
-     * The config a session grades under. Reading it also seeds the ladder
+     * The config a session grades under. Reading it also seeds the grading
      * version if this install has never had one, so the very first review is
      * stamped with a version that has a history row behind it.
+     *
+     * Invariant: a review's `gradingVersion` must name the row whose cuts
+     * graded it. `writeCuts` puts the pair and its id in one DataStore edit,
+     * so the returned config trusts the id stored *with* the cuts. Re-reading
+     * the id separately let a concurrent Reset or cut save interleave, so new
+     * cuts could wear the old id and every stats epoch derived from it would
+     * start at the wrong `effectiveFrom`.
+     *
+     * A config whose id reads as 0 is that interleaving: a Reset has removed
+     * the id but not yet written the replacement row. Pairing the id seeded
+     * above with those cuts would be exactly the mismatch this method exists
+     * to prevent, so the read is retried — `currentVersion()` re-seeds the id
+     * and its cuts atomically — and only a store that keeps answering 0 fails.
      */
     suspend fun schedulerConfigNow(): com.mcqapp.domain.SchedulerConfig {
-        ladderStore.currentVersion()
-        return settings.schedulerConfigNow()
+        repeat(SCHEDULER_CONFIG_READ_ATTEMPTS) {
+            gradingRules.currentVersion()
+            val config = settings.schedulerConfigNow()
+            if (config.gradingVersion > 0) return config
+        }
+        throw GradingRuleUnavailable()
+    }
+
+    /**
+     * Decides the first-start grading rule before any screen asks for the
+     * config. [McqApplication] calls this on an IO scope in `onCreate` so an
+     * import in the first run cannot turn a new install into an upgrade;
+     * every config read awaits the same decision.
+     */
+    internal suspend fun decideInstallFreshness(): Boolean {
+        // The seed is a write, so it belongs here (a job) and in
+        // `schedulerConfigNow`, never inside a settings flow collection.
+        settings.ensureInstallSeed()
+        return installFreshness.isNewInstall()
     }
 
     /**
      * Writes the whole scheduler config. A changed cut goes through
-     * [LadderStore] first, so the new value always owns a version row; the
-     * remaining fields are the settings store's business.
+     * [GradingRulesStore] first, so the new value always owns a version row;
+     * the remaining fields are the settings store's business.
+     *
+     * [schedulerWriteMutex] serialises this against [resetSchedulerConfig] and
+     * [settingsRestore]: a cut save and Reset read the stored pair, write a new
+     * one and mint a version row, and a restore rewrites the pair and the whole
+     * `grading_versions` table, so two of them interleaving could file new cuts
+     * under an id that named the pair they replaced.
      */
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
-        ladderStore.recordConfigCuts(config)
-        settings.setSchedulerConfig(config)
+        schedulerWriteMutex.withLock {
+            writeSchedulerConfigLocked(config)
+        }
     }
-
-    suspend fun resetSchedulerConfig() {
-        settings.resetSchedulerConfig()
-        val defaults = com.mcqapp.domain.SchedulerConfig().sanitized()
-        ladderStore.setCuts(
-            easySeconds = defaults.fastSeconds,
-            slowSeconds = defaults.slowSeconds,
-            reason = LadderReason.MANUAL
-        )
-    }
-
-    /** The current ladder version; a manual Settings save of a cut writes one. */
-    internal suspend fun ladderVersion(): Int = ladderStore.currentVersion()
-
-    /** Applies an accepted Easy-cut proposal and records its evidence block. */
-    suspend fun applyLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Int =
-        ladderStore.applyProposal(proposal)
-
-    /** Records a dismissed proposal as a no-change block. */
-    suspend fun dismissLadderProposal(proposal: com.mcqapp.domain.stats.LadderPolicy.Proposal): Long =
-        ladderStore.dismissProposal(proposal)
-
-    /** Restores the previous ladder version; null when there is no earlier one. */
-    suspend fun rollbackLadder(): Int? = ladderStore.rollback()
 
     /**
-     * Runs phase 5's automatic controller. Called at the end of a sitting; a
-     * no-op unless the learner switched automatic grading on.
+     * Reads the stored config, applies [transform] and writes the result, all
+     * under [schedulerWriteMutex]. The Settings screen's per-field handlers use
+     * this instead of reading [schedulerConfigNow] and then calling
+     * [setSchedulerConfig]: those are two steps, so two overlapping edits (a
+     * cut typed while a rule switch is landing) would each start from the same
+     * stored value and the later write would revert the earlier field.
+     *
+     * Returns the config as written, including the version id
+     * [GradingRulesStore.recordConfigCuts] chose, so the caller can publish it
+     * without waiting for the DataStore flow to re-emit.
      */
-    internal suspend fun runLadderController(now: Long = System.currentTimeMillis()): LadderController.Result =
-        ladderController.run(now)
+    suspend fun updateSchedulerConfig(
+        transform: (com.mcqapp.domain.SchedulerConfig) -> com.mcqapp.domain.SchedulerConfig
+    ): com.mcqapp.domain.SchedulerConfig = schedulerWriteMutex.withLock {
+        val stored = schedulerConfigNow()
+        val edited = transform(stored).sanitized()
+        writeSchedulerConfigLocked(edited)
+    }
+
+    /** Must run under [schedulerWriteMutex]. Returns the config actually stored. */
+    private suspend fun writeSchedulerConfigLocked(
+        config: com.mcqapp.domain.SchedulerConfig
+    ): com.mcqapp.domain.SchedulerConfig {
+        val version = gradingRules.recordConfigCuts(config)
+        settings.setSchedulerConfig(config)
+        return config.copy(gradingVersion = version)
+    }
+
+    /** Serialises the three whole-config writers (save, reset, restore). */
+    private val schedulerWriteMutex = Mutex()
+
+    /**
+     * Resets the pacing knobs without touching the grading rule. The store
+     * decides from its single edit whether the effective cut pair changed: an
+     * unchanged pair keeps its version (and therefore the calibration epoch),
+     * while a changed pair gets one `manual` row for the defaults.
+     *
+     * Holding [schedulerWriteMutex] for the whole sequence is what makes that
+     * decision trustworthy: a concurrent save cannot move the pair between the
+     * reset's write and its follow-up read, so "unchanged" cannot mint a row
+     * and two confirms cannot write two rows.
+     */
+    suspend fun resetSchedulerConfig() = schedulerWriteMutex.withLock {
+        if (settings.resetSchedulerConfig()) {
+            gradingRules.recordResetCuts(settings.schedulerConfigNow())
+        }
+    }
+
+    /** The current grading version; a manual Settings save of a cut writes one. */
+    internal suspend fun gradingVersion(): Int = gradingRules.currentVersion()
 
     // --- FSRS parameter optimization ---
 
@@ -429,13 +551,69 @@ class McqRepository(
     suspend fun settingsSnapshot() = settings.snapshot()
 
     /**
-     * Full replace of every preference from a backup. Restored cuts get a
-     * fresh `prior` ladder version continuing the restored numbering; the
-     * restored blocks stay as a prior epoch's evidence.
+     * Whether the live preferences still carry the grading values [exported]
+     * was taken with: the cut pair, the `grading_versions` id that names it and
+     * the grading rule.
+     *
+     * A backup export writes its settings snapshot and *then* streams the study
+     * rows, so it needs this twice — once on the snapshot it wrote, once after
+     * the stream. A cut save or a rule switch in between would leave the file
+     * pairing one rule's settings with the other rule's reviews, and a restore
+     * trusts exactly that pairing when the row at the restored id describes the
+     * restored pair. False is a refused export, never a repaired one: the
+     * caller discards the file and the learner retries.
+     */
+    internal suspend fun settingsUnchangedSince(
+        exported: com.mcqapp.data.backup.McqBackupFormat.SettingsFile
+    ): Boolean = settings.gradingGuard(exported) == settings.gradingGuard(settings.snapshot())
+
+    /**
+     * Full replace of every preference from a backup, with the restored
+     * grading version resolved after it.
+     *
+     * A restore that replayed its `grading_versions` rows has already resolved
+     * the restored `ladder_version` to a row that graded exactly the reviews
+     * being restored. `gradingRules.currentVersion()` keeps that id and its
+     * `effectiveFrom` and writes nothing, so the calibration epoch continues
+     * where the backup left off instead of restarting at "now" and excluding
+     * the restored history. An id whose row is missing — a crash — gets the
+     * same in-place repair every read performs, with the restored pair and a
+     * current timestamp.
+     *
+     * The guard that decides between keeping and minting lives in
+     * `GradingRulesStore.ensureVersionLocked`: it keeps the epoch only when the
+     * row it names describes the restored pair and carries a usable start, and
+     * mints a `prior` version stamped now otherwise. A row graded under other
+     * cuts, or stamped at or before 0 or in the future by a device with a wrong
+     * clock, cannot share an epoch with these cuts — `Calibration.report`
+     * filters by `reviewedAt >= epochStart` alone, so the old reviews would be
+     * counted as evidence for the new pair. Every restore wipes all tables and
+     * replays the backup's own rows, so in the ordinary case that row is the
+     * backup's own; the mismatch branch is defence in depth against a backup
+     * whose settings and log disagree, not a settings-only path.
+     *
+     * A backup without `grading_rules_version` carries no rule gate, so its pair
+     * cannot be reinterpreted under the absolute rule: the old pair is retired,
+     * the shipped 6/60 takes over, and one new `prior` version opens a fresh
+     * epoch.
+     *
+     * The `finally` invalidates the first-start answer and the cached
+     * calibration report even if the settings or version write throws: the
+     * database half of a full restore has already committed by the time this
+     * runs, so the pre-restore answer no longer describes the install, and a
+     * report built from pre-restore rows can no longer be keyed apart from the
+     * post-restore one now that the id and epoch survive.
      */
     suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
-        settings.restore(snapshot)
-        ladderStore.seedAfterRestore()
+        schedulerWriteMutex.withLock {
+            try {
+                settings.restore(snapshot)
+                gradingRules.currentVersion()
+            } finally {
+                statsStore.invalidateCalibrationCache()
+                installFreshness.invalidate()
+            }
+        }
         // A restored install can carry pre-FSRS-7 card rows — a v26 backup, or
         // one taken before the rebuild finished — and the restore itself
         // clears the done flag. Start the rebuild right after the settings
@@ -616,7 +794,7 @@ class McqRepository(
         // writes live in mcq.db-wal until a checkpoint, and counting only the
         // main file understates the database after a session.
         val dbBytes = try {
-            val main = context.getDatabasePath("mcq.db")
+            val main = context.getDatabasePath(AppDatabase.NAME)
             listOf(main, java.io.File("${main.path}-wal"), java.io.File("${main.path}-shm"))
                 .filter { it.exists() }
                 .sumOf { it.length() }
@@ -656,8 +834,20 @@ class McqRepository(
         passageStore.getPassagesByIds(ids)
     suspend fun getPassagesForPaper(paperId: String): List<com.mcqapp.domain.Passage> =
         passageStore.getPassagesForPaper(paperId)
-    suspend fun savePassage(passage: com.mcqapp.domain.Passage): String =
-        passageStore.savePassage(passage)
+    /**
+     * Saving a passage can move its members to another category: a passage
+     * lives in a category, and moving it takes every member with it. A member
+     * that crosses into another paper loses its `review_log` rows (the
+     * schedule restarts in the new paper), so the cached report may count
+     * reviews that are gone. Same reason as [deletePaper]: the invalidation
+     * runs after the store call, never inside its transaction, so a rolled-back
+     * save changed nothing that needs forgetting.
+     */
+    suspend fun savePassage(passage: com.mcqapp.domain.Passage): String {
+        val id = passageStore.savePassage(passage)
+        statsStore.invalidateCalibrationCache()
+        return id
+    }
     suspend fun passageMemberCount(passageId: String): Int =
         passageStore.memberCount(passageId)
     suspend fun passageMemberCounts(): Map<String, Int> =
@@ -679,8 +869,22 @@ class McqRepository(
     suspend fun getPassageMemberIds(passageId: String): List<String> =
         db.questionDao().getMemberIdsByPassage(passageId)
 
-    suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) =
+    /**
+     * Assigning questions to a passage moves any member that sits in another
+     * category into the passage's category, which can cross a paper boundary
+     * and delete that member's `review_log` rows. The cached report may count
+     * reviews that are gone, so it is invalidated after the store call
+     * returns, exactly like [savePassage].
+     *
+     * No screen calls this yet — the passage editor assigns through the
+     * passage's own save — but the wrapper is the only way into the store, so
+     * the invalidation belongs here rather than at a caller that may never
+     * come.
+     */
+    suspend fun assignQuestionsToPassage(questionIds: Collection<String>, passageId: String) {
         passageStore.assignQuestions(questionIds, passageId)
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun unassignQuestionsFromPassage(questionIds: Collection<String>) =
         passageStore.unassignQuestions(questionIds)
     suspend fun unassignAllFromPassage(passageId: String) =
@@ -696,12 +900,36 @@ class McqRepository(
     suspend fun getPaper(paperId: String): Paper? = paperStore.getPaper(paperId)
     suspend fun savePaper(paper: Paper) = paperStore.savePaper(paper)
     suspend fun deleteImpact(paperId: String): DeleteImpact = paperStore.deleteImpact(paperId)
-    suspend fun deletePaper(paperId: String) = paperStore.deletePaper(paperId)
+
+    /**
+     * Deleting removes `review_log` rows, and the calibration cache is keyed on
+     * `max(reviewedAt)` — which a delete only moves when the newest row was
+     * among the deleted — so a cached report could keep counting reviews that
+     * no longer exist until the block advanced. The invalidation runs after the
+     * store call, never inside its transaction: a rolled-back delete changed
+     * nothing that needs forgetting.
+     *
+     * The writers that can remove review rows are the paper, category and
+     * question deletes, the bulk move to another category, the passage
+     * wrappers whose member move can cross a paper boundary, and a question
+     * save or duplicate whose passage enforcement makes such a move. Each
+     * invalidates the cache after its store call has returned; the bulk move
+     * and question save/duplicate paths do so only when rows were removed.
+     */
+    suspend fun deletePaper(paperId: String) {
+        paperStore.deletePaper(paperId)
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun movePaper(paperId: String, delta: Int): Boolean =
         paperStore.movePaper(paperId, delta)
     suspend fun addCategory(paperId: String, title: String, parentId: String?): String =
         paperStore.addCategory(paperId, title, parentId)
-    suspend fun deleteCategory(categoryId: String) = paperStore.deleteCategory(categoryId)
+    suspend fun deleteCategory(categoryId: String) {
+        paperStore.deleteCategory(categoryId)
+        // Same reason as [deletePaper]: the rows are gone, the cache key need
+        // not have moved.
+        statsStore.invalidateCalibrationCache()
+    }
     suspend fun nestCategoryIntoSibling(categoryId: String): Boolean =
         paperStore.nestCategoryIntoSibling(categoryId)
     suspend fun promoteCategoryOutOfParent(categoryId: String): Boolean =
@@ -1432,14 +1660,53 @@ class McqRepository(
         categoryId: String,
         categoryTitle: String
     ) = questionStore.ensurePaperAndCategory(paperId, paperTitle, categoryId, categoryTitle)
-    suspend fun saveQuestion(question: Question) = questionStore.saveQuestion(question)
-    suspend fun deleteQuestion(questionId: String) = questionStore.deleteQuestion(questionId)
-    suspend fun deleteQuestions(questionIds: Collection<String>) =
+    /**
+     * Saves a question.
+     *
+     * An ordinary edit leaves review history alone. Assigning the question to
+     * a passage in another category can instead enforce that passage's
+     * category and move the question (or another member of a malformed group)
+     * across a paper, which deletes the affected member's `review_log` rows.
+     * The store returns the exact number of rows removed, so the calibration
+     * cache is invalidated only when this save really changed history.
+     */
+    suspend fun saveQuestion(question: Question) {
+        val reviewRowsRemoved = questionStore.saveQuestion(question)
+        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
+    }
+    suspend fun deleteQuestion(questionId: String) {
+        questionStore.deleteQuestion(questionId)
+        // Same reason as [deletePaper]: the review rows are gone, the cache key
+        // need not have moved.
+        statsStore.invalidateCalibrationCache()
+    }
+
+    suspend fun deleteQuestions(questionIds: Collection<String>) {
         questionStore.deleteQuestions(questionIds)
-    suspend fun duplicateQuestion(questionId: String): String? =
-        questionStore.duplicateQuestion(questionId)
-    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
-        questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
+        statsStore.invalidateCalibrationCache()
+    }
+    /**
+     * Deep-copies a question and returns the clone's id.
+     *
+     * The clone has no history of its own, but the passage-category
+     * enforcement used by [saveQuestion] also runs for the clone. It can move
+     * another member of a malformed passage group across a paper and delete
+     * that member's review rows, so the exact removal count decides whether
+     * the calibration cache is invalidated.
+     */
+    suspend fun duplicateQuestion(questionId: String): String? {
+        val result = questionStore.duplicateQuestion(questionId)
+        if (result != null && result.reviewRowsRemoved > 0) {
+            statsStore.invalidateCalibrationCache()
+        }
+        return result?.questionId
+    }
+    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
+        val reviewRowsRemoved = questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
+        // A cross-paper move deletes the review rows (the schedule restarts in
+        // the new paper), so the cached report may count reviews that are gone.
+        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
+    }
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
         questionStore.copyQuestionsToCategory(questionIds, targetCategoryId)
     suspend fun bulkUpdateQuestions(
@@ -1518,7 +1785,6 @@ class McqRepository(
         proposedGrade: com.mcqapp.domain.ReviewGrade? = null,
         gradeSource: com.mcqapp.domain.GradeSource =
             com.mcqapp.domain.GradeProvenance.source(proposedGrade, edited = false),
-        readingAllowanceSeconds: Long? = null,
         wasSkipped: Boolean? = null,
         /** The session's own config snapshot; null resolves the stored one. */
         config: com.mcqapp.domain.SchedulerConfig? = null
@@ -1534,7 +1800,6 @@ class McqRepository(
             wasCorrect = wasCorrect,
             proposedGrade = proposedGrade,
             gradeSource = gradeSource,
-            readingAllowanceSeconds = readingAllowanceSeconds,
             wasSkipped = wasSkipped
         )
 
@@ -1686,7 +1951,7 @@ class McqRepository(
         paper: com.mcqapp.domain.Paper?,
         now: Long = System.currentTimeMillis()
     ): com.mcqapp.domain.ReportEvidence {
-        val config = settings.schedulerConfigNow()
+        val config = schedulerConfigNow()
         val scheduler = com.mcqapp.domain.FsrsScheduler(
             desiredRetention = config.desiredRetention,
             config = config

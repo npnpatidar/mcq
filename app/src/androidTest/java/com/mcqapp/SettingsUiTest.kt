@@ -66,6 +66,10 @@ class SettingsUiTest {
         // library screen (the title is "MCQ App").
         compose.onNodeWithText("Settings", substring = false).performClick()
         waitForTag("settings-section-appearance")
+        // The scheduler section shows a loading row until the stored config
+        // (and the seeded rule) arrives; its advanced block only exists once
+        // the section is interactive, so every scroll below must wait for it.
+        waitForTag("advanced-anki-settings")
     }
 
     @Test

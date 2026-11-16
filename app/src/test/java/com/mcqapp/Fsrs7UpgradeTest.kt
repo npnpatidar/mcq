@@ -75,7 +75,7 @@ class Fsrs7UpgradeTest {
         // The rebuild reads the *stored* weights, so the migration has to have
         // run first, exactly as it does at startup.
         repository.ensureFsrs7()
-        settings = SettingsStore(context)
+        settings = SettingsStore(context, freshInstall = false)
     }
 
     @After

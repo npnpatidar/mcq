@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
  * un-typeable. The raw text must be owned by the state, not re-derived.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class ImportFieldTextTest {
 
     private fun viewModel() = ImportViewModel(

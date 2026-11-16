@@ -200,8 +200,10 @@ class Fsrs7SelectionTest {
     // --- helpers ------------------------------------------------------------
 
     private suspend fun scheduler(): FsrsScheduler {
-        val config = SettingsStore(ApplicationProvider.getApplicationContext<Context>())
-            .schedulerConfigNow()
+        val config = SettingsStore(
+            ApplicationProvider.getApplicationContext<Context>(),
+            freshInstall = false
+        ).schedulerConfigNow()
         return FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
     }
 

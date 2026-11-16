@@ -35,6 +35,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
+/** The clone id and the history rows removed while creating it. */
+internal data class DuplicateQuestionResult(
+    val questionId: String,
+    val reviewRowsRemoved: Int
+)
+
 /**
  * Question CRUD and bulk operations. Split out of [McqRepository]; the paper
  * delegate calls into it for [getQuestionsForCategories] and [insertCopies]
@@ -234,12 +240,24 @@ internal class QuestionStore(
         )
     }
 
-    suspend fun saveQuestion(question: Question) {
+    /**
+     * Saves a question and returns the number of `review_log` rows removed by
+     * the transaction.
+     *
+     * Normally that number is zero. Assigning the question to a passage in a
+     * different category can enforce the passage's category, which may make
+     * the question (or another member of its passage group) cross a paper
+     * boundary; that move deletes the affected member's review rows. The
+     * exact count lets the repository invalidate the calibration cache only
+     * when history really changed.
+     */
+    suspend fun saveQuestion(question: Question): Int {
         Logger.d("REPO", "saveQuestion(id=${question.id}, category=${question.categoryId}, " +
             "options=${question.options.size}, correct=${question.correctOptionIds}, " +
             "textLength=${question.text.length})")
         // One transaction: the question row, its options and its answer key
         // must land together, so a crash can never leave options without a key.
+        var reviewRowsRemoved = 0
         db.withTransaction {
             val existing = db.questionDao().getById(question.id)
             val sortOrder = existing?.sortOrder
@@ -314,10 +332,11 @@ internal class QuestionStore(
             // and exports without the user hand-placing it. Contiguous
             // imports are no-ops.
             if (question.passageId != null && existing?.passageId != question.passageId) {
-                enforcePassageCategory(question.id, question.passageId)
+                reviewRowsRemoved += enforcePassageCategory(question.id, question.passageId)
                 placeWithGroup(question.id)
             }
         }
+        return reviewRowsRemoved
     }
 
     /**
@@ -424,8 +443,15 @@ internal class QuestionStore(
         }
     }
 
-    /** Deep-copies a question (options, key, explanation, marks) after siblings. */
-    suspend fun duplicateQuestion(questionId: String): String? {
+    /**
+     * Deep-copies a question (options, key, explanation, marks) after siblings.
+     *
+     * The clone itself has no history, but the same passage-category
+     * enforcement as [saveQuestion] runs for it. In a malformed group that can
+     * move another member across a paper and delete that member's review rows,
+     * so the result carries the exact removal count to the repository.
+     */
+    suspend fun duplicateQuestion(questionId: String): DuplicateQuestionResult? {
         val source = getQuestion(questionId) ?: return null
         // A generated id is `${questionId}-copy(-n)`, so only ids in that
         // namespace can collide; the scoped check replaces materializing every
@@ -433,16 +459,24 @@ internal class QuestionStore(
         val namespace = db.questionDao()
             .getIdsLike(likePrefixPattern("$questionId-copy")).toSet()
         val newId = com.mcqapp.domain.BulkOps.copyId(namespace, questionId)
-        saveQuestion(source.copy(id = newId))
+        val reviewRowsRemoved = saveQuestion(source.copy(id = newId))
         Logger.i("REPO", "duplicateQuestion($questionId -> $newId)")
-        return newId
+        return DuplicateQuestionResult(newId, reviewRowsRemoved)
     }
 
-    /** Moves questions into another category, appended after its siblings. */
-    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
+    /**
+     * Moves questions into another category, appended after its siblings, and
+     * returns the number of `review_log` rows removed by the move.
+     *
+     * Only a cross-paper move removes history: the schedule is keyed to a
+     * paper, so the old row is dropped and the review rows that described it
+     * go with it.
+     */
+    suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String): Int {
         Logger.i("REPO", "moveQuestionsToCategory(${questionIds.size} ids -> $targetCategoryId)")
         // One transaction: a partial move must not strand questions, and the
         // cross-paper schedule reset below belongs to the same move.
+        var reviewRowsRemoved = 0
         db.withTransaction {
             val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
             // A slim read and one UPDATE per chunk replace a full
@@ -480,7 +514,8 @@ internal class QuestionStore(
                     db.cardStateDao().deleteByQuestionsChunked(crossPaperIds)
                     // The reset wipes history too: the old paper's log rows
                     // would otherwise describe a schedule that no longer exists.
-                    db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
+                    reviewRowsRemoved =
+                        db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
                 }
             }
             // Re-placement is deliberately NOT done here: placeWithGroup (run
@@ -488,6 +523,7 @@ internal class QuestionStore(
             // category and converges, while a whole-group reorder here would
             // shuffle unrelated rows of the target around the group.
         }
+        return reviewRowsRemoved
     }
 
     /** Deep-copies questions into another category (appended after siblings). */
@@ -614,13 +650,17 @@ internal class QuestionStore(
      * only occur together when its members share one): a member saved into a
      * passage that lives elsewhere is moved over before being placed with
      * the group. No-op when the categories already match.
+     *
+     * Returns the number of review rows removed when the move crosses a paper
+     * boundary.
      */
-    internal suspend fun enforcePassageCategory(questionId: String, passageId: String) {
-        val passage = db.passageDao().getById(passageId) ?: return
-        val member = db.questionDao().getById(questionId) ?: return
+    internal suspend fun enforcePassageCategory(questionId: String, passageId: String): Int {
+        val passage = db.passageDao().getById(passageId) ?: return 0
+        val member = db.questionDao().getById(questionId) ?: return 0
         if (member.categoryId != passage.categoryId) {
-            moveQuestionsToCategory(setOf(questionId), passage.categoryId)
+            return moveQuestionsToCategory(setOf(questionId), passage.categoryId)
         }
+        return 0
     }
 
     /**

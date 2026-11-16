@@ -26,7 +26,7 @@ import org.robolectric.annotation.Config
  * showed a spinner forever.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class ResultsViewModelTest {
 
     private lateinit var app: McqApplication

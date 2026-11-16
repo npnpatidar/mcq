@@ -61,7 +61,7 @@ class RestoreRebuildIsolationTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        settings = SettingsStore(context)
+        settings = SettingsStore(context, freshInstall = false)
     }
 
     @After

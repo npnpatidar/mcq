@@ -38,7 +38,7 @@ import org.robolectric.annotation.Config
  * on the ARM64 host.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class TestPlanSessionTest {
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication
@@ -46,6 +46,9 @@ class TestPlanSessionTest {
 
     @get:Rule
     val watchdog = HangWatchdogRule(seconds = 90)
+
+    @get:Rule
+    val settingsReset = SettingsResetRule()
 
     @After
     fun cleanup() {

@@ -43,19 +43,21 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.FsrsOptimizer
+import com.mcqapp.domain.SchedulerConfig
 import java.util.Locale
 import kotlin.math.roundToInt
 
 /** The Study / Spaced repetition group: the whole scheduler card, collapsible. */
 @Composable
 fun StudySchedulerSection(
-    config: com.mcqapp.domain.SchedulerConfig,
+    config: com.mcqapp.domain.SchedulerConfig?,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -72,22 +74,43 @@ fun StudySchedulerSection(
         onExpandedChange = onExpandedChange,
         testTag = "settings-section-study"
     ) {
-        AnkiSchedulerBody(
-            config = config,
-            onChange = onChange,
-            onReset = onReset,
-            simplifiedStudy = simplifiedStudy,
-            onSimplifiedChange = onSimplifiedChange,
-            automaticLadderAdaptation = automaticLadderAdaptation,
-            onAutomaticLadderChange = onAutomaticLadderChange,
-            fsrsReviewCount = fsrsReviewCount,
-            fsrsOptimizeState = fsrsOptimizeState,
-            fsrs7Notice = fsrs7Notice,
-            onDismissFsrs7Notice = onDismissFsrs7Notice,
-            onOptimizeFsrs = onOptimizeFsrs,
-            onDismissFsrsOptimize = onDismissFsrsOptimize,
-            onRestoreFsrsDefaults = onRestoreFsrsDefaults
-        )
+        if (config == null) {
+            // The first stored config has not arrived yet (the fresh-install
+            // seed and the version seed both run behind it). Nothing here is
+            // editable: writing the defaults in this window would overwrite
+            // whichever of those landed first.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    stringResource(R.string.loading),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        } else {
+            AnkiSchedulerBody(
+                config = config,
+                onChange = onChange,
+                onFastChange = onFastChange,
+                onSlowChange = onSlowChange,
+                onRuleChange = onRuleChange,
+                onReset = onReset,
+                simplifiedStudy = simplifiedStudy,
+                onSimplifiedChange = onSimplifiedChange,
+                fsrsReviewCount = fsrsReviewCount,
+                fsrsOptimizeState = fsrsOptimizeState,
+                fsrs7Notice = fsrs7Notice,
+                onDismissFsrs7Notice = onDismissFsrs7Notice,
+                onOptimizeFsrs = onOptimizeFsrs,
+                onDismissFsrsOptimize = onDismissFsrsOptimize,
+                onRestoreFsrsDefaults = onRestoreFsrsDefaults
+            )
+        }
     }
 }
 
@@ -105,11 +128,12 @@ fun StudySchedulerSection(
 private fun AnkiSchedulerBody(
     config: com.mcqapp.domain.SchedulerConfig,
     onChange: (com.mcqapp.domain.SchedulerConfig) -> Unit,
+    onFastChange: (Long) -> Unit,
+    onSlowChange: (Long) -> Unit,
+    onRuleChange: (Boolean) -> Unit,
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
-    automaticLadderAdaptation: Boolean,
-    onAutomaticLadderChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -168,14 +192,6 @@ private fun AnkiSchedulerBody(
         onChange = onSimplifiedChange,
         testTag = "setting-simplified-anki"
     )
-    Spacer(Modifier.height(8.dp))
-    SwitchSettingRow(
-        label = stringResource(R.string.automatic_ladder_adaptation),
-        help = stringResource(R.string.automatic_ladder_adaptation_help),
-        checked = automaticLadderAdaptation,
-        onChange = onAutomaticLadderChange,
-        testTag = "setting-automatic-ladder"
-    )
     Spacer(Modifier.height(12.dp))
 
     // --- the everyday pull-based controls ---
@@ -212,6 +228,91 @@ private fun AnkiSchedulerBody(
         style = MaterialTheme.typography.bodySmall
     )
     Spacer(Modifier.height(12.dp))
+
+    Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)
+    Spacer(Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = config.studyMode == com.mcqapp.domain.StudyMode.MEMORY_FIRST,
+            onClick = {
+                onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.MEMORY_FIRST))
+            },
+            label = { Text(stringResource(R.string.memory_first)) }
+        )
+        FilterChip(
+            selected = config.studyMode == com.mcqapp.domain.StudyMode.EXPLORE_NEW,
+            onClick = {
+                onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.EXPLORE_NEW))
+            },
+            label = { Text(stringResource(R.string.explore_new_cards)) }
+        )
+    }
+    Text(
+        stringResource(R.string.ranking_mode_help),
+        style = MaterialTheme.typography.bodySmall
+    )
+    Spacer(Modifier.height(12.dp))
+    SwitchSettingRow(
+        label = stringResource(R.string.introduce_new_cards),
+        help = stringResource(R.string.introduce_new_cards_help),
+        checked = config.introduceNewCards,
+        onChange = { onChange(config.copy(introduceNewCards = it)) },
+        testTag = "setting-introduce-new-cards"
+    )
+    Spacer(Modifier.height(12.dp))
+    SwitchSettingRow(
+        label = stringResource(R.string.grade_correctness_only),
+        help = stringResource(R.string.grade_correctness_only_help),
+        checked = config.correctnessOnlyGrading,
+        onChange = onRuleChange,
+        testTag = "setting-grade-correctness-only"
+    )
+    Spacer(Modifier.height(12.dp))
+
+    // The two cuts are the fallback rule, so there is nothing to tune while
+    // the switch above is on. They stay stored and still grade if the switch
+    // is turned back off.
+    if (!config.correctnessOnlyGrading) {
+        AnkiNumberRow(
+            label = stringResource(R.string.easy_answer_threshold),
+            help = stringResource(R.string.easy_answer_threshold_help),
+            value = config.fastSeconds,
+            step = 1.0,
+            // The range is the domain's, not a copy of it: the domain clamps
+            // fastSeconds to SchedulerConfig.MIN_FAST_SECONDS..MAX_FAST_SECONDS
+            // (SpacedRepetition.sanitized, which keeps a second of room below
+            // the Hard cut), and a restored 601-3600 value used to render as a
+            // permanent error with dead steppers (consolidated_bugs.md H3). The
+            // floor is 2 s, not 1: a correct answer inside the first second is
+            // untimed and grades Good, so a 1 s cut leaves no measured second
+            // below it and the Easy band would be empty.
+            range = SchedulerConfig.MIN_FAST_SECONDS.toFloat()..
+                SchedulerConfig.MAX_FAST_SECONDS.toFloat(),
+            suffix = "s",
+            onChange = { onFastChange(it.toLong()) }
+        )
+        AnkiNumberRow(
+            label = stringResource(R.string.hard_answer_threshold),
+            help = stringResource(R.string.hard_answer_threshold_help),
+            value = config.slowSeconds,
+            step = 1.0,
+            range = 1f..3600f,
+            suffix = "s",
+            // The domain keeps a one-second gap above fast; without this check
+            // a typed value below fast "succeeded" silently, left a phantom in
+            // the field and stored the old value (consolidated_bugs.md
+            // F16/H2), and an equal pair left the Good class empty.
+            validExtra = { it > config.fastSeconds },
+            onChange = { onSlowChange(it.toLong()) }
+        )
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            stringResource(R.string.response_time_thresholds_help),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+    }
 
     // --- optimizer: Anki's "Optimize FSRS parameters" button ---
 
@@ -339,71 +440,6 @@ private fun AnkiSchedulerBody(
             }
         )
     }
-    Spacer(Modifier.height(12.dp))
-    Text(stringResource(R.string.ranking_mode), style = MaterialTheme.typography.bodyMedium)
-    Spacer(Modifier.height(4.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(
-            selected = config.studyMode == com.mcqapp.domain.StudyMode.MEMORY_FIRST,
-            onClick = {
-                onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.MEMORY_FIRST))
-            },
-            label = { Text(stringResource(R.string.memory_first)) }
-        )
-        FilterChip(
-            selected = config.studyMode == com.mcqapp.domain.StudyMode.EXPLORE_NEW,
-            onClick = {
-                onChange(config.copy(studyMode = com.mcqapp.domain.StudyMode.EXPLORE_NEW))
-            },
-            label = { Text(stringResource(R.string.explore_new_cards)) }
-        )
-    }
-    Text(
-        stringResource(R.string.ranking_mode_help),
-        style = MaterialTheme.typography.bodySmall
-    )
-    Spacer(Modifier.height(12.dp))
-    SwitchSettingRow(
-        label = stringResource(R.string.introduce_new_cards),
-        help = stringResource(R.string.introduce_new_cards_help),
-        checked = config.introduceNewCards,
-        onChange = { onChange(config.copy(introduceNewCards = it)) },
-        testTag = "setting-introduce-new-cards"
-    )
-    Spacer(Modifier.height(12.dp))
-
-    AnkiNumberRow(
-        label = stringResource(R.string.easy_answer_threshold),
-        help = stringResource(R.string.easy_answer_threshold_help),
-        value = config.fastSeconds,
-        step = 1.0,
-        // 1..3600: the domain clamps fastSeconds to 1..3600
-        // (SpacedRepetition.sanitized), and a restored 601-3600 value
-        // used to render as a permanent error with dead steppers
-        // (consolidated_bugs.md H3).
-        range = 1f..3600f,
-        suffix = "s",
-        onChange = { onChange(config.copy(fastSeconds = it.toLong())) }
-    )
-    AnkiNumberRow(
-        label = stringResource(R.string.hard_answer_threshold),
-        help = stringResource(R.string.hard_answer_threshold_help),
-        value = config.slowSeconds,
-        step = 1.0,
-        range = 1f..3600f,
-        suffix = "s",
-        // The domain clamps slow up to fast; without this check a typed
-        // value below fast "succeeded" silently, left a phantom in the
-        // field and stored the old value (consolidated_bugs.md F16/H2).
-        validExtra = { it >= config.fastSeconds },
-        onChange = { onChange(config.copy(slowSeconds = it.toLong())) }
-    )
-
-    Spacer(Modifier.height(8.dp))
-    Text(
-        stringResource(R.string.response_time_thresholds_help),
-        style = MaterialTheme.typography.bodySmall
-    )
     Spacer(Modifier.height(12.dp))
     Row(
         modifier = Modifier

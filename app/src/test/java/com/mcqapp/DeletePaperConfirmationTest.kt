@@ -32,7 +32,7 @@ import org.robolectric.annotation.Config
  * These tests cover the numbers in that confirmation.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class DeletePaperConfirmationTest {
 
     private lateinit var repository: McqRepository

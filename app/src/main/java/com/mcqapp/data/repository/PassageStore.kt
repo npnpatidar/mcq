@@ -52,6 +52,11 @@ internal class PassageStore(
      * to another category: every member follows it, and is renumbered into a
      * contiguous block (see [assignQuestions], [unassignAll] for explicit
      * membership changes).
+     *
+     * A member that follows the passage into another paper loses its
+     * `review_log` rows on the way (see
+     * [QuestionStore.moveQuestionsToCategory]), so the repository wrapper
+     * invalidates the calibration cache once this call returns.
      */
     suspend fun savePassage(passage: Passage): String {
         val id = passage.id.ifBlank {
@@ -128,6 +133,10 @@ internal class PassageStore(
      * moved into the passage's category first (the same semantics as the
      * bulk "move to category"), then placed right after the group's last
      * member.
+     *
+     * An assignee that crosses a paper boundary loses its `review_log` rows
+     * on the way, so the repository wrapper invalidates the calibration cache
+     * once this call returns.
      */
     suspend fun assignQuestions(questionIds: Collection<String>, passageId: String) {
         if (questionIds.isEmpty()) return

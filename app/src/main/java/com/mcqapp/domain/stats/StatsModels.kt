@@ -637,22 +637,27 @@ data class RetentionData(
      */
     val calibrationReport: Calibration.Report? = null,
     /**
-     * Phase 4's answer to "may the ladder act, and should it move now?" Null
-     * only when the surface did not ask; every status is renderable so a
-     * controller that declines is not mistaken for one that is stalled.
+     * The read-only pair the calibration report's direction implies (v28).
+     * Null when the surface did not ask for a report; present but
+     * `NEEDS_EVIDENCE` while the gates are closed, because "not yet" is an
+     * answer the learner should see.
      */
-    val ladderEvaluation: LadderPolicy.Evaluation? = null,
-    /** True when the current version has an earlier one to restore. */
-    val ladderCanRollback: Boolean = false,
-    /** The latest cut move, so an automatic change is visible after the fact. */
-    val ladderLastChange: LadderChange? = null
-)
-
-data class LadderChange(
-    val fromEasySeconds: Long,
-    val toEasySeconds: Long,
-    val reason: String,
-    val at: Long
+    val cutSuggestion: Calibration.CutSuggestion? = null,
+    /**
+     * The pair the learner's own answer times imply, computed under both
+     * grading rules. Under correctness-only it is always shown, because it is
+     * the pair the learner would type into the fields; under timed grading it
+     * is shown only while it still `changes` the pair in force, so a line that
+     * merely repeats the current cuts stays off the card.
+     */
+    val dwellSuggestion: Calibration.CutSuggestion? = null,
+    /**
+     * Whether the grade came from the answer clock (v28). False under
+     * correctness-only grading, where no Easy or Hard label exists: the
+     * calibration card is still shown, with its forecast/Brier chart, but its
+     * cut evidence is hidden because it measures the two cuts.
+     */
+    val timeBasedGrading: Boolean = true
 )
 
 /** Grade mix in one bucket (plan §7); the four counts always add to [total]. */

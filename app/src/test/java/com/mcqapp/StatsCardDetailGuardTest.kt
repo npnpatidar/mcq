@@ -28,7 +28,7 @@ import org.robolectric.annotation.Config
  * DB-backed test it runs on CI's x86_64 runners and not on the ARM64 host.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class StatsCardDetailGuardTest {
 
     private val app get() = ApplicationProvider.getApplicationContext<Context>() as McqApplication

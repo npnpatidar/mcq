@@ -1,14 +1,16 @@
 package com.mcqapp.domain.stats
 
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.SchedulerConfig
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * Grade-level calibration (plan phase 2): does the dwell ladder's Easy window
+ * Grade-level calibration (plan phase 2): does the dwell cuts' Easy window
  * actually predict recall better than Good?
  *
  * The estimand is the **adjacent contrast** of mean prediction error, not a
@@ -47,14 +49,48 @@ object Calibration {
     const val DESCRIPTIVE_CARDS = 20
     const val MAX_HALF_WIDTH = 0.05
 
+    /**
+     * Answer-time evidence is much cheaper than outcome evidence: it needs no
+     * matured pairs, only enough correct answers to place two percentiles.
+     */
+    const val MIN_DWELL_ROWS = 200
+    const val MIN_DWELL_CARDS = 30
+    const val MIN_DWELL_DAYS = 14
+
+    /** The share of correct answers each outer band should receive, in percent. */
+    const val DWELL_EASY_PERCENT = 10
+    const val DWELL_HARD_PERCENT = 90
+
+    /**
+     * The Easy cut's floor, taken from the domain clamp rather than restated:
+     * a 1 s cut is not worth proposing, because a correct answer under one
+     * second is stored as 0 and graded Good, so the Easy band would be empty
+     * and the proposal would snap back to 2 s on save.
+     */
+    const val MIN_EASY_SECONDS = SchedulerConfig.MIN_FAST_SECONDS
+
+    /**
+     * The answer-time pair's own floor: the estimate's noise floor, not the
+     * domain clamp. A percentile of whole-second dwells cannot place a cut
+     * below the resolution of its own measurement, so the answer-time
+     * suggestion never proposes less than this. It coincides with
+     * [MIN_EASY_SECONDS] today and is deliberately a separate number: every
+     * answer-time fast cut is clamped to
+     * `maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS)`, so this estimator
+     * floor can never drift below the domain's legal floor.
+     */
+    const val MIN_DWELL_FAST_SECONDS = 2L
+    const val MIN_DWELL_GAP_SECONDS = 5L
+    const val MAX_DWELL_SLOW_SECONDS = 120L
+
     const val RESAMPLES = 5_000
     const val SEED = 20261111L
 
     private const val DAY_MS = 86_400_000L
     private const val BLOCK_MS = BLOCK_DAYS * DAY_MS
 
-    /** The three ladder grades, in output order. */
-    enum class LadderGrade(val rating: Int, val stored: String) {
+    /** The three automatable grades, in output order. */
+    enum class GradeClass(val rating: Int, val stored: String) {
         HARD(2, "Hard"),
         GOOD(3, "Good"),
         EASY(4, "Easy");
@@ -69,21 +105,35 @@ object Calibration {
         val reviewedAt: Long,
         val gradeSource: String?,
         val proposedRating: Int?,
-        val ladderVersion: Int,
+        val gradingVersion: Int,
         val fsrsFitVersion: Int?,
         val predictedRecall: Double?,
         val stateBefore: CardStateKind?,
         val wasGuess: Boolean?,
         val wasCorrect: Boolean?,
         val wasSkipped: Boolean?,
-        val intervalDaysAfter: Int?
+        val intervalDaysAfter: Int?,
+        /**
+         * Whole-second dwell; null when the caller had no trustworthy
+         * measurement for this row. 0 is a measurement too: every answer given
+         * inside the first second is stored as 0
+         * ([com.mcqapp.domain.Study.gradedDwellSeconds]).
+         */
+        val elapsedSeconds: Long? = null,
+        /**
+         * Whether the grading version that produced this row ignored the clock.
+         * Answer-time evidence only trusts these rows: when the clock is tinted
+         * it feeds the cuts back to the learner, so the dwell distribution
+         * would partly measure the cuts rather than the person.
+         */
+        val correctnessOnly: Boolean = false
     )
 
     /** One usable label → outcome pair. */
     data class Sample(
         val paperId: String,
         val questionId: String,
-        val grade: LadderGrade,
+        val grade: GradeClass,
         /** 0.0 or 1.0. */
         val outcome: Double,
         val predicted: Double,
@@ -107,7 +157,7 @@ object Calibration {
 
     /** One grade's descriptive numbers. */
     data class GradeStat(
-        val grade: LadderGrade,
+        val grade: GradeClass,
         val pairs: Int,
         val cards: Int,
         /** Observed recall in this grade's paired outcomes. */
@@ -145,9 +195,250 @@ object Calibration {
 
     enum class Direction { LOWER, RAISE, NONE }
 
+    /** One re-tune step never moves the Easy cut further than this. */
+    const val MAX_STEP_SECONDS = 4
+
+    /**
+     * A read-only cut proposal: the report's own direction turned into the pair
+     * to try next. Nothing applies it — the learner edits the two fields in the
+     * scheduler settings, and the next report judges the result.
+     *
+     * The step is bounded because a contrast says which way to move and roughly
+     * how far the evidence sits from agreement, not where the optimum is: one
+     * report of a few hundred pairs cannot resolve seconds on its own.
+     */
+    data class CutSuggestion(
+        val currentFast: Long,
+        val currentSlow: Long,
+        val nextFast: Long,
+        val nextSlow: Long,
+        val status: Status,
+        /** How many reviews the proposal is based on; 0 when not applicable. */
+        val evidence: Int = 0,
+        /**
+         * The gate that stopped an answer-time pair, so the UI can name the real
+         * blocker instead of always quoting the row count. Null when no gate
+         * was involved.
+         */
+        val blockingGate: Gate? = null,
+        /** Distinct questions behind [evidence]; 0 when no gate needed them. */
+        val evidenceCards: Int = 0,
+        /** Days spanned by the answers behind [evidence]; 0 when not counted. */
+        val evidenceDays: Int = 0
+    ) {
+        enum class Status {
+            /** The gates are not met, so no number would be honest. */
+            NEEDS_EVIDENCE,
+
+            /** Easy and Good are calibrated alike; leave the pair alone. */
+            KEEP,
+
+            /** The Easy cut moves down. */
+            STEP_DOWN,
+
+            /** The Easy cut moves up. */
+            STEP_UP,
+
+            /**
+             * A direction-specific wall: for a downward step, the Easy cut is
+             * already at its floor; for an upward step, the Hard cut caps how
+             * far the Easy cut may rise.
+             */
+            AT_LIMIT,
+
+            /**
+             * Chosen from answer times alone, before the first timed review:
+             * a starting pair, not a retention finding.
+             */
+            FROM_TIMES
+        }
+
+        /** The gates of [suggestCutsFromDwell], in the order they are checked. */
+        enum class Gate {
+            /** Too few correct, clock-neutral answers. */
+            ROWS,
+
+            /** Too few distinct questions behind them. */
+            CARDS,
+
+            /** Recorded over too short a span to be a pace. */
+            DAYS
+        }
+
+        val changes: Boolean get() = nextFast != currentFast || nextSlow != currentSlow
+    }
+
+    /**
+     * Converts the report into the pair to try next. The Hard cut is shown but
+     * never moved: δ2 is not acted on, so a suggestion that moved it would
+     * launder a number the evidence does not support.
+     *
+     * A downward step stops at [MIN_EASY_SECONDS] rather than being refused:
+     * the step size is the evidence's estimate, the floor is the domain's
+     * limit, and a learner at 3 s with strong evidence is still one legal
+     * second away from the floor. In that direction,
+     * [CutSuggestion.Status.AT_LIMIT] means the Easy cut is already at the
+     * floor.
+     *
+     * An upward step is different: the Hard cut caps how far the Easy cut may
+     * rise, so [CutSuggestion.Status.AT_LIMIT] means the proposed target
+     * would reach or pass the Hard cut. The target is not clamped down to
+     * `slow - 1`: a one-second Good band is nearly the degenerate pair the
+     * app refuses elsewhere.
+     */
+    fun suggestCuts(report: Report, fastSeconds: Long, slowSeconds: Long): CutSuggestion {
+        fun keep(status: CutSuggestion.Status) =
+            CutSuggestion(fastSeconds, slowSeconds, fastSeconds, slowSeconds, status)
+
+        if (!report.readiness.ready || !report.followUpGatePassed) {
+            return keep(CutSuggestion.Status.NEEDS_EVIDENCE)
+        }
+        val contrast = report.contrast1
+        val value = contrast.value ?: return keep(CutSuggestion.Status.NEEDS_EVIDENCE)
+        // One second per 5 pp of contrast, so a wider gap moves further,
+        // but never past [MAX_STEP_SECONDS].
+        val step = (abs(value) / DIRECTION_THRESHOLD)
+            .roundToInt()
+            .coerceIn(1, MAX_STEP_SECONDS)
+            .toLong()
+        return when (contrast.direction) {
+            Direction.LOWER -> {
+                // The step is the evidence's estimate, so it is left alone;
+                // the target is only clamped to the floor
+                // ([SchedulerConfig.sanitized] rejects anything below
+                // [MIN_EASY_SECONDS], and a 1 s cut leaves no measured second
+                // below it that could ever grade Easy). Landing exactly on the
+                // floor is a legal move, so only a clamp that leaves the cut
+                // unchanged is "at the limit".
+                val target = (fastSeconds - step).coerceAtLeast(MIN_EASY_SECONDS)
+                if (target >= fastSeconds) keep(CutSuggestion.Status.AT_LIMIT)
+                else CutSuggestion(
+                    fastSeconds, slowSeconds, target, slowSeconds,
+                    CutSuggestion.Status.STEP_DOWN
+                )
+            }
+
+            Direction.RAISE -> {
+                val target = fastSeconds + step
+                // The cross-field rule requires fast < slow, so the Hard cut is
+                // the hard wall; a proposal equal to it is not a proposal.
+                if (target >= slowSeconds) keep(CutSuggestion.Status.AT_LIMIT)
+                else CutSuggestion(
+                    fastSeconds, slowSeconds, target, slowSeconds,
+                    CutSuggestion.Status.STEP_UP
+                )
+            }
+
+            Direction.NONE -> keep(CutSuggestion.Status.KEEP)
+        }
+    }
+
+    /**
+     * The first pair a learner can be offered: the cuts that would put about a
+     * tenth of their correct, unguessed answers on each side, taken from the
+     * dwell history itself. No labels and no outcomes are needed, so it works
+     * while the learner grades on correctness only — which is exactly the state
+     * in which no Easy or Hard label exists to calibrate.
+     *
+     * Only rows graded with the clock ignored are used ([Row.correctnessOnly]):
+     * a tinted clock feeds the cuts back to the learner, so those dwells are
+     * not a free measurement of their pace. Outcomes are not consulted, so this
+     * says nothing about retention; it places the bands where the learner's own
+     * pace already separates fast from slow.
+     *
+     * The percentiles are taken over answers, not over cards, so a few heavily
+     * repeated questions weigh more than the gate's 30-card floor suggests:
+     * 200 answers on 30 cards resolve the tenth percentile from roughly 30
+     * distinct readings. Read the result as a pace quantile, not a precise cut
+     * — [MIN_DWELL_CARDS] is the guard against a single card setting both ends.
+     *
+     * Timing convention: `elapsedSeconds == null` means "not measured" — the
+     * caller had no trustworthy measurement for that row — and is excluded
+     * everywhere. It is not an old-row marker; the column has existed for many
+     * versions, so an old row can carry a value like any other. A stored 0 is
+     * a measurement — every answer inside the first second is stored as 0 —
+     * so it counts toward all three gates and enters the percentile as 1 s.
+     * Dropping it would discard exactly the fast tail p10 is read from, bias
+     * the Easy cut upward and keep a fast learner permanently short of
+     * [MIN_DWELL_ROWS]. The grade those rows already have is untouched: 0 still
+     * grades Good ([com.mcqapp.domain.Study.inferGrade]); only this estimate
+     * reads it as one second.
+     */
+    fun suggestCutsFromDwell(
+        reviews: List<Row>,
+        now: Long,
+        fastSeconds: Long,
+        slowSeconds: Long
+    ): CutSuggestion {
+        val usable = reviews.filter {
+            it.correctnessOnly &&
+                it.elapsedSeconds != null &&
+                it.wasCorrect == true &&
+                it.wasGuess != true &&
+                it.wasSkipped != true
+        }
+        val cards = usable.map { it.paperId to it.questionId }.toSet()
+        val first = if (usable.isEmpty()) now else usable.minOf { it.reviewedAt }
+        val days = ((now - first) / DAY_MS).toInt().coerceAtLeast(0)
+        fun insufficient(gate: CutSuggestion.Gate) = CutSuggestion(
+            currentFast = fastSeconds,
+            currentSlow = slowSeconds,
+            nextFast = fastSeconds,
+            nextSlow = slowSeconds,
+            status = CutSuggestion.Status.NEEDS_EVIDENCE,
+            evidence = usable.size,
+            blockingGate = gate,
+            evidenceCards = cards.size,
+            evidenceDays = days
+        )
+        // Checked one at a time so the "not yet" line can name the gate that
+        // actually failed: with 250 answers on 12 cards, quoting the row count
+        // printed "250 of 200" and hid the real requirement.
+        if (usable.size < MIN_DWELL_ROWS) return insufficient(CutSuggestion.Gate.ROWS)
+        if (cards.size < MIN_DWELL_CARDS) return insufficient(CutSuggestion.Gate.CARDS)
+        if (now - first < MIN_DWELL_DAYS * DAY_MS) return insufficient(CutSuggestion.Gate.DAYS)
+
+        // Sub-second answers are stored as 0 and are real observations of the
+        // fast end, so they enter as one second rather than being dropped.
+        val sorted = usable.map { it.elapsedSeconds!!.coerceAtLeast(1L) }.sorted()
+        val fast = percentile(sorted, DWELL_EASY_PERCENT)
+            .coerceAtLeast(maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS))
+        val slow = percentile(sorted, DWELL_HARD_PERCENT)
+            .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
+        // A tight pace would otherwise name two cuts a second apart, where a
+        // one-second rounding error moves a third of the answers.
+        val wideSlow = slow.coerceAtLeast(fast + MIN_DWELL_GAP_SECONDS)
+            .coerceAtMost(MAX_DWELL_SLOW_SECONDS)
+        val wideFast = fast.coerceAtMost(wideSlow - MIN_DWELL_GAP_SECONDS)
+            .coerceAtLeast(maxOf(MIN_DWELL_FAST_SECONDS, MIN_EASY_SECONDS))
+        return CutSuggestion(
+            currentFast = fastSeconds,
+            currentSlow = slowSeconds,
+            nextFast = wideFast,
+            nextSlow = wideSlow,
+            status = CutSuggestion.Status.FROM_TIMES,
+            evidence = usable.size
+        )
+    }
+
+    /**
+     * Linear-interpolated percentile over an ascending list, half-up rounded.
+     * Integer arithmetic on purpose: `0.9 * 199` is a hair under 179.1 in
+     * binary, which turns an exact 20 s into 19 s.
+     */
+    private fun percentile(sorted: List<Long>, percent: Int): Long {
+        if (sorted.isEmpty()) return 0L
+        val numerator = percent.toLong() * (sorted.size - 1)
+        val low = (numerator / 100).toInt()
+        val remainder = (numerator % 100).toInt()
+        if (remainder == 0) return sorted[low]
+        val high = (low + 1).coerceAtMost(sorted.lastIndex)
+        return (sorted[low] * (100 - remainder) + sorted[high] * remainder + 50) / 100
+    }
+
     /** Follow-up coverage among labels whose outcome is due, per grade. */
     data class FollowUp(
-        val grade: LadderGrade,
+        val grade: GradeClass,
         val due: Int,
         val observed: Int
     ) {
@@ -156,7 +447,7 @@ object Calibration {
 
     /** The first-exposure stratum; reported, never fitted (plan §2.2). */
     data class FirstExposure(
-        val grade: LadderGrade,
+        val grade: GradeClass,
         val count: Int,
         val correct: Int
     ) {
@@ -234,11 +525,11 @@ object Calibration {
     /**
      * Builds the report. [now] decides which blocks are closed and which
      * labels' outcomes are due; [epochStart] is the effective time of the
-     * current ladder version (0 when no version exists), moved forward when a
+     * current grading version (0 when no version exists), moved forward when a
      * refit ended the epoch.
      *
      * Only labels dated inside the epoch are pooled (plan §2.4): a review from
-     * before the current ladder version, or before the current weight set, was
+     * before the current grading version, or before the current weight set, was
      * graded and forecast under different rules, so it is not evidence about
      * the cuts in force now. Its row may still supply an outcome for a label
      * inside the epoch; the label side is what starts the epoch.
@@ -256,11 +547,11 @@ object Calibration {
             exclusions[reason] = (exclusions[reason] ?: 0) + 1
         }
 
-        val followDue = HashMap<LadderGrade, Int>()
-        val followObserved = HashMap<LadderGrade, Int>()
+        val followDue = HashMap<GradeClass, Int>()
+        val followObserved = HashMap<GradeClass, Int>()
         val firstExposure = ArrayList<FirstExposure>()
 
-        val firstCounts = HashMap<LadderGrade, IntArray>() // count, correct
+        val firstCounts = HashMap<GradeClass, IntArray>() // count, correct
         reviews.forEach { row ->
             if (epochStart > 0L && row.reviewedAt < epochStart) return@forEach
             if (row.stateBefore == CardStateKind.NEW && row.wasCorrect != null) {
@@ -270,7 +561,7 @@ object Calibration {
                 if (row.wasCorrect) counts[1]++
             }
         }
-        LadderGrade.entries.forEach { grade ->
+        GradeClass.entries.forEach { grade ->
             val counts = firstCounts[grade] ?: IntArray(2)
             firstExposure += FirstExposure(grade, counts[0], counts[1])
         }
@@ -329,14 +620,14 @@ object Calibration {
             }
         }
 
-        val grades = LadderGrade.entries.map { grade -> gradeStat(grade, pairs) }
-        val easy = pairs.filter { it.grade == LadderGrade.EASY }
-        val good = pairs.filter { it.grade == LadderGrade.GOOD }
-        val hard = pairs.filter { it.grade == LadderGrade.HARD }
+        val grades = GradeClass.entries.map { grade -> gradeStat(grade, pairs) }
+        val easy = pairs.filter { it.grade == GradeClass.EASY }
+        val good = pairs.filter { it.grade == GradeClass.GOOD }
+        val hard = pairs.filter { it.grade == GradeClass.HARD }
         val contrast1 = contrast(easy, good)
         val contrast2 = contrast(hard, good)
 
-        val followUp = LadderGrade.entries.map { grade ->
+        val followUp = GradeClass.entries.map { grade ->
             FollowUp(grade, followDue[grade] ?: 0, followObserved[grade] ?: 0)
         }
         // Follow-up is a gate on the decision, not on the display: a class
@@ -397,13 +688,13 @@ object Calibration {
         else -> null
     }
 
-    /** The automatable label grade; Again has none (it is never the ladder's). */
-    private fun labelGrade(label: Row): LadderGrade? = gradeOf(label.rating)
+    /** The automatable label grade; Again has none (it is never one of these cuts). */
+    private fun labelGrade(label: Row): GradeClass? = gradeOf(label.rating)
 
-    private fun gradeOf(rating: Int): LadderGrade? =
-        LadderGrade.entries.firstOrNull { it.rating == rating }
+    private fun gradeOf(rating: Int): GradeClass? =
+        GradeClass.entries.firstOrNull { it.rating == rating }
 
-    private fun gradeStat(grade: LadderGrade, pairs: List<Sample>): GradeStat {
+    private fun gradeStat(grade: GradeClass, pairs: List<Sample>): GradeStat {
         val rows = pairs.filter { it.grade == grade }
         if (rows.isEmpty()) return GradeStat(grade, 0, 0, null, null, null)
         return GradeStat(
@@ -555,16 +846,16 @@ object Calibration {
             val isClosed = index in closed
             val contrast = if (index in safetyWindow) {
                 contrast(
-                    first = rows.filter { it.grade == LadderGrade.EASY },
-                    good = rows.filter { it.grade == LadderGrade.GOOD },
+                    first = rows.filter { it.grade == GradeClass.EASY },
+                    good = rows.filter { it.grade == GradeClass.GOOD },
                     seed = SEED + index
                 )
             } else {
                 null
             }
-            val easyRows = rows.filter { it.grade == LadderGrade.EASY }
-            val goodRows = rows.filter { it.grade == LadderGrade.GOOD }
-            val hardRows = rows.filter { it.grade == LadderGrade.HARD }
+            val easyRows = rows.filter { it.grade == GradeClass.EASY }
+            val goodRows = rows.filter { it.grade == GradeClass.GOOD }
+            val hardRows = rows.filter { it.grade == GradeClass.HARD }
             Block(
                 index = index,
                 startAt = start,

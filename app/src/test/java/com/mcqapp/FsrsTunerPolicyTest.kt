@@ -44,7 +44,7 @@ class FsrsTunerPolicyTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        settings = SettingsStore(context)
+        settings = SettingsStore(context, freshInstall = false)
         tuner = FsrsTuner(db, settings)
     }
 

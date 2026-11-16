@@ -1,6 +1,7 @@
 package com.mcqapp.data.local
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -10,6 +11,8 @@ import com.mcqapp.domain.TagNormalizer
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Database(
     entities = [
@@ -31,17 +34,33 @@ import com.mcqapp.domain.searchableText
         PanelQuestionEntity::class,
         BlueprintEntity::class,
         BlueprintSectionEntity::class,
-        LadderVersionEntity::class,
-        LadderBlockEntity::class,
+        GradingVersionEntity::class,
         StudySessionEntity::class
     ],
-    version = 27,
+    version = 28,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
+
+    /**
+     * Serialises the physical SQLite open for this instance. Grading-rule
+     * reads can arrive concurrently on the main dispatcher and an IO worker;
+     * only one of them may own Room's initial helper open.
+     */
+    private val openLock = Any()
+
+    /**
+     * Whether this instance has completed its first open. The volatile fast
+     * path lets later reads avoid both the lock and a dispatcher hop. It is
+     * only an optimisation hint: [isOpen] remains the authority, so a closed
+     * database is reopened rather than trusted from stale state.
+     */
+    @Volatile
+    private var opened = false
+
     abstract fun paperDao(): PaperDao
     abstract fun categoryDao(): CategoryDao
     abstract fun questionDao(): QuestionDao
@@ -57,12 +76,116 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun testProgressDao(): TestProgressDao
     abstract fun panelDao(): PanelDao
     abstract fun blueprintDao(): BlueprintDao
-    abstract fun ladderDao(): LadderDao
+    abstract fun gradingRulesDao(): GradingRulesDao
     abstract fun studySessionDao(): StudySessionDao
 
+    /**
+     * Forces the underlying SQLite database open on [Dispatchers.IO] exactly
+     * once per live instance.
+     *
+     * The CI hang around a first Room/DAO access happened while Android's
+     * `SQLiteConnectionPool` was opening its first connection and another
+     * path waited for that connection. The physical open therefore happens
+     * on IO, away from a caller that may be blocking Robolectric's main
+     * looper. [openLock] makes concurrent warm-ups idempotent: the first
+     * caller opens, later callers observe the completed open and return
+     * without a second physical open.
+     *
+     * Failure semantics are deliberately retryable. An exception or
+     * cancellation leaves [opened] false, so the next call tries the open
+     * again; the error is not cached as a permanent failure. If Room later
+     * reports the instance closed, the stale success hint is ignored and the
+     * database is reopened. A successful open is therefore both one-shot on
+     * the hot path and safe after an ordinary close.
+     */
+    internal suspend fun ensureOpen() {
+        if (opened && isOpen) return
+        withContext(Dispatchers.IO) {
+            openDatabase()
+        }
+    }
+
+    /**
+     * Opens Room's helper and records the result. The lock makes concurrent
+     * first-use paths idempotent; the helper's own open is idempotent too.
+     */
+    private fun openDatabase() {
+        synchronized(openLock) {
+            if (opened && isOpen) return
+            opened = false
+            if (!isOpen) {
+                openHelper.writableDatabase
+            }
+            opened = isOpen
+        }
+    }
+
+    /**
+     * The app's single definition of a new install (v28): this database has
+     * never held a paper or a review row.
+     *
+     * The first-launch grading-rule seed asks this instead of probing for the
+     * database file. The file is created by far more than a first study
+     * session — opening the library, importing a paper, starting a test — so
+     * its presence says nothing about whether the learner has used the app
+     * before. Content does.
+     *
+     * One statement on the database, not two DAO counts: `NOT EXISTS` stops at
+     * the first row, so the probe is O(1) on either table, and one snapshot
+     * cannot see a paper appear between the two halves.
+     */
+    suspend fun hasNoPapersOrReviews(): Boolean {
+        // Recorded on the caller's thread, before the switch to IO: a startup
+        // probe that was made synchronous would arrive here on the main
+        // thread, which StartupTest fails on. `withContext` would hide that.
+        freshnessProbeThread = Thread.currentThread().name
+        // Warm and probe in one IO block, using the same writable open path as
+        // ensureOpen() so first-open handling is consistent and stays off the
+        // main thread. The read-only probe still runs as a query after the open.
+        return withContext(Dispatchers.IO) {
+            openDatabase()
+            openHelper.readableDatabase.query(
+                "SELECT NOT EXISTS(SELECT 1 FROM papers) " +
+                    "AND NOT EXISTS(SELECT 1 FROM review_log)"
+            ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) != 0 }
+        }
+    }
+
     companion object {
+        /** The database file name, for the storage report. */
+        const val NAME = "mcq.db"
+
+        /**
+         * The thread that last ran [hasNoPapersOrReviews], for `StartupTest`.
+         * The first-start probe is a background job; a main-thread name here
+         * means `onCreate` was made to open the database synchronously.
+         */
+        @VisibleForTesting
+        @Volatile
+        internal var freshnessProbeThread: String? = null
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        /**
+         * Drops the cached instance, for a test that drives the real
+         * [com.mcqapp.McqApplication] startup probe. Robolectric keeps static
+         * state between tests in one sandbox, so without this the probe would
+         * answer from a previous test's database. The old instance is not
+         * closed: the suite never closes the process-wide database, and its
+         * temporary directory is already gone.
+         */
+        @VisibleForTesting
+        internal fun resetInstanceForTests() {
+            INSTANCE = null
+        }
+
+        @VisibleForTesting
+        internal fun restoreInstanceForTests(db: AppDatabase?) {
+            // Never retain a closed instance: a later get() must be able to
+            // obtain a usable database. Restoring null is always safe.
+            INSTANCE = db?.takeIf { it.isOpen }
+        }
 
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -731,7 +854,8 @@ abstract class AppDatabase : RoomDatabase() {
          * version/block audit tables, the study-session timing table, and the
          * per-card pairing index. All columns are nullable (or defaulted) so
          * every pre-v26 row survives verbatim, with `ladderVersion = 0` and no
-         * provenance claims.
+         * provenance claims. 26->27 then adds the FSRS-7 traces, and 27->28
+         * keeps the version table (renamed) and drops the blocks.
          */
         val MIGRATION_25_26 = object : Migration(25, 26) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -820,6 +944,115 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
         }
+
+        /**
+         * The adaptive ladder goes away (v28). Its version table becomes
+         * [GradingVersionEntity]: the cut pair each review was graded under,
+         * with the evidence blocks and the policy metadata dropped. Existing
+         * version rows are copied with their ids, so every pre-v28 review's
+         * `ladderVersion` still resolves to the pair that graded it.
+         *
+         * What the step discards: `ladder_blocks` in full. The pair and card
+         * counters, the deltas, `outcome` and `decidedAt` behind a v26
+         * automatic or proposal cut change have no successor here. A version
+         * row keeps its `id`, the cut pair, `effectiveFrom` and `reason`; the
+         * `previousId` chain is discarded. `id` ordering reconstructs that chain
+         * only for ordinary edits, not after a rollback: the released v26
+         * `LadderStore.rollback()` gave the rollback row the restored version's
+         * predecessor, so that row's parent skips the row it undid;
+         * `policyVersion` is not reconstructable at all. Copied `reason` values
+         * keep v26's vocabulary (`proposal`,
+         * `automatic`, `rollback`), so nothing may parse a stored `reason`
+         * against this build's three values — see [GradingVersionEntity.reason].
+         *
+         * `review_log` itself is untouched: it is append-only history, and its
+         * `ladderVersion` column now names a grading version.
+         *
+         * Two incompatible v27 shapes reach this step, because both parents of
+         * the merge that renumbered Room to 28 called themselves 27. A `main`
+         * v27 has `ladder_versions` (with FSRS-7's fast-trace columns already
+         * on `card_state` and `review_log`); a v27 written by the pre-merge
+         * branch (head `ef2ffa5`) had already copied the ladder into
+         * `grading_versions`, dropped both ladder tables and never had the
+         * fast traces. The guards below make this step correct for both: the
+         * copy runs only when its source exists, and each fast-trace column is
+         * added only when missing. Both are no-ops on a `main` v27, so the
+         * released path is unchanged.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `grading_versions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`easySeconds` INTEGER NOT NULL, `slowSeconds` INTEGER NOT NULL, " +
+                        "`effectiveFrom` INTEGER NOT NULL, `reason` TEXT NOT NULL, " +
+                        "`correctnessOnly` INTEGER NOT NULL DEFAULT 0)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_grading_versions_effectiveFrom` " +
+                        "ON `grading_versions` (`effectiveFrom`)"
+                )
+                if (hasTable(db, "ladder_versions")) {
+                    db.execSQL(
+                        "INSERT INTO `grading_versions` " +
+                            "(`id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, `reason`, " +
+                            "`correctnessOnly`) " +
+                            "SELECT `id`, `easySeconds`, `slowSeconds`, `effectiveFrom`, " +
+                            "`reason`, 0 FROM `ladder_versions`"
+                    )
+                }
+                db.execSQL("DROP TABLE IF EXISTS `ladder_blocks`")
+                db.execSQL("DROP TABLE IF EXISTS `ladder_versions`")
+                // A pre-merge branch v27 was stamped before FSRS-7's columns
+                // existed, and Room rejects the open without them. Each is
+                // checked on its own: they were added by two separate
+                // statements, so one present never implies the other.
+                if (!hasColumn(db, "card_state", "stabilityFast")) {
+                    db.execSQL(
+                        "ALTER TABLE `card_state` ADD COLUMN `stabilityFast` " +
+                            "REAL NOT NULL DEFAULT 0.0"
+                    )
+                }
+                if (!hasColumn(db, "review_log", "stabilityFastAfter")) {
+                    db.execSQL(
+                        "ALTER TABLE `review_log` ADD COLUMN `stabilityFastAfter` REAL"
+                    )
+                }
+            }
+        }
+
+        /**
+         * Whether this file has a table called [name].
+         *
+         * It exists because 27->28 must run on a pre-merge branch v27 that has
+         * no ladder left. A SQL `WHERE EXISTS` cannot do this job: SQLite
+         * resolves the `FROM ladder_versions` reference when the INSERT is
+         * prepared, before any WHERE is evaluated, so the guard has to run
+         * first in Kotlin.
+         */
+        private fun hasTable(db: SupportSQLiteDatabase, name: String): Boolean =
+            db.query(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                arrayOf(name)
+            ).use { it.moveToFirst() }
+
+        /**
+         * Whether [table] already has a column called [column].
+         *
+         * The fast-trace columns belong to a `main` v27 only, and an
+         * unconditional `ALTER` fails with "duplicate column name" there.
+         * `PRAGMA table_info` is the only portable way to ask; Room offers no
+         * version-independent API for it inside a migration.
+         */
+        private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean =
+            db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (!found && cursor.moveToNext()) {
+                    found = cursor.getString(nameIndex) == column
+                }
+                found
+            }
 
         /**
          * Keys `question_tags` off the stored CSV in the same normalisation as
@@ -1015,7 +1248,7 @@ abstract class AppDatabase : RoomDatabase() {
          */
         internal fun builder(
             context: Context,
-            name: String = "mcq.db"
+            name: String = NAME
         ): RoomDatabase.Builder<AppDatabase> =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
                 .addMigrations(
@@ -1025,7 +1258,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                     MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                    MIGRATION_25_26, MIGRATION_26_27
+                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

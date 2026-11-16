@@ -166,8 +166,10 @@ class SignalQueryTest {
 
     /** The retention the signals must report, built the way `SignalStore` is. */
     private suspend fun expectedRetention(state: CardState, now: Long): Double {
-        val config = SettingsStore(ApplicationProvider.getApplicationContext<Context>())
-            .schedulerConfigNow()
+        val config = SettingsStore(
+            ApplicationProvider.getApplicationContext<Context>(),
+            freshInstall = false
+        ).schedulerConfigNow()
         return FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
             .retention(state, now)
     }
@@ -251,7 +253,10 @@ class SignalQueryTest {
         val fitted = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.mapIndexed { index, value ->
             if (index == 24) 0.2 else value
         }
-        SettingsStore(ApplicationProvider.getApplicationContext<Context>())
+        SettingsStore(
+            ApplicationProvider.getApplicationContext<Context>(),
+            freshInstall = false
+        )
             .setFsrsParameters(fitted)
 
         val fromFit = retentionOf("q1", now)
@@ -283,7 +288,10 @@ class SignalQueryTest {
         )
 
         val atDefault = retentionOf("q1", now)
-        val settings = SettingsStore(ApplicationProvider.getApplicationContext<Context>())
+        val settings = SettingsStore(
+            ApplicationProvider.getApplicationContext<Context>(),
+            freshInstall = false
+        )
         settings.setSchedulerConfig(settings.schedulerConfigNow().copy(desiredRetention = 0.8))
 
         assertEquals(atDefault, retentionOf("q1", now), 0.0)

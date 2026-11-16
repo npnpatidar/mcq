@@ -29,7 +29,7 @@ import org.robolectric.annotation.Config
  * resume; this pins the half that actually holds the data.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = McqApplication::class)
+@Config(sdk = [34], application = TestMcqApplication::class)
 class LibraryStudyCountRefreshTest {
 
     private lateinit var viewModel: LibraryViewModel

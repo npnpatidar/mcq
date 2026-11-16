@@ -37,7 +37,7 @@ class Exporter(private val db: AppDatabase) {
      */
     suspend fun exportAllTo(writer: java.io.BufferedWriter, withScheduling: Boolean = true) {
         Logger.i("EXPORT", "Streaming export of all papers")
-        writer.write("{\"version\":1,\"papers\":[")
+        writer.write("{\"version\":$JSON_EXPORT_VERSION,\"papers\":[")
         val papers = db.paperDao().getAll()
         papers.forEachIndexed { pIndex, paper ->
             if (pIndex > 0) writer.write(",")
@@ -149,6 +149,14 @@ class Exporter(private val db: AppDatabase) {
      * `(paperId, questionId)` ([cardScheduleKey]) so two papers that hold the
      * same question keep independent schedules.
      *
+     * A question id that belongs to exactly one paper is also written under
+     * its bare id: that is the compatibility alias a reader from before format
+     * version 2 understands (it looks up the bare id only), and the whole
+     * point of the version bump. Where the same id appears under two papers
+     * the alias is skipped — `CardStateDao.ambiguousScheduleQuestionIds` gives
+     * those — because an older reader could not tell the two schedules apart
+     * and would apply one to both.
+     *
      * This is what the streaming rewrite of the whole-bank export dropped: the
      * plain JSON export wrote `{}` here, so a bank exported and imported lost
      * every schedule, and no test noticed because the method that carried them
@@ -157,6 +165,7 @@ class Exporter(private val db: AppDatabase) {
      * studied — and the rows are written as they are read, never as a map.
      */
     private suspend fun writeScheduling(writer: java.io.BufferedWriter) {
+        val ambiguous = db.cardStateDao().ambiguousScheduleQuestionIds().toHashSet()
         var afterRowId = Long.MIN_VALUE
         var first = true
         while (true) {
@@ -165,13 +174,17 @@ class Exporter(private val db: AppDatabase) {
             for (row in page) {
                 val state = row.state
                 if (state.reps <= 0 && state.dueAt <= 0L) continue
-                if (!first) writer.write(",")
-                first = false
-                writer.write(
-                    JsonPrimitive(cardScheduleKey(state.paperId, state.questionId)).toString()
+                val schedule = json.encodeToString(
+                    CardScheduleDto.serializer(),
+                    state.toCardScheduleDto()
                 )
-                writer.write(":")
-                writer.write(json.encodeToString(CardScheduleDto.serializer(), state.toCardScheduleDto()))
+                for (key in scheduleKeysFor(state.paperId, state.questionId, ambiguous)) {
+                    if (!first) writer.write(",")
+                    first = false
+                    writer.write(JsonPrimitive(key).toString())
+                    writer.write(":")
+                    writer.write(schedule)
+                }
             }
             afterRowId = page.last().rowid
         }
@@ -233,22 +246,29 @@ class Exporter(private val db: AppDatabase) {
         Logger.i("EXPORT", "Exported ${paperDtos.size} papers, ${bookmarks.size} bookmarks, " +
             "${attemptDtos.size} attempts")
         return McqFileDto(
-            version = 1,
+            version = JSON_EXPORT_VERSION,
             papers = paperDtos,
             bookmarks = bookmarks,
             passages = db.passageDao().getAll().map { it.toPassageDto() },
             attempts = attemptDtos,
             // Review progress travels with the JSON backup, keyed by the
-            // composite card identity so per-paper schedules cannot collapse.
+            // composite card identity so per-paper schedules cannot collapse,
+            // plus the bare question-id alias a pre-version-2 reader looks up
+            // when the id belongs to one paper only (see [scheduleKeysFor]).
             // The full per-paper rows ride in the backup zip's study.json
             // instead, which is why they are not built there.
             scheduling = if (withScheduling) {
-                db.cardStateDao().getAll()
+                val states = db.cardStateDao().getAll()
                     .filter { it.reps > 0 || it.dueAt > 0L }
-                    .associate { state ->
-                        cardScheduleKey(state.paperId, state.questionId) to
-                            state.toCardScheduleDto()
+                val ambiguous = db.cardStateDao().ambiguousScheduleQuestionIds().toHashSet()
+                buildMap {
+                    for (state in states) {
+                        val schedule = state.toCardScheduleDto()
+                        for (key in scheduleKeysFor(state.paperId, state.questionId, ambiguous)) {
+                            put(key, schedule)
+                        }
                     }
+                }
             } else {
                 emptyMap()
             }

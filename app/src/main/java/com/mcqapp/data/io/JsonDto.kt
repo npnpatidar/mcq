@@ -177,9 +177,30 @@ data class AttemptDto(
     val results: List<AttemptResultDto> = emptyList()
 )
 
+/**
+ * The plain-JSON format this build writes.
+ *
+ * Version 2 keys `scheduling` by `(paperId, questionId)` and, for a question
+ * id that belongs to exactly one paper in the file, additionally by the bare
+ * question id, so a reader from before version 2 — which looks up the bare id
+ * only — still finds the schedule. Version 1 had bare keys only.
+ */
+const val JSON_EXPORT_VERSION = 2
+
+/**
+ * The format of a file that declares no `version` field, and of every export
+ * written before [JSON_EXPORT_VERSION].
+ */
+const val JSON_LEGACY_VERSION = 1
+
 @Serializable
 data class McqFileDto(
-    val version: Int = 1,
+    /**
+     * The plain-JSON format the file declares. A file without the field is
+     * [JSON_LEGACY_VERSION]; the value decides how [scheduling] keys resolve
+     * ([lookupCardSchedule]).
+     */
+    val version: Int = JSON_LEGACY_VERSION,
     val papers: List<PaperDto> = emptyList(),
     val bookmarks: List<String> = emptyList(),
     val attempts: List<AttemptDto> = emptyList(),

@@ -582,15 +582,19 @@ class Importer(
                         // re-importing a deck does not overwrite a schedule
                         // the user has since moved on with. A question whose
                         // content changed gets no schedule either: the file's
-                        // progress describes the old content.
-                        // Composite key first (this build's export), then the
-                        // bare question id for files written before it and the
-                        // Anki path, whose map is scoped to one paper.
+                        // progress describes the old content. Which key names
+                        // the card depends on the format the file declares;
+                        // [lookupCardSchedule] is the one rule, shared with the
+                        // streaming importer.
                         val schedule = if (contentChanged) {
                             null
                         } else {
-                            restoreScheduling[cardScheduleKey(paperDto.id, questionDto.id)]
-                                ?: restoreScheduling[questionDto.id]
+                            lookupCardSchedule(
+                                restoreScheduling,
+                                paperDto.id,
+                                questionDto.id,
+                                file.version
+                            )
                         }
                         schedule?.let { schedule ->
                             // The hash of the bytes as stored, because that is

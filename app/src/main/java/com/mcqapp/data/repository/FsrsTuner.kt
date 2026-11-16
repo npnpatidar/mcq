@@ -12,6 +12,21 @@ import com.mcqapp.domain.FsrsTrainingReview
 import com.mcqapp.util.Logger
 
 /**
+ * What one [FsrsTuner.optimize] run did: the optimizer's own [result] plus the
+ * tuner's storage decision. The screen reports [stored] instead of recomputing
+ * the loss comparison, so the copy can never claim a fit was saved when the
+ * tuner kept the current weights. [FsrsFitResult] stays a pure optimizer value,
+ * with no storage flag of its own.
+ *
+ * @param stored true when [result]'s weights were persisted; false leaves the
+ *   learner on the set they already had.
+ */
+data class FsrsOptimizeOutcome(
+    val result: FsrsFitResult,
+    val stored: Boolean
+)
+
+/**
  * The settings-side bridge between the immutable review log and
  * [FsrsOptimizer]: groups logged reviews into per-card training histories,
  * runs the fit, and persists the result through [SettingsStore] so the next
@@ -40,32 +55,58 @@ internal class FsrsTuner(
      * (`rslib/src/scheduler/fsrs/params.rs`); an equal loss is therefore not
      * an improvement either, and the learner keeps what they already had.
      *
-     * A log too thin to train returns the official defaults untouched
-     * (`steps = 0`), as the reference does.
+     * A log too thin to train returns the official defaults with `steps = 0`,
+     * and that result is never stored: it is not a fit, so there is nothing it
+     * could improve on. At `fsrs_items == 0` that lands on the same behaviour as
+     * the reference, which returns the current parameters;
+     * [storeIfImproved] documents where this app is deliberately stricter.
+     *
+     * The returned [FsrsOptimizeOutcome] carries the tuner's own storage
+     * decision, which is the only honest source for "did this save anything";
+     * callers must not re-derive it from the two losses.
      */
-    suspend fun optimize(onProgress: (Int, Int) -> Unit = { _, _ -> }): FsrsFitResult {
+    suspend fun optimize(onProgress: (Int, Int) -> Unit = { _, _ -> }): FsrsOptimizeOutcome {
         // A fit must never race the one-time model migration: the weights it
         // reads and writes have to be FSRS-7's, not a legacy 21-value set.
         settings.ensureFsrs7()
         val cards = buildTrainingCards(db.reviewLogDao())
         val current = settings.schedulerConfigNow().fsrsParameters
         val result = FsrsOptimizer.fit(cards, current, onProgress)
-        val improves = storeIfImproved(result)
+        val stored = storeIfImproved(result)
         Logger.i(
             "TUNER",
             "FSRS optimized on ${result.predictions} predictions " +
                 "(${result.items} items, ${result.cards} cards, ${result.steps} steps): " +
                 "loss ${result.lossBefore} -> ${result.lossAfter} " +
-                (if (improves) "(stored)" else "(kept current weights)")
+                (if (stored) "(stored)" else "(kept current weights)")
         )
-        return result
+        return FsrsOptimizeOutcome(result, stored)
     }
 
     /**
-     * Persists [result] when it is a **strict** improvement, and reports whether
-     * it did.
+     * Persists [result] when it is a **strict** improvement of a **real** fit,
+     * and reports whether it did.
      *
      * The policy is deliberately narrow:
+     *  - a real fit ran: `items > 0 && steps > 0`. A degenerate result is not
+     *    an optimisation, and storing one is how a learner's genuine fit gets
+     *    replaced by the shipped defaults: a thin or empty trainset returns the
+     *    defaults unchanged ([FsrsOptimizer.MIN_ITEMS_FOR_TRAINING] items, no
+     *    long-term signal, or no prefixes at all), and those defaults can score
+     *    better than the learner's own set on that same thin data.
+     *
+     *    The reference only partly agrees. At `fsrs_items == 0` Anki's
+     *    `compute_params` returns the current parameters unchanged
+     *    (`rslib/src/scheduler/fsrs/params.rs`), so an empty fit is not an
+     *    optimisation at all. For `0 < items < 64`, and for a set whose every
+     *    prefix carries exactly one long-term review, `fsrs-rs` returns the
+     *    **defaults** instead (`src/training.rs`), and Anki compares those with
+     *    the current set and adopts them when strictly better. This app is
+     *    deliberately stricter in that thin band: a candidate that could not be
+     *    trained on must not displace a real fit. `steps > 0` already implies
+     *    the trainer's own item-count floor, so no separate
+     *    `MIN_ITEMS_FOR_TRAINING` gate is applied here: refusing a fit the
+     *    trainer did run would second-guess its own guards.
      *  - `lossAfter < lossBefore` — an equal loss is not an improvement, so the
      *    learner keeps the weights they already had (current Anki/rslib keeps
      *    the current set when the candidate is no worse).
@@ -73,14 +114,26 @@ internal class FsrsTuner(
      *    `NaN`, and `NaN < x` is false, but the explicit check says so instead
      *    of relying on the comparison's polarity.
      *
+     * A refusal is logged at `E` rather than `W`, and that is load-bearing:
+     * `Logger.recentErrors()` — the app's error view — keeps only `E`/`CRASH`
+     * lines, so a `W` would make "logged, not silent" unobservable there. The
+     * outcome line alone could not say it either: "kept current weights" reads
+     * the same for an equal loss and for a fit that never ran.
+     *
      * The write is a single-key DataStore edit: no read-modify-write of the
      * whole config, so a racing pacing slider write cannot clobber the fit (or
      * the fit cannot clobber it).
      */
     internal suspend fun storeIfImproved(result: FsrsFitResult): Boolean {
-        val improves = result.lossBefore.isFinite() &&
-            result.lossAfter.isFinite() &&
-            result.lossAfter < result.lossBefore
+        if (result.items <= 0 || result.steps <= 0) {
+            Logger.e(
+                "TUNER",
+                "Refusing a degenerate fit (${result.items} items, ${result.steps} " +
+                    "steps, loss ${result.lossBefore} -> ${result.lossAfter}): " +
+                    "the current weights stay"
+            )
+        }
+        val improves = isStorableFit(result)
         if (improves) settings.setFsrsParameters(result.parameters)
         return improves
     }
@@ -96,6 +149,29 @@ internal class FsrsTuner(
     }
 
     companion object {
+
+        /**
+         * The storage policy, pure so it is pinned by a JVM test that needs no
+         * DataStore: a result is worth persisting only when a fit actually ran
+         * (`items` and `steps` both positive) and its loss on the same
+         * predictions is **strictly** lower than the current weights'. Every
+         * other result keeps what the learner had.
+         *
+         * `steps > 0` is the load-bearing clause. The trainer sets it only when
+         * it actually ran Adam, which it does only past
+         * [FsrsOptimizer.MIN_ITEMS_FOR_TRAINING] items with a non-empty
+         * long-term signal, so it cannot disagree with the trainer's own gate.
+         * `items > 0` is belt-and-braces — `steps > 0` already implies it — and
+         * is kept so the predicate reads as the two facts it means. A second
+         * item-count floor in the tuner would instead refuse a fit the trainer
+         * chose to run, if that guard ever changes.
+         */
+        internal fun isStorableFit(result: FsrsFitResult): Boolean =
+            result.items > 0 &&
+                result.steps > 0 &&
+                result.lossBefore.isFinite() &&
+                result.lossAfter.isFinite() &&
+                result.lossAfter < result.lossBefore
 
         /** Cards per page when streaming the log into training cards. */
         private const val QUESTION_PAGE = 500

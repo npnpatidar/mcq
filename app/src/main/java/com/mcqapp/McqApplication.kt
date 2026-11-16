@@ -14,17 +14,19 @@ import kotlinx.coroutines.launch
 
 class McqApplication : Application() {
 
-    val repository: McqRepository by lazy {
-        McqRepository(AppDatabase.get(this), this)
-    }
-
     /**
      * Process-scoped work that must finish eventually but must never block
-     * startup. The FSRS-7 migration and card rebuild live here (AGENTS.md: no
-     * WorkManager dependency); both are idempotent and resumable, so a killed
-     * process simply resumes next launch.
+     * startup or decide a caller's outcome. The FSRS-7 migration and card
+     * rebuild live here (AGENTS.md: no WorkManager dependency), as does the
+     * rebuild a backup restore starts — that one must never turn a committed
+     * restore into "Restore failed". All of it is idempotent and resumable, so
+     * a killed process simply resumes next launch.
      */
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val repository: McqRepository by lazy {
+        McqRepository(AppDatabase.get(this), this, applicationScope)
+    }
 
     override fun onCreate() {
         super.onCreate()

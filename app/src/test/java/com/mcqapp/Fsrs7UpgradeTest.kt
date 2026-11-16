@@ -17,6 +17,7 @@ import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
@@ -577,9 +578,11 @@ class Fsrs7UpgradeTest {
      *  - reset the fit version to zero — defaults nobody fitted are not a fit,
      *    whatever the backup claimed,
      *  - raise the one-shot notice,
-     *  - and rebuild the fast traces **during the restore**, because a cursor
-     *    from another device is meaningless here and waiting for the next
-     *    launch would leave `Sf` unknown until then.
+     *  - and start the rebuild from scratch straight after the settings write,
+     *    on the process scope, because a cursor from another device is
+     *    meaningless here and waiting for the next launch would leave `Sf`
+     *    unknown until then. The rebuild is not part of the restore's outcome:
+     *    it runs in the background and the test waits for it.
      */
     @Test
     fun aFittedFsrs6BackupIsRetiredAndRebuiltWithoutARelaunch() = runBlocking {
@@ -610,9 +613,35 @@ class Fsrs7UpgradeTest {
         assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS, config.fsrsParameters)
         assertEquals("a retired legacy fit is version zero", 0, config.fsrsFitVersion)
         assertTrue(settings.fsrs7Notice().first())
-        assertTrue("the restore must rebuild, not defer to the next launch", settings.fsrs7RebuildDone())
+        awaitBackgroundRebuild()
         assertTrue(db.cardStateDao().get("p1", "q1")!!.stabilityFast > 0.0)
     }
+
+    /**
+     * Waits for the rebuild a restore starts in the background. Bounded, so a
+     * restore that stopped scheduling it fails the assertion instead of
+     * hanging.
+     *
+     * It watches this test's own card row rather than the process-global
+     * `fsrs7RebuildDone()` flag: `McqApplication.onCreate` runs the same
+     * startup rebuild under Robolectric and writes that flag, so polling it
+     * could return before this restore's rebuild had done anything and race
+     * the `stabilityFast` assertion below.
+     */
+    private suspend fun awaitBackgroundRebuild() {
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!rowHasFastTrace() && System.currentTimeMillis() < deadline) {
+            delay(20)
+        }
+        assertTrue(
+            "the restore must start the rebuild, not defer it to the next launch",
+            rowHasFastTrace()
+        )
+    }
+
+    /** The thing the assertion checks: the restore's rebuild wrote this row's fast trace. */
+    private suspend fun rowHasFastTrace(): Boolean =
+        (db.cardStateDao().get("p1", "q1")?.stabilityFast ?: 0.0) > 0.0
 
     // --- helpers -----------------------------------------------------------
 

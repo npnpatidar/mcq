@@ -59,15 +59,17 @@ class FsrsTunerPolicyTest {
     private fun result(
         lossBefore: Double,
         lossAfter: Double,
-        parameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS
+        parameters: List<Double> = FsrsScheduler.DEFAULT_FSRS_PARAMETERS,
+        items: Int = 420,
+        steps: Int = 9
     ) = FsrsFitResult(
         parameters = parameters,
         predictions = 400,
-        items = 420,
+        items = items,
         cards = 80,
         lossBefore = lossBefore,
         lossAfter = lossAfter,
-        steps = 9
+        steps = steps
     )
 
     /** A regressing fit leaves both the weights and the fit version untouched. */
@@ -114,6 +116,36 @@ class FsrsTunerPolicyTest {
         val after = settings.schedulerConfigNow()
         assertEquals(candidate, after.fsrsParameters)
         assertTrue(after.fsrsFitVersion > before.fsrsFitVersion)
+    }
+
+    /**
+     * A fit that never ran is not an optimisation, however its loss compares.
+     *
+     * The realistic shape of the defect: a trainset too thin to train returns
+     * the **official defaults** as the candidate with `steps = 0`, and those
+     * defaults can score better on that same thin data than the learner's own
+     * fitted set. Storing them would silently throw the fit away, and the
+     * version bump would then claim the defaults were fitted. An empty trainset
+     * (`items = 0`) is the same refusal — the reference returns the current
+     * parameters unchanged when there is nothing to train on.
+     */
+    @Test
+    fun aDegenerateFitNeverReplacesARealOne() = runBlocking {
+        val fitted = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.mapIndexed { index, value ->
+            if (index == 10) value * 1.4 else value
+        }
+        settings.setFsrsParameters(fitted)
+        val before = settings.schedulerConfigNow()
+
+        assertFalse("thin data, no training", tuner.storeIfImproved(result(0.52, 0.41, steps = 0)))
+        assertFalse(
+            "empty trainset",
+            tuner.storeIfImproved(result(0.52, 0.41, items = 0, steps = 0))
+        )
+
+        val after = settings.schedulerConfigNow()
+        assertEquals(fitted, after.fsrsParameters)
+        assertEquals(before.fsrsFitVersion, after.fsrsFitVersion)
     }
 
     /**

@@ -193,6 +193,19 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
   `dueAt`, `intervalDays`, `reps`, `lapses`, `leech`, `lastReviewedAt` and
   `contentHash` must keep the values the learner already sees; the write is a
   compare-and-set on `lastReviewedAt` so a concurrent review wins.
+- **A result that did not train is never stored.** `FsrsTuner.isStorableFit`
+  requires `steps > 0` besides a strictly better, finite loss. At `fsrs_items == 0`
+  this matches Anki's `compute_params`, which returns the current parameters; for
+  `0 < items < 64` it is deliberately stricter, because `fsrs-rs` returns the
+  *defaults* there and Anki would adopt them when they score better — which is how
+  a thin-data fit could destroy a real one. Do not "fix" this toward Anki. The
+  Optimize screen reports storage from the tuner's own flag, never by recomputing
+  the loss comparison.
+- **A restore does not wait for the rebuild.** `McqRepository.settingsRestore`
+  fires it on the process scope, so the restore's success depends on the data and
+  settings write alone; a rebuild failure is logged and resumes next launch. Until
+  it finishes, un-reached cards schedule from `Sf = S`, and a card reviewed in
+  that window keeps the review-derived value (the compare-and-set then skips it).
 - `src/test` is split: pure-JVM tests (`FsrsSchedulerTest`, `FsrsOptimizerTest`,
   the parsers, statistics) run on the ARM64 host; anything touching Room or
   SQLite is Robolectric and only CI (x86_64) can run it.

@@ -111,7 +111,7 @@ different paper, then asserts `exposureInStudyDay(...) == 2`.
 | m3 | `data/repository/RepositorySettings.kt:373` vs `:441` | A successful refit never invalidates the FSRS-7 rebuild: `setFsrsParameters` does not clear the done flag, and `fillMissingFastStability` only fills rows with `stabilityFast = 0`. Stored `(S, Sf, D)` are a blend of two weight sets until each card is next reviewed; retrievability and the due ranking use the new weights on old state. Self-healing per card, but wrong on every card at once. |
 | m4 | `data/repository/Fsrs7Upgrade.kt:148` vs `data/local/Daos.kt:2029` | Two orderings for one log: the rebuild sorts one card's rows by `(reviewedAt, id)`, the paged replay that feeds statistics consumes append (`id`) order. Diverges only when the clock steps backwards. The log is append-only with monotonic ids, so `id` alone is the correct total order. |
 | m5 | `data/repository/RepositorySettings.kt:347-350` via `setSchedulerConfig:324-341` | `writeWeights` unconditionally stamps `fsrs_model_version = 7`. A settings write in the window before the async `ensureFsrs7` (`McqApplication.onCreate`) short-circuits the `hadFit` branch, so a learner who had a genuine 21-weight fit never sees the one-shot explanation. Scheduling outcome is identical; the *information* is lost. |
-| m6 | `data/repository/McqRepository.kt:405-415` called from `ui/settings/SettingsViewModel.kt:697` | `settingsRestore` runs the FSRS-7 rebuild inline: a large backup's "restoring…" phase is dominated by the rebuild, and because `SettingsViewModel` catches around the whole `restoreStreaming` call, a rebuild failure surfaces as "Restore failed" although the wipe/replace and the settings write already committed. |
+| m6 | `data/repository/McqRepository.kt:405-415` called from `ui/settings/SettingsViewModel.kt:697` | `settingsRestore` ran the FSRS-7 rebuild inline: a large backup's "restoring…" phase was dominated by the rebuild. **Corrected cause:** `BackupRestorer` already catches `Exception` around `applySettings`, so a rebuild `Exception` never reached "Restore failed" — it produced a *false partial note* blaming the settings write that had in fact succeeded, and only a non-`Exception` `Throwable` could escape the restore entirely. Fixed anyway, because the attribution was wrong either way and the inline rebuild also made the restore's duration depend on unrelated work. |
 | m7 | `data/anki/AnkiPackageReader.kt:589,439` | The `cards` SELECT omits `data`, where Anki stores real FSRS memory state (`s`, `d`, `dr`, `decay`, `lrt`; `rslib/src/storage/card/data.rs`; schema 11 guarantees the column). Every FSRS-aware Anki import is re-derived from a rounded day count plus `D = 5`, discarding state Anki already knew. |
 | m8 | `ui/stats/StatsViewModel.kt:125` → `McqRepository.kt:356` → `StatsStore.kt:591` → `Daos.kt:2069` | The drill-down loads history by `questionId` alone while every other surface is keyed `(paperId, questionId)`. A question shared by two papers mixes two independently scheduled cards: wrong stability line, wrong attempt list, a sawtooth trend that never happened. Needs `historyForCard(paperId, questionId)`. |
 | m9 | `data/repository/StudyStore.kt:273-290` | `bestDueReview` materialises the entire due backlog and ranks it in Kotlin, per card served. `StudyPullQueryCountTest` pins query *count*, not rows, so an unbounded scan is invisible. Push the ranking into SQL or `LIMIT` a candidate window before the Kotlin tie-break. |
@@ -262,22 +262,51 @@ All five were accepted as recommended:
 
 ## 10. Implementation status
 
-Code (uncommitted at the time of writing, pending review): `AnkiScheduling`,
-`CardScheduleMapping`, `Exporter`, `Importer`, `JsonDto`, `StreamingImportSession`,
-`Daos`, `ImportViewModel`, plus `AnkiSchedulingTest`, `BackupSchedulingTest`,
-`FsrsOptimizerTest` (comment only) and the new `ExposureInStudyDayTest`.
+**Landed on the branch** (all reviewed before commit):
+
+- Rulings `e997185` (Anki historical retention), `d3f4063` (plain-JSON v2),
+  `c8a9816` (exposure test + optimiser-cap comment), `5b0a52a` (docs):
+  `AnkiScheduling`, `AnkiPackageReader`, `AnkiApkgImporter`, `CardScheduleMapping`,
+  `Exporter`, `Importer`, `JsonDto`, `StreamingImportSession`, `Daos`,
+  `ImportViewModel`, `Fsrs.kt` (orphaned constant removed), plus
+  `AnkiSchedulingTest`, `BackupSchedulingTest`, `FsrsOptimizerTest` and the new
+  `ExposureInStudyDayTest`.
+- Pre-merge fixes for **m2** and **m6**: `FsrsTuner` (`isStorableFit` — a result
+  that did not train is never stored, matching Anki's `compute_params`),
+  `McqRepository.scheduleFsrs7Rebuild` (the rebuild leaves the restore's failure
+  path), `McqApplication` (the rebuild runs on the process scope), plus
+  `FsrsFitStorageGateTest` (new, pure JVM) and `RestoreRebuildIsolationTest`
+  (new, Robolectric), with `FsrsTunerPolicyTest` and `Fsrs7UpgradeTest` extended.
+  `SettingsViewModel` needed no change: neither the restore nor the rebuild can
+  throw there any more.
 
 Docs: `AGENTS.md` (upstream anchor on the FSRS-7 section, widened `Sf` rule,
 `LEARNING`/`RELEARNING` distinction, import-retention rule, `cards.data`
-limitation) and `README.md` (format v2 and its alias rule, the annotated example,
-the version row, the Optimise-vs-Anki caveat, the full curve arithmetic).
+limitation, plain-JSON export section) and `README.md` (format v2 and its alias
+rule, the annotated example, the version row, the Optimise-vs-Anki caveat, the
+full curve arithmetic).
 
 Deliberately **not** changed: the Optimize button's user-facing copy still says
 "the way Anki's Optimize does", because user-facing copy is the owner's call; the
 technical difference is documented in `README.md` §3.3 and nit n2 instead.
 
-Still open from the audit: m2, m3, m4, m5, m6, m8, m9, m10, m12, m13, m15 and
-every nit except n2/n4/n8.
+Still open from the audit: m3, m4, m5, m8, m9, m10, m12, m13, m15 and every
+nit except n2/n4/n8/n5/n7.
+
+### Evidence — CI run `43786336543` on `5b0a52a` (green)
+
+All four jobs (`wrapper-validation`, `release-build`, `build`, `ui-test`)
+succeeded: **2206 tests, 0 failures, 0 errors, 7 skipped** across 267 suites.
+The classes that only x86_64 can run, and that carry this diff's proof:
+
+| Class | Tests | Result |
+|---|---|---|
+| `ExposureInStudyDayTest` | 1 | pass (the new relearn-cap guard) |
+| `BackupSchedulingTest` | 10 | pass (v2 declaration, alias, collision, v1 fixture, round trip) |
+| `StreamingImporterEquivalenceTest` | 14 | pass (both readers agree after the shared helper) |
+| `AnkiPackageReaderTest` | 38 | pass (the `.apkg` chain after the retention parameter was deleted) |
+| `AnkiStreamEquivalenceTest` | 3 | pass |
+| `NoDeadCodeTest` | 12 | pass (after `BENCHMARK_RETENTION` was removed) |
 
 ### Accepted limitations (recorded, not fixed)
 
@@ -296,6 +325,29 @@ every nit except n2/n4/n8.
 6. Robolectric evidence is deferred: the format proof and the exposure-count
    guard can only run on x86_64, so the first green CI run is their first real
    evidence.
+7. **The m2 storage gate is deliberately stricter than Anki in one band.** At
+   `fsrs_items == 0` Anki returns the current parameters unchanged, which is what
+   this app matched. For `0 < items < 64`, and for a set whose every review is a
+   first review, `fsrs-rs` returns the *defaults* and Anki then compares and
+   adopts them when strictly better — upstream would store them. This app refuses
+   any result that did not train (`steps == 0`), because a candidate that could
+   not be trained on must not displace a real fit. A deliberate product
+   divergence, not an oversight.
+8. **A restore no longer returns with FSRS-7 state consistent** — *owner-ruled
+   2026-11-16, option "background rebuild"*. The rebuild fires on the process
+   scope, so the summary is computed and the UI unlocks while it runs: a card it
+   has not reached schedules from `Sf = S`, and a card *reviewed in that window*
+   keeps the review-derived approximation, because the rebuild's compare-and-set
+   on `lastReviewedAt` then skips it. The alternative — keeping the rebuild inline
+   and only wrapping its failure — would preserve the old completion order; it was
+   rejected because it makes a large restore's "restoring…" phase dominated by
+   the rebuild, and the exposure needs the learner to restore and immediately
+   study a specific card within seconds.
+9. A failed post-restore rebuild is silent to the learner: logged, resumable next
+   launch, and deliberately not surfaced as a restore failure.
+10. There is no single-flight guard on the rebuild, so a restore starting while
+    the startup rebuild is still running replays pages twice. The
+    compare-and-set keeps the writes correct; the cost is wasted CPU only.
 
 ## 11. Reference basis
 

@@ -2144,6 +2144,14 @@ matches upstream: a training item is a *prefix* of one card and prefixes longer 
 `MAX_SEQ_LEN` are excluded (`fsrs-rs` `dataset.rs`, `training.rs`), so a card with a very
 long history still contributes its shorter prefixes rather than being dropped whole.
 
+The result is stored only when the fit actually trained **and** its loss is strictly
+better (`FsrsTuner.isStorableFit`). At zero training items that matches Anki's
+`compute_params`, which returns the current parameters; between one and 64 items it is
+stricter on purpose, because `fsrs-rs` hands back the *defaults* there and Anki would
+adopt them if they scored better — which would replace a real fit with the shipped
+weights. The screen's "applied" vs "kept" message comes from that decision, not from
+the loss numbers alone.
+
 Button `Optimize FSRS parameters`:
 - Disabled when `fsrsReviewCount < 1000` or fit running.
 - Running: label `Optimizing…` → `Optimizing… X/Y` + circular progress.

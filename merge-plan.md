@@ -115,13 +115,20 @@ git switch main && git pull
 
 Do **not** tag here — the single `0.0.52` goes on the second merge commit (§7).
 
-### Step 2 — rebase #81 onto the merged main and renumber to 28
+### Step 2 — bring #81 up to date and renumber to 28
 
 ```bash
 git fetch origin
 git switch feature/absolute-dwell-thresholds
-git rebase origin/main               # resolve the 8 conflicts per §3
+git merge origin/main                  # resolve the conflicts per Step 3, once
 ```
+
+**Merge, not rebase.** The branch carries 23 commits, several of which touch the
+same conflicting files (`AppDatabase.kt`, `RepositorySettings.kt`, the two
+tests). A rebase replays them one at a time, so the same conflict is resolved
+repeatedly and an early mistake is only visible at the end. Merging `main` in
+resolves everything in a single pass, keeps the branch's history intact, and
+still lands on `main` as a merge commit — which is the ruling either way.
 
 Then the schema work, in order:
 
@@ -254,7 +261,7 @@ gh release view 0.0.52          # assets: mcq-0.0.52-signed.apk + .sha256
 
 | # | Question | Ruling |
 |---|---|---|
-| 1 | Order | **As recommended**: #82 first keeping 27, then #81 rebased and renumbered to 28 |
+| 1 | Order | **As recommended**: #82 first keeping 27, then #81 merged (not rebased) and renumbered to 28 |
 | 2 | Releases | **One** release, `0.0.52`, tagged on the second merge commit |
 | 3 | Merge strategy | **Merge commits** — the tag then names the merge commit, which is what the release workflow expects |
 | 4 | Un-draft timing | **As recommended**: #82 to ready as soon as its final CI is green; #81 stays draft until its renumbering lands and its CI is green |
@@ -262,6 +269,47 @@ gh release view 0.0.52          # assets: mcq-0.0.52-signed.apk + .sha256
 | 6 | Restore vs rebuild | **Background rebuild (A).** `Restored` is reported as soon as the data and settings are in; the FSRS-7 rebuild continues on the process scope. The gap where a card the rebuild has not reached schedules from `Sf = S` — and a card reviewed inside that gap keeps its review-derived value — is accepted, recorded as limitation 8 in `fsrs_audit.md` and as a rule in `AGENTS.md` |
 
 Consequences for the runbook above: Step 1 merges #82 and does **not** tag;
-Step 2 rebases, renumbers and merges #81; Step 4 then tags **`0.0.52`** on that
-second merge commit and verifies its assets — there is no `0.0.53`.
+Step 2 merges `main` into #81, renumbers it and merges it; Step 4 then tags
+**`0.0.52`** on that second merge commit and verifies its assets — there is no
+`0.0.53`.
+
+## 8. What actually happened (2026-11-16)
+
+| Step | Result |
+|---|---|
+| #82 | Merged as `4a816fb`; head `b8751b1`, CI run `43794588314`: 2216 tests, 0 failures, 0 errors, 7 skipped across 269 suites; all four jobs green. APKs downloaded. |
+| #81 up to date | `git merge origin/main` — single merge commit `7b8f7f4`, **29 commits ahead of the old remote tip `ef2ffa5`** (the common base with `main` is `7f47596`). No rebase: the same conflicts would have replayed across 23 commits. |
+| Renumber | `version = 28`; `MIGRATION_26_27` is `main`'s body only; this branch's old body became `MIGRATION_27_28`; `27.json` byte-identical to `main`'s; `28.json` generated (adds `grading_versions`, drops the two ladder tables). |
+| Three reviews | Schema/design, implementation/integration, tests/docs — all reported, no blocker in the merged code itself. The one blocker is "no CI has ever built this tree", which the push resolves. |
+| Fix pass | `069eb76` — the migration made total, two new `MigrationTest` fixtures, the startup-job opt-out, the DataStore leak closed, 15 version markers retargeted. **30 commits ahead of `ef2ffa5`.** Three reviewers re-checked it: no blocker, major, or runtime defect; the remaining findings were prose and were applied in two follow-up commits — `a59fc05` (source and test prose) and `34b51ec` (one assertion-message string) — with the supervisor's own corrections to these two documents still uncommitted at the time of writing. |
+| CI on the merged tree | **Pending** — the branch has not been pushed since the merge. Nothing in the merged tree has run on x86_64 yet. |
+
+**Decisions taken on the review findings** (supervisor, reported to the owner):
+
+1. **`MIGRATION_27_28` is made total.** Before `069eb76`, a pre-renumber branch v27
+   (no ladder tables, no fast-trace columns) threw `no such table:
+   ladder_versions` and then failed Room's schema check — a per-launch crash for
+   unreleased dev installs only. Reviewer 1 said only documentation could help;
+   reviewer 2 proved a guard works. Both are done: a Kotlin-side `sqlite_master`
+   check before the copy and `PRAGMA table_info` checks before each `ALTER`, plus
+   the caveat in the PR body and the release note. Verified fact worth
+   keeping: a SQL `WHERE EXISTS` guard does **not** work, because SQLite resolves
+   `FROM ladder_versions` at prepare time.
+2. **`reason` is documented, not normalised.** Migrated **and restored** rows keep
+   v26's `proposal`/`automatic`/`rollback`; the enum stays write-side only.
+   Rewriting history in a migration was rejected by two reviewers.
+3. **Grading prose is reworded behaviour-first, not by version number.** Feature
+   introduction markers become `(v28)`; FSRS-7's stay at v27; and the residual
+   "pre-v27" wording becomes "from before the absolute grading rule" / "rows
+   graded under the retired reading-allowance rule" / "a backup without
+   `grading_rules_version`". A mechanical `pre-v27` → `pre-v28` substitution was
+   explicitly rejected: branch-v27 data already used the absolute rule, so the
+   number never denoted one thing.
+4. **`TestMcqApplication` opts out of the FSRS-7 startup jobs too**, so
+   `StartupTest`'s file-absence assertion is an invariant again rather than a
+   race with `ensureFsrs7`/`rebuildFsrs7Memory`.
+5. **Accepted, not fixed**: no CI schema-drift check; `SignalQueryTest`'s
+   parallel `SettingsStore` oracle; the `Fsrs7UpgradeTest` freshness coupling.
+   All three are nits with no behavioural consequence today.
+
 

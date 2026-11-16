@@ -1,5 +1,28 @@
 # Audit — `feature/absolute-dwell-thresholds`
 
+> **Historical record — read the schema claims with this in mind.** This audit
+> reviewed the branch while it still called its own schema **27**. Before the
+> branch landed, PR #82 merged `feature/fsrs-7` into `main` and took **27**
+> (`card_state.stabilityFast`, `review_log.stabilityFastAfter`), so this
+> branch was renumbered to **28** and its migration became **27→28** (merge
+> commit `7b8f7f4`). Nothing was ever released with this branch's 27.
+>
+> Consequences for the entries below: **M8** ("v27 amended in place") and the
+> no-27→28 decision are **superseded** — a 27→28 step now exists and 27 is
+> main's; **F6** is **superseded** — `27.json` is now `main`'s file byte for
+> byte, this branch generated `28.json` from the merged entities, and the
+> hand-edited hash it describes belongs to a file that no longer exists;
+> **F5** is **closed** — `MigrationTest` now asserts a review stamped with a
+> non-zero `ladderVersion` resolves through the copy. Every phrase "v27" below
+> that refers to *this branch's* grading-rule schema means **28** in the
+> merged tree — but do not read it as a version boundary: "pre-v27" never
+> denoted one thing. Branch-v27 data already used the absolute rule, while
+> `main`'s v27 data still carried the reading allowance, so the honest reading
+> of those phrases is **"from before the absolute grading rule"** — rows graded
+> under the retired reading allowance, and backups without
+> `grading_rules_version`. The FSRS-7 entries (fast traces, `fsrs_*` keys)
+> really are v27, and v27 is `main`'s schema version there.
+
 - **Range reviewed:** `main...HEAD` — 20 commits, 88 files, +6 788 / −7 925
 - **Head:** `a62a94c legacy docs deleted` (docs-only)
 - **Code tip:** `5e91f1e fix(grading): treat an answer inside the first second as untimed`
@@ -8,20 +31,33 @@
 - **Method:** three specialist read-only passes — (D) design & domain model, (I) implementation & integration, (T) tests, copy, docs & release — followed by a supervisor verification pass on the highest-severity claims. Reviewer T's pass was completed by the supervisor because the subagent quota was exhausted; every T finding below was re-derived directly from the tree.
 - **Limits:** this host is ARM64/Termux. Robolectric/SQLite tests, the Compose runtime and the emulator cannot run locally, so every database, migration, backup and UI claim here is static code-reading unless stated otherwise. CI is the only executed evidence. The latest debug/release APKs are in `/sdcard/Download`.
 
-**Verdict: do not un-draft yet — but the branch is close.** The feature's core is sound and every original blocker is genuinely closed. What remains is one **inherited** Major (a full restore restarts the calibration epoch and excludes the restored history from the evidence report), one new inconsistency in the retired-pair policy, a cluster of copy that the last three commits made false, and one new test assertion that can never execute. There is no Blocker, no schema or migration break, and no data-loss path in normal use.
+**Verdict at the time of this review round (2026-11-15, pre-merge): do not un-draft yet — but the branch is close.** The feature's core is sound and every original blocker is genuinely closed. What remained was one **inherited** Major (a full restore restarts the calibration epoch and excludes the restored history from the evidence report), one new inconsistency in the retired-pair policy, a cluster of copy that the last three commits made false, and one new test assertion that can never execute. There was no Blocker, no schema or migration break, and no data-loss path in normal use.
+
+**Current state (2026-11-16).** Every finding above is closed or accepted. The
+restore finding is closed by `StatsRetentionStreamTest.aRestoreKeepsTheCalibrationEvidenceItBrought`
+and the dead-branch finding by `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair`.
+The branch has since merged `main` and been renumbered to Room **28** (see the
+preamble); three further specialist passes on the merged tree found **no
+blocker, major, or runtime defect**, and the one real migration defect they
+found — `27→28` failing on the branch's own pre-merge v27 — is fixed and covered
+by two new fixtures. What is left is CI, which has not yet seen the merged
+tree.
 
 ---
 
 ## Severity summary
 
+Counts are **as of this review round (2026-11-15)**. Everything the round found
+is closed or accepted now — see the status table below.
+
 | Severity | Count | Themes |
 |---|---|---|
 | Blocker | 0 | — |
-| Major | 1 | Restore restarts the calibration epoch (inherited from `main`) |
+| Major | 1 (closed) | Restore restarts the calibration epoch (inherited from `main`) — closed by `aRestoreKeepsTheCalibrationEvidenceItBrought` |
 | Minor | 10 | Retired-pair reset gap, dead test branch, copy/PR drift, migration resolvability, schema hash, dead doc references, `fast = 1`, sub-second gate exclusion, copy precision, gate wording |
 | Nit | 6 | Tint freshness claim, test seams in production, static probe field, `AT_LIMIT` wording, "agree with" wording, 5 pp step wording |
 
-All original Blockers **B1–B4** and Majors **M1, M2, M4–M7, M9, M10** are fixed or closed as recorded below. **M8** is accepted by owner decision and **M3** is an owner decision.
+All original Blockers **B1–B4** and Majors **M1, M2, M4–M7, M9, M10** are fixed or closed as recorded below. **M8** was accepted by owner decision and is now **superseded** by the 27→28 renumber (see the preamble); **M3** is an owner decision.
 
 **State after the implementation batches of 2026-11-15.** No Blocker and no Major is
 open: **F1** is fixed and hardened against a mismatched pair and an unusable timestamp
@@ -29,7 +65,7 @@ open: **F1** is fixed and hardened against a mismatched pair and an unusable tim
 settled by a from-scratch regeneration, **F7** documents are deleted, and the two later
 rulings **F8** (2 s Easy floor) and **F9** (sub-second rows count as one second in the
 suggestion only) are implemented with tests. What remains is deliberate: the 80 `plan §N`
-code citations, the accepted **M8** no-27→28 decision, the **minor 6** migrated-row contract,
+code citations, the **minor 6** migrated-row contract,
 the **F11** nits, three untested UI behaviours, the untested legacy *streaming* import, and the
 deleted-analysis provenance of the PR's 812-row figure. CI is green on `5ecdede` (run
 43681964531, all four jobs; the first attempt hit one flaky assertion in
@@ -58,11 +94,13 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 
 **Not a regression.** I checked `main`: `LadderStore.seedAfterRestore` stamped a new row at `now` in the same way, and `StatsStore`/`Calibration` already filtered by `versionStart` (`git show main:.../LadderStore.kt`, `git show main:.../StatsStore.kt:184-222`). The branch did not introduce the behaviour, but v27 makes "the cuts in force are evidence" the headline promise, which raises the cost.
 
-**No test asserts the intent.** `GradingRulesStoreTest.restoreSeedsANewPriorVersionContinuingTheNumbering` (`:448-466`) pins only the id and the reason string. Nothing asserts what the report should contain after a restore.
+**No test asserts the intent.** At review time, `GradingRulesStoreTest.restoreSeedsANewPriorVersionContinuingTheNumbering` pinned only the id and the reason string, and nothing asserted what the report should contain after a restore. The test that closed it is `GradingRulesStoreTest.aRestoreKeepsTheRestoredVersionAndItsEpoch` (`GradingRulesStoreTest.kt:475`), which pins the id **and** the epoch; what it still does not assert is the report's contents — that is covered separately by `StatsRetentionStreamTest.aRestoreKeepsTheCalibrationEvidenceItBrought`.
 
 **Suggested fix.** When the restored current version id already names a row whose pair equals the restored pair, keep that id and its `effectiveFrom` and skip the reseed; mint only when the pair differs or the row is missing (`ensureVersionLocked` already repairs the missing case at `GradingRulesStore.kt:216-230`). Add a test: after a restore, a review dated inside the backup's epoch is counted by `Calibration.report`. Alternatively, keep the behaviour and document the epoch restart in README §3.9/restore — but that is a weaker contract.
 
 **Owner ruling (2026-11-15): option A — fix it.** Reuse the restored version row and its `effectiveFrom` when the restored pair matches; mint only when it differs or the row is missing. The test above is required.
+
+**Closed (2026-11-16).** `StatsRetentionStreamTest.aRestoreKeepsTheCalibrationEvidenceItBrought` — a review dated inside the backup's epoch is counted by `Calibration.report` after the restore, so the epoch continues where the backup left off.
 
 ---
 
@@ -76,6 +114,8 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 
 **Owner ruling (2026-11-15): option A — fix it.** Add the `retainRetiredCuts()` call on the reset-first path and pin it with a test.
 
+**Closed (2026-11-16).** The reset-first path now calls `retainRetiredCuts()` before the edit that overwrites the pair, and `GradingRulesStoreTest` pins it.
+
 ---
 
 ### F3 — The new correctness-only stats assertion is unreachable *(Minor, new test gap)*
@@ -87,6 +127,8 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 **Suggested fix.** Add a dedicated test (or a second case) that writes `correctness_only = true` through `updateSchedulerConfig` before loading, then asserts the correctness-only payload and that the timed contrast is null. Keep the existing timed loop as it is.
 
 **Owner ruling (2026-11-15): add the fixture.** The correctness-only branch must execute in CI.
+
+**Closed (2026-11-16).** `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair` writes `correctness_only = true` before loading and asserts the correctness-only payload with the timed contrast null, so the branch executes.
 
 ---
 
@@ -109,7 +151,7 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 - "Locally: **326** pure-JVM classes" — the tree has **165** files with `@Test` and no `^import org.robolectric` (262 test files total).
 - "Evidence and method: `threshold_analysis.md`; plan and checklists: `threshold.md`" — both deleted at `a62a94c`.
 
-**Step wording (prior minor 7, still open).** `README.md:1004` and `Calibration.kt:257` say "one second per 5 pp **outside** the band"; the code is `round(|δ1| / 0.05)` over the total gap (`Calibration.kt:260-264`; 0.06 → 1 s, 0.10 → 2 s, 0.40 → capped 4 s), which the tests pin.
+**Step wording (prior minor 7, fixed).** `README.md:1004` and `Calibration.kt:257` used to say "one second per 5 pp **outside** the band" while the code computed `round(|δ1| / 0.05)` over the total gap (`Calibration.kt:260-264`; 0.06 → 1 s, 0.10 → 2 s, 0.40 → capped 4 s), which the tests pin. The wording now matches the code: `README.md:1064` and `Calibration.kt:298`.
 
 **Suggested fix.** Correct the five README sentences, the two strings, the model KDoc and the PR body. No test references these strings, so nothing guards the drift.
 
@@ -119,11 +161,13 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 
 ### F5 — The 26→27 migration test never proves a non-zero `ladderVersion` resolves *(Minor, new test gap)*
 
-**Evidence.** `MigrationTest.createV26WithLadderHistory` copies `ladder_versions` id 7 with 8/30 (`:1357-1371`), but the review inserted by `createV25WithSeed` carries `ladderVersion = 0`, and the test asserts `0` (`:1401`). The comment above it ("every pre-v27 review row still resolves the cuts that graded it") is therefore untested for the case that matters: a v26 review stamped with id 7.
+**Evidence (at review time).** `MigrationTest.createV26WithLadderHistory` copied `ladder_versions` id 7 with 8/30, but the review inserted by `createV25WithSeed` carried `ladderVersion = 0`, and the test asserted `0`. The comment above it ("every pre-v27 review row still resolves the cuts that graded it") was therefore untested for the case that matters: a v26 review stamped with id 7. The current fixture is `MigrationTest.createV26WithBothHistories`, and the non-zero case is now covered: the `26→28` test asserts a review stamped `ladderVersion = 7` resolves to its copied pair.
 
 **Suggested fix.** Insert one v26 review with `ladderVersion = 7` and assert it reads back as 7 and that `gradingRulesDao().version(7)` exists after migration.
 
 **Owner ruling (2026-11-15): add the assertion.** The migration test must prove a non-zero version resolves.
+
+**Closed (2026-11-16).** `MigrationTest`'s 26→28 fixture seeds a v26 review stamped `ladderVersion = 7` and asserts it reads back as 7 *and* that `gradingRulesDao().version(7)` exists with the copied pair after the 27→28 step.
 
 ---
 
@@ -136,6 +180,8 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 **Suggested fix.** Run one build that regenerates the schema and confirm `git status` is clean (or add a drift check to CI). If it differs, commit the generated file.
 
 **Owner ruling (2026-11-15): regenerate it.** Run the build, verify the generated `27.json`, and commit only if it differs. Keep the no-27→28 decision.
+
+**Superseded (2026-11-16).** The renumbering changed what this entry is about. `27.json` in the merged tree is `main`'s FSRS-7 file, byte for byte (`identityHash` `ee3a66…`), and this branch's schema is `28.json` (`identityHash` `66afb0…`), generated by KSP from the merged entities. The hand-edited `c8196…` hash describes a file that no longer exists. The drift-check gap is unchanged and still accepted: no CI step compares `app/schemas` against the generated files.
 
 ---
 
@@ -216,16 +262,16 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 | **B2** fresh-install file probe | **Fixed** | freshness is DB content (`AppDatabase.hasNoPapersOrReviews`, `:137-160`); `StartupTest` drives the real application; marker survives relaunch |
 | **B3** any preference voids the seed | **Fixed** | `RepositorySettings.kt:382-390` short-circuits only on `correctness_only` and re-checks inside the edit; two store tests |
 | **B4** Reset flips the rule | **Fixed** | `resetSchedulerConfig` never writes `correctness_only` (`:530-576`); `SettingsViewModelResetTest` pins UI + store |
-| **M1** upgrade retires a tuned pair | **Fixed**, except F2 | `retainRetiredCuts` (`:487-495`); silently kept per owner; reset-first path skips it |
-| **M2** chart hidden under correctness-only | **Fixed** in code; copy stale (F4) | `RetentionSection.kt:57-63`, `:254` |
+| **M1** upgrade retires a tuned pair | **Fixed** | `retainRetiredCuts` (`:487-495`); silently kept per owner; the reset-first path retains it too (F2 closed) |
+| **M2** chart hidden under correctness-only | **Fixed** | `RetentionSection.kt:57-63`, `:254`; the copy matches the app (F4 closed) |
 | **M3** suggestion is a relative rule | **Owner decision**; feedback loop closed structurally | version-flag filter (`Calibration.kt:314-321`); salted test `CalibrationTest:565-584` |
 | **M4** suggested pair unusable | **Fixed** | card persists under timed while `changes` (`StatsStore.kt:208-212`, `RetentionSection.kt:69-77`); values stay on screen |
 | **M5** "not yet" states the wrong gate | **Fixed** | `Gate` enum and ordered checks (`Calibration.kt:229-240,335-338`); per-gate lines (`RetentionSection.kt:201-219`, `strings.xml:828-830`) |
 | **M6** no e2e correctness-only test | **Fixed** | `StudyViewModelPullTest.correctnessOnlyGradingIgnoresANinetySecondDwell` + timed twin: 90 s → Good vs Hard, persisted `review_log` |
-| **M7** stats test excluded the new fields | **Partly** — new branch is dead (F3) | `StatsRetentionStreamTest.kt:227-249` |
-| **M8** v27 amended in place | **Accepted won't-fix**; hash unverified (F6) | owner decided no tagged release carried v27; no CI drift check |
+| **M7** stats test excluded the new fields | **Fixed** | `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair` — the correctness-only branch now executes |
+| **M8** v27 amended in place | **Superseded** by the 27→28 renumber; hash unverified (F6) | 27 is `main`'s schema and this branch's is 28 (`AppDatabase.kt`); no CI drift check still |
 | **M9** backup coverage | **Closed** | `correctnessOnly = true` round-trip (`BackupRestoreRoundTripTest.kt:228,323`); legacy `ladderVersions` + `ladderBlocks` decode (`:244-258`); legacy *streaming* import still untested |
-| **M10** shared DataStore leakage | **Fixed** | `robolectric.properties` → `TestMcqApplication`; `SettingsResetRule` clears four keys before/after; classes that write prefs clear the store themselves |
+| **M10** shared DataStore leakage | **Fixed** | `robolectric.properties` → `TestMcqApplication` (now also opting out of the FSRS-7 startup jobs, which open Room); `SettingsResetRule` clears six keys before/after — `correctness_only`, `grading_rules_version`, `ladder_version`, `install_first_start_new`, `haptics_enabled`, `last_test_length`; classes that write prefs clear the store themselves |
 | Minor 1 clock/check boundary | **Fixed** | tint from `gradedDwellSeconds(dwellMillis)` (`StudyScreen.kt:527-531`); ticker re-anchored per card (`StudyViewModel.kt:554-557`) |
 | Minor 2 sub-second never Easy | **Fixed by decision**; consequences F9/F11.4 | `gradedDwellSeconds` (`SpacedRepetition.kt:420-423`); row-level test |
 | Minor 3 equal cuts legal | **Fixed**; residual F8 | `sanitized` + `validExtra = it > fast`; `AT_LIMIT` |
@@ -249,7 +295,7 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 | Correctness-only through `StudyViewModel` → `review_log` | `StudyViewModelPullTest` 90 s pair | ✅ |
 | Neutral clock tint under correctness-only | — | ❌ |
 | Cut fields hidden while the switch is on | — (UI test only waits for the section) | ❌ |
-| Correctness-only `RetentionData` payload (dwell pair, null contrast) | `StatsRetentionStreamTest` | ⚠️ dead branch (F3) |
+| Correctness-only `RetentionData` payload (dwell pair, null contrast) | `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair` | ✅ (was F3) |
 | Forecast chart stays under correctness-only | — | ❌ |
 | Suggestion visible under timed while pair differs | `StatsRetentionStreamTest` (field only) | ⚠️ no render test |
 | `suggestCutsFromDwell` percentile/gates/clamps | `CalibrationTest` | ✅ |
@@ -259,26 +305,26 @@ The backup's `grading_versions` rows are re-inserted with their original ids and
 | Reset keeps the rule and mint rules | `SettingsViewModelResetTest`, `GradingRulesStoreTest` | ✅ |
 | RULE vs MANUAL versions; no-op save; crash repair | `GradingRulesStoreTest` | ✅ |
 | Epoch seeds on migrated install; failure fails loud | `StatsRetentionStreamTest`, `StatsSeedFailureTest` | ✅ |
-| Migration 25→27 / 26→27 | `MigrationTest` | ✅ |
-| 26→27 non-zero `ladderVersion` resolves | — | ❌ (F5) |
+| Migration 25→28 / 26→28 / 27→28 | `MigrationTest` | ✅ |
+| 26→27 non-zero `ladderVersion` resolves | `MigrationTest` (26→28) | ✅ (was F5) |
 | Backup round-trip incl. `correctnessOnly = true` | `BackupRestoreRoundTripTest` | ✅ |
-| Pre-v27 backup decode with `ladderBlocks` | `BackupRestoreRoundTripTest` | ✅ (json decode only) |
-| Pre-v27 backup through the **streaming** reader | — | ❌ |
-| Restore keeps the calibration evidence | — | ❌ (F1) |
+| Legacy backup decode with `ladderBlocks` | `BackupRestoreRoundTripTest` | ✅ (json decode only) |
+| Legacy backup through the **streaming** reader | — | ❌ |
+| Restore keeps the calibration evidence | `StatsRetentionStreamTest.aRestoreKeepsTheCalibrationEvidenceItBrought` | ✅ (was F1) |
 
-**Test infrastructure.** `HangWatchdogRule` bounds and stack-dumps a hung test and halts the worker rather than wedging CI; `RobolectricMainThread` runs DB work off the paused main looper while pumping it; `robolectric.properties` makes `TestMcqApplication` (no startup probe) the default; `SettingsResetRule` clears `correctness_only`, `grading_rules_version`, `ladder_version` and the install marker before and after each test. The M10 leak is closed. The new `testLogging` block in `app/build.gradle.kts` makes a hang visible.
+**Test infrastructure.** `HangWatchdogRule` bounds and stack-dumps a hung test and halts the worker rather than wedging CI; `RobolectricMainThread` runs DB work off the paused main looper while pumping it; `robolectric.properties` makes `TestMcqApplication` the default — production wiring minus every startup job that opens Room (the install-freshness probe and the FSRS-7 migration and rebuild, each behind its own `@VisibleForTesting` opt-out); `SettingsResetRule` clears six process-wide preference keys — `correctness_only`, `grading_rules_version`, `ladder_version`, `install_first_start_new`, `haptics_enabled` and `last_test_length` — before and after each test. The M10 leak is closed. The new `testLogging` block in `app/build.gradle.kts` makes a hang visible.
 
-**Coverage gaps that matter:** the three UI behaviours (tint, hidden fields, chart) and the correctness-only stats payload are the ones a regression could silently break without any CI test failing.
+**Coverage gaps that matter:** the three UI behaviours (tint, hidden fields, chart) are the ones a regression could silently break without any CI test failing. The correctness-only stats payload is no longer one of them — `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair` executes that branch.
 
 ---
 
 ## Docs, copy and release review
 
-- **README/strings/KDoc drift:** F4. The copy was true before `564497d`/`5641fd2`; it is now false in five README places, two strings, the readiness model KDoc and the PR body.
-- **Deleted planning docs:** F7. 80 `plan §N` citations, `ladder-evaluation.md` still describing the deleted ladder, dead PR links, audit record removed.
+- **README/strings/KDoc drift:** F4, **closed** — the copy now matches the app. The drift was true before `564497d`/`5641fd2`; the five README places, the two strings, the readiness model KDoc and the PR body were corrected.
+- **Deleted planning docs:** F7, **closed**. `ladder-evaluation.md` and the dead PR links are gone; the residual is the 80 `plan §N` code-comment citations, which are code rather than documents. This audit record is retained until the release.
 - **Release compliance:** good. Feature branch off `main`; PR #81 is a draft; no `versionName`/`versionCode` change (both derive from the release tag, `app/build.gradle.kts:101-104`); no workflow change; debug/release variants and artifact names unchanged. The 3-line `app/build.gradle.kts` change is test logging only.
 - **Commit-message accuracy:** `564497d` claims the new stats assertion pins the rule in force, but its correctness-only half cannot run (F3). `5e91f1e` accurately records the owner decisions. `a62a94c` is labelled "legacy docs deleted" but also deletes the current `audit.md`.
-- **CI tip coverage:** `a62a94c` is docs-only and unbuilt; the last built commit is `5e91f1e`. Low risk, but the merged commit should be the built one, or the docs-only diff must be confirmed to change nothing else.
+- **CI coverage:** the merged tree has no CI run yet — CI is pending. The earlier review round's tip coverage (`a62a94c` docs-only and unbuilt; `5e91f1e` the last built commit) is historical.
 
 ---
 
@@ -318,7 +364,7 @@ All six decisions were made in favour of the recommended option.
 | **R2 follow-up** | **Invalidate the calibration cache when reviews are deleted.** The key's freshness guard only notices appends, so a cached report could keep counting deleted reviews until the block advanced. | Code and test |
 
 
-**Residual accepted after the rulings:** the 80 `plan §N` code-comment citations (code, not documents), and the items the owner previously decided to leave (`M3` pace suggestion, `M8` no 27→28, naming).
+**Residual accepted after the rulings:** the 80 `plan §N` code-comment citations (code, not documents), and the items the owner previously decided to leave (`M3` pace suggestion, naming). The `M8` no-27→28 decision is **superseded**: the branch now carries a 27→28 migration, and both v27 shapes are covered by `MigrationTest`.
 
 ## Suggested order of work
 
@@ -339,7 +385,7 @@ No commit, no push.
 
 | Finding | Change | Where |
 |---|---|---|
-| **F1** | `seedAfterRestore()` deleted. `settingsRestore` now calls `gradingRules.currentVersion()`, so a restored id whose row exists **with the same pair and a usable timestamp** keeps the id **and** its `effectiveFrom`; a missing row is repaired in place under the same id; a mismatched pair or an unusable stamp (≤ 0 or in the future) mints a new `prior` row; a pre-v27 backup also mints one. | `GradingRulesStore.kt`, `McqRepository.kt`, `StatsStore.kt` |
+| **F1** | `seedAfterRestore()` deleted. `settingsRestore` now calls `gradingRules.currentVersion()`, so a restored id whose row exists **with the same pair and a usable timestamp** keeps the id **and** its `effectiveFrom`; a missing row is repaired in place under the same id; a mismatched pair or an unusable stamp (≤ 0 or in the future) mints a new `prior` row; a backup without `grading_rules_version` also mints one. | `GradingRulesStore.kt`, `McqRepository.kt`, `StatsStore.kt` |
 | **F2** | Inside the existing reset edit, when `!cutsCurrent`, the stored `fast_seconds`/`slow_seconds` are copied into `retired_easy_seconds`/`retired_slow_seconds` before the defaults overwrite them. No second or nested edit. | `RepositorySettings.kt` |
 | **F3** | `StatsRetentionStreamTest.correctnessOnlyPayloadCarriesTheAnswerTimePair` switches the rule through `updateSchedulerConfig` first, so the correctness-only payload is now exercised. | test |
 | **F4** | `strings.xml` (8 strings incl. a new `stats_cuts_limit_hard`), `RetentionSection.kt` (`AT_LIMIT` picks the wall from `contrast1.direction`), `StatsModels` KDoc. | res + UI + KDoc |

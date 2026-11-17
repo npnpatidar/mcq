@@ -35,6 +35,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/**
+ * The import router's smallest Anki signal: the classifier's OTHER bucket is
+ * an Anki package. Word banks and library backups are explicitly not Anki, so
+ * the scheduling-memory note must never be shown for them.
+ */
+internal fun pickedArchiveIsAnki(kind: PickedArchive): Boolean = kind == PickedArchive.OTHER
+
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Exposed for the setup sheet's scoped mistake count query. */
@@ -172,8 +179,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     showError("Could not read the file.")
                     return@launch
                 }
-                when (kind) {
-                    com.mcqapp.ui.library.PickedArchive.DOCX -> {
+                when {
+                    kind == com.mcqapp.ui.library.PickedArchive.DOCX -> {
                         // A Word bank is small and the parser wants its bytes,
                         // so read it now, under the same cap as before.
                         val bytes = try {
@@ -206,13 +213,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         // lastPathSegment.
                         onDocx(bytes, contentResolver.displayName(picked) ?: "")
                     }
-                    com.mcqapp.ui.library.PickedArchive.BACKUP -> {
+                    kind == com.mcqapp.ui.library.PickedArchive.BACKUP -> {
                         // Restore is the reverse of export: it replaces the
                         // whole library, while import only adds papers.
                         Logger.i("LIB", "picked library backup: not an import")
                         showError(backupNotABankMessage())
                     }
-                    com.mcqapp.ui.library.PickedArchive.OTHER -> {
+                    pickedArchiveIsAnki(kind) -> {
                         // The deck is streamed straight from the Uri by the
                         // importer, so the archive is never held as bytes.
                         val title = contentResolver.displayName(picked) ?: "deck.apkg"

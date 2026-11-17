@@ -391,6 +391,15 @@ class McqRepository internal constructor(
     suspend fun dismissFsrs7Notice() = settings.dismissFsrs7Notice()
 
     /**
+     * The persisted "already seen" flag for the one-time Study grading hint.
+     * Read once at session start; the hint is shown while it is false and
+     * permanently hidden once [markStudyGradingHintShown] writes it.
+     */
+    fun studyGradingHintShown(): Flow<Boolean> = settings.studyGradingHintShown()
+
+    suspend fun markStudyGradingHintShown() = settings.setStudyGradingHintShown()
+
+    /**
      * Rebuilds every card's dual-trace memory from its review log. Runs from
      * [com.mcqapp.McqApplication]; a completed run returns immediately.
      */

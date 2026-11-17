@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Calibration evidence window provenance, shown in the retention card. -->
+    <string name="stats_calibration_window_began">Evidence window began %1$s</string>
+    <string name="stats_calibration_window_refit">A parameter refit means this window is not yet reliable.</string>
+    <!-- Unlike the legacy contrast line, the unit is part of each bound token so a missing bound can be a bare dash. -->
+    <string name="stats_calibration_contrast_disclosed">%1$s: %2$s, 90%% interval %3$s to %4$s — %5$s</string>
+</resources>

@@ -310,6 +310,33 @@ fun ImportScreen(
                     )
                 }
 
+                // Informational only: it never blocks the import button. Shown
+                // when the picker classified the file as an Anki deck, since a
+                // deck's own scheduling memory is not carried over.
+                if (ankiMemoryDisclosureApplies(state.importSource)) {
+                    item(contentType = "anki-notice") {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    stringResource(R.string.anki_memory_notice_title),
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    stringResource(R.string.anki_memory_notice_body),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+
                 if (state.previewTruncated) {
                     item(contentType = "notice") {
                         Spacer(Modifier.height(8.dp))

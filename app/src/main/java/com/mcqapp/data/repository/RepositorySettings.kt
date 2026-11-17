@@ -140,6 +140,22 @@ internal class SettingsStore(
         context.dataStore.edit { it[simplifiedStudyKey] = enabled }
     }
 
+    /**
+     * One-time Study hint that explains correctness-only grading, the clock's
+     * role and when Easy/Hard can appear. False until the learner dismisses it;
+     * once written it is never cleared, so a rotation or a process kill cannot
+     * bring the hint back. Kept here next to the other study-behaviour flags.
+     */
+    private val studyGradingHintShownKey =
+        booleanPreferencesKey("study_grading_hint_shown")
+
+    fun studyGradingHintShown(): Flow<Boolean> =
+        context.dataStore.data.map { it[studyGradingHintShownKey] ?: false }
+
+    suspend fun setStudyGradingHintShown() {
+        context.dataStore.edit { it[studyGradingHintShownKey] = true }
+    }
+
     fun shuffleOptions(): Flow<Boolean> =
         context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
     suspend fun setShuffleOptions(enabled: Boolean) {

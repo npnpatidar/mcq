@@ -558,6 +558,16 @@ fun QuestionEditorScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            // Disclose the schedule restart next to Save, before the tap —
+            // never as a blocking dialog. The note follows the content
+            // fingerprint, so an explanation/metadata-only edit stays quiet.
+            if (state.willResetSchedule) {
+                Text(
+                    stringResource(R.string.editor_save_resets_schedule_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(

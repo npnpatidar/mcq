@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- One-time, dismissible Study hint explaining the grading rule on new installs. -->
+    <string name="study_grading_hint_title">How grading works</string>
+    <string name="study_grading_hint_message">New installs grade on correctness only. The timer records how long you take, but it does not decide the grade. Easy and Hard appear only when timed grading is turned on in Settings, or when you change a grade yourself.</string>
+    <string name="study_grading_hint_dismiss">Got it</string>
+</resources>

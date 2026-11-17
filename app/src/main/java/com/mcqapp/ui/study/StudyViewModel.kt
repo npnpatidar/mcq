@@ -105,6 +105,13 @@ data class StudyUiState(
     val revealed: Boolean = false,
     val grading: Boolean = false,
     /**
+     * Whether the one-time grading hint has already been dismissed. Loaded from
+     * persistent storage at session start; false on a new install. Kept in state
+     * only so the screen can react without a second flow, and set the moment the
+     * hint is dismissed so it never flashes again this session.
+     */
+    val gradingHintDismissed: Boolean = false,
+    /**
      * Simplified mode: the card is graded from the answer instead of asking for
      * Again/Hard/Good/Easy. Read once per session; the scheduler underneath is
      * the same either way.
@@ -238,6 +245,16 @@ data class StudyUiState(
      */
     val showBreakStrip: Boolean
         get() = reviewed > 0 && reviewed % 10 == 0 && breakDismissedAt < reviewed
+
+    /**
+     * The one-time grading disclosure. Shown only while a card is genuinely on
+     * screen — never during loading, an error or the summary — and only until
+     * dismissed. The dismissal is persisted, so a recreation of the session
+     * starts with [gradingHintDismissed] already true and this stays false.
+     */
+    val showGradingHint: Boolean
+        get() = !gradingHintDismissed && !loading && loadError == null &&
+            !finished && current != null && question != null
 }
 
 /** Test-only synchronisation for an in-flight pull (see [StudyViewModel.pullGateForTests]). */
@@ -378,6 +395,10 @@ class StudyViewModel(
             try {
                 val paper = repository.getPaper(paperId)
                 config = repository.schedulerConfigNow()
+                // Read once per sitting. A dismissal writes this flag, so a new
+                // ViewModel (rotation is the same instance, process death is a
+                // fresh one) starts with the hint already hidden.
+                val gradingHintDismissed = repository.studyGradingHintShown().first()
                 // Expand once, from the paper already loaded: the route carries
                 // the ticked ids (so the snapshot keeps matching when a
                 // category is added later), and every query gets the scope.
@@ -423,6 +444,7 @@ class StudyViewModel(
                     it.copy(
                         loading = false,
                         paperTitle = paper?.title ?: "Study",
+                        gradingHintDismissed = gradingHintDismissed,
                         simplified = repository.simplifiedStudy().first(),
                         introduceNewCards = config?.introduceNewCards ?: true,
                         scopeLabel = label
@@ -1261,6 +1283,28 @@ class StudyViewModel(
 
     fun dismissBreak() {
         _state.update { it.copy(breakDismissedAt = it.reviewed) }
+    }
+
+    /**
+     * Dismisses the one-time grading disclosure for good. The state flips at
+     * once (so the card is never left showing a stale hint), and the durable
+     * write follows on IO: a rotation keeps the same ViewModel and reads the
+     * flipped state, while a process death starts a fresh ViewModel that reads
+     * the persisted flag. Neither brings the hint back.
+     */
+    fun dismissGradingHint() {
+        if (_state.value.gradingHintDismissed) return
+        _state.update { it.copy(gradingHintDismissed = true) }
+        // sessionScope outlives onCleared; a fast Back must not drop the write.
+        sessionScope.launch {
+            try {
+                repository.markStudyGradingHintShown()
+            } catch (e: Exception) {
+                // Best effort: the in-memory flag still hides it this session;
+                // a failed write only risks the hint returning next process.
+                Logger.e("STUDY", "markStudyGradingHintShown failed", e)
+            }
+        }
     }
 
     /**

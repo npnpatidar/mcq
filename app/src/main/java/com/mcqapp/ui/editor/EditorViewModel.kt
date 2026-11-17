@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.io.CardContent
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.ContentElement
@@ -165,6 +166,12 @@ data class EditorUiState(
     /** The persisted form differs from what is on screen. */
     val isDirty: Boolean = false,
     /**
+     * [CardContent] fingerprint of the form as last persisted (load or save).
+     * Null when there is no schedule to reset: a new question, an import
+     * preview draft, or an editor that failed to load a stored row.
+     */
+    val baselineCardFingerprint: String? = null,
+    /**
      * The route said this is an import-preview edit, but the in-memory draft
      * was gone (process death). The editor is inert: nothing may be loaded,
      * saved or deleted, least of all a database row with the same id
@@ -178,6 +185,16 @@ data class EditorUiState(
 ) {
     /** Any write (save/delete) or move is in flight; controls gate on it. */
     val busy: Boolean get() = operation != EditorOperation.IDLE
+
+    /**
+     * Saving this form would change the content the learner studied, so
+     * `QuestionStore.saveQuestion` deletes the card's `card_state` row. Derived
+     * from the same [CardContent] fingerprint that drives that deletion, not
+     * from [editorSnapshot] (which also covers explanation, marks, difficulty,
+     * tags and category — none of which reset a schedule). Review history stays.
+     */
+    val willResetSchedule: Boolean
+        get() = baselineCardFingerprint != null && editorCardFingerprint(this) != baselineCardFingerprint
 
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
@@ -408,6 +425,46 @@ internal fun editorSnapshot(s: EditorUiState): String {
 }
 
 /**
+ * The [CardContent] fingerprint of exactly what `buildDto()`/`save()` would
+ * persist: body and option blocks, both scalar images, option order and ids, the
+ * answer key and passage membership. Explanation, marks, difficulty, tags,
+ * category and the scalar text join fields are deliberately absent, matching
+ * [CardContent].
+ *
+ * [rawImages] selects which side of `QuestionStore.saveQuestion`'s comparison
+ * this represents:
+ *  - `false` (the default): scalar images are normalized exactly as
+ *    [buildDto] stores them. This is the *incoming* side — what a save would
+ *    write — and is used for the form on screen and the post-save baseline.
+ *  - `true`: scalar images are taken verbatim from the editor's untrimmed
+ *    state, matching `CardContent.of(existing, …)` — the *stored* side that
+ *    saveQuestion compares against on load / Prev-Next.
+ *
+ * The two must agree only for already-trimmed stored values. A stored src with
+ * stray whitespace is the exception: saveQuestion trims the incoming image but
+ * compares it to the raw stored one, so saving such a row *does* delete
+ * `card_state`. Fingerprinting the load baseline raw makes the disclosure warn
+ * about exactly that reset; trimming both sides would hide it.
+ */
+internal fun editorCardFingerprint(s: EditorUiState, rawImages: Boolean = false): String {
+    fun image(value: String): String? =
+        if (rawImages) value else value.trim().ifBlank { null }
+    return CardContent.of(
+        Question(
+            id = s.questionId,
+            categoryId = s.categoryId,
+            elements = s.elements,
+            image = image(s.image),
+            options = s.options.map { o ->
+                QuestionOption(o.id, o.elements, image(o.image))
+            },
+            correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toSet(),
+            passageId = s.passageId?.takeIf { it.isNotBlank() }
+        )
+    )
+}
+
+/**
  * True when the form currently on screen differs from [signature], the state
  * actually persisted. Keystrokes typed while a write is in flight are not part
  * of the signature, so they must keep the editor dirty rather than be marked
@@ -493,6 +550,22 @@ class EditorViewModel(
         // the CURRENT form: a keystroke made after the snapshot must stay dirty
         // (it was not persisted), never be cleared by a stale "clean" flag.
         _state.update { it.copy(isDirty = dirtyAfterSave(it, signature)) }
+    }
+
+    /** Re-anchors what "will change on save" is measured against. */
+    private fun setCardBaseline(fingerprint: String) {
+        _state.update { it.copy(baselineCardFingerprint = fingerprint) }
+    }
+
+    /**
+     * Baseline for a row just loaded from Room. Its scalar images are stored
+     * verbatim, so fingerprint them raw — the same side `saveQuestion` reads
+     * via `CardContent.of(existing, …)`. The current form is fingerprinted
+     * trimmed (the incoming, buildDto side), so a padded stored src is flagged
+     * as a reset rather than silently losing the note.
+     */
+    private fun setStoredCardBaseline(s: EditorUiState) {
+        setCardBaseline(editorCardFingerprint(s, rawImages = true))
     }
 
     init {
@@ -585,6 +658,9 @@ class EditorViewModel(
                         passageId = question.passageId
                     )
                     snapshotClean()
+                    // A stored row may have a schedule: from here, "will this
+                    // edit restart it?" is measured against this content.
+                    setStoredCardBaseline(_state.value)
                     return@launch
                 }
             }
@@ -1146,6 +1222,10 @@ class EditorViewModel(
         // changing under an async save; snapshotting later would mark
         // unpersisted keystrokes as clean).
         val savedSig = editorSnapshot(s)
+        // Capture the persisted card content now: keystrokes made during the
+        // async write are NOT saved, so the post-save baseline must be this
+        // snapshot, not the (possibly newer) state when the write returns.
+        val savedCardFingerprint = editorCardFingerprint(s)
         if (fromImportSession) {
             // Live write-through as well: if the user moved Prev/Next before
             // saving, the holder alone would be discarded on return (id
@@ -1163,6 +1243,9 @@ class EditorViewModel(
             try {
                 repository.saveQuestion(question)
                 markClean(savedSig)
+                // The form now equals what is stored, so the disclosure clears
+                // until the next content edit changes the studied content.
+                setCardBaseline(savedCardFingerprint)
                 // A new question's minted id is written back, so a second tap
                 // updates the same row instead of minting another (J7).
                 if (s.questionId.isBlank()) {
@@ -1241,6 +1324,7 @@ class EditorViewModel(
         }
         val dto = if (dirty) buildDto() else null
         val savedSig = editorSnapshot(current)
+        val savedCardFingerprint = if (dirty) editorCardFingerprint(current) else null
         Logger.i("EDITORVM", "moveToQuestion: ${if (dirty) "saving" else "no changes, skipping save for"} " +
             "${current.questionId}, loading $targetId (fromImportSession=$fromImportSession)")
         if (fromImportSession) {
@@ -1302,6 +1386,7 @@ class EditorViewModel(
                         val categoryId = current.categoryId
                         repository.saveQuestion(domainFrom(dto, categoryId))
                         markClean(savedSig)
+                        if (savedCardFingerprint != null) setCardBaseline(savedCardFingerprint)
                         // The save may have changed this question's filter
                         // membership; re-anchor before resolving the target
                         // so Prev/Next follow the live result set (M-04). The
@@ -1379,6 +1464,8 @@ class EditorViewModel(
                     // the form now equals what is stored.
                     cleanSignature = editorSnapshot(_state.value)
                     _state.update { it.copy(isDirty = false) }
+                    // The disclosure is about the question now on screen.
+                    setStoredCardBaseline(_state.value)
                     Logger.i("EDITORVM", "moveToQuestion: now editing ${target.id} (DB)")
                     onMoved(dirty)
                 } catch (e: CancellationException) {

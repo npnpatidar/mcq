@@ -129,6 +129,20 @@ class QuestionEditorUiTest {
     private fun dialogNode(text: String) =
         compose.onNode(hasText(text) and hasAnyAncestor(isDialog()))
 
+    /**
+     * Waits for the confirmation title to appear inside a dialog window. This
+     * is the same `isDialog()`-scoped check the passing leave-prompt tests use:
+     * the title must belong to the dialog, not just match any text node in the
+     * semantics tree. The caller's `waitForIdle()` first gives the newly opened
+     * window a chance to settle before this polls.
+     */
+    private fun waitForDialogTitle(title: String) {
+        compose.waitUntil(30_000) {
+            compose.onAllNodes(hasText(title) and hasAnyAncestor(isDialog()))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     // ---- new-question framing ----
 
     @Test
@@ -284,7 +298,8 @@ class QuestionEditorUiTest {
         waitFor("UITest UI question?")
 
         compose.onNodeWithContentDescription("Delete question").performClick()
-        waitFor("Delete question?")
+        compose.waitForIdle()
+        waitForDialogTitle("Delete question?")
         dialogNode("Cancel").performClick()
 
         compose.onNodeWithText("Delete question?").assertDoesNotExist()
@@ -316,7 +331,8 @@ class QuestionEditorUiTest {
         waitFor("UITest UI question?")
 
         compose.onNodeWithContentDescription("Delete question").performClick()
-        waitFor("Delete question?")
+        compose.waitForIdle()
+        waitForDialogTitle("Delete question?")
         dialogNode("Delete").performClick()
         compose.waitUntil(10_000) {
             runBlocking { repository.getQuestion("uitest-ui-q1") == null }

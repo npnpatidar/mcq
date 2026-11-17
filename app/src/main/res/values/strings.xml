@@ -23,6 +23,10 @@
     <string name="bookmarks">Bookmarks</string>
     <string name="browse">Browse</string>
     <string name="cancel">Cancel</string>
+    <string name="discard">Discard</string>
+    <string name="unsaved_changes_title">Unsaved changes</string>
+    <string name="unsaved_changes_invalid">Fix the highlighted problems to save, or discard your changes.</string>
+    <string name="unsaved_changes_message">Save your changes before leaving?</string>
     <string name="cannot_open_file">Cannot open file</string>
     <string name="category">Category</string>
     <string name="category_name_for_all_questions">Category name for all questions</string>
@@ -36,12 +40,27 @@
     <string name="delete_category_confirm">Delete “%1$s” and every question in it? This cannot be undone.</string>
     <string name="delete_paper">Delete paper</string>
     <string name="delete_question">Delete question</string>
+    <string name="delete_question_title">Delete question?</string>
+    <string name="delete_question_confirm">Delete “%1$s”? Its review schedule, review history, statistics and bookmark go with it. This cannot be undone.</string>
+    <string name="delete_question_fallback_name">this question</string>
     <string name="description">Description</string>
     <string name="description_optional">Description (optional)</string>
     <string name="difficulty">Difficulty</string>
     <string name="dismiss">Dismiss</string>
     <string name="done">Done</string>
     <string name="duplicate_question">Duplicate question</string>
+    <string name="question_duplicated">Question duplicated</string>
+    <plurals name="questions_moved_count">
+        <item quantity="one">%1$d question moved</item>
+        <item quantity="other">%1$d questions moved</item>
+    </plurals>
+    <plurals name="questions_copied_count">
+        <item quantity="one">%1$d question copied</item>
+        <item quantity="other">%1$d questions copied</item>
+    </plurals>
+    <string name="move_cross_paper_warning">Moving to another paper keeps each card\'s schedule and review history. The destination paper\'s statistics will include those reviews.</string>
+    <string name="move_includes_passage">Questions that share a passage move together: %1$d questions in total.</string>
+    <string name="action_failed">Action failed</string>
     <string name="duration_min">Duration (min)</string>
     <string name="duration_minutes_0_untimed">Duration (minutes, 0 = untimed)</string>
     <string name="edit">Edit</string>
@@ -194,6 +213,26 @@
     <string name="mcq_app">MCQ App</string>
     <string name="minutes">Minutes</string>
     <string name="move">Move</string>
+    <string name="option_label">Option %1$s</string>
+    <string name="move_option_up_named">Move option %1$s up</string>
+    <string name="move_option_down_named">Move option %1$s down</string>
+    <string name="remove_option_named">Remove option %1$s</string>
+    <string name="toggle_correct_named">Mark option %1$s as the correct answer</string>
+    <string name="block_label">Block %1$d (%2$s)</string>
+    <string name="move_block_up_named">Move block %1$d up</string>
+    <string name="move_block_down_named">Move block %1$d down</string>
+    <string name="remove_block_named">Remove block %1$d</string>
+    <string name="remove_row_named">Remove row %1$d</string>
+    <string name="remove_column_named">Remove column %1$d</string>
+    <string name="table_cell_label">Row %1$d, column %2$d</string>
+    <string name="tap_formula_to_edit">Tap the formula to edit it</string>
+    <string name="new_question_title">New question</string>
+    <string name="edit_question_title">Edit question</string>
+    <string name="select_category">Select category</string>
+    <string name="marks_invalid">Marks must be zero or a positive number.</string>
+    <string name="save_blocked_two_options">Add at least two options to save.</string>
+    <string name="save_blocked_empty_option">Every option needs content to save.</string>
+    <string name="save_blocked_no_content">Add the question text, an image or a formula to save.</string>
     <string name="move_block_down">Move block down</string>
     <string name="move_block_up">Move block up</string>
     <string name="move_down">Move down</string>
@@ -972,6 +1011,8 @@
     </plurals>
     <string name="drill_banner_text">Drill — %1$d questions on the clock</string>
     <string name="saving">Saving…</string>
+    <string name="deleting">Deleting…</string>
+    <string name="moving_progress">Moving…</string>
     <string name="saving_progress_text">Saving result… %1$d of %2$d</string>
     <string name="answered_progress_text">%1$d/%2$d answered</string>
     <string name="position_progress_text">%1$d/%2$d</string>

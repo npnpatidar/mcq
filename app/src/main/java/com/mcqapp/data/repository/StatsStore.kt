@@ -222,7 +222,7 @@ internal class StatsStore(
      *
      * The cache is only filled when no invalidation completed while this pass
      * was running ([calibrationGeneration]). After
-     * [invalidateCalibrationCache] executes, a report computed from pre-delete
+     * [invalidateCalibrationCache] executes, a report computed from pre-change
      * rows is not inserted, and an invalidation that overlaps a concurrent
      * insert wins.
      *
@@ -245,7 +245,7 @@ internal class StatsStore(
         val version = resolvedConfig.gradingVersion
         // Captured before the row scan: an invalidation that completes while
         // this pass is reading bumps the generation, and the report built from
-        // rows deleted before that invalidation must not be inserted
+        // rows deleted or re-keyed before that invalidation must not be inserted
         // afterwards (see [invalidateCalibrationCache]).
         val generation = calibrationGeneration
         var maxReviewedAt = 0L
@@ -406,12 +406,12 @@ internal class StatsStore(
     /**
      * How many times the calibration cache has been invalidated.
      *
-     * The cache is cleared by the writers that delete `review_log` rows, but a
-     * report that is already being computed could otherwise be inserted
-     * afterwards under a key the delete did not move — and then be served
-     * until the block advanced. The generation is captured before the row scan
-     * and compared again under the cache lock before the insert. After
-     * [invalidateCalibrationCache] executes, a report computed from pre-delete
+     * The cache is cleared by the writers that delete or re-key `review_log`
+     * rows, but a report that is already being computed could otherwise be
+     * inserted afterwards under a key the writer did not move — and then be
+     * served until the block advanced. The generation is captured before the
+     * row scan and compared again under the cache lock before the insert. After
+     * [invalidateCalibrationCache] executes, a report computed from pre-change
      * rows is not cached; an invalidation that overlaps a concurrent insert
      * wins.
      *
@@ -436,19 +436,24 @@ internal class StatsStore(
      * moving it.
      *
      * A deletion (a paper, question or category) and a cross-paper move are the
-     * other writers that leave the key alone: they remove `review_log` rows,
-     * and `maxReviewedAt` only falls when the newest row was among them, so the
-     * cache could keep counting a review that is gone until the block advances.
-     * Their callers — the repository funnels that can remove review rows: the
-     * paper, category and question deletes, the bulk move, the passage
-     * wrappers whose member move can cross a paper, and a question save or
-     * duplicate whose passage enforcement makes such a move — invalidate once
-     * the store call has committed. The bulk move and the question
-     * save/duplicate paths do so only when the store reports that it removed
+     * other writers that leave the key alone. A delete removes `review_log`
+     * rows; a move re-keys them to another paper without moving any key input —
+     * except on a destination-card collision, where the destination card and
+     * its history win and the source rows are deleted. The cache key includes
+     * `scopePaperId` and filters rows by paper, but `maxReviewedAt`, the versions
+     * and the block are unchanged. Either way the
+     * cache could keep counting a review that is gone, or keep serving a
+     * destination-paper report that predates the re-keyed rows, until the block
+     * advances. Their callers — the repository funnels that can change review
+     * rows: the paper, category and question deletes, the bulk move, the
+     * passage wrappers whose member move can cross a paper, and a question save
+     * or duplicate whose passage enforcement makes such a move — invalidate
+     * once the store call has committed. The bulk move and the question
+     * save/duplicate paths do so only when the store reports that it touched
      * rows; the passage wrappers invalidate conservatively after their call.
      *
      * The invalidation also bumps [calibrationGeneration]. After this method
-     * executes, a report computed from pre-delete rows is not inserted, and an
+     * executes, a report computed from pre-change rows is not inserted, and an
      * invalidation that overlaps a concurrent insert wins; the next read
      * rebuilds the report from the rows that are left.
      *

@@ -97,20 +97,34 @@ class MathLiveTest {
         // the payload made Compose rebuild the block on every keystroke, which
         // closed the soft keyboard in text fields and destroyed the WebView
         // holding the MathLive keyboard.
-        assertEquals(blockKey(before, 0), blockKey(after, 0))
-        assertEquals(blockKey(before, 1), blockKey(after, 1))
+        assertEquals(blockKey("q1", "b0", before), blockKey("q1", "b0", after))
     }
 
     @Test
-    fun blockKeysSeparateBlocksAndKinds() {
+    fun blockKeysFollowTheBlockNotItsPosition() {
         val math = ContentElement.MathElement("<math><mi>x</mi></math>")
         val other = ContentElement.MathElement("<math><mi>y</mi></math>")
         val text = ContentElement.TextElement("x")
-        // Different position, and different kind, are different blocks.
-        assertNotEquals(blockKey(math, 0), blockKey(math, 1))
-        assertNotEquals(blockKey(math, 0), blockKey(text, 0))
-        // Two blocks of the same kind at the same slot are the same block.
-        assertEquals(blockKey(math, 0), blockKey(other, 0))
+        // Two formulas of the same kind carry different ids, so swapping them
+        // gives each its own WebView instead of reusing the neighbour's
+        // (question_editor_audit.md M-01).
+        assertNotEquals(blockKey("q1", "b0", math), blockKey("q1", "b1", other))
+        // Kind is still part of the identity.
+        assertNotEquals(blockKey("q1", "b0", math), blockKey("q1", "b0", text))
+    }
+
+    @Test
+    fun blockKeysBelongToTheirQuestionAndOption() {
+        val math = ContentElement.MathElement("<math><mi>x</mi></math>")
+        // `q1`'s option `a` and `q2`'s option `a` must not share a WebView:
+        // the user-edited latch would refuse q2's formula and typing would
+        // write q1's formula into q2 (question_editor_audit.md H-05).
+        assertNotEquals(
+            blockKey("q1|a", "b0", math),
+            blockKey("q2|a", "b0", math)
+        )
+        // The same block keeps its identity across a recomposition.
+        assertEquals(blockKey("q1|a", "b0", math), blockKey("q1|a", "b0", math))
     }
 
 

@@ -489,7 +489,7 @@ class RepositoryTest {
     }
 
     @Test
-    fun movingAQuestionAcrossPapersResetsItsHistoryHereToo() = runBlocking {
+    fun movingAQuestionAcrossPapersCarriesItsHistoryToTheNewPaper() = runBlocking {
         repository.ensurePaperAndCategory("p1", "Paper 1", "c1", "Cat 1")
         db.paperDao().insertIgnore(
             com.mcqapp.data.local.PaperEntity(id = "p2", title = "Paper 2", createdAt = 1L)
@@ -501,12 +501,11 @@ class RepositoryTest {
         repository.recordStudyReview("p1", "q1", com.mcqapp.domain.ReviewGrade.GOOD, now = 1000L)
         assertEquals(1, db.reviewLogDao().countByPaper("p1"))
 
-        // The move resets the schedule (card_state goes with the old paper);
-        // the rows that described it go with it, not into "p2"'s log.
+        // The history follows the card, so the destination paper now owns it.
         repository.moveQuestionsToCategory(listOf("q1"), "c2")
-        assertTrue(db.reviewLogDao().historyForQuestion("q1").isEmpty())
+        assertEquals(1, db.reviewLogDao().historyForQuestion("q1").size)
         assertEquals(0, db.reviewLogDao().countByPaper("p1"))
-        assertEquals(0, db.reviewLogDao().countByPaper("p2"))
+        assertEquals(1, db.reviewLogDao().countByPaper("p2"))
     }
 
     @Test

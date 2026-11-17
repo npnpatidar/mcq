@@ -837,17 +837,20 @@ class McqRepository internal constructor(
     /**
      * Saving a passage can move its members to another category: a passage
      * lives in a category, and moving it takes every member with it. A member
-     * that crosses into another paper loses its `review_log` rows (the
-     * schedule restarts in the new paper), so the cached report may count
-     * reviews that are gone. Same reason as [deletePaper]: the invalidation
-     * runs after the store call, never inside its transaction, so a rolled-back
-     * save changed nothing that needs forgetting.
+     * that crosses into another paper keeps its schedule and history, re-keyed
+     * to the new paper — unless a destination card collides, where that card and
+     * its history win and the source history is dropped — so the cached
+     * per-paper reports may keep the old attribution. Same reason as [deletePaper]:
+     * the invalidation runs after
+     * the store call, never inside its transaction, so a rolled-back save changed
+     * nothing that needs forgetting.
      */
     suspend fun savePassage(passage: com.mcqapp.domain.Passage): String {
         val id = passageStore.savePassage(passage)
         statsStore.invalidateCalibrationCache()
         return id
     }
+
     suspend fun passageMemberCount(passageId: String): Int =
         passageStore.memberCount(passageId)
     suspend fun passageMemberCounts(): Map<String, Int> =
@@ -872,9 +875,10 @@ class McqRepository internal constructor(
     /**
      * Assigning questions to a passage moves any member that sits in another
      * category into the passage's category, which can cross a paper boundary
-     * and delete that member's `review_log` rows. The cached report may count
-     * reviews that are gone, so it is invalidated after the store call
-     * returns, exactly like [savePassage].
+     * and re-key that member's `review_log` rows to the new paper (or, on a
+     * destination-card collision, drop the source history). The cached
+     * per-paper reports may keep the old attribution, so the cache is
+     * invalidated after the store call returns, exactly like [savePassage].
      *
      * No screen calls this yet — the passage editor assigns through the
      * passage's own save — but the wrapper is the only way into the store, so
@@ -909,12 +913,15 @@ class McqRepository internal constructor(
      * store call, never inside its transaction: a rolled-back delete changed
      * nothing that needs forgetting.
      *
-     * The writers that can remove review rows are the paper, category and
-     * question deletes, the bulk move to another category, the passage
-     * wrappers whose member move can cross a paper boundary, and a question
-     * save or duplicate whose passage enforcement makes such a move. Each
-     * invalidates the cache after its store call has returned; the bulk move
-     * and question save/duplicate paths do so only when rows were removed.
+     * The writers that can change or remove review rows are the paper,
+     * category and question deletes, the bulk move to another category, the
+     * passage wrappers whose member move can cross a paper boundary, and a
+     * question save or duplicate whose passage enforcement makes such a move.
+     * Each invalidates the cache after its store call has returned; the bulk
+     * move and question save/duplicate paths do so only when rows were
+     * re-keyed or deleted: a cross-paper move carries history to the new paper,
+     * except on a destination-card collision, where the destination card and its
+     * history win and the source history is dropped.
      */
     suspend fun deletePaper(paperId: String) {
         paperStore.deletePaper(paperId)
@@ -1666,13 +1673,14 @@ class McqRepository internal constructor(
      * An ordinary edit leaves review history alone. Assigning the question to
      * a passage in another category can instead enforce that passage's
      * category and move the question (or another member of a malformed group)
-     * across a paper, which deletes the affected member's `review_log` rows.
-     * The store returns the exact number of rows removed, so the calibration
-     * cache is invalidated only when this save really changed history.
+     * across a paper. The store returns how many `review_log` rows had their
+     * paper attribution changed — re-keyed to the new paper, or deleted when a
+     * destination card collided — so the calibration cache is invalidated only
+     * when a per-paper report really changed.
      */
     suspend fun saveQuestion(question: Question) {
-        val reviewRowsRemoved = questionStore.saveQuestion(question)
-        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
+        val reviewRowsChanged = questionStore.saveQuestion(question)
+        if (reviewRowsChanged > 0) statsStore.invalidateCalibrationCache()
     }
     suspend fun deleteQuestion(questionId: String) {
         questionStore.deleteQuestion(questionId)
@@ -1690,23 +1698,28 @@ class McqRepository internal constructor(
      *
      * The clone has no history of its own, but the passage-category
      * enforcement used by [saveQuestion] also runs for the clone. It can move
-     * another member of a malformed passage group across a paper and delete
-     * that member's review rows, so the exact removal count decides whether
-     * the calibration cache is invalidated.
+     * another member of a malformed passage group across a paper, re-keying or
+     * (on a collision) deleting that member's review rows, so the store's count
+     * decides whether the calibration cache is invalidated.
      */
     suspend fun duplicateQuestion(questionId: String): String? {
         val result = questionStore.duplicateQuestion(questionId)
-        if (result != null && result.reviewRowsRemoved > 0) {
+        if (result != null && result.reviewRowsChanged > 0) {
             statsStore.invalidateCalibrationCache()
         }
         return result?.questionId
     }
     suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) {
-        val reviewRowsRemoved = questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
-        // A cross-paper move deletes the review rows (the schedule restarts in
-        // the new paper), so the cached report may count reviews that are gone.
-        if (reviewRowsRemoved > 0) statsStore.invalidateCalibrationCache()
+        val reviewRowsChanged = questionStore.moveQuestionsToCategory(questionIds, targetCategoryId)
+        // Re-keying moves review rows between papers and a collision deletes
+        // the source's rows; either way every cache-key input (scope, max
+        // reviewedAt, versions) is untouched, so the cached per-paper reports
+        // would otherwise keep the old attribution.
+        if (reviewRowsChanged > 0) statsStore.invalidateCalibrationCache()
     }
+    /** Every question a move of [questionIds] would touch, passage groups included. */
+    suspend fun moveGroupIds(questionIds: Collection<String>): Set<String> =
+        questionStore.moveGroupIds(questionIds)
     suspend fun copyQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String) =
         questionStore.copyQuestionsToCategory(questionIds, targetCategoryId)
     suspend fun bulkUpdateQuestions(

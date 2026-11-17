@@ -30,6 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.ContentElements
@@ -45,10 +48,14 @@ import com.mcqapp.R
 @Composable
 fun BlockListEditor(
     elements: List<ContentElement>,
-    /** Identity of the load this list belongs to (the question id, an option
-     *  id): included in the block keys so a re-targeted editor rebuilds its
-     *  formula blocks (consolidated_bugs.md J4). */
-    generation: String = "",
+    /** Stable ids parallel to [elements]. The key is built from these, not
+     *  from the position or the payload, so a reordered formula keeps its own
+     *  WebView and an edit never tears the block down. */
+    blockIds: List<String> = emptyList(),
+    /** Who owns this list (the question, plus the option or "explanation"):
+     *  two questions that share an option id must never share a WebView
+     *  (question_editor_audit.md H-05). */
+    owner: String = "",
     onAddBlock: (EditorBlockType) -> Unit,
     onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
     onRemoveBlock: (index: Int) -> Unit,
@@ -59,35 +66,49 @@ fun BlockListEditor(
     onRemoveRow: ((index: Int, row: Int) -> Unit)? = null,
     onAddColumn: ((index: Int) -> Unit)? = null,
     onRemoveColumn: ((index: Int, col: Int) -> Unit)? = null,
-    onPickImage: (onPicked: (String) -> Unit) -> Unit,
+    /** Starts a gallery pick for the block with this stable id. */
+    onPickImage: (blockId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tablesEditable = onUpdateCell != null && onAddRow != null &&
         onRemoveRow != null && onAddColumn != null && onRemoveColumn != null
     Column(modifier = modifier.fillMaxWidth()) {
         elements.forEachIndexed { index, element ->
-            // Keyed by content: inserting, removing or reordering a block now
-            // gives the moved block its own composition instead of handing the
-            // existing WebView to a different formula.
-            androidx.compose.runtime.key(blockKey(element, index, generation)) {
+            // Keyed by stable id (see blockKey): a moved block keeps its own
+            // composition instead of handing its WebView to a different formula.
+            androidx.compose.runtime.key(
+                blockKey(owner, blockIds.getOrNull(index) ?: "index$index", element)
+            ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Block ${index + 1} (${blockLabel(element)})",
+                        stringResource(R.string.block_label, index + 1, stringResource(blockLabelRes(element))),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.weight(1f)
                     )
+                    // Every repeated control names its target, so a screen
+                    // reader does not announce ten identical "Move up"s
+                    // (question_editor_audit.md M-11).
                     IconButton(onClick = { onMoveUp(index) }, enabled = index > 0) {
-                        Icon(Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.move_block_up))
+                        Icon(
+                            Icons.Default.ArrowUpward,
+                            contentDescription = stringResource(R.string.move_block_up_named, index + 1)
+                        )
                     }
                     IconButton(onClick = { onMoveDown(index) }, enabled = index < elements.size - 1) {
-                        Icon(Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.move_block_down))
+                        Icon(
+                            Icons.Default.ArrowDownward,
+                            contentDescription = stringResource(R.string.move_block_down_named, index + 1)
+                        )
                     }
                     IconButton(onClick = { onRemoveBlock(index) }) {
-                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_block))
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.remove_block_named, index + 1)
+                        )
                     }
                 }
                 when (element) {
@@ -111,9 +132,7 @@ fun BlockListEditor(
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedButton(onClick = {
-                                onPickImage { picked ->
-                                    onUpdateBlock(index, ContentElement.ImageElement(picked))
-                                }
+                                onPickImage(blockIds.getOrNull(index) ?: "")
                             }) {
                                 Text(stringResource(R.string.pick))
                             }
@@ -130,7 +149,7 @@ fun BlockListEditor(
                         // The MathLive keyboard only appears once the field has
                         // focus, which is not obvious from a formula on screen.
                         Text(
-                            "Tap the formula to edit it",
+                            stringResource(R.string.tap_formula_to_edit),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = 4.dp)
                         )
@@ -161,32 +180,27 @@ fun BlockListEditor(
 }
 
 /**
- * Stable identity for a content block: its position and its kind.
+ * Stable identity for a content block: owner, block id, kind.
  *
- * Deliberately **not** derived from the content. Keying on the payload meant
- * every keystroke changed the key, so Compose tore the block down and rebuilt
- * it: the caret and the soft keyboard vanished from text fields after each
- * letter, and the MathLive WebView was recreated, taking its virtual keyboard
- * with it.
+ * Deliberately **not** derived from the content or the position. A
+ * content-derived key meant every keystroke rebuilt the block (the caret and
+ * the soft keyboard vanished, and the MathLive WebView with its virtual
+ * keyboard was recreated), while a position-derived one meant swapping two
+ * formulas of the same kind kept the same keys and one WebView went on
+ * showing the other block's formula (question_editor_audit.md M-01).
  *
- * A block that moves gets a new key and is rebuilt, which is correct; the
- * MathLive editor additionally syncs a changed value through its `update`
- * block, so reuse cannot leave a stale formula on screen.
+ * The owner is the question plus the list (an option id, "explanation"), so
+ * navigating to another question that uses the same option id cannot hand it
+ * the previous question's WebView and its user-edited latch (H-05).
  */
-internal fun blockKey(element: ContentElement, index: Int, generation: String = ""): String {
-    val base = "$index:${element::class.simpleName}"
-    // A formula block at the same index in a DIFFERENT question must not
-    // inherit the previous question's WebView: the user-edited latch would
-    // refuse the new formula, and typing over what is shown would overwrite
-    // the loaded question's MathML (consolidated_bugs.md J4).
-    return if (generation.isEmpty()) base else "$generation|$base"
-}
+internal fun blockKey(owner: String, blockId: String, element: ContentElement): String =
+    "$owner|$blockId|${element::class.simpleName}"
 
-private fun blockLabel(element: ContentElement): String = when (element) {
-    is ContentElement.TextElement -> "Text"
-    is ContentElement.ImageElement -> "Image"
-    is ContentElement.TableElement -> "Table"
-    is ContentElement.MathElement -> "Formula"
+private fun blockLabelRes(element: ContentElement): Int = when (element) {
+    is ContentElement.TextElement -> R.string.text
+    is ContentElement.ImageElement -> R.string.image
+    is ContentElement.TableElement -> R.string.table
+    is ContentElement.MathElement -> R.string.formula
 }
 
 @Composable
@@ -211,8 +225,17 @@ private fun TableBlockEditor(
                         modifier = Modifier.weight(1f),
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        IconButton(onClick = { onRemoveColumn(col) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove column ${col + 1}")
+                        // Disable exactly the no-op cases (last column, or a
+                        // ragged row lacking this index) so the control agrees
+                        // with withColumnRemoved (question_editor_audit.md L-04).
+                        IconButton(
+                            onClick = { onRemoveColumn(col) },
+                            enabled = table.canRemoveColumn(col)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.remove_column_named, col + 1)
+                            )
                         }
                     }
                 }
@@ -225,21 +248,40 @@ private fun TableBlockEditor(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 cells.forEachIndexed { col, cell ->
+                    val tableCellLabel = stringResource(
+                        R.string.table_cell_label,
+                        row + 1,
+                        col + 1
+                    )
                     OutlinedTextField(
                         value = cell,
                         onValueChange = { onUpdateCell(row, col, it) },
                         singleLine = true,
+                        label = { Text(tableCellLabel) },
                         modifier = Modifier
                             .weight(1f)
                             .padding(end = 4.dp)
+                            .semantics {
+                                // A contentDescription would replace the field's
+                                // value for screen readers. A stateDescription
+                                // adds the target-specific cell label while the
+                                // typed value stays accessible.
+                                stateDescription = tableCellLabel
+                            }
                     )
                 }
                 // Pad short rows so the delete button stays aligned.
                 repeat((colCount - cells.size).coerceAtLeast(0)) {
                     Spacer(Modifier.weight(1f))
                 }
-                IconButton(onClick = { onRemoveRow(row) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove row ${row + 1}")
+                IconButton(
+                    onClick = { onRemoveRow(row) },
+                    enabled = table.rows.size > 1
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.remove_row_named, row + 1)
+                    )
                 }
             }
             Spacer(Modifier.height(4.dp))

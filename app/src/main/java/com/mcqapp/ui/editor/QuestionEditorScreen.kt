@@ -1,7 +1,9 @@
 package com.mcqapp.ui.editor
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,13 +44,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -64,8 +65,6 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.ui.EditorViewModelFactory
 import com.mcqapp.util.ContentElements
-import com.mcqapp.util.ImageUtils
-import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
 
@@ -76,39 +75,51 @@ fun QuestionEditorScreen(
     questionId: String,
     paperId: String,
     categoryId: String,
-    navController: NavController
+    navController: NavController,
+    /** The route's explicit editor source (`import`, `new`, `database`, or
+     *  blank for an older link). */
+    source: String = ""
 ) {
     val context = LocalContext.current
+    val editorSource = EditorSource.fromRoute(source)
     val viewModel: EditorViewModel = viewModel(
-        key = "editor-$questionId-$paperId-$categoryId",
+        key = "editor-$questionId-$paperId-$categoryId-$source",
         factory = EditorViewModelFactory(
             context.applicationContext as Application,
             questionId,
             paperId,
-            categoryId
+            categoryId,
+            editorSource
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // Generic gallery picker for image blocks: stores the block's write-back
-    // until the gallery returns, then delivers the encoded image to it.
-    var pendingBlockPick by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    // Leaving: a dirty editor asks Save / Discard / Cancel instead of losing
+    // the edit in one tap (question_editor_audit.md H-02). A write in flight
+    // blocks leaving, so navigation can neither cancel it nor double-pop
+    // (M-13).
+    var showLeaveDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    val requestLeave: () -> Unit = {
+        when {
+            state.busy -> Unit
+            state.isDirty -> showLeaveDialog = true
+            else -> navController.popBackStack()
+        }
+    }
+    BackHandler { requestLeave() }
+
+    // Generic gallery picker for image blocks. The target lives in the
+    // ViewModel (a rotation keeps it) and the encoding runs off the main
+    // thread; the result is delivered by block identity, not by a captured
+    // list index (question_editor_audit.md M-05, M-06).
     val pickBlockImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri ->
-        val writeBack = pendingBlockPick
-        pendingBlockPick = null
-        if (uri != null && writeBack != null) {
-            val encoded = ImageUtils.encodeImageUri(context, uri)
-            if (encoded != null) {
-                writeBack(encoded)
-            } else {
-                Logger.e("EDITOR", "Failed to encode block image")
-            }
-        }
+        if (uri != null) viewModel.onImagePicked(uri) else viewModel.onImagePickCancelled()
     }
-    val pickBlockImage: ((String) -> Unit) -> Unit = { onPicked ->
-        pendingBlockPick = onPicked
+    val pickBlockImage: (ImageTarget) -> Unit = { target ->
+        viewModel.beginImagePick(target)
         pickBlockImageLauncher.launch("image/*")
     }
 
@@ -125,9 +136,15 @@ fun QuestionEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (state.isNew) "New question" else "Edit question") },
+                title = {
+                    Text(
+                        stringResource(
+                            if (state.isNew) R.string.new_question_title else R.string.edit_question_title
+                        )
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = requestLeave) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
@@ -149,7 +166,7 @@ fun QuestionEditorScreen(
                                     }
                                 }
                             },
-                            enabled = prevId != null
+                            enabled = prevId != null && !state.busy
                         ) {
                             Text(stringResource(R.string.prev))
                         }
@@ -161,7 +178,7 @@ fun QuestionEditorScreen(
                                     }
                                 }
                             },
-                            enabled = nextId != null
+                            enabled = nextId != null && !state.busy
                         ) {
                             Text(stringResource(R.string.next))
                         }
@@ -235,8 +252,14 @@ fun QuestionEditorScreen(
             // question is already assigned: a member pointing at another
             // category's passage (the stray state the group rules heal) used
             // to render "No passage" with no unassign action at all
-            // (consolidated_bugs.md C7).
-            if (categoryPassages.isNotEmpty() || state.passageId != null) {
+            // (consolidated_bugs.md C7). An import-source edit is the exception:
+            // it carries a passage id in its DTO but has no passage list, so the
+            // picker would show "No passage" for a set id whose only action
+            // clears membership. Hide it; the DTO id stays untouched (M3).
+            val passagePickerVisible =
+                (categoryPassages.isNotEmpty() || state.passageId != null) &&
+                    (!viewModel.editingFromImport || state.passages.isNotEmpty())
+            if (passagePickerVisible) {
                 PassageDropdown(
                     passages = state.passages,
                     assignable = categoryPassages,
@@ -250,7 +273,8 @@ fun QuestionEditorScreen(
             Spacer(Modifier.height(4.dp))
             BlockListEditor(
                 elements = state.elements,
-                generation = state.questionId,
+                blockIds = state.blockIds,
+                owner = state.questionId.ifBlank { "new" },
                 onAddBlock = viewModel::addBlock,
                 onUpdateBlock = viewModel::updateBlock,
                 onRemoveBlock = viewModel::removeBlock,
@@ -261,7 +285,7 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeTableRow,
                 onAddColumn = viewModel::addTableColumn,
                 onRemoveColumn = viewModel::removeTableColumn,
-                onPickImage = pickBlockImage
+                onPickImage = { blockId -> pickBlockImage(ImageTarget.Body(blockId)) }
             )
             Spacer(Modifier.height(8.dp))
 
@@ -292,9 +316,11 @@ fun QuestionEditorScreen(
             )
             Spacer(Modifier.height(4.dp))
 
-            state.options.forEach { option ->
+            state.options.forEachIndexed { optionPosition, option ->
                 OptionEditorRow(
                     option = option,
+                    position = optionPosition,
+                    owner = "${state.questionId}|${option.id}",
                     onAddBlock = { viewModel.addOptionBlock(option.id, it) },
                     onUpdateBlock = { index, element ->
                         viewModel.updateOptionBlock(option.id, index, element)
@@ -302,13 +328,28 @@ fun QuestionEditorScreen(
                     onRemoveBlock = { viewModel.removeOptionBlock(option.id, it) },
                     onMoveBlockUp = { viewModel.moveOptionBlockUp(option.id, it) },
                     onMoveBlockDown = { viewModel.moveOptionBlockDown(option.id, it) },
-                    onPickBlockImage = pickBlockImage,
+                    onPickBlockImage = { blockId ->
+                        pickBlockImage(ImageTarget.Option(option.id, blockId))
+                    },
                     onImageChange = { viewModel.updateOptionImage(option.id, it) },
                     onToggleCorrect = { viewModel.toggleCorrect(option.id) },
                     onMoveUp = { viewModel.moveOptionUp(option.id) },
                     onMoveDown = { viewModel.moveOptionDown(option.id) },
                     onRemove = { viewModel.removeOption(option.id) },
-                    canRemove = state.options.size > 2
+                    canRemove = state.options.size > 2,
+                    canMoveUp = optionPosition > 0,
+                    canMoveDown = optionPosition < state.options.lastIndex,
+                    onUpdateCell = { index, row, col, value ->
+                        viewModel.updateOptionTableCell(option.id, index, row, col, value)
+                    },
+                    onAddRow = { viewModel.addOptionTableRow(option.id, it) },
+                    onRemoveRow = { index, row ->
+                        viewModel.removeOptionTableRow(option.id, index, row)
+                    },
+                    onAddColumn = { viewModel.addOptionTableColumn(option.id, it) },
+                    onRemoveColumn = { index, col ->
+                        viewModel.removeOptionTableColumn(option.id, index, col)
+                    }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -328,22 +369,34 @@ fun QuestionEditorScreen(
                 onValueChange = viewModel::updateMarks,
                 label = { Text(stringResource(R.string.marks_default_1)) },
                 singleLine = true,
+                // An invalid entry is reported here and blocks Save instead of
+                // being stored as 1 behind the user's back (M-08).
+                isError = !state.marksValid,
+                supportingText = if (!state.marksValid) {
+                    { Text(stringResource(R.string.marks_invalid)) }
+                } else null,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
             Text(stringResource(R.string.explanation), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            // No table cell callbacks: the ViewModel exposes cell ops for the
-            // question body only, so explanation tables render read-only.
+            // Explanation tables are editable too, on the same grid the
+            // question body uses (question_editor_audit.md L-01).
             BlockListEditor(
                 elements = state.explanationElements,
-                generation = state.questionId,
+                blockIds = state.explanationBlockIds,
+                owner = "${state.questionId}|explanation",
                 onAddBlock = viewModel::addExplanationBlock,
                 onUpdateBlock = viewModel::updateExplanationBlock,
                 onRemoveBlock = viewModel::removeExplanationBlock,
                 onMoveUp = viewModel::moveExplanationBlockUp,
                 onMoveDown = viewModel::moveExplanationBlockDown,
-                onPickImage = pickBlockImage
+                onUpdateCell = viewModel::updateExplanationTableCell,
+                onAddRow = viewModel::addExplanationTableRow,
+                onRemoveRow = viewModel::removeExplanationTableRow,
+                onAddColumn = viewModel::addExplanationTableColumn,
+                onRemoveColumn = viewModel::removeExplanationTableColumn,
+                onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) }
             )
             Spacer(Modifier.height(8.dp))
             if (state.explanationImage.isNotBlank()) {
@@ -359,7 +412,8 @@ fun QuestionEditorScreen(
             // Phase-3 tag chips: the comma string stays the state, but adding
             // and removing one label at a time keeps the editor's intent
             // explicit; the same list is what the Tag test filters on.
-            var newTag by remember { mutableStateOf("") }
+            // A typed tag survives rotation (question_editor_audit.md L-02).
+            var newTag by rememberSaveable { mutableStateOf("") }
             val tagLabels = remember(state.tags) {
                 com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
             }
@@ -399,6 +453,24 @@ fun QuestionEditorScreen(
                 }
             }
 
+            // A picked image that could not be read writes nothing and says
+            // so (question_editor_audit.md M-06, M-12).
+            state.imageError?.let { error ->
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            // A failed move keeps the current draft on screen and says why
+            // (question_editor_audit.md M-07).
+            state.moveError?.let { error ->
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             // A failed save/delete is reported here instead of crashing
             // (consolidated_bugs.md J7).
             state.saveError?.let { error ->
@@ -417,12 +489,47 @@ fun QuestionEditorScreen(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+            // A disabled Save says what is missing, instead of leaving the
+            // learner to guess (question_editor_audit.md M-12). The marks and
+            // empty-option cases have their own field-level errors.
+            val saveBlockedHint: String? = when {
+                state.loading || state.busy || !state.marksValid -> null
+                state.options.size < 2 -> stringResource(R.string.save_blocked_two_options)
+                state.options.any { o ->
+                    o.elements.none { it.isSignificant() } && o.image.isBlank()
+                } -> stringResource(R.string.save_blocked_empty_option)
+                state.elements.none { it.isSignificant() } && state.image.isBlank() ->
+                    stringResource(R.string.save_blocked_no_content)
+                else -> null
+            }
+            // An in-flight operation used to look like an unresponsive
+            // screen: Back and the action buttons simply did nothing.
+            val operationLabel = when (state.operation) {
+                EditorOperation.SAVING -> stringResource(R.string.saving)
+                EditorOperation.DELETING -> stringResource(R.string.deleting)
+                EditorOperation.MOVING -> stringResource(R.string.moving_progress)
+                EditorOperation.IDLE -> null
+            }
+            operationLabel?.let { label ->
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            saveBlockedHint?.let { hint ->
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { viewModel.save { navController.popBackStack() } },
                     modifier = Modifier.weight(1f),
-                    enabled = canProceed && !state.saving
+                    enabled = canProceed && !state.busy
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(Modifier.padding(2.dp))
@@ -433,69 +540,186 @@ fun QuestionEditorScreen(
                 // it used to delete the stored row the preview came from
                 // (consolidated_bugs.md J2).
                 if (!state.isNew && !viewModel.editingFromImport) {
-                    OutlinedButton(onClick = {
-                        viewModel.delete { navController.popBackStack() }
+                    OutlinedButton(enabled = !state.busy, onClick = {
+                        showDeleteDialog = true
                     }) {
-                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.delete_question)
+                        )
                     }
                 }
             }
             Spacer(Modifier.height(32.dp))
         }
     }
+
+    if (showLeaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showLeaveDialog = false },
+            title = { Text(stringResource(R.string.unsaved_changes_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.unsaved_changes_message))
+                    // Saving an invalid draft is impossible, so the dialog
+                    // says so instead of closing on a no-op save that looked
+                    // like a success (M-08, M-12).
+                    if (!canProceed) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.unsaved_changes_invalid))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = canProceed,
+                    onClick = {
+                        showLeaveDialog = false
+                        // onDone runs only after the write succeeds, so a
+                        // failed save leaves the editor (and the draft) in
+                        // place.
+                        viewModel.save { navController.popBackStack() }
+                    }
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showLeaveDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(onClick = {
+                        showLeaveDialog = false
+                        navController.popBackStack()
+                    }) {
+                        Text(stringResource(R.string.discard))
+                    }
+                }
+            }
+        )
+    }
+
+    if (showDeleteDialog) {
+        // Editor-only confirmation: the repository transaction also removes
+        // this question's schedules, history, statistics and bookmark
+        // (question_editor_audit.md M-14).
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text(stringResource(R.string.delete_question_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.delete_question_confirm,
+                        state.text.trim().take(80).ifBlank {
+                            stringResource(R.string.delete_question_fallback_name)
+                        }
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    viewModel.delete { navController.popBackStack() }
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun OptionEditorRow(
     option: OptionEditorState,
+    /** This option's position, shown as A/B/C rather than its internal id. */
+    position: Int,
+    /** Identifies this option's block list across questions. */
+    owner: String,
     onAddBlock: (EditorBlockType) -> Unit,
     onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
     onRemoveBlock: (index: Int) -> Unit,
     onMoveBlockUp: (index: Int) -> Unit,
     onMoveBlockDown: (index: Int) -> Unit,
-    onPickBlockImage: ((String) -> Unit) -> Unit,
+    onPickBlockImage: (blockId: String) -> Unit,
     onImageChange: (String) -> Unit,
     onToggleCorrect: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onRemove: () -> Unit,
-    canRemove: Boolean
+    canRemove: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onUpdateCell: (index: Int, row: Int, col: Int, value: String) -> Unit,
+    onAddRow: (index: Int) -> Unit,
+    onRemoveRow: (index: Int, row: Int) -> Unit,
+    onAddColumn: (index: Int) -> Unit,
+    onRemoveColumn: (index: Int, col: Int) -> Unit
 ) {
+    // Imported option ids can be arbitrary strings, so the label is the
+    // position (A, B, C…); the id stays internal for answer-key references
+    // (question_editor_audit.md L-03).
+    val label = optionOrdinalLabel(position)
+    val toggleCorrectLabel = stringResource(R.string.toggle_correct_named, label)
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(checked = option.isCorrect, onCheckedChange = { onToggleCorrect() })
+            Checkbox(
+                checked = option.isCorrect,
+                onCheckedChange = { onToggleCorrect() },
+                modifier = Modifier.semantics {
+                    contentDescription = toggleCorrectLabel
+                }
+            )
             Text(
-                "Option ${option.id}",
+                stringResource(R.string.option_label, label),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            IconButton(onClick = onMoveUp) {
-                Icon(Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.move_up))
+            IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                Icon(
+                    Icons.Default.ArrowUpward,
+                    contentDescription = stringResource(R.string.move_option_up_named, label)
+                )
             }
-            IconButton(onClick = onMoveDown) {
-                Icon(Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.move_down))
+            IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                Icon(
+                    Icons.Default.ArrowDownward,
+                    contentDescription = stringResource(R.string.move_option_down_named, label)
+                )
             }
             if (canRemove) {
                 IconButton(onClick = onRemove) {
-                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_option))
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.remove_option_named, label)
+                    )
                 }
             }
         }
-        // Option tables render read-only: options rarely need tables and the
-        // ViewModel exposes cell ops for the question body only, so full grid
-        // editing is omitted here to keep scope sane.
         BlockListEditor(
             elements = option.elements,
-            generation = option.id,
+            blockIds = option.blockIds,
+            owner = owner,
             onAddBlock = onAddBlock,
             onUpdateBlock = onUpdateBlock,
             onRemoveBlock = onRemoveBlock,
             onMoveUp = onMoveBlockUp,
             onMoveDown = onMoveBlockDown,
+            // Option tables are editable, like the body's (L-01).
+            onUpdateCell = onUpdateCell,
+            onAddRow = onAddRow,
+            onRemoveRow = onRemoveRow,
+            onAddColumn = onAddColumn,
+            onRemoveColumn = onRemoveColumn,
             onPickImage = onPickBlockImage
         )
         // As with the question image, no blank field: an option image is added
@@ -547,7 +771,8 @@ private fun CategoryDropdown(
 ) {
     val flat = flattenCategories(categories)
     var expanded by remember { mutableStateOf(false) }
-    val selectedTitle = flat.firstOrNull { it.id == selectedId }?.title ?: "Select category"
+    val selectedTitle = flat.firstOrNull { it.id == selectedId }?.title
+        ?: stringResource(R.string.select_category)
 
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
@@ -669,3 +894,19 @@ private fun flattenCategories(
     }
 
 private data class FlatCategory(val id: String, val title: String, val depth: Int)
+
+/**
+ * Ordinal label for the option at [position]: A…Z, then AA… (bijective
+ * base-26), matching the ids the ViewModel mints without exposing them.
+ * The ViewModel reuses this with [lower] = true for its lowercase option ids.
+ */
+internal fun optionOrdinalLabel(position: Int, lower: Boolean = false): String {
+    var n = position.coerceAtLeast(0)
+    val sb = StringBuilder()
+    val base = if (lower) 'a' else 'A'
+    do {
+        sb.append(base + n % 26)
+        n = n / 26 - 1
+    } while (n >= 0)
+    return sb.reverse().toString()
+}

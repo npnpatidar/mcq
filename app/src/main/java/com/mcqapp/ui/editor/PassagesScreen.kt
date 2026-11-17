@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -178,6 +179,11 @@ fun PassagesScreen(
     var editing by remember { mutableStateOf<Passage?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleteRefusal by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    // A passage whose category changes to another paper's takes its whole
+    // member group across the paper boundary. Hold the request until the user
+    // confirms; Cancel just dismisses this dialog and leaves the edit form as
+    // it was (nothing written).
+    var pendingCrossPaperSave by remember { mutableStateOf<Passage?>(null) }
     // The one open passage's member rows, paged in as they scroll into view.
     val memberItems: LazyPagingItems<QuestionRef> = viewModel.memberPaging.collectAsLazyPagingItems()
 
@@ -381,14 +387,27 @@ fun PassagesScreen(
             }
         }
 
-        if (creating || editing != null) {
+        if ((creating || editing != null) && pendingCrossPaperSave == null) {
             PassageEditDialog(
                 initial = editing,
                 papers = state.papers,
                 onSave = { passage ->
-                    viewModel.save(passage)
-                    creating = false
-                    editing = null
+                    val original = editing
+                    val originalPaper = original?.let { paperByCategoryId[it.categoryId] }
+                    val newPaper = paperByCategoryId[passage.categoryId]
+                    val memberCount = state.memberCounts[passage.id] ?: 0
+                    val crossesPaper = original != null && memberCount > 0 &&
+                        originalPaper != null && newPaper != null &&
+                        originalPaper.id != newPaper.id
+                    if (crossesPaper) {
+                        // Members would follow into the other paper: ask first,
+                        // the same warning the Browse move shows.
+                        pendingCrossPaperSave = passage
+                    } else {
+                        viewModel.save(passage)
+                        creating = false
+                        editing = null
+                    }
                 },
                 onDismiss = {
                     creating = false
@@ -397,14 +416,47 @@ fun PassagesScreen(
             )
         }
 
-        deleteRefusal?.let { (_, members) ->
+        // Never stack the delete refusal over the cross-paper confirmation:
+        // a second dialog would hide the choice and steal the back/dismiss.
+        if (pendingCrossPaperSave == null) {
+            deleteRefusal?.let { (_, members) ->
+                AlertDialog(
+                    onDismissRequest = { deleteRefusal = null },
+                    title = { Text(stringResource(R.string.delete_passage)) },
+                    text = { Text(stringResource(R.string.passage_has_members_warning, members)) },
+                    confirmButton = {
+                        TextButton(onClick = { deleteRefusal = null }) {
+                            Text(stringResource(R.string.ok))
+                        }
+                    }
+                )
+            }
+        }
+
+        pendingCrossPaperSave?.let { passage ->
             AlertDialog(
-                onDismissRequest = { deleteRefusal = null },
-                title = { Text(stringResource(R.string.delete_passage)) },
-                text = { Text(stringResource(R.string.passage_has_members_warning, members)) },
+                onDismissRequest = { pendingCrossPaperSave = null },
+                title = { Text(stringResource(R.string.move)) },
+                text = { Text(stringResource(R.string.move_cross_paper_warning)) },
                 confirmButton = {
-                    TextButton(onClick = { deleteRefusal = null }) {
-                        Text(stringResource(R.string.ok))
+                    TextButton(
+                        modifier = Modifier.testTag("cross-paper-move-confirm"),
+                        onClick = {
+                            viewModel.save(passage)
+                            pendingCrossPaperSave = null
+                            creating = false
+                            editing = null
+                        }
+                    ) {
+                        Text(stringResource(R.string.move))
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        modifier = Modifier.testTag("cross-paper-move-cancel"),
+                        onClick = { pendingCrossPaperSave = null }
+                    ) {
+                        Text(stringResource(R.string.cancel))
                     }
                 }
             )

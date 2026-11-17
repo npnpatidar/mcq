@@ -718,24 +718,24 @@ class StatsRetentionStreamTest {
     }
 
     /**
-     * The same funnel, without a delete: a question moved into another paper
-     * loses its schedule, and its review rows go with it.
+     * A cross-paper move keeps history but re-keys it to the destination paper,
+     * so the all-papers report is unchanged. The destination paper's cached
+     * report must still be refreshed: the re-key moves no cache-key input.
      */
     @Test
-    fun aCrossPaperMoveDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+    fun aCrossPaperMoveRefreshesTheDestinationReport() = dbBlocking {
         seedDeletablePair()
-        assertReviewRemovalStopsTheCachedReport("a cross-paper move") {
+        assertCrossPaperMoveRefreshesDestinationReport("a cross-paper move") {
             repository.moveQuestionsToCategory(listOf("q1"), "c2")
         }
     }
 
     /**
-     * The sixth funnel: a passage moved to another category takes its members
-     * with it, and a member that crosses a paper boundary loses its review
-     * rows on the way.
+     * The same funnel when a passage moves: its member crosses a paper boundary
+     * and its history is re-keyed with the schedule.
      */
     @Test
-    fun aPassageMoveDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+    fun aPassageMoveRefreshesTheDestinationReport() = dbBlocking {
         seedDeletablePair()
         // q1 becomes the member of a passage that lives in paper p1.
         db.questionDao().upsertAll(
@@ -758,39 +758,22 @@ class StatsRetentionStreamTest {
             )
         )
 
-        val before = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
-        assertEquals(
-            "the fixture must be a usable pair",
-            1,
-            before.calibrationReport!!.pairs
-        )
-
-        // The passage moves to paper p2, so its member crosses a paper
-        // boundary and its review rows are deleted with the schedule.
-        repository.savePassage(
-            Passage(id = "passage-1", categoryId = "c2", title = "Passage One")
-        )
-
-        assertEquals(
-            "the move must not move the cache key",
-            now - hour,
-            newestReviewAt()
-        )
-        val after = repository.statsRetention(null, StatsAggregator.Range.ALL, now)
-        assertEquals(
-            "a passage move must not serve the report built from deleted reviews",
-            0,
-            after.calibrationReport!!.pairs
-        )
+        assertCrossPaperMoveRefreshesDestinationReport("a passage move") {
+            // The passage moves to paper p2, so its member crosses a paper
+            // boundary and its review rows are re-keyed with the schedule.
+            repository.savePassage(
+                Passage(id = "passage-1", categoryId = "c2", title = "Passage One")
+            )
+        }
     }
 
     /**
-     * The seventh funnel: assigning a question to a passage in another
-     * category enforces the passage's category. The question then crosses a
-     * paper boundary and loses its review rows with its old schedule.
+     * Assigning a question to a passage in another paper enforces the passage's
+     * category: the question crosses a paper boundary and its history is
+     * re-keyed with its old schedule.
      */
     @Test
-    fun aQuestionSaveIntoAnotherPaperPassageDoesNotServeTheReportBuiltFromDeletedReviews() = dbBlocking {
+    fun aQuestionSaveIntoAnotherPaperPassageRefreshesTheDestinationReport() = dbBlocking {
         seedDeletablePair()
         db.passageDao().upsert(
             PassageEntity(
@@ -804,7 +787,7 @@ class StatsRetentionStreamTest {
         )
         val q1 = repository.getQuestion("q1")!!
 
-        assertReviewRemovalStopsTheCachedReport("a question save into another paper's passage") {
+        assertCrossPaperMoveRefreshesDestinationReport("a question save into another paper's passage") {
             repository.saveQuestion(q1.copy(passageId = "passage-in-p2"))
         }
     }
@@ -907,6 +890,34 @@ class StatsRetentionStreamTest {
             "$what must not serve the report built from deleted reviews",
             0,
             after.calibrationReport!!.pairs
+        )
+    }
+
+    /**
+     * The cross-paper counterpart of [assertReviewRemovalStopsTheCachedReport]:
+     * here nothing is deleted, so the all-papers report is unchanged. The rows
+     * are re-keyed to the destination paper, which must make its own cached
+     * report include them. The newest row belongs to the other paper's card, so
+     * `max(reviewedAt)` — the key's only row-derived input — does not move; only
+     * invalidation can turn the cached 0 pairs into the moved card's 1 pair.
+     */
+    private suspend fun assertCrossPaperMoveRefreshesDestinationReport(
+        what: String,
+        move: suspend () -> Unit
+    ) {
+        val p2Before = repository.statsRetention("p2", StatsAggregator.Range.ALL, now)
+        assertEquals("the fixture must have no pairs in p2 yet", 0, p2Before.calibrationReport!!.pairs)
+        val newestBefore = newestReviewAt()
+        assertEquals(now - hour, newestBefore)
+
+        move()
+
+        assertEquals("the move must not move the cache key", newestBefore, newestReviewAt())
+        val p2After = repository.statsRetention("p2", StatsAggregator.Range.ALL, now)
+        assertEquals(
+            "$what must refresh the destination paper's cached report",
+            1,
+            p2After.calibrationReport!!.pairs
         )
     }
 

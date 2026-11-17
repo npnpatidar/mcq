@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -16,6 +17,23 @@ import kotlin.io.path.readText
  * rather than trusted.
  */
 class StringResourceUsageTest {
+
+    /**
+     * True only for a CONFIRMED rendered position: a direct sink, or a call
+     * chain proven to end in one. Unlike [isRendered] this never accepts a bare
+     * `->` / `?:` branch as proof — a nested resource must be rendered by a
+     * confirmed enclosing call, not merely sit in a branch that might itself
+     * be discarded.
+     */
+    private fun isRenderedConfirmed(before: String, src: String, offset: Int): Boolean {
+        if (before.endsWith("Text(") ||
+            before.endsWith("contentDescription =") ||
+            before.endsWith("label =") ||
+            before.endsWith("help =") ||
+            before.endsWith("value =")
+        ) return true
+        return isInsideTextCall(src, offset)
+    }
 
     /**
      * True when the `stringResource(` result is displayed, not discarded:
@@ -44,6 +62,12 @@ class StringResourceUsageTest {
         return isInsideTextCall(src, offset)
     }
 
+    /** Testable entry point for the rendered check on a synthetic snippet. */
+    internal fun checkRendered(src: String, offset: Int): Boolean {
+        val before = src.substring(0, offset).trimEnd()
+        return isRendered(before, src, offset)
+    }
+
     private fun sources(): List<File> =
         File("src/main/java/com/mcqapp/ui").walkTopDown().filter { it.extension == "kt" }.toList()
 
@@ -63,6 +87,17 @@ class StringResourceUsageTest {
                 if (depth == 0) {
                     val head = src.substring(0, i).trimEnd()
                     val name = Regex("(?:^|[^A-Za-z0-9_])([A-Za-z0-9_]+)$").find(head)?.groupValues?.get(1)
+                    if (name == "stringResource") {
+                        // A resource used as another resource's format
+                        // argument is rendered exactly when that outer call
+                        // is. Judge the outer call with the CONFIRMED check:
+                        // accepting isRendered's bare branch shortcut let a
+                        // discarded `when` branch's nested argument pass.
+                        val outerStart = i - "stringResource".length
+                        if (outerStart <= 0) return false
+                        val outerBefore = src.substring(0, outerStart).trimEnd()
+                        return isRenderedConfirmed(outerBefore, src, outerStart)
+                    }
                     // Buttons/labels render their text argument too.
                     return name in setOf("Text", "TextButton", "Button", "FilledToneButton",
                         "OutlinedButton", "AlertDialog", "FilterChip", "DropdownMenuItem",
@@ -98,6 +133,25 @@ class StringResourceUsageTest {
         assertTrue(
             "these stringResource calls render nothing: $offenders",
             offenders.isEmpty()
+        )
+    }
+
+    /**
+     * Counter-example for the weakened recursion (M4): the outer resource is
+     * in a discarded `when` branch, so the resource nested as its format
+     * argument is discarded too. The old recursion followed isRendered's bare
+     * `->` shortcut for the outer call and wrongly passed the inner one.
+     */
+    @Test
+    fun aDiscardedWhenBranchsNestedFormatArgumentIsNotRendered() {
+        val src = """val title = when (mode) {
+    MODE -> stringResource(R.string.outer, stringResource(R.string.inner))
+}"""
+        val inner = src.indexOf("stringResource(R.string.inner")
+        assertTrue("the nested call was found", inner >= 0)
+        assertFalse(
+            "a discarded branch's nested resource must be reported",
+            checkRendered(src, inner)
         )
     }
 

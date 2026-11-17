@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.mcqapp.ui.browse.BrowseViewModel
+import com.mcqapp.ui.editor.EditorSource
 import com.mcqapp.ui.editor.EditorViewModel
 import com.mcqapp.ui.results.ResultsViewModel
 import com.mcqapp.ui.study.StudyViewModel
@@ -46,11 +47,12 @@ class EditorViewModelFactory(
     private val application: Application,
     private val questionId: String,
     private val paperId: String,
-    private val categoryId: String
+    private val categoryId: String,
+    private val source: EditorSource = EditorSource.UNSPECIFIED
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return EditorViewModel(application, questionId, paperId, categoryId) as T
+        return EditorViewModel(application, questionId, paperId, categoryId, source) as T
     }
 }
 

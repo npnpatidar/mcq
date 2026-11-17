@@ -65,7 +65,6 @@ object ImportDataHolder {
     /** Display name of the picked Word file; becomes the default paper title. */
     var pendingDocxName: String? = null
     var pendingEditQuestion: QuestionDto? = null
-    var editingFromImport: Boolean = false
 }
 
 /**

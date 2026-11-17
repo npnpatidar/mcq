@@ -132,6 +132,14 @@ class BrowseViewModel(
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
     private val _bulkError = MutableStateFlow<String?>(null)
     val bulkError: StateFlow<String?> = _bulkError.asStateFlow()
+    /** A failed question action (delete/duplicate/move/copy), shown once. */
+    private val _actionError = MutableStateFlow<String?>(null)
+    val actionError: StateFlow<String?> = _actionError.asStateFlow()
+    /** How many questions a move of the current selection would touch. */
+    private val _moveAffectedCount = MutableStateFlow<Int?>(null)
+    val moveAffectedCount: StateFlow<Int?> = _moveAffectedCount.asStateFlow()
+    /** Guards an older async scope read from overwriting a newer dialog's count. */
+    private var moveScopeGeneration = 0
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
     // One shared seed, not two adjoined copies: the MutableStateFlow's
@@ -556,41 +564,121 @@ class BrowseViewModel(
                 return@launch
             }
             onReady(
-                EditorSession.Cursor(size, index) { offset ->
-                    repository.browseFilteredIdAt(offset, scope)
-                }
+                EditorSession.Cursor(
+                    size,
+                    index,
+                    idAt = { offset -> repository.browseFilteredIdAt(offset, scope) },
+                    // Live reads: an edit can change whether this question
+                    // still matches the filter, so the counter and the
+                    // neighbours are re-anchored against these rather than
+                    // the size/index captured here (M-04).
+                    count = { repository.browseFilteredCount(scope) },
+                    indexOf = { id -> repository.browseFilteredIndexOf(id, scope) }
+                )
             )
         }
     }
 
+    /**
+     * A failed question action is reported, never thrown out of the scope.
+     * These used to launch the repository call bare, so an unexpected Room
+     * failure crashed the process instead of using the screen's error dialog
+     * (question_actions_audit.md QA-07).
+     */
+    private fun reportActionFailure(action: String, e: Exception) {
+        Logger.e("BROWSEVM", "$action failed", e)
+        _actionError.value = "$action failed: ${e.message}"
+    }
+
+    fun dismissActionError() {
+        _actionError.value = null
+    }
+
     fun deleteQuestion(questionId: String) {
         viewModelScope.launch {
-            repository.deleteQuestion(questionId)
-            invalidateContexts()
-            Logger.i("BROWSEVM", "Deleted question $questionId")
+            try {
+                repository.deleteQuestion(questionId)
+                invalidateContexts()
+                Logger.i("BROWSEVM", "Deleted question $questionId")
+            } catch (e: Exception) {
+                reportActionFailure("Could not delete the question", e)
+            }
         }
     }
 
-    fun duplicateQuestion(questionId: String) {
+    fun duplicateQuestion(questionId: String, onDone: (duplicated: Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            repository.duplicateQuestion(questionId)
-            invalidateContexts()
+            try {
+                val cloneId = repository.duplicateQuestion(questionId)
+                invalidateContexts()
+                onDone(cloneId != null)
+            } catch (e: Exception) {
+                reportActionFailure("Could not duplicate the question", e)
+                onDone(false)
+            }
         }
     }
 
     fun deleteQuestions(questionIds: Set<String>) {
         viewModelScope.launch {
-            repository.deleteQuestions(questionIds)
-            invalidateContexts()
-            Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
+            try {
+                repository.deleteQuestions(questionIds)
+                invalidateContexts()
+                Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
+            } catch (e: Exception) {
+                reportActionFailure("Could not delete the questions", e)
+            }
         }
     }
 
-    fun moveQuestions(questionIds: Set<String>, targetCategoryId: String) {
+    /**
+     * Every question a move of the current selection would touch, passage
+     * siblings included, so the dialog can count and warn accurately
+     * (question_actions_audit.md QA-02).
+     */
+    fun prepareMove(questionIds: Set<String>) {
+        val generation = ++moveScopeGeneration
         viewModelScope.launch {
-            repository.moveQuestionsToCategory(questionIds, targetCategoryId)
-            invalidateContexts()
-            Logger.i("BROWSEVM", "Moved ${questionIds.size} questions to $targetCategoryId")
+            val count = try {
+                repository.moveGroupIds(questionIds).size
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "Could not resolve the move scope", e)
+                null
+            }
+            // Only the newest dialog's read may publish: an older selection's
+            // slower result used to overwrite the count being shown.
+            if (generation == moveScopeGeneration) _moveAffectedCount.value = count
+        }
+    }
+
+    /** Forget a previous dialog's scope so a stale count cannot leak into the
+     *  next one (the dialog reopens with selection changed or empty). */
+    fun clearMoveScope() {
+        moveScopeGeneration++
+        _moveAffectedCount.value = null
+    }
+
+    /**
+     * Moves the selection and reports the real scope actually touched
+     * (passage siblings included), so the confirmation toast never falls back
+     * to counting only the ticked rows.
+     */
+    fun moveQuestions(
+        questionIds: Set<String>,
+        targetCategoryId: String,
+        onDone: (movedCount: Int?) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val affected = repository.moveGroupIds(questionIds).size
+                repository.moveQuestionsToCategory(questionIds, targetCategoryId)
+                invalidateContexts()
+                Logger.i("BROWSEVM", "Moved $affected questions to $targetCategoryId")
+                onDone(affected)
+            } catch (e: Exception) {
+                reportActionFailure("Could not move the questions", e)
+                onDone(null)
+            }
         }
     }
 
@@ -625,11 +713,21 @@ class BrowseViewModel(
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun copyQuestions(questionIds: Set<String>, targetCategoryId: String) {
+    fun copyQuestions(
+        questionIds: Set<String>,
+        targetCategoryId: String,
+        onDone: (copied: Boolean) -> Unit = {}
+    ) {
         viewModelScope.launch {
-            repository.copyQuestionsToCategory(questionIds, targetCategoryId)
-            invalidateContexts()
-            Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
+            try {
+                repository.copyQuestionsToCategory(questionIds, targetCategoryId)
+                invalidateContexts()
+                Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
+                onDone(true)
+            } catch (e: Exception) {
+                reportActionFailure("Could not copy the questions", e)
+                onDone(false)
+            }
         }
     }
 
@@ -789,9 +887,14 @@ class BrowseViewModel(
             // values (consolidated_bugs.md K2).
             val tags = tagsText.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
-            repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
-            invalidateContexts()
-            Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
+            try {
+                repository.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
+                invalidateContexts()
+                Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "Bulk edit failed", e)
+                _bulkError.value = "Could not apply the edit: ${e.message}"
+            }
         }
     }
 

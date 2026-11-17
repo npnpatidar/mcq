@@ -9,6 +9,8 @@ import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.COPY_ID_PROBE
 import com.mcqapp.data.local.deleteByQuestionsChunked
+import com.mcqapp.data.local.deleteOtherPapersChunked
+import com.mcqapp.data.local.existingQuestionIdsInPaperChunked
 import com.mcqapp.data.local.getIdCategoriesByIdsChunked
 import com.mcqapp.data.local.getIdCategoryPassageByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
@@ -17,6 +19,7 @@ import com.mcqapp.data.local.getRefsByCategoriesChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.moveAfterAnchor
 import com.mcqapp.data.local.placeWithGroup
+import com.mcqapp.data.local.rekeyToPaperChunked
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.data.local.updateBulkFieldsChunked
@@ -35,10 +38,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
-/** The clone id and the history rows removed while creating it. */
+/** The clone id and how many history rows changed paper while creating it. */
 internal data class DuplicateQuestionResult(
     val questionId: String,
-    val reviewRowsRemoved: Int
+    val reviewRowsChanged: Int
 )
 
 /**
@@ -241,15 +244,16 @@ internal class QuestionStore(
     }
 
     /**
-     * Saves a question and returns the number of `review_log` rows removed by
+     * Saves a question and returns the number of `review_log` rows re-keyed by
      * the transaction.
      *
      * Normally that number is zero. Assigning the question to a passage in a
      * different category can enforce the passage's category, which may make
      * the question (or another member of its passage group) cross a paper
-     * boundary; that move deletes the affected member's review rows. The
-     * exact count lets the repository invalidate the calibration cache only
-     * when history really changed.
+     * boundary. The count is every `review_log` row whose paper attribution
+     * changed — re-keyed to the new paper, or deleted when a destination card
+     * collided — so the repository invalidates the calibration cache only when
+     * a per-paper report really changed.
      */
     suspend fun saveQuestion(question: Question): Int {
         Logger.d("REPO", "saveQuestion(id=${question.id}, category=${question.categoryId}, " +
@@ -257,7 +261,7 @@ internal class QuestionStore(
             "textLength=${question.text.length})")
         // One transaction: the question row, its options and its answer key
         // must land together, so a crash can never leave options without a key.
-        var reviewRowsRemoved = 0
+        var reviewRowsChanged = 0
         db.withTransaction {
             val existing = db.questionDao().getById(question.id)
             val sortOrder = existing?.sortOrder
@@ -332,11 +336,11 @@ internal class QuestionStore(
             // and exports without the user hand-placing it. Contiguous
             // imports are no-ops.
             if (question.passageId != null && existing?.passageId != question.passageId) {
-                reviewRowsRemoved += enforcePassageCategory(question.id, question.passageId)
+                reviewRowsChanged += enforcePassageCategory(question.id, question.passageId)
                 placeWithGroup(question.id)
             }
         }
-        return reviewRowsRemoved
+        return reviewRowsChanged
     }
 
     /**
@@ -448,8 +452,8 @@ internal class QuestionStore(
      *
      * The clone itself has no history, but the same passage-category
      * enforcement as [saveQuestion] runs for it. In a malformed group that can
-     * move another member across a paper and delete that member's review rows,
-     * so the result carries the exact removal count to the repository.
+     * move another member across a paper and re-key or delete that member's
+     * review rows, so the result carries the exact change count to the repository.
      */
     suspend fun duplicateQuestion(questionId: String): DuplicateQuestionResult? {
         val source = getQuestion(questionId) ?: return null
@@ -459,24 +463,32 @@ internal class QuestionStore(
         val namespace = db.questionDao()
             .getIdsLike(likePrefixPattern("$questionId-copy")).toSet()
         val newId = com.mcqapp.domain.BulkOps.copyId(namespace, questionId)
-        val reviewRowsRemoved = saveQuestion(source.copy(id = newId))
+        val reviewRowsChanged = saveQuestion(source.copy(id = newId))
         Logger.i("REPO", "duplicateQuestion($questionId -> $newId)")
-        return DuplicateQuestionResult(newId, reviewRowsRemoved)
+        return DuplicateQuestionResult(newId, reviewRowsChanged)
     }
 
     /**
-     * Moves questions into another category, appended after its siblings, and
-     * returns the number of `review_log` rows removed by the move.
+     * Moves questions into another category, appended after its siblings.
      *
-     * Only a cross-paper move removes history: the schedule is keyed to a
-     * paper, so the old row is dropped and the review rows that described it
-     * go with it.
+     * @return how many `review_log` rows had their paper attribution changed —
+     *   re-keyed to the destination for a normal cross-paper move, or deleted
+     *   for an id whose card collided with an existing destination card. The
+     *   repository uses this to invalidate the calibration cache only when a
+     *   per-paper report really changed; same-paper moves return 0.
+     *
+     * A cross-paper move keeps each card's schedule and review history: the
+     * rows are re-pointed at the destination paper, not deleted, so the learner
+     * keeps the memory the app has built. The one exception is a collision: if
+     * the destination already holds a card for a question, that card and its
+     * own history win, and the source's history is dropped rather than merged
+     * into it. Same-paper moves change none of it.
      */
     suspend fun moveQuestionsToCategory(questionIds: Collection<String>, targetCategoryId: String): Int {
         Logger.i("REPO", "moveQuestionsToCategory(${questionIds.size} ids -> $targetCategoryId)")
         // One transaction: a partial move must not strand questions, and the
-        // cross-paper schedule reset below belongs to the same move.
-        var reviewRowsRemoved = 0
+        // cross-paper schedule/history transfer below belongs to the same move.
+        var reviewRowsChanged = 0
         db.withTransaction {
             val targetPaperId = db.categoryDao().getById(targetCategoryId)?.paperId
             // A slim read and one UPDATE per chunk replace a full
@@ -503,19 +515,47 @@ internal class QuestionStore(
                 rows.map { it.categoryId }.distinct()
             ).associate { it.id to it.paperId }
             db.questionDao().updateCategoryChunked(rows.map { it.id }, targetCategoryId)
-            // A schedule is keyed to a paper. Moving a question into another
-            // paper makes the old row an orphan that would still inflate the
-            // source paper's due count, so start the card over instead.
             if (targetPaperId != null) {
                 val crossPaperIds = rows
                     .filter { paperIdByCategory[it.categoryId] != targetPaperId }
                     .map { it.id }
                 if (crossPaperIds.isNotEmpty()) {
-                    db.cardStateDao().deleteByQuestionsChunked(crossPaperIds)
-                    // The reset wipes history too: the old paper's log rows
-                    // would otherwise describe a schedule that no longer exists.
-                    reviewRowsRemoved =
-                        db.reviewLogDao().deleteByQuestionsChunked(crossPaperIds)
+                    // A schedule is keyed to a paper. On a cross-paper move its
+                    // card row and its lifetime stats are re-pointed at the
+                    // destination, not dropped.
+                    val collisions = db.cardStateDao()
+                        .existingQuestionIdsInPaperChunked(targetPaperId, crossPaperIds)
+                    if (collisions.isNotEmpty()) {
+                        Logger.w(
+                            "REPO",
+                            "moveQuestionsToCategory: destination card collision for " +
+                                "${collisions.size} id(s), keeping destination row(s): $collisions"
+                        )
+                    }
+                    // INSERT OR IGNORE keeps the destination card as-is; the
+                    // source (and any third-paper) card rows go away as before.
+                    db.cardStateDao().rekeyToPaperChunked(crossPaperIds, targetPaperId)
+                    db.cardStateDao().deleteOtherPapersChunked(crossPaperIds, targetPaperId)
+                    // Non-colliding history follows its card. For a collision
+                    // the destination card keeps only its own history — merging
+                    // the source's reviews into it would invent a memory nobody
+                    // earned — so the source rows are deleted instead. Both
+                    // operations change a per-paper report, so both count.
+                    val rekeyed = db.reviewLogDao()
+                        .rekeyToPaperChunked(crossPaperIds - collisions, targetPaperId)
+                    val deletedOnCollision = db.reviewLogDao()
+                        .deleteOtherPapersChunked(collisions, targetPaperId)
+                    reviewRowsChanged = rekeyed + deletedOnCollision
+                    // Lifetime aggregates key on the question id alone; only
+                    // their display paper/category need re-pointing so History
+                    // groups the moved question under its new home. Collided
+                    // ids are included: the row's counters belong to the kept
+                    // destination card and must still name the destination.
+                    val targetPaperTitle = db.paperDao().getById(targetPaperId)?.title.orEmpty()
+                    val targetCategoryTitle = db.categoryDao().getById(targetCategoryId)?.title.orEmpty()
+                    db.questionStatsDao().rekeyToPaperChunked(
+                        crossPaperIds, targetPaperId, targetPaperTitle, targetCategoryTitle
+                    )
                 }
             }
             // Re-placement is deliberately NOT done here: placeWithGroup (run
@@ -523,7 +563,25 @@ internal class QuestionStore(
             // category and converges, while a whole-group reorder here would
             // shuffle unrelated rows of the target around the group.
         }
-        return reviewRowsRemoved
+        return reviewRowsChanged
+    }
+
+    /**
+     * Every question a move of [questionIds] would actually touch.
+     *
+     * A passage group occurs together, so selecting one member moves the whole
+     * group ([moveQuestionsToCategory]); the move dialog needs that set to
+     * count what it is about to do instead of counting only the ticked rows
+     * (question_actions_audit.md QA-02).
+     */
+    suspend fun moveGroupIds(questionIds: Collection<String>): Set<String> {
+        if (questionIds.isEmpty()) return emptySet()
+        val rows = db.questionDao().getIdCategoryPassageByIdsChunked(questionIds.toList())
+        val ids = LinkedHashSet(rows.map { it.id })
+        rows.mapNotNull { it.passageId }.distinct().forEach { passageId ->
+            ids += db.passageDao().memberIds(passageId)
+        }
+        return ids
     }
 
     /** Deep-copies questions into another category (appended after siblings). */
@@ -651,7 +709,7 @@ internal class QuestionStore(
      * passage that lives elsewhere is moved over before being placed with
      * the group. No-op when the categories already match.
      *
-     * Returns the number of review rows removed when the move crosses a paper
+     * Returns the number of review rows re-keyed when the move crosses a paper
      * boundary.
      */
     internal suspend fun enforcePassageCategory(questionId: String, passageId: String): Int {

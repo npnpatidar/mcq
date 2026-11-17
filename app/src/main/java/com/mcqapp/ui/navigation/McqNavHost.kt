@@ -199,23 +199,28 @@ fun McqNavHost(repository: McqRepository) {
             SearchScreen(navController = navController)
         }
         composable(
-            route = "editor?questionId={questionId}&paperId={paperId}&categoryId={categoryId}",
+            route = "editor?questionId={questionId}&paperId={paperId}&categoryId={categoryId}&source={source}",
             arguments = listOf(
                 navArgument("questionId") { type = NavType.StringType; defaultValue = "" },
                 navArgument("paperId") { type = NavType.StringType; defaultValue = "" },
-                navArgument("categoryId") { type = NavType.StringType; defaultValue = "" }
+                navArgument("categoryId") { type = NavType.StringType; defaultValue = "" },
+                // Absent on links built before a source existed; those infer
+                // database/new from the id, exactly as before.
+                navArgument("source") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             Logger.i(
                 "NAV", "editor screen: questionId=${entry.arguments?.getString("questionId")}, " +
                     "paperId=${entry.arguments?.getString("paperId")}, " +
-                    "categoryId=${entry.arguments?.getString("categoryId")}"
+                    "categoryId=${entry.arguments?.getString("categoryId")}, " +
+                    "source='${entry.arguments?.getString("source")}'"
             )
             QuestionEditorScreen(
                 repository = repository,
                 questionId = entry.arguments?.getString("questionId").orEmpty(),
                 paperId = entry.arguments?.getString("paperId").orEmpty(),
                 categoryId = entry.arguments?.getString("categoryId").orEmpty(),
+                source = entry.arguments?.getString("source").orEmpty(),
                 navController = navController
             )
         }

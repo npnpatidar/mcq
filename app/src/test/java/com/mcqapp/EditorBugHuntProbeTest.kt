@@ -6,6 +6,7 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.ui.editor.EditorSession
+import com.mcqapp.ui.editor.EditorSource
 import com.mcqapp.ui.editor.EditorViewModel
 import com.mcqapp.ui.importscreen.ImportDataHolder
 import org.junit.After
@@ -43,13 +44,11 @@ class EditorBugHuntProbeTest {
     )
 
     private fun arm(dto: QuestionDto) {
-        ImportDataHolder.editingFromImport = true
         ImportDataHolder.pendingEditQuestion = dto
     }
 
     @After
     fun tearDown() {
-        ImportDataHolder.editingFromImport = false
         ImportDataHolder.pendingEditQuestion = null
         EditorSession.clear()
     }
@@ -79,7 +78,10 @@ class EditorBugHuntProbeTest {
             writer = { dto -> byId[dto.id] = dto }
         )
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val vm = EditorViewModel(app, questionId = "q1", paperId = "", categoryId = "")
+        val vm = EditorViewModel(
+            app, questionId = "q1", paperId = "", categoryId = "",
+            source = EditorSource.IMPORT
+        )
         assertTrue(vm.state.value.loading || vm.state.value.questionId == "q1")
         assertFalse(vm.state.value.loading)
 
@@ -104,7 +106,10 @@ class EditorBugHuntProbeTest {
         arm(dto("imported-1"))
         EditorSession.start(ids = listOf("imported-1"), index = 0)
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val vm = EditorViewModel(app, questionId = "imported-1", paperId = "", categoryId = "")
+        val vm = EditorViewModel(
+            app, questionId = "imported-1", paperId = "", categoryId = "",
+            source = EditorSource.IMPORT
+        )
         assertFalse(vm.state.value.loading)
         assertFalse("isNew=false -> the Delete button renders", vm.state.value.isNew)
         assertTrue(vm.state.value.canSave)
@@ -122,7 +127,10 @@ class EditorBugHuntProbeTest {
         arm(d)
         EditorSession.start(ids = listOf("q-key"), index = 0)
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val vm = EditorViewModel(app, questionId = "q-key", paperId = "", categoryId = "")
+        val vm = EditorViewModel(
+            app, questionId = "q-key", paperId = "", categoryId = "",
+            source = EditorSource.IMPORT
+        )
         assertFalse(vm.state.value.loading)
 
         vm.toggleCorrect("a")
@@ -159,7 +167,10 @@ class EditorBugHuntProbeTest {
         )
         arm(d)
         val app = ApplicationProvider.getApplicationContext<Application>()
-        val vm = EditorViewModel(app, questionId = "q-imgopt", paperId = "", categoryId = "")
+        val vm = EditorViewModel(
+            app, questionId = "q-imgopt", paperId = "", categoryId = "",
+            source = EditorSource.IMPORT
+        )
         assertFalse(vm.state.value.loading)
 
         val optA = vm.state.value.options.first { it.id == "a" }

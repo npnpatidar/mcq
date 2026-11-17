@@ -29,10 +29,24 @@ internal fun encodeCategoryList(ids: List<String>): String =
 internal fun decodeCategoryList(raw: String): List<String> =
     raw.split(",").filter { it.isNotBlank() }.map { Uri.decode(it) }
 
-fun editorRoute(questionId: String, paperId: String, categoryId: String): String =
+/**
+ * The editor route. [source] names what is being edited (`database`, `new`,
+ * `import`); it is appended only when given so every pre-source caller keeps
+ * its exact URL shape. An absent source stays inferable from the question id,
+ * but an import edit must state itself: after process death the draft is gone
+ * and the id alone would point at an unrelated database row
+ * (question_editor_audit.md H-04).
+ */
+fun editorRoute(
+    questionId: String,
+    paperId: String,
+    categoryId: String,
+    source: String = ""
+): String =
     "editor?questionId=${encode(questionId)}" +
         "&paperId=${encode(paperId)}" +
-        "&categoryId=${encode(categoryId)}"
+        "&categoryId=${encode(categoryId)}" +
+        if (source.isBlank()) "" else "&source=${encode(source)}"
 
 /**
  * Browse's route. [categoryIds] seed the screen's category filter (the ticked

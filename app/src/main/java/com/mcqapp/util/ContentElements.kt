@@ -420,7 +420,7 @@ private fun MixedContentView(
     val density = androidx.compose.ui.platform.LocalDensity.current
     val colorScheme = MaterialTheme.colorScheme
     val defaultSize = MaterialTheme.typography.bodyLarge.fontSize
-    val html = remember(elements, textStyle, colorScheme, density) {
+    val targetHtml = remember(elements, textStyle, colorScheme, density) {
         // WebView CSS px are density-independent like dp: scale the Sp
         // value by the font scale only. toPx() would also multiply by
         // the screen density and render several times too big, while
@@ -430,6 +430,17 @@ private fun MixedContentView(
         val color = textStyle?.color?.takeUnless { it == androidx.compose.ui.graphics.Color.Unspecified }
             ?: colorScheme.onSurface
         mixedContentHtml(elements, cssPx, color.toCssRgba())
+    }
+    // Coalesce preview updates: the WebView is keyed by the page, so a page
+    // rebuilt on every keystroke was destroyed and recreated (with its
+    // renderer) for each letter typed — question_editor_audit.md M-09. The
+    // last page still wins; only the intermediate ones are skipped.
+    var html by remember { mutableStateOf(targetHtml) }
+    LaunchedEffect(targetHtml) {
+        if (html != targetHtml) {
+            delay(180)
+            html = targetHtml
+        }
     }
     // The settled height of this exact page, if it has been rendered before.
     // Remembered per page so a resize of the block (and everything below it)

@@ -17,10 +17,10 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiMediaPool.kt` | 137 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiPackageReader.kt` | 1606 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiPackageWriter.kt` | 488 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiScheduling.kt` | 294 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiScheduling.kt` | 294 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiSchema11.kt` | 350 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/anki/AnkiTempFiles.kt` | 48 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/backup/Backup.kt` | 1368 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/backup/Backup.kt` | 1368 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/backup/JsonValueStream.kt` | 253 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/docx/DocxParser.kt` | 1081 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/docx/DocxReader.kt` | 545 | PENDING | — | — | — |
@@ -43,7 +43,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/AnkiApkgImporter.kt` | 95 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/BookmarkExport.kt` | 35 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/CardContent.kt` | 179 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/CardScheduleMapping.kt` | 99 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/CardScheduleMapping.kt` | 99 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/CategoryFilter.kt` | 23 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/ContentHash.kt` | 209 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/Exporter.kt` | 540 | PENDING | — | — | — |
@@ -51,24 +51,24 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/ImportPaperMatch.kt` | 48 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/ImportPreview.kt` | 103 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/ImportRunJournal.kt` | 93 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/Importer.kt` | 1092 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/Importer.kt` | 1092 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/JsonDto.kt` | 261 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/JsonPull.kt` | 309 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/LegacyParser.kt` | 1584 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/QuestionDtoMapper.kt` | 36 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/SelectionExport.kt` | 66 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/StreamingImportSession.kt` | 1008 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/io/StreamingImportSession.kt` | 1008 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/StreamingImporter.kt` | 221 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/AppDatabase.kt` | 1279 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/ChunkedQueries.kt` | 471 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/Daos.kt` | 3643 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/Entities.kt` | 705 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/AppDatabase.kt` | 1279 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/ChunkedQueries.kt` | 471 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/Daos.kt` | 3643 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/local/Entities.kt` | 705 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/local/PassageEntity.kt` | 50 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/local/QuestionPlacement.kt` | 50 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/Fsrs7Upgrade.kt` | 218 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/FsrsTuner.kt` | 269 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/GradingRulesStore.kt` | 278 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/HistoryStore.kt` | 1055 | IN REVIEW | B4 | parallel reviewers | partial: result/bookmark paths |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/Fsrs7Upgrade.kt` | 218 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/FsrsTuner.kt` | 269 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/GradingRulesStore.kt` | 278 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/HistoryStore.kt` | 1055 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/InstallFreshness.kt` | 131 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt` | 2422 | IN REVIEW | B1 | parallel reviewers | partial: Library/delete wrappers |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PaperStore.kt` | 457 | IN REVIEW | B1 | parallel reviewers | partial: cascade paths only |
@@ -78,7 +78,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/RepositorySettings.kt` | 960 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/SignalStore.kt` | 126 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StatsStore.kt` | 865 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StudyStore.kt` | 635 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StudyStore.kt` | 635 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/TestProgressStore.kt` | 204 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/AnswerReview.kt` | 55 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/AutoAdvance.kt` | 15 | PENDING | — | — | — |
@@ -87,12 +87,12 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/BulkOps.kt` | 19 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/CategoryCounts.kt` | 82 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/CategorySelection.kt` | 229 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/DayBoundary.kt` | 61 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/DayBoundary.kt` | 61 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Drill.kt` | 32 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ExamMode.kt` | 19 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ExamTiming.kt` | 93 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Feedback.kt` | 33 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Fsrs.kt` | 750 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Fsrs.kt` | 750 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/FsrsOptimizer.kt` | 740 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ImportWarnings.kt` | 76 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Marks.kt` | 43 | PENDING | — | — | — |
@@ -113,7 +113,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionOrder.kt` | 442 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionReviewPagingSource.kt` | 45 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Shuffle.kt` | 48 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SpacedRepetition.kt` | 673 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SpacedRepetition.kt` | 673 | FINDINGS | C | deep reviewer | review-reports/15-c-domain.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/StorageInfo.kt` | 54 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Submission.kt` | 40 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SubmitSummary.kt` | 60 | PENDING | — | — | — |
@@ -140,10 +140,10 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseScreen.kt` | 1318 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseViewModel.kt` | 1021 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseWindow.kt` | 42 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/AttemptLabels.kt` | 75 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/PagingStates.kt` | 69 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/StatsRangeChips.kt` | 51 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/TestTypeLabels.kt` | 58 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/AttemptLabels.kt` | 75 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/PagingStates.kt` | 69 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/StatsRangeChips.kt` | 51 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/TestTypeLabels.kt` | 58 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt` | 329 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorSession.kt` | 199 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorViewModel.kt` | 1405 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
@@ -207,14 +207,14 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyViewModel.kt` | 1400 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt` | 1280 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt` | 1469 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/AppThemes.kt` | 512 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/CustomTheme.kt` | 220 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/Theme.kt` | 61 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/VerdictColors.kt` | 108 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/AppThemes.kt` | 512 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/CustomTheme.kt` | 220 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/Theme.kt` | 61 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/VerdictColors.kt` | 108 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/BitmapDecoder.kt` | 60 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/BoundedRead.kt` | 149 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/ContentElements.kt` | 547 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/util/DelayedVisibility.kt` | 27 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/util/DelayedVisibility.kt` | 27 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/FontScale.kt` | 26 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/ImageUtils.kt` | 157 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/util/InlineHtml.kt` | 141 | PENDING | — | — | — |
@@ -227,8 +227,8 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Resources | `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` | 6 | PENDING | — | — | — |
 | Resources | `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` | 6 | PENDING | — | — | — |
 | Resources | `app/src/main/res/values/colors.xml` | 5 | PENDING | — | — | — |
-| Resources | `app/src/main/res/values/strings.xml` | 1219 | PENDING | — | — | — |
-| Resources | `app/src/main/res/values/themes.xml` | 6 | PENDING | — | — | — |
+| Resources | `app/src/main/res/values/strings.xml` | 1219 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
+| Resources | `app/src/main/res/values/themes.xml` | 6 | FINDINGS | E | deep reviewer | review-reports/17-e-design-a11y-strings.md |
 | Resources | `app/src/main/res/xml/backup_rules.xml` | 10 | PENDING | — | — | — |
 | Resources | `app/src/main/res/xml/data_extraction_rules.xml` | 28 | PENDING | — | — | — |
 | Resources | `app/src/main/res/xml/file_paths.xml` | 8 | PENDING | — | — | — |
@@ -467,7 +467,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Unit tests | `app/src/test/java/com/mcqapp/StreamingImportTest.kt` | 292 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/StreamingImporterEquivalenceTest.kt` | 525 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/StreamingImporterScaleTest.kt` | 102 | PENDING | — | — | — |
-| Unit tests | `app/src/test/java/com/mcqapp/StringResourceUsageTest.kt` | 195 | PENDING | — | — | — |
+| Unit tests | `app/src/test/java/com/mcqapp/StringResourceUsageTest.kt` | 195 | FINDINGS | E/G | deep reviewer | review-reports/17-e-design-a11y-strings.md; 19-g-tests-ci.md |
 | Unit tests | `app/src/test/java/com/mcqapp/StudyActionStructureTest.kt` | 237 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/StudyCategoryScopeTest.kt` | 334 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/StudyCountsInputTest.kt` | 224 | PENDING | — | — | — |
@@ -499,10 +499,10 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Unit tests | `app/src/test/java/com/mcqapp/TestTimingTest.kt` | 46 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/ThemeSchemeTest.kt` | 331 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/TrendsTest.kt` | 116 | PENDING | — | — | — |
-| Unit tests | `app/src/test/java/com/mcqapp/UiAccessibilityTest.kt` | 90 | PENDING | — | — | — |
+| Unit tests | `app/src/test/java/com/mcqapp/UiAccessibilityTest.kt` | 90 | FINDINGS | E/G | deep reviewer | review-reports/17-e-design-a11y-strings.md; 19-g-tests-ci.md |
 | Unit tests | `app/src/test/java/com/mcqapp/UpdateAnswersOnDuplicateTest.kt` | 206 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/VersionCodeGuardTest.kt` | 38 | PENDING | — | — | — |
-| Unit tests | `app/src/test/java/com/mcqapp/WebViewLifecycleTest.kt` | 124 | PENDING | — | — | — |
+| Unit tests | `app/src/test/java/com/mcqapp/WebViewLifecycleTest.kt` | 124 | FINDINGS | E/G | deep reviewer | review-reports/17-e-design-a11y-strings.md; 19-g-tests-ci.md |
 | Unit tests | `app/src/test/java/com/mcqapp/WorkloadAdditionsTest.kt` | 240 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/WrapperValidationTest.kt` | 51 | PENDING | — | — | — |
 | Unit tests | `app/src/test/java/com/mcqapp/XmlEscapingAppendableTest.kt` | 54 | PENDING | — | — | — |
@@ -526,11 +526,11 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Instrumentation tests | `app/src/androidTest/java/com/mcqapp/StudyAndSelectionUiTest.kt` | 1064 | PENDING | — | — | — |
 | Config / schema | `AGENTS.md` | 126 | PENDING | — | — | — |
 | Config / schema | `PROJECT_NOTES.md` | 312 | PENDING | — | — | — |
-| Config / schema | `app/build.gradle.kts` | 289 | PENDING | — | — | — |
+| Config / schema | `app/build.gradle.kts` | 289 | FINDINGS | G | deep reviewer | review-reports/19-g-tests-ci.md |
 | Config / schema | `build.gradle.kts` | 6 | PENDING | — | — | — |
 | Config / schema | `settings.gradle.kts` | 17 | PENDING | — | — | — |
 | Config / schema | `gradle.properties` | 6 | PENDING | — | — | — |
-| Config / schema | `.github/workflows/build.yml` | 216 | PENDING | — | — | — |
-| Config / schema | `.github/workflows/release.yml` | 130 | PENDING | — | — | — |
+| Config / schema | `.github/workflows/build.yml` | 216 | FINDINGS | G | deep reviewer | review-reports/19-g-tests-ci.md |
+| Config / schema | `.github/workflows/release.yml` | 130 | FINDINGS | G | deep reviewer | review-reports/19-g-tests-ci.md |
 | Config / schema | `app/src/main/AndroidManifest.xml` | 45 | PENDING | — | — | — |
-| Config / schema | `app/schemas/com.mcqapp.data.local.AppDatabase/28.json` | 1832 | PENDING | — | — | — |
+| Config / schema | `app/schemas/com.mcqapp.data.local.AppDatabase/28.json` | 1832 | FINDINGS | D | deep reviewer | review-reports/16-d-data-integrity.md |

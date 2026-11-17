@@ -329,6 +329,33 @@ class QuestionStatsRecomputeTest {
         )
     }
 
+    /**
+     * The write path (not recompute): a later skip-only attempt must leave the
+     * stored last-graded standing untouched. Before the fix the increment took
+     * the just-written skip row's `isCorrect = false` and its finishedAt, so
+     * the standing drifted from what deleting the attempt would recompute.
+     */
+    @Test
+    fun aSkipOnlyAttemptDoesNotAdvanceTheStoredLastStanding() = runBlocking {
+        save(1000L, listOf(result("q1")), "RANDOM", 2)
+        save(2000L, listOf(result("q1", skip = true)), "RANDOM", 2)
+
+        val after = stats("q1")!!
+        assertTrue("the graded correct answer stays the standing", after.lastCorrect)
+        assertEquals(1000L, after.lastFinishedAt)
+    }
+
+    @Test
+    fun anUngradedOnlyAttemptDoesNotAdvanceTheStoredLastStanding() = runBlocking {
+        save(1000L, listOf(result("q1")), "RANDOM", 2)
+        // No answer key: ungraded rows carry no standing evidence either.
+        save(2000L, listOf(result("q1", graded = false)), "RANDOM", 2)
+
+        val after = stats("q1")!!
+        assertTrue(after.lastCorrect)
+        assertEquals(1000L, after.lastFinishedAt)
+    }
+
     // The write-path guard (section 12.3): the last-standing pair follows
     // `finishedAt DESC, id DESC`. On insert, `>=` is that rule because the new
     // result always has the largest id.

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.util.Logger
@@ -66,8 +67,12 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
                 Logger.e("SESSIONS", "Failed to load the session history", e)
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
+                        // The exception is logged above; the UI never shows its
+                        // raw message, only the one user-facing string.
+                        val message =
+                            getApplication<Application>().getString(R.string.sessions_load_error)
                         _state.update {
-                            it.copy(loading = false, error = e.message ?: "error")
+                            it.copy(loading = false, error = message)
                         }
                     }
                 }

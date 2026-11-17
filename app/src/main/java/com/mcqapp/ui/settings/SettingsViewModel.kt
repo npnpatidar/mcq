@@ -542,17 +542,39 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _storage = MutableStateFlow<com.mcqapp.domain.StorageInfo.Report?>(null)
     val storage: StateFlow<com.mcqapp.domain.StorageInfo.Report?> = _storage.asStateFlow()
 
+    /**
+     * A failed storage measurement, shown by the Backup & data card with a
+     * Retry action. Null while loading and after a successful load. The old
+     * code only logged the failure, so a locked database or an IO error left
+     * `_storage` null and the card stuck on "Measuring…" with no recovery.
+     */
+    private val _storageError = MutableStateFlow<String?>(null)
+    val storageError: StateFlow<String?> = _storageError.asStateFlow()
+
     init {
         refreshStorage()
     }
 
     fun refreshStorage() {
+        refreshStorage { repository.storageReport() }
+    }
+
+    /**
+     * The load is a parameter so the state transitions live in the pure
+     * [loadStorageInto] helper and can be tested without a Robolectric
+     * application or a database. The public [refreshStorage] (used by init and
+     * by the card's Retry button) passes the real repository loader.
+     */
+    internal fun refreshStorage(load: suspend () -> com.mcqapp.domain.StorageInfo.Report) {
         viewModelScope.launch {
-            try {
-                _storage.value = repository.storageReport()
-            } catch (e: Exception) {
-                Logger.e("SETTINGS", "storageReport failed", e)
-            }
+            loadStorageInto(
+                load = load,
+                onReport = { _storage.value = it },
+                onError = { _storageError.value = it },
+                errorMessage = getApplication<Application>()
+                    .getString(R.string.storage_load_failed),
+                onException = { Logger.e("SETTINGS", "storageReport failed", it) }
+            )
         }
     }
 

@@ -730,6 +730,17 @@ class TestViewModel(
                 delay(1000)
                 val current = _state.value
                 if (current.submitted || current.remainingSeconds <= 0) break
+                // A dialog, the palette or the review sheet covers the question:
+                // that is not exam time. Mirror the dwell gate — freeze the
+                // anchor while covered so the interval is neither charged nor
+                // able to reach zero and auto-submit behind the overlay. Every
+                // covered tick re-anchors, so resuming carries the same remaining
+                // forward with no restart and never a second timer job.
+                if (!timerShouldRun(current)) {
+                    timerAnchorRemaining = current.remainingSeconds
+                    timerAnchorElapsed = SystemClock.elapsedRealtime()
+                    continue
+                }
                 val target = Countdown.remainingAt(
                     timerAnchorRemaining, timerAnchorElapsed, SystemClock.elapsedRealtime()
                 )
@@ -852,6 +863,20 @@ class TestViewModel(
             answerable = !state.submitted && state.currentQuestion != null && !state.loading
         )
 
+    /**
+     * The exam countdown's twin of [dwellShouldRun]: a covered question or a
+     * still-pending resume choice withholds the countdown exactly as it withholds
+     * dwell. The learner's tap-to-pause is deliberately *not* a countdown pause —
+     * that control belongs to the per-question clock — but every blocking
+     * surface the screen reports through [setQuestionVisible] gates both.
+     */
+    private fun timerShouldRun(state: TestUiState): Boolean =
+        clockMayRun(
+            questionInView = questionInView,
+            pausedByUser = false,
+            answerable = !state.submitted && state.currentQuestion != null && !state.loading
+        ) && state.resumeOffer == null
+
     /** Backgrounding pauses dwell but never turns a deliberate pause off. */
     fun onAppBackgrounded() {
         setDwellActive(false)
@@ -868,8 +893,18 @@ class TestViewModel(
 
     /** Called when a dialog or question palette covers the question body. */
     fun setQuestionVisible(visible: Boolean) {
+        val wasVisible = questionInView
         questionInView = visible
         setDwellActive(visible)
+        // Mirror setDwellActive's anchor move for the exam clock: freeze the
+        // moment a cover goes up and carry that exact remaining forward the
+        // moment it is dismissed, so no covered second is charged. No job is
+        // cancelled or launched here — the single timer loop gates itself on
+        // [timerShouldRun], so a cover can never double-start the countdown.
+        if (wasVisible != visible) {
+            timerAnchorRemaining = _state.value.remainingSeconds
+            timerAnchorElapsed = SystemClock.elapsedRealtime()
+        }
     }
 
     /** The tap-to-pause control on the question clock. */

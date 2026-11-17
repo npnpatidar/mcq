@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -162,6 +163,32 @@ class DeferredDbQueriesTest {
         assertEquals(breakdown.title, topic.title)
         assertEquals(breakdown.graded, topic.asked)
         assertEquals(breakdown.correct, topic.correct)
+    }
+
+    /**
+     * A historical attempt keeps its question rows; what may change is the
+     * question's current category. A move to another paper must read as
+     * unresolved so the report cannot offer a Study link into that paper.
+     */
+    @Test
+    fun aQuestionMovedToAnotherPaperIsUnresolvedInAnOlderReport() = runBlocking {
+        val attemptId = saveAttempt(
+            selections = mapOf("q1" to setOf("q1-a"), "q2" to setOf("q2-a")),
+            finishedAt = 1_000L
+        )
+        val before = repository.getReportRows(attemptId)
+        assertEquals("c1", before.single { it.questionId == "q1" }.currentCategoryId)
+        assertEquals("c1", before.single { it.questionId == "q2" }.currentCategoryId)
+
+        repository.ensurePaperAndCategory("p2", "Other Paper", "c2", "Other Cat")
+        repository.moveQuestionsToCategory(listOf("q1"), "c2")
+
+        val after = repository.getReportRows(attemptId)
+        assertNull(
+            "a cross-paper move must not link into the foreign paper",
+            after.single { it.questionId == "q1" }.currentCategoryId
+        )
+        assertEquals("c1", after.single { it.questionId == "q2" }.currentCategoryId)
     }
 
     // --- §9.1 item 2: the standing rule is finishedAt DESC, id DESC -----------

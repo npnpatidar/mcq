@@ -159,8 +159,9 @@ class BulkOpsDbTest {
             repCorrect = 2,
             repWrong = 1,
             repSkip = 0,
-            isCorrect = true,
-            finishedAt = 5_000L
+            finishedAt = 5_000L,
+            lastGradedIsCorrect = true,
+            lastGradedFinishedAt = 5_000L
         )
     }
 

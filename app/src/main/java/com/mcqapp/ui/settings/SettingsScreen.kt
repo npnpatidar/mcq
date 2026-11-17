@@ -66,6 +66,7 @@ fun SettingsScreen(
     val fsrs7Notice by viewModel.fsrs7Notice.collectAsStateWithLifecycle()
     val pdfTwoColumn by viewModel.pdfTwoColumn.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val storageError by viewModel.storageError.collectAsStateWithLifecycle()
 
     // rememberSaveable: the pickers and confirm dialogs recreate the activity,
     // and plain `remember` dismissed the confirm and lost the picked URI and
@@ -256,6 +257,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             BackupDataSection(
                 storage = storage,
+                storageError = storageError,
                 updateAnswersOnDuplicate = updateAnswersOnDuplicate,
                 pdfTwoColumn = pdfTwoColumn,
                 busy = busy,

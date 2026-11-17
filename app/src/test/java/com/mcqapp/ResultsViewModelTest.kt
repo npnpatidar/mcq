@@ -2,10 +2,15 @@ package com.mcqapp
 
 import android.content.Context
 import android.os.Looper
+import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.QuestionResultEntity
+import com.mcqapp.data.repository.ResultPageKey
+import com.mcqapp.domain.NumberedResult
+import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.ui.results.ResultsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -123,6 +128,77 @@ class ResultsViewModelTest {
         )
         val rows = app.repository.getResultCategoryBreakdown(attemptId)
         assertEquals(listOf("Cat" to (1 to 2)), rows.map { it.title to (it.correct to it.graded) })
+    }
+
+    /**
+     * The Saved chip's paging source reads the bookmark set at load time.
+     * A toggle must update that set BEFORE invalidating the source; an
+     * out-of-order invalidate would reload against the previous set and show
+     * a stale list. The fake source records the set visible at invalidation.
+     */
+    @Test
+    fun bookmarkToggleRefreshesSavedOnlyAfterTheSetIsUpdated() = runBlocking {
+        val dao = app.repository.db().attemptDao()
+        val attemptId = dao.insertAttempt(
+            AttemptEntity(
+                paperId = "p1",
+                title = "Paper",
+                totalQuestions = 2,
+                correctCount = 2,
+                wrongCount = 0,
+                skippedCount = 0,
+                score = 2.0,
+                maxScore = 2.0,
+                durationSeconds = 60,
+                finishedAt = 100L
+            )
+        )
+        dao.insertResults(
+            listOf(
+                resultEntity(attemptId, "q1", "Cat", correct = true, graded = true),
+                resultEntity(attemptId, "q2", "Cat", correct = true, graded = true)
+            )
+        )
+        // Seed one bookmark so the SAVED filter does not fall back to ALL on
+        // the initial empty emission.
+        app.repository.toggleBookmark("q1")
+
+        val viewModel = ResultsViewModel(app, attemptId)
+        assertTrue(
+            "the seeded bookmark must reach the state set",
+            awaitIdle { !viewModel.state.value.loading && "q1" in viewModel.state.value.bookmarked }
+        )
+        viewModel.updateFilter(ReviewFilters.SAVED)
+        awaitIdle { true } // let the request change settle
+
+        val seenAtInvalidation = mutableListOf<Set<String>>()
+        val fake = object : PagingSource<ResultPageKey, NumberedResult>() {
+            override fun getRefreshKey(
+                state: PagingState<ResultPageKey, NumberedResult>
+            ): ResultPageKey? = null
+
+            override suspend fun load(
+                params: LoadParams<ResultPageKey>
+            ): PagingSource.LoadResult<ResultPageKey, NumberedResult> =
+                PagingSource.LoadResult.Page(emptyList<NumberedResult>(), null, null)
+        }
+        fake.registerInvalidatedCallback {
+            seenAtInvalidation += viewModel.state.value.bookmarked
+        }
+        viewModel.liveSource = fake
+
+        // Toggle q2 through the real repository: Room emits the updated set.
+        app.repository.toggleBookmark("q2")
+
+        assertTrue(
+            "the bookmark change must invalidate the Saved list",
+            awaitIdle { seenAtInvalidation.isNotEmpty() }
+        )
+        assertEquals(setOf("q1", "q2"), viewModel.state.value.bookmarked)
+        assertTrue(
+            "every invalidation must observe the NEW set, never the old one: $seenAtInvalidation",
+            seenAtInvalidation.all { it == setOf("q1", "q2") }
+        )
     }
 
     private fun resultEntity(

@@ -15,6 +15,7 @@ import com.mcqapp.data.export.ReportCsv
 import com.mcqapp.data.export.ReportCsvHeader
 import com.mcqapp.data.export.ReportCsvRow
 import com.mcqapp.data.export.ReportPdf
+import com.mcqapp.data.local.QuestionResultEntity
 import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.ResultPageKey
@@ -75,7 +76,7 @@ class ResultsViewModel(
     private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL))
 
     /** The live paging source; bookmark writes invalidate it in place (F14). */
-    private var liveSource: PagingSource<ResultPageKey, NumberedResult>? = null
+    internal var liveSource: PagingSource<ResultPageKey, NumberedResult>? = null
 
     val pagingData: Flow<PagingData<NumberedResult>> = request
         .flatMapLatest { req ->
@@ -108,21 +109,29 @@ class ResultsViewModel(
 
     init {
         reload()
+        // The bookmark SET is the single source of truth for the Saved chip.
+        // The paging source reads it at load time, so we must update the set
+        // BEFORE invalidating — a bare table-change signal can arrive first and
+        // would reload against the previous set, showing a stale Saved list.
+        // There is deliberately no `observeBookmarkChanges()` collector: that
+        // is exactly the out-of-order signal this ordering removes.
         viewModelScope.launch {
-            repository.observeBookmarkChanges().collect { liveSource?.invalidate() }
+            repository.observeBookmarks().collect { applyBookmarks(it) }
         }
-        viewModelScope.launch {
-            repository.observeBookmarks().collect { ids ->
-                val saved = ids.toSet()
-                _state.update { it.copy(bookmarked = saved) }
-                // The paging source re-reads the set per load and invalidates
-                // on this very table, so nothing needs re-keying here; only
-                // an emptied Saved chip falls back to the whole attempt.
-                if (saved.isEmpty() && _state.value.filter == ReviewFilters.SAVED) {
-                    updateFilter(ReviewFilters.ALL)
-                }
-            }
+    }
+
+    /** Applies a fresh bookmark set, then (only then) refreshes the Saved list. */
+    internal fun applyBookmarks(ids: List<String>) {
+        val saved = ids.toSet()
+        val leavingSaved = _state.value.filter == ReviewFilters.SAVED && saved.isEmpty()
+        _state.update { it.copy(bookmarked = saved) }
+        if (leavingSaved) {
+            // An emptied Saved chip falls back to the whole attempt. The
+            // request change rebuilds the pager against the fresh set.
+            updateFilter(ReviewFilters.ALL)
+            return
         }
+        liveSource?.invalidate()
     }
 
     /** Loads the attempt. Exposed so a failed load can be retried. */
@@ -203,21 +212,7 @@ class ResultsViewModel(
         try {
             val entities = repository.getAttemptResultEntities(attemptId)
             val tagsById = repository.getQuestionTagsByIds(entities.map { it.questionId }.distinct())
-            val rows = entities.mapIndexed { index, entity ->
-                val result = when {
-                    entity.selectedOptionIds.isBlank() -> "skipped"
-                    entity.isCorrect -> "correct"
-                    else -> "wrong"
-                }
-                ReportCsvRow(
-                    number = index + 1,
-                    questionId = entity.questionId,
-                    category = entity.categoryTitle,
-                    result = result,
-                    dwellSeconds = entity.dwellSeconds,
-                    tags = tagsById[entity.questionId].orEmpty()
-                )
-            }
+            val rows = buildCsvRows(entities, tagsById)
             val header = ReportCsvHeader(
                 attemptId = report.attempt.id,
                 paperTitle = report.attempt.title,
@@ -278,4 +273,35 @@ class ResultsViewModel(
     companion object {
         private const val RESULTS_PAGE = 40
     }
+}
+
+/**
+ * Maps stored result rows to CSV verdicts. Kept as a pure function so the
+ * verdict mapping the export writes can be pinned by a test without going
+ * through FileProvider and a share intent.
+ *
+ * An ungraded question (no answer key at the time of the attempt) is reported
+ * as "ungraded" even when the learner answered it — the result screen shows
+ * the same "Not scored" tag for it, so calling it "wrong" in the export would
+ * contradict what the learner saw. The ungraded check comes first so a
+ * selected option on an ungraded question cannot be mislabelled.
+ */
+internal fun buildCsvRows(
+    entities: List<QuestionResultEntity>,
+    tagsById: Map<String, String>
+): List<ReportCsvRow> = entities.mapIndexed { index, entity ->
+    val result = when {
+        entity.correctOptionIds.isBlank() -> "ungraded"
+        entity.selectedOptionIds.isBlank() -> "skipped"
+        entity.isCorrect -> "correct"
+        else -> "wrong"
+    }
+    ReportCsvRow(
+        number = index + 1,
+        questionId = entity.questionId,
+        category = entity.categoryTitle,
+        result = result,
+        dwellSeconds = entity.dwellSeconds,
+        tags = tagsById[entity.questionId].orEmpty()
+    )
 }

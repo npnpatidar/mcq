@@ -38,6 +38,9 @@ import com.mcqapp.ui.stats.charts.LineChart
 import com.mcqapp.ui.stats.charts.LineSeries
 import com.mcqapp.ui.stats.charts.MeterBar
 import com.mcqapp.ui.stats.charts.formatPct
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -251,6 +254,10 @@ private fun CalibrationCard(bundle: RetentionData) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp)
         )
+        // The evidence window's own provenance. It says when the window began
+        // and whether a parameter refit restarted it; it carries no raw epoch
+        // millis and disappears entirely for a learner with no evidence yet.
+        bundle.calibrationReport?.let { CalibrationEpochCaption(it) }
         // Only this part reads the grade labels; the chart above does not.
         if (bundle.timeBasedGrading) {
             bundle.calibrationReport?.let { report ->
@@ -399,6 +406,36 @@ private fun CalibrationEvidence(
     }
 }
 
+/**
+ * When the evidence window started, and whether a parameter refit makes it
+ * unreliable. The date is formatted for the device locale and time zone, never shown as the
+ * raw epoch millis the report stores. [evidenceWindowCaption] gates the whole
+ * block so a learner with no reviews sees no caption at all.
+ */
+@Composable
+private fun CalibrationEpochCaption(report: Calibration.Report) {
+    val caption = evidenceWindowCaption(report)
+    if (!caption.show) return
+    val date = formatEvidenceDate(caption.epochStart)
+    Column(
+        modifier = Modifier.padding(top = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(
+            stringResource(R.string.stats_calibration_window_began, date),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (caption.refit) {
+            Text(
+                stringResource(R.string.stats_calibration_window_refit),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun ContrastLine(
     label: String,
@@ -416,11 +453,11 @@ private fun ContrastLine(
     }
     Text(
         stringResource(
-            R.string.stats_calibration_contrast,
+            R.string.stats_calibration_contrast_disclosed,
             label,
-            formatSignedPp(contrast.value ?: 0.0),
-            formatSignedPp(contrast.low ?: 0.0),
-            formatSignedPp(contrast.high ?: 0.0),
+            formatBound(contrast.value),
+            formatBound(contrast.low),
+            formatBound(contrast.high),
             decision
         ),
         style = MaterialTheme.typography.labelSmall,
@@ -430,15 +467,52 @@ private fun ContrastLine(
 
 /** A probability as a one-decimal percentage point value. */
 private fun formatPp(value: Double): String =
-    String.format(java.util.Locale.ENGLISH, "%.1f", value * 100)
+    String.format(Locale.ENGLISH, "%.1f", value * 100)
 
 /** Signed percentage points, for a contrast or an interval bound. */
 private fun formatSignedPp(value: Double): String {
-    val text = String.format(java.util.Locale.ENGLISH, "%.1f", value * 100)
+    val text = String.format(Locale.ENGLISH, "%.1f", value * 100)
     return if (value >= 0) "+$text" else text
 }
 
-private fun Double.roundTo3(): String = String.format(java.util.Locale.ENGLISH, "%.3f", this)
+/**
+ * A contrast value or bound as a complete signed-percentage-point token. A
+ * missing bound is genuinely unknown, so it reads as a bare dash — never a
+ * fabricated "+0.0 pp" with a stray unit appended by the format string.
+ */
+internal fun formatBound(value: Double?): String =
+    value?.let { formatSignedPp(it) + " pp" } ?: EM_DASH
+
+private const val EM_DASH = "—"
+
+/**
+ * The pure decision behind the evidence-window caption. No Compose and no
+ * formatting here, so it can be tested on the JVM: the caption is shown only
+ * when the report actually carries evidence inside a dated window, and the
+ * refit line is shown only when the report says a refit restarted that window.
+ */
+internal data class EvidenceWindowCaption(
+    val show: Boolean,
+    val epochStart: Long,
+    val refit: Boolean
+)
+
+internal fun evidenceWindowCaption(report: Calibration.Report): EvidenceWindowCaption {
+    val show = !report.isEmpty && report.epochStart > 0L && report.epochDays > 0
+    return EvidenceWindowCaption(
+        show = show,
+        epochStart = report.epochStart,
+        refit = show && report.readiness.refitInEpoch
+    )
+}
+
+/** A device-locale, device-time-zone date for the evidence window's start. */
+internal fun formatEvidenceDate(
+    epochMs: Long,
+    locale: Locale = Locale.getDefault()
+): String = DateFormat.getDateInstance(DateFormat.MEDIUM, locale).format(Date(epochMs))
+
+private fun Double.roundTo3(): String = String.format(Locale.ENGLISH, "%.3f", this)
 
 @Composable
 private fun GroupRetentionCard(bundle: RetentionData) {

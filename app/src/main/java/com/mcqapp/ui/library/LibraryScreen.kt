@@ -675,27 +675,42 @@ fun LibraryScreen(
             onDismissRequest = { viewModel.dismissImportReport() },
             title = { Text(stringResource(R.string.imported)) },
             text = {
-                Text(
-                    buildString {
-                        append(importReportTitle ?: "Deck")
-                        append(": ")
-                        append("${report.newPapers} new")
-                        if (report.updatedPapers > 0) append(", ${report.updatedPapers} updated")
-                        append(" paper${if (report.newPapers + report.updatedPapers == 1) "" else "s"}, ")
-                        append("${report.newQuestions} new questions")
-                        if (report.updatedQuestions > 0) append(", ${report.updatedQuestions} updated")
-                        if (report.answersRefreshed > 0) {
-                            append(", ${report.answersRefreshed} answers refreshed")
+                Column {
+                    Text(
+                        buildString {
+                            append(importReportTitle ?: "Deck")
+                            append(": ")
+                            append("${report.newPapers} new")
+                            if (report.updatedPapers > 0) append(", ${report.updatedPapers} updated")
+                            append(" paper${if (report.newPapers + report.updatedPapers == 1) "" else "s"}, ")
+                            append("${report.newQuestions} new questions")
+                            if (report.updatedQuestions > 0) append(", ${report.updatedQuestions} updated")
+                            if (report.answersRefreshed > 0) {
+                                append(", ${report.answersRefreshed} answers refreshed")
+                            }
+                            if (report.duplicateQuestions > 0) {
+                                append(", ${report.duplicateQuestions} already present")
+                            }
+                            append('.')
+                            if (report.restoredSchedules > 0) {
+                                append(" Review progress kept for ${report.restoredSchedules} cards.")
+                            }
                         }
-                        if (report.duplicateQuestions > 0) {
-                            append(", ${report.duplicateQuestions} already present")
-                        }
-                        append('.')
-                        if (report.restoredSchedules > 0) {
-                            append(" Review progress kept for ${report.restoredSchedules} cards.")
-                        }
-                    }
-                )
+                    )
+                    // This dialog is opened only by importAnkiPackage, so an
+                    // Anki deck's scheduling memory is always in play here. The
+                    // note is informational and never blocks the dialog.
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.anki_memory_notice_title),
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.anki_memory_notice_body),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissImportReport() }) { Text(stringResource(R.string.ok)) }

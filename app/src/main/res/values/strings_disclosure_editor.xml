@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_save_resets_schedule_note">Saving this edit will restart this card\'s study schedule. Its review history stays.</string>
+</resources>

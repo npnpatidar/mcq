@@ -47,6 +47,22 @@ const val JSON_STREAM_THRESHOLD_BYTES: Int = 4 * 1024 * 1024
 /** How many questions of a large bank the preview keeps on the heap. */
 const val PREVIEW_SAMPLE_SIZE: Int = 500
 
+/**
+ * Where a previewed file came from. Only [ANKI] carries the scheduling-memory
+ * disclosure: a plain JSON bank or a Word document has no Anki memory state to
+ * lose, so neither must show that note.
+ */
+enum class ImportSource { ANKI, DOCX, JSON }
+
+/**
+ * Whether the Anki scheduling-memory disclosure applies to [source].
+ *
+ * An unknown source answers false: we never warn someone about an Anki deck
+ * for a file we could not identify as one.
+ */
+internal fun ankiMemoryDisclosureApplies(source: ImportSource?): Boolean =
+    source == ImportSource.ANKI
+
 object ImportDataHolder {
     /**
      * Raw bytes of a picked JSON bank. Held as bytes, never as a String: a
@@ -136,6 +152,11 @@ data class ImportUiState(
     val previewTruncated: Boolean = false,
     /** The file's first paper has exactly one category, so the preview may rename it. */
     val singleCategoryPaper: Boolean = false,
+    /**
+     * Where the previewed file was classified from. Only an Anki deck shows the
+     * scheduling-memory disclosure; null means "not identified as Anki".
+     */
+    val importSource: ImportSource? = null,
     /** Ids the preview sample started with, to tell a preview deletion from an absent question. */
     val previewSampleIds: Set<String> = emptySet(),
     /** Fatal load failure (unreadable/corrupt file, no papers): shown as a dialog. */
@@ -518,6 +539,22 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     // not be retained twice) of the last directly-loaded JSON.
     private var loadedDirectFp: String? = null
 
+    // Classification of the picked file. Today only the JSON/Word loaders mark
+    // the preview source; an Anki disclosure is shown by the Library report
+    // path, which imports `.apkg` straight to the database.
+    private var currentSource: ImportSource? = null
+
+    /**
+     * Records where the picked file came from so the preview can decide whether
+     * the Anki scheduling-memory note applies. The JSON and Word loaders call
+     * this themselves; `.apkg` files bypass the preview entirely and get the
+     * note in the Library import report instead.
+     */
+    fun markSource(source: ImportSource) {
+        currentSource = source
+        _state.update { it.copy(importSource = source) }
+    }
+
     // Set only for a JSON the bounded preview could represent: how the
     // streaming import re-opens the file. Null means the whole-file path
     // (small JSON, docx).
@@ -543,6 +580,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadJsonBytes(bytes: ByteArray) {
         viewModelScope.launch {
+            markSource(ImportSource.JSON)
             val fp = withContext(Dispatchers.Default) { fingerprint(bytes) }
             if (fp == loadedDirectFp &&
                 (_state.value.questions.isNotEmpty() || _state.value.totalQuestionCount > 0)
@@ -578,6 +616,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadJsonUri(uri: Uri) {
         viewModelScope.launch {
+            markSource(ImportSource.JSON)
             val resolver = getApplication<Application>().contentResolver
             val key = "uri:$uri"
             if (key == loadedDirectFp &&
@@ -659,6 +698,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             totalQuestionCount = preview.totalQuestions,
             previewTruncated = sampleQuestions.size < preview.totalQuestions,
             singleCategoryPaper = preview.firstPaperCategoryCount == 1,
+            importSource = currentSource,
             previewSampleIds = sampleQuestions.mapTo(HashSet()) { it.id },
             paperTitleSuggestions = _state.value.paperTitleSuggestions,
             categorySuggestions = _state.value.categorySuggestions
@@ -673,6 +713,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadJsonText(text: String) {
         viewModelScope.launch {
+            markSource(ImportSource.JSON)
             val fp = withContext(Dispatchers.Default) { fingerprint(text.toByteArray()) }
             if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) {
                 Logger.d("IMPORTVM", "loadJsonText: same text already loaded " +
@@ -698,6 +739,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadDocx(bytes: ByteArray, fileName: String? = null) {
         viewModelScope.launch {
+            markSource(ImportSource.DOCX)
             try {
                 val parsed = withContext(Dispatchers.Default) {
                     com.mcqapp.data.docx.parseDocx(bytes)
@@ -791,6 +833,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             questions = allQuestions,
             parseWarnings = extraWarnings + backupNotice + file.warnings,
             originalFile = file,
+            importSource = currentSource,
             paperTitleSuggestions = _state.value.paperTitleSuggestions,
             categorySuggestions = _state.value.categorySuggestions
         )

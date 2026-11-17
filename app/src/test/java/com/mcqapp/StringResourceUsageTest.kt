@@ -163,9 +163,17 @@ class StringResourceUsageTest {
     }
 
     private fun definedResources(): Set<String> {
-        val xml = File("src/main/res/values/strings.xml").readText()
-        return Regex("""<string name="([a-z0-9_]+)">""").findAll(xml)
-            .map { it.groupValues[1] }.toSet()
+        // Resources may live in feature files as well as strings.xml: each
+        // disclosure keeps its captions in its own strings_*.xml, so discover
+        // them all rather than maintaining a list that drifts out of date.
+        val files = File("src/main/res/values").walkTopDown()
+            .filter { it.isFile && it.name.startsWith("strings") && it.extension == "xml" }
+            .toList()
+        return files.flatMap { file ->
+            Regex("""<string name="([a-z0-9_]+)">""")
+                .findAll(file.readText())
+                .map { it.groupValues[1] }.toList()
+        }.toSet()
     }
 
     @Test

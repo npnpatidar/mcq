@@ -233,6 +233,10 @@ private fun StudyBody(
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
+                if (state.showGradingHint) {
+                    StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
+                    Spacer(Modifier.height(12.dp))
+                }
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
@@ -262,6 +266,10 @@ private fun StudyBody(
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
+                if (state.showGradingHint) {
+                    StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
+                    Spacer(Modifier.height(12.dp))
+                }
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
@@ -305,6 +313,39 @@ private fun StudyBody(
                         onGrade = { viewModel.grade(it) }
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The one-time grading disclosure. Sits inline above the question in the
+ * scrollable area — a dismissible note, never a dialog, so the card stays
+ * answerable the whole time. Its visibility is decided entirely by
+ * [StudyUiState.showGradingHint]; the copy lives in its own strings file.
+ */
+@Composable
+private fun StudyGradingHintCard(onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("study_grading_hint"),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.study_grading_hint_title),
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.study_grading_hint_message),
+                style = MaterialTheme.typography.bodySmall
+            )
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.study_grading_hint_dismiss))
             }
         }
     }

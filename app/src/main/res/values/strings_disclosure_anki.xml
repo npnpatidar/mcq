@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Disclosure shown when an Anki deck is imported. Kept in its own file so this
+  feature does not touch the shared strings.xml. Names are unique and the
+  wording is plain: no internal scheduler terms reach the user.
+-->
+<resources>
+    <string name="anki_memory_notice_title">About the review schedule</string>
+    <string name="anki_memory_notice_body">The scheduling memory stored in an Anki deck is not imported. Next reviews are worked out from the interval on each card at a fixed 90 percent retention, so the memory Anki had saved is approximated rather than kept exactly.</string>
+</resources>

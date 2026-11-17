@@ -67,11 +67,11 @@ class SearchUiTest {
         }
     }
 
+    /** Only the result-count Text — never a hint or a card — is a valid label. */
     private fun matchLabel(): String? =
         compose.onAllNodesWithText("match", substring = true).fetchSemanticsNodes()
-            .firstNotNullOfOrNull { node ->
-                node.config[SemanticsProperties.Text]?.joinToString("") { it.text }
-            }
+            .mapNotNull { node -> node.config[SemanticsProperties.Text]?.joinToString("") { it.text } }
+            .firstOrNull { COUNT_LABEL.matches(it) }
 
     /**
      * During the debounce the committed results are hidden behind the loading
@@ -156,7 +156,14 @@ class SearchUiTest {
     private companion object {
         const val PAPER = "uisearch-paper"
         const val CAT = "uisearch-cat"
-        const val MANY = 40
+        /**
+         * The repository reads candidate windows of 200 and only sets a next
+         * key when a window is full. With 40 rows the single window returns a
+         * null next key, so the count is correctly exact and "+" is absent.
+         * More than one window is required to exercise the "+" branch.
+         */
+        const val MANY = 260
         const val FEW = 3
+        val COUNT_LABEL = Regex("""^\d+\+? matches?$""")
     }
 }

@@ -143,8 +143,11 @@ class TestSessionUiTest {
 
         compose.onNodeWithText("Your answers", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Q1", substring = false).assertIsDisplayed()
-        compose.onNodeWithText(app.getString(R.string.status_unanswered), substring = false)
-            .assertIsDisplayed()
+        // Both review rows are unanswered, so the status text appears twice;
+        // the first is Q1's row (review rows follow session order).
+        compose.onAllNodesWithText(
+            app.getString(R.string.status_unanswered), substring = false
+        )[0].assertIsDisplayed()
 
         compose.onNodeWithText("Close", substring = false).performClick()
         compose.waitUntil(30_000) {

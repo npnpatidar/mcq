@@ -63,40 +63,44 @@ class ResultsUiTest {
     )
 
     @Before
-    fun seed() = runBlocking {
-        repository.ensurePaperAndCategory(paperId, "Results Paper", categoryId, "Results Cat")
-        // Correct, wrong, skipped and ungraded in one attempt.
-        val questions = listOf(
-            question(1, hasAnswerKey = true),
-            question(2, hasAnswerKey = true),
-            question(3, hasAnswerKey = true),
-            question(4, hasAnswerKey = false)
-        )
-        val selections = mapOf(
-            "uitest-results-q1" to setOf("uitest-results-q1-a"),
-            "uitest-results-q2" to setOf("uitest-results-q2-b"),
-            // q3 deliberately unanswered; q4 answered but has no answer key.
-            "uitest-results-q4" to setOf("uitest-results-q4-a")
-        )
-        attemptId = repository.saveAttempt(
-            paperId = paperId,
-            paperTitle = "Results Paper",
-            questions = questions,
-            selections = selections,
-            negativeMarking = 0.0,
-            durationSeconds = 300,
-            finishedAt = System.currentTimeMillis(),
-            dwellSeconds = questions.associate { it.id to 10L },
-            metadata = AttemptMetadata()
-        )
-        // A clean slate for the export-failure injection.
-        File(app.cacheDir, "reports").deleteRecursively()
+    fun seed() {
+        runBlocking<Unit> {
+            repository.ensurePaperAndCategory(paperId, "Results Paper", categoryId, "Results Cat")
+            // Correct, wrong, skipped and ungraded in one attempt.
+            val questions = listOf(
+                question(1, hasAnswerKey = true),
+                question(2, hasAnswerKey = true),
+                question(3, hasAnswerKey = true),
+                question(4, hasAnswerKey = false)
+            )
+            val selections = mapOf(
+                "uitest-results-q1" to setOf("uitest-results-q1-a"),
+                "uitest-results-q2" to setOf("uitest-results-q2-b"),
+                // q3 deliberately unanswered; q4 answered but has no answer key.
+                "uitest-results-q4" to setOf("uitest-results-q4-a")
+            )
+            attemptId = repository.saveAttempt(
+                paperId = paperId,
+                paperTitle = "Results Paper",
+                questions = questions,
+                selections = selections,
+                negativeMarking = 0.0,
+                durationSeconds = 300,
+                finishedAt = System.currentTimeMillis(),
+                dwellSeconds = questions.associate { it.id to 10L },
+                metadata = AttemptMetadata()
+            )
+            // A clean slate for the export-failure injection.
+            File(app.cacheDir, "reports").deleteRecursively()
+        }
     }
 
     @After
-    fun cleanup() = runBlocking {
-        File(app.cacheDir, "reports").deleteRecursively()
-        repository.deletePaper(paperId)
+    fun cleanup() {
+        runBlocking<Unit> {
+            File(app.cacheDir, "reports").deleteRecursively()
+            repository.deletePaper(paperId)
+        }
     }
 
     private fun spoken(verdict: Verdict): String = app.getString(

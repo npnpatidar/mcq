@@ -138,6 +138,8 @@ fun BrowseScreen(
 
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
+    val actionError by viewModel.actionError.collectAsStateWithLifecycle()
+    val moveAffectedCount by viewModel.moveAffectedCount.collectAsStateWithLifecycle()
 
     fun exportTitle(): String {
         val paper = state.paper?.title ?: "Selected"
@@ -237,7 +239,16 @@ fun BrowseScreen(
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.edit)) }
                         TextButton(
-                            onClick = { showMoveDialog = true },
+                            onClick = {
+                                // Resolve passage siblings before the dialog
+                                // opens, so it can count what will move
+                                // (question_actions_audit.md QA-02). Clear the
+                                // previous scope first: a stale count must not
+                                // describe a different selection.
+                                viewModel.clearMoveScope()
+                                viewModel.prepareMove(selectedIds)
+                                showMoveDialog = true
+                            },
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.move)) }
                         TextButton(
@@ -653,7 +664,17 @@ fun BrowseScreen(
                             }
                         },
                         onDelete = { viewModel.deleteQuestion(question.id) },
-                        onDuplicate = { viewModel.duplicateQuestion(question.id) }
+                        onDuplicate = {
+                            viewModel.duplicateQuestion(question.id) { duplicated ->
+                                if (duplicated) {
+                                    Toast.makeText(
+                                        platformContext,
+                                        R.string.question_duplicated,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
                     )
                 }
                 if (rowContent == null) {
@@ -768,6 +789,19 @@ fun BrowseScreen(
                 text = { Text(message) },
                 confirmButton = {
                     TextButton(onClick = { viewModel.dismissBulkError() }) {
+                        Text(stringResource(R.string.ok))
+                    }
+                }
+            )
+        }
+
+        actionError?.let { message ->
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissActionError() },
+                title = { Text(stringResource(R.string.action_failed)) },
+                text = { Text(message) },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissActionError() }) {
                         Text(stringResource(R.string.ok))
                     }
                 }
@@ -896,7 +930,10 @@ fun BrowseScreen(
                 CategorySelection.flatten(movePaper?.categories ?: emptyList())
             }
             AlertDialog(
-                onDismissRequest = { showMoveDialog = false },
+                onDismissRequest = {
+                    showMoveDialog = false
+                    viewModel.clearMoveScope()
+                },
                 title = {
                     Text("${if (moveIsCopy) "Copy" else "Move"} ${selectedIds.size} questions to…")
                 },
@@ -947,18 +984,70 @@ fun BrowseScreen(
                                 }
                             }
                         }
+                        // Moving to another paper keeps each card's schedule
+                        // and review history and carries them to the new
+                        // paper's statistics, and a shared passage takes its
+                        // siblings along (QA-02). Both are said before the
+                        // tap, not discovered after it.
+                        if (!moveIsCopy && movePaperId != paperId) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                stringResource(R.string.move_cross_paper_warning),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        val affected = moveAffectedCount
+                        if (!moveIsCopy && affected != null && affected > selectedIds.size) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                stringResource(R.string.move_includes_passage, affected),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Spacer(Modifier.height(8.dp))
+                        val movedCount = selectedIds.size
                         targets.forEach { (node, depth) ->
                             TextButton(
                                 onClick = {
                                     if (moveIsCopy) {
-                                        viewModel.copyQuestions(selectedIds, node.id)
+                                        viewModel.copyQuestions(selectedIds, node.id) { copied ->
+                                            if (copied) {
+                                                Toast.makeText(
+                                                    platformContext,
+                                                    platformResources.getQuantityString(
+                                                        R.plurals.questions_copied_count,
+                                                        movedCount,
+                                                        movedCount
+                                                    ),
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
                                     } else {
-                                        viewModel.moveQuestions(selectedIds, node.id)
+                                        // The move reports the real scope it
+                                        // touched (passage siblings included),
+                                        // never a stale dialog count or just the
+                                        // ticked rows.
+                                        viewModel.moveQuestions(selectedIds, node.id) { total ->
+                                            if (total != null) {
+                                                Toast.makeText(
+                                                    platformContext,
+                                                    platformResources.getQuantityString(
+                                                        R.plurals.questions_moved_count,
+                                                        total,
+                                                        total
+                                                    ),
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
                                     }
                                     selectedIds = emptySet()
                                     selectionMode = false
                                     showMoveDialog = false
+                                    viewModel.clearMoveScope()
                                 }
                             ) {
                                 Text(
@@ -971,7 +1060,10 @@ fun BrowseScreen(
                 },
                 confirmButton = {},
                 dismissButton = {
-                    TextButton(onClick = { showMoveDialog = false }) { Text(stringResource(R.string.cancel)) }
+                    TextButton(onClick = {
+                        showMoveDialog = false
+                        viewModel.clearMoveScope()
+                    }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }

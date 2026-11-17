@@ -13,6 +13,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,68 @@ enum class EditorBlockType {
 }
 
 /**
+ * What the editor is editing, carried explicitly by the route.
+ *
+ * The distinction used to be inferred from a process-global import holder:
+ * after process death the holder was empty and an import edit silently became
+ * a database edit of whatever row shared its id (question_editor_audit.md
+ * H-04). An explicit source keeps that fallback from existing at all.
+ */
+enum class EditorSource {
+    /** A stored database row named by the route's questionId. */
+    DATABASE,
+    /** A new question; no row exists yet. */
+    NEW,
+    /** An in-memory copy in the import preview's list. */
+    IMPORT,
+    /** Not stated by the route (older callers); resolved from the id. */
+    UNSPECIFIED;
+
+    companion object {
+        /** Unknown tokens stay UNSPECIFIED, so an older link still opens. */
+        fun fromRoute(raw: String): EditorSource = when (raw) {
+            "database" -> DATABASE
+            "new" -> NEW
+            "import" -> IMPORT
+            else -> UNSPECIFIED
+        }
+
+        fun token(source: EditorSource): String = when (source) {
+            DATABASE -> "database"
+            NEW -> "new"
+            IMPORT -> "import"
+            UNSPECIFIED -> ""
+        }
+    }
+}
+
+/**
+ * Where a picked image belongs, described by stable block identity rather
+ * than a callback capturing a list index.
+ *
+ * The write-back used to live in `remember` and captured the block's index,
+ * so a configuration change lost it and a rotation could redeliver the pick
+ * with nowhere to put it (question_editor_audit.md M-05). The descriptor is
+ * resolved against the current state when the URI returns.
+ */
+sealed interface ImageTarget {
+    /** The block's stable id, from [EditorUiState.blockIds]. */
+    val blockId: String
+
+    data class Body(override val blockId: String) : ImageTarget
+    data class Explanation(override val blockId: String) : ImageTarget
+    data class Option(val optionId: String, override val blockId: String) : ImageTarget
+}
+
+/**
+ * What the editor is doing right now. One operation at a time: a second
+ * Save/Prev/Next/Delete while one is in flight is refused, and the screen
+ * disables those controls, so two moves cannot interleave their session
+ * arithmetic (question_editor_audit.md H-03, M-13).
+ */
+enum class EditorOperation { IDLE, SAVING, MOVING, DELETING }
+
+/**
  * Whether a block counts as content for validation. Whitespace-only text
  * and empty tables do not; any image src or formula does (even a
  * placeholder one — clearing the field is what removes it).
@@ -52,8 +115,12 @@ data class EditorUiState(
     val paperId: String = "",
     val categoryId: String = "",
     val elements: List<ContentElement> = emptyList(),
+    /** Stable identity of each body block, parallel to [elements]. */
+    val blockIds: List<String> = emptyList(),
     val image: String = "",
     val explanationElements: List<ContentElement> = emptyList(),
+    /** Stable identity of each explanation block, parallel to that list. */
+    val explanationBlockIds: List<String> = emptyList(),
     val explanationImage: String = "",
     val difficulty: Difficulty = Difficulty.MEDIUM,
     val marks: String = "1",
@@ -68,15 +135,36 @@ data class EditorUiState(
     /** Set when the initial load failed; the screen offers the message
      *  instead of an eternal "Loading…" (consolidated_bugs.md J5). */
     val loadError: String? = null,
-    /** A save/delete is in flight; buttons gate on it (J7). */
-    val saving: Boolean = false,
+    /** The single in-flight editor operation, if any. */
+    val operation: EditorOperation = EditorOperation.IDLE,
     /** Set when a save or delete failed, so the failure is visible instead
      *  of a crash (consolidated_bugs.md J7). */
-    val saveError: String? = null
+    val saveError: String? = null,
+    /** A Prev/Next move failed; the current form is kept intact. */
+    val moveError: String? = null,
+    /** The persisted form differs from what is on screen. */
+    val isDirty: Boolean = false,
+    /**
+     * The route said this is an import-preview edit, but the in-memory draft
+     * was gone (process death). The editor is inert: nothing may be loaded,
+     * saved or deleted, least of all a database row with the same id
+     * (question_editor_audit.md H-04).
+     */
+    val importContextMissing: Boolean = false,
+    /** The block awaiting a picked image; null when no pick is pending. */
+    val pendingImageTarget: ImageTarget? = null,
+    /** A picked image could not be read/encoded; nothing was written. */
+    val imageError: String? = null
 ) {
+    /** Any write (save/delete) or move is in flight; controls gate on it. */
+    val busy: Boolean get() = operation != EditorOperation.IDLE
+
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent
     val explanation: String get() = explanationElements.textContent
+
+    /** A nonblank marks field must hold a valid number (M-08). */
+    val marksValid: Boolean get() = com.mcqapp.domain.Marks.isValid(marks)
 
     /**
      * A question saves when it holds at least one significant block of any
@@ -91,7 +179,8 @@ data class EditorUiState(
      * still loading and never again — the Save button never enabled.
      */
     val canSave: Boolean
-        get() = (elements.any { it.isSignificant() } || image.isNotBlank()) &&
+        get() = marksValid &&
+            (elements.any { it.isSignificant() } || image.isNotBlank()) &&
             options.size >= 2 &&
             options.all { o ->
                 // A legacy image-only option loads as one empty text element
@@ -104,17 +193,179 @@ data class EditorUiState(
 data class OptionEditorState(
     val id: String,
     val elements: List<ContentElement> = emptyList(),
+    /** Stable identity of each option block, parallel to [elements]. */
+    val blockIds: List<String> = emptyList(),
     val image: String = "",
     val isCorrect: Boolean = false
 ) {
     val text: String get() = elements.textContent
 }
 
+/** Replaces the table at [index], or returns [elements] unchanged. */
+internal fun updateTableAt(
+    elements: List<ContentElement>,
+    index: Int,
+    transform: (ContentElement.TableElement) -> ContentElement.TableElement
+): List<ContentElement> {
+    val current = elements.getOrNull(index) as? ContentElement.TableElement ?: return elements
+    return elements.toMutableList().also { it[index] = transform(current) }
+}
+
+/** Out-of-range cell writes are ignored, as the grid editor's bounds are. */
+internal fun ContentElement.TableElement.withCell(
+    row: Int,
+    col: Int,
+    value: String
+): ContentElement.TableElement {
+    if (row !in rows.indices || col !in rows[row].indices) return this
+    return copy(rows = rows.mapIndexed { r, cells ->
+        if (r != row) cells
+        else cells.toMutableList().also { it[col] = value }
+    })
+}
+
+internal fun ContentElement.TableElement.withRowAdded(): ContentElement.TableElement {
+    val width = rows.firstOrNull()?.size ?: 1
+    return copy(rows = rows + listOf(List(width) { "" }))
+}
+
+/** The last row is kept: a table must always have one cell to edit. */
+internal fun ContentElement.TableElement.withRowRemoved(row: Int): ContentElement.TableElement {
+    if (rows.size <= 1 || row !in rows.indices) return this
+    return copy(rows = rows.toMutableList().also { it.removeAt(row) })
+}
+
+internal fun ContentElement.TableElement.withColumnAdded(): ContentElement.TableElement =
+    copy(rows = rows.map { it + "" })
+
+/**
+ * Whether removing [col] does anything. The last column is kept, and a ragged
+ * row that lacks this index makes the removal a no-op — the UI uses the same
+ * rule to disable its button, so control and data agree.
+ */
+internal fun ContentElement.TableElement.canRemoveColumn(col: Int): Boolean {
+    if ((rows.firstOrNull()?.size ?: 0) <= 1) return false
+    return rows.all { col in it.indices }
+}
+
+/** The last column is kept, and a ragged row makes the removal a no-op. */
+internal fun ContentElement.TableElement.withColumnRemoved(col: Int): ContentElement.TableElement {
+    if (!canRemoveColumn(col)) return this
+    return copy(rows = rows.map { row -> row.toMutableList().also { it.removeAt(col) } })
+}
+
+/**
+ * Writes [src] into the block the target names, resolving the id against the
+ * *current* lists. A target whose block or option is gone (deleted while the
+ * picker was open) writes nothing rather than a neighbouring block.
+ */
+internal fun applyImageTarget(s: EditorUiState, target: ImageTarget, src: String): EditorUiState {
+    val image = ContentElement.ImageElement(src)
+    return when (target) {
+        is ImageTarget.Body -> {
+            val i = s.blockIds.indexOf(target.blockId)
+            if (i !in s.elements.indices) s
+            else s.copy(elements = s.elements.toMutableList().also { it[i] = image })
+        }
+        is ImageTarget.Explanation -> {
+            val i = s.explanationBlockIds.indexOf(target.blockId)
+            if (i !in s.explanationElements.indices) s
+            else s.copy(
+                explanationElements = s.explanationElements.toMutableList().also { it[i] = image }
+            )
+        }
+        is ImageTarget.Option -> {
+            val option = s.options.firstOrNull { it.id == target.optionId } ?: return s
+            val i = option.blockIds.indexOf(target.blockId)
+            if (i !in option.elements.indices) s
+            else s.copy(options = s.options.map { o ->
+                if (o.id != option.id) o
+                else o.copy(elements = o.elements.toMutableList().also { it[i] = image })
+            })
+        }
+    }
+}
+
+/**
+ * Unambiguous canonical snapshot of exactly what a save would persist.
+ *
+ * The old signature joined raw user content with `|`, `;`, `,` and newlines,
+ * so different structures could encode identically — `Text("a|i:b") +
+ * Image("c")` and `Text("a") + Image("b|i:c")` looked clean — and it trimmed
+ * text that buildDto() stores verbatim, so a whitespace-only edit was
+ * dropped by a Prev/Next auto-save (question_editor_audit.md M-02, M-03).
+ *
+ * Every string is length-prefixed, so a delimiter inside user content can
+ * never be mistaken for structure, and content is encoded exactly as the DTO
+ * carries it: raw element text, normalized image fields (buildDto trims and
+ * blanks them), the persisted marks value (blank means 1), and the tags the
+ * save writes.
+ */
+internal fun editorSnapshot(s: EditorUiState): String {
+    val sb = StringBuilder()
+
+    fun string(value: String) {
+        sb.append(value.length).append(':').append(value)
+    }
+
+    fun elements(list: List<ContentElement>) {
+        sb.append(list.size).append('[')
+        list.forEach { el ->
+            when (el) {
+                is ContentElement.TextElement -> { sb.append('T'); string(el.text) }
+                is ContentElement.ImageElement -> { sb.append('I'); string(el.src) }
+                is ContentElement.MathElement -> { sb.append('M'); string(el.mathml) }
+                is ContentElement.TableElement -> {
+                    sb.append('B').append(el.rows.size).append('<')
+                    el.rows.forEach { row ->
+                        sb.append(row.size).append('(')
+                        row.forEach { string(it) }
+                        sb.append(')')
+                    }
+                    sb.append('>')
+                }
+            }
+        }
+        sb.append(']')
+    }
+
+    fun image(value: String) = string(value.trim().ifBlank { "\u0000null" })
+
+    elements(s.elements)
+    image(s.image)
+    elements(s.explanationElements)
+    image(s.explanationImage)
+    string(s.difficulty.label)
+    string(EditorViewModel.parseMarks(s.marks).toString())
+    string(s.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }.joinToString(","))
+    string(s.categoryId)
+    string(s.passageId.orEmpty())
+    sb.append(s.options.size).append('{')
+    s.options.forEach { o ->
+        string(o.id)
+        elements(o.elements)
+        image(o.image)
+        sb.append(if (o.isCorrect) '1' else '0')
+    }
+    sb.append('}')
+    return sb.toString()
+}
+
+/**
+ * True when the form currently on screen differs from [signature], the state
+ * actually persisted. Keystrokes typed while a write is in flight are not part
+ * of the signature, so they must keep the editor dirty rather than be marked
+ * clean and silently lost on Back.
+ */
+internal fun dirtyAfterSave(current: EditorUiState, signature: String): Boolean =
+    editorSnapshot(current) != signature
+
 class EditorViewModel(
     application: Application,
     private val questionId: String,
     private val paperId: String,
-    private val categoryId: String
+    private val categoryId: String,
+    source: EditorSource = EditorSource.UNSPECIFIED
 ) : AndroidViewModel(application) {
 
     // Resolved lazily: import-session editing never touches the database,
@@ -131,76 +382,119 @@ class EditorViewModel(
     )
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
+    /** The route's explicit source; an unstated one is inferred from the id. */
+    private val editorSource: EditorSource = when (source) {
+        EditorSource.UNSPECIFIED ->
+            if (questionId.isBlank()) EditorSource.NEW else EditorSource.DATABASE
+        else -> source
+    }
+
+    /** True when the import preview's in-memory draft was available. */
     private var fromImportSession: Boolean = false
 
     /**
-     * Signature of the last persisted state (load or save), normalized the
-     * same way buildDto() normalizes. A Prev/Next move with a matching
-     * signature writes nothing.
+     * Monotonic block ids for this editor instance. Identity must not come
+     * from position or content: reordering two formulas kept the same Compose
+     * keys and left one WebView showing the other's formula (M-01), and an
+     * option key without its question reused a WebView across two questions
+     * that shared the option id (H-05).
+     */
+    private var nextBlockId: Long = 0
+
+    /** Invalidates an in-flight passage re-check superseded by a newer pick. */
+    private var passagePickSeq: Int = 0
+
+    private fun freshBlockIds(count: Int): List<String> = List(count) { "b" + nextBlockId++ }
+
+    private fun idsWithout(ids: List<String>, index: Int): List<String> =
+        if (index !in ids.indices) ids else ids.toMutableList().also { it.removeAt(index) }
+
+    private fun idsMoved(ids: List<String>, from: Int, to: Int): List<String> =
+        if (from !in ids.indices || to !in ids.indices) ids
+        else ids.toMutableList().also { it.add(to, it.removeAt(from)) }
+
+    /**
+     * An import edit whose draft is gone. Every write path refuses, so a
+     * same-id database row can never be mistaken for the missing draft.
+     */
+    private val importContextMissing: Boolean
+        get() = editorSource == EditorSource.IMPORT && !fromImportSession
+
+    /**
+     * Snapshot of the last persisted state (load or save). A Prev/Next move
+     * with a matching snapshot writes nothing.
      */
     private var cleanSignature: String = ""
 
-    private fun signatureOf(s: EditorUiState): String {
-        fun normImage(v: String) = v.trim().ifBlank { "<null>" }
-        fun normElements(elements: List<ContentElement>) = elements.joinToString("|") { el ->
-            when (el) {
-                is ContentElement.TextElement -> "t:${el.text.trim()}"
-                is ContentElement.ImageElement -> "i:${el.src.trim()}"
-                is ContentElement.TableElement ->
-                    "b:" + el.rows.joinToString(";") { row -> row.joinToString(",") { it.trim() } }
-                is ContentElement.MathElement -> "m:${el.mathml.trim()}"
-            }
-        }
-        val opts = s.options.map { o ->
-            "${o.id}|${normElements(o.elements)}|${normImage(o.image)}|${o.isCorrect}"
-        }
-        val tags = s.tags.split(",").map { it.trim() }.filter { it.isNotBlank() }
-            .joinToString(",")
-        return listOf(
-            normElements(s.elements), normImage(s.image), normElements(s.explanationElements),
-            normImage(s.explanationImage), s.difficulty.label,
-            s.marks.trim(), tags, s.categoryId, s.passageId.orEmpty()
-        ).joinToString("\n") + "\n" + opts.joinToString("\n")
+    private fun snapshotClean() {
+        cleanSignature = editorSnapshot(_state.value)
+        _state.update { it.copy(isDirty = false) }
     }
 
-    private fun snapshotClean() {
-        cleanSignature = signatureOf(_state.value)
+    private fun markClean(signature: String) {
+        cleanSignature = signature
+        // Fields stay editable while the write is in flight. Recompute against
+        // the CURRENT form: a keystroke made after the snapshot must stay dirty
+        // (it was not persisted), never be cleared by a stale "clean" flag.
+        _state.update { it.copy(isDirty = dirtyAfterSave(it, signature)) }
     }
 
     init {
         Logger.i("EDITORVM", "EditorViewModel created: questionId='$questionId', paperId='$paperId', categoryId='$categoryId'")
-        val holderFlag = com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport
         val pendingEdit = com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion
-        com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = false
         com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null
-        Logger.d("EDITORVM", "init: holderPresent=${pendingEdit != null}, holderId=${pendingEdit?.id}, " +
-            "holderFlag=$holderFlag (both consumed atomically)")
-        fromImportSession = holderFlag && pendingEdit != null && pendingEdit.id == questionId
-        Logger.d("EDITORVM", "init: fromImportSession=$fromImportSession")
-        if (fromImportSession && pendingEdit != null) {
-            com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = null
-            _state.value = _state.value.copy(
-                loading = false,
-                elements = pendingEdit.elements,
-                image = pendingEdit.image.orEmpty(),
-                explanationElements = pendingEdit.explanationElements,
-                explanationImage = pendingEdit.explanationImage.orEmpty(),
-                difficulty = Difficulty.fromLabel(pendingEdit.difficulty),
-                marks = formatMarks(pendingEdit.marks),
-                tags = pendingEdit.tags.joinToString(", "),
-                options = pendingEdit.options.map { o ->
-                    OptionEditorState(
-                        id = o.id,
-                        elements = o.elements,
-                        image = o.image.orEmpty(),
-                        isCorrect = o.id in pendingEdit.correctOptionIds
-                    )
-                },
-                categories = emptyList(),
-                categoryId = ""
-            )
-            snapshotClean()
-            Logger.i("EDITORVM", "Editor ready: editing from import screen (in-memory)")
+        Logger.d("EDITORVM", "init: holderPresent=${pendingEdit != null}, holderId=${pendingEdit?.id}")
+        // The route's source is authoritative; the holder only supplies the
+        // draft. Only an import route may use it — a leftover holder must not
+        // redirect a database edit's save into the in-memory list.
+        fromImportSession = editorSource == EditorSource.IMPORT &&
+            pendingEdit != null && pendingEdit.id == questionId
+        Logger.d("EDITORVM", "init: source=$editorSource, fromImportSession=$fromImportSession")
+        if (editorSource == EditorSource.IMPORT) {
+            if (fromImportSession && pendingEdit != null) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    elements = pendingEdit.elements,
+                    blockIds = freshBlockIds(pendingEdit.elements.size),
+                    image = pendingEdit.image.orEmpty(),
+                    explanationElements = pendingEdit.explanationElements,
+                    explanationBlockIds = freshBlockIds(pendingEdit.explanationElements.size),
+                    explanationImage = pendingEdit.explanationImage.orEmpty(),
+                    difficulty = Difficulty.fromLabel(pendingEdit.difficulty),
+                    marks = formatMarks(pendingEdit.marks),
+                    tags = pendingEdit.tags.joinToString(", "),
+                    options = pendingEdit.options.map { o ->
+                        OptionEditorState(
+                            id = o.id,
+                            elements = o.elements,
+                            blockIds = freshBlockIds(o.elements.size),
+                            image = o.image.orEmpty(),
+                            isCorrect = o.id in pendingEdit.correctOptionIds
+                        )
+                    },
+                    categories = emptyList(),
+                    categoryId = "",
+                    // Passage membership is part of the imported content; an
+                    // edit must not turn a member into a standalone question
+                    // (question_editor_audit.md H-01).
+                    passageId = pendingEdit.passageId
+                )
+                snapshotClean()
+                Logger.i("EDITORVM", "Editor ready: editing from import screen (in-memory)")
+            } else {
+                // Process death consumed the in-memory draft. Fail closed: an
+                // id that happens to exist in the library is NOT this draft
+                // (question_editor_audit.md H-04).
+                Logger.w("EDITORVM", "import draft missing for '$questionId': failing closed")
+                _state.value = _state.value.copy(
+                    loading = false,
+                    importContextMissing = true,
+                    loadError = "This edit came from an import preview, and its draft is no longer " +
+                        "available. Return to the import and open the question again."
+                )
+                snapshotClean()
+                Logger.i("EDITORVM", "Editor ready: import context missing (inert)")
+            }
         } else {
             viewModelScope.launch {
             try {
@@ -212,8 +506,10 @@ class EditorViewModel(
                     _state.value = _state.value.copy(
                         loading = false,
                         elements = question.elements,
+                        blockIds = freshBlockIds(question.elements.size),
                         image = question.image.orEmpty(),
                         explanationElements = question.explanationElements,
+                        explanationBlockIds = freshBlockIds(question.explanationElements.size),
                         explanationImage = question.explanationImage.orEmpty(),
                         difficulty = question.difficulty,
                         marks = formatMarks(question.marks),
@@ -222,6 +518,7 @@ class EditorViewModel(
                             OptionEditorState(
                                 id = o.id,
                                 elements = o.elements,
+                                blockIds = freshBlockIds(o.elements.size),
                                 image = o.image.orEmpty(),
                                 isCorrect = o.id in question.correctOptionIds
                             )
@@ -247,9 +544,19 @@ class EditorViewModel(
                 categories = categories,
                 passages = if (paperId.isNotBlank()) repository.getPassagesForPaper(paperId) else emptyList(),
                 elements = listOf(ContentElement.TextElement("")),
+                blockIds = freshBlockIds(1),
                 options = listOf(
-                    OptionEditorState(id = "a", elements = listOf(ContentElement.TextElement("")), isCorrect = true),
-                    OptionEditorState(id = "b", elements = listOf(ContentElement.TextElement("")))
+                    OptionEditorState(
+                        id = "a",
+                        elements = listOf(ContentElement.TextElement("")),
+                        blockIds = freshBlockIds(1),
+                        isCorrect = true
+                    ),
+                    OptionEditorState(
+                        id = "b",
+                        elements = listOf(ContentElement.TextElement("")),
+                        blockIds = freshBlockIds(1)
+                    )
                 )
             )
             snapshotClean()
@@ -318,13 +625,66 @@ class EditorViewModel(
         it.copy(categoryId = value, passageId = keepPassage)
     }
 
-    /** Assigns this question to a passage (null clears membership). */
-    fun updatePassage(value: String?) = updateState { it.copy(passageId = value) }
+    /**
+     * Assigns this question to a passage (null clears membership).
+     *
+     * The picker's list is cached at load time, so a passage may have been
+     * re-homed into another paper since. Re-read the list from the repository
+     * and only apply the pick if the passage is still in this question's paper;
+     * otherwise refresh the cached list and ignore the pick silently. The
+     * question identity, category and a pick sequence are captured at the tap
+     * and checked again when the read returns, so a stale result can never land
+     * on a different question after Prev/Next, on a superseded pick, or on a
+     * passage outside the question's current category after a category switch.
+     */
+    fun updatePassage(value: String?) {
+        val seq = ++passagePickSeq
+        if (value == null) {
+            updateState { it.copy(passageId = null) }
+            return
+        }
+        val s = _state.value
+        val questionIdAtPick = s.questionId
+        val paperIdAtPick = s.paperId
+        val categoryIdAtPick = s.categoryId
+        viewModelScope.launch {
+            val fresh = try {
+                repository.getPassagesForPaper(paperIdAtPick)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.e("EDITORVM", "Could not re-check the passage list", e)
+                return@launch
+            }
+            val now = _state.value
+            if (seq != passagePickSeq ||
+                now.questionId != questionIdAtPick || now.paperId != paperIdAtPick
+            ) return@launch
+            val picked = fresh.firstOrNull { it.id == value }
+            if (picked == null) {
+                // The cached entry is stale: refresh it and drop the pick. No
+                // assignment is written and no error copy is shown.
+                _state.update { it.copy(passages = fresh) }
+                return@launch
+            }
+            // The category can change between the tap and this re-read (and a
+            // passage can move category since the list was cached). A member
+            // must belong to the question's current category, so never attach
+            // a passage picked under a now-abandoned one.
+            if (now.categoryId != categoryIdAtPick ||
+                picked.categoryId != now.categoryId
+            ) return@launch
+            updateState { it.copy(passageId = value) }
+        }
+    }
 
     // ---- question-body blocks ----
 
     fun addBlock(type: EditorBlockType) = updateState {
-        it.copy(elements = it.elements + type.defaultElement())
+        it.copy(
+            elements = it.elements + type.defaultElement(),
+            blockIds = it.blockIds + freshBlockIds(1)
+        )
     }
 
     fun updateBlock(index: Int, element: ContentElement) = updateState {
@@ -334,68 +694,103 @@ class EditorViewModel(
 
     fun removeBlock(index: Int) = updateState {
         if (index !in it.elements.indices) return@updateState it
-        it.copy(elements = it.elements.toMutableList().also { list -> list.removeAt(index) })
+        it.copy(
+            elements = it.elements.toMutableList().also { list -> list.removeAt(index) },
+            blockIds = idsWithout(it.blockIds, index)
+        )
     }
 
     fun moveBlockUp(index: Int) = updateState {
         if (index <= 0 || index >= it.elements.size) return@updateState it
-        it.copy(elements = it.elements.toMutableList().also { list ->
-            val item = list.removeAt(index)
-            list.add(index - 1, item)
-        })
+        it.copy(
+            elements = it.elements.toMutableList().also { list ->
+                val item = list.removeAt(index)
+                list.add(index - 1, item)
+            },
+            // The id travels with its block, so a moved formula keeps its
+            // WebView instead of inheriting the neighbour's (M-01).
+            blockIds = idsMoved(it.blockIds, index, index - 1)
+        )
     }
 
     fun moveBlockDown(index: Int) = updateState {
         if (index < 0 || index >= it.elements.size - 1) return@updateState it
-        it.copy(elements = it.elements.toMutableList().also { list ->
-            val item = list.removeAt(index)
-            list.add(index + 1, item)
-        })
+        it.copy(
+            elements = it.elements.toMutableList().also { list ->
+                val item = list.removeAt(index)
+                list.add(index + 1, item)
+            },
+            blockIds = idsMoved(it.blockIds, index, index + 1)
+        )
     }
 
     // ---- table cells (index addresses a TableElement in the body) ----
 
     private fun updateTable(index: Int, transform: (ContentElement.TableElement) -> ContentElement.TableElement) =
-        updateState {
-            val current = it.elements.getOrNull(index) as? ContentElement.TableElement
-                ?: return@updateState it
-            it.copy(elements = it.elements.toMutableList().also { list -> list[index] = transform(current) })
-        }
+        updateState { it.copy(elements = updateTableAt(it.elements, index, transform)) }
 
-    fun updateTableCell(index: Int, row: Int, col: Int, value: String) = updateTable(index) { table ->
-        if (row !in table.rows.indices) return@updateTable table
-        val newRows = table.rows.mapIndexed { r, cells ->
-            if (r != row || col !in cells.indices) cells
-            else cells.toMutableList().also { it[col] = value }
-        }
-        table.copy(rows = newRows)
+    fun updateTableCell(index: Int, row: Int, col: Int, value: String) =
+        updateTable(index) { it.withCell(row, col, value) }
+
+    fun addTableRow(index: Int) = updateTable(index) { it.withRowAdded() }
+
+    fun removeTableRow(index: Int, row: Int) =
+        updateTable(index) { it.withRowRemoved(row) }
+
+    fun addTableColumn(index: Int) = updateTable(index) { it.withColumnAdded() }
+
+    fun removeTableColumn(index: Int, col: Int) =
+        updateTable(index) { it.withColumnRemoved(col) }
+
+    // ---- table cells (option and explanation lists) ----
+
+    private fun updateOptionTable(
+        optionId: String,
+        index: Int,
+        transform: (ContentElement.TableElement) -> ContentElement.TableElement
+    ) = updateState { s ->
+        s.copy(options = s.options.map { o ->
+            if (o.id != optionId) o
+            else o.copy(elements = updateTableAt(o.elements, index, transform))
+        })
     }
 
-    fun addTableRow(index: Int) = updateTable(index) { table ->
-        val width = table.rows.firstOrNull()?.size ?: 1
-        table.copy(rows = table.rows + listOf(List(width) { "" }))
+    fun updateOptionTableCell(optionId: String, index: Int, row: Int, col: Int, value: String) =
+        updateOptionTable(optionId, index) { it.withCell(row, col, value) }
+
+    fun addOptionTableRow(optionId: String, index: Int) =
+        updateOptionTable(optionId, index) { it.withRowAdded() }
+
+    fun removeOptionTableRow(optionId: String, index: Int, row: Int) =
+        updateOptionTable(optionId, index) { it.withRowRemoved(row) }
+
+    fun addOptionTableColumn(optionId: String, index: Int) =
+        updateOptionTable(optionId, index) { it.withColumnAdded() }
+
+    fun removeOptionTableColumn(optionId: String, index: Int, col: Int) =
+        updateOptionTable(optionId, index) { it.withColumnRemoved(col) }
+
+    private fun updateExplanationTable(
+        index: Int,
+        transform: (ContentElement.TableElement) -> ContentElement.TableElement
+    ) = updateState {
+        it.copy(explanationElements = updateTableAt(it.explanationElements, index, transform))
     }
 
-    fun removeTableRow(index: Int, row: Int) = updateState {
-        val table = it.elements.getOrNull(index) as? ContentElement.TableElement
-            ?: return@updateState it
-        if (table.rows.size <= 1 || row !in table.rows.indices) return@updateState it
-        val rows = table.rows.toMutableList().also { rows -> rows.removeAt(row) }
-        it.copy(elements = it.elements.toMutableList().also { list -> list[index] = table.copy(rows = rows) })
-    }
+    fun updateExplanationTableCell(index: Int, row: Int, col: Int, value: String) =
+        updateExplanationTable(index) { it.withCell(row, col, value) }
 
-    fun addTableColumn(index: Int) = updateTable(index) { table ->
-        table.copy(rows = table.rows.map { it + "" })
-    }
+    fun addExplanationTableRow(index: Int) =
+        updateExplanationTable(index) { it.withRowAdded() }
 
-    fun removeTableColumn(index: Int, col: Int) = updateState {
-        val table = it.elements.getOrNull(index) as? ContentElement.TableElement
-            ?: return@updateState it
-        if ((table.rows.firstOrNull()?.size ?: 0) <= 1) return@updateState it
-        if (table.rows.any { col !in it.indices }) return@updateState it
-        val rows = table.rows.map { row -> row.toMutableList().also { it.removeAt(col) } }
-        it.copy(elements = it.elements.toMutableList().also { list -> list[index] = table.copy(rows = rows) })
-    }
+    fun removeExplanationTableRow(index: Int, row: Int) =
+        updateExplanationTable(index) { it.withRowRemoved(row) }
+
+    fun addExplanationTableColumn(index: Int) =
+        updateExplanationTable(index) { it.withColumnAdded() }
+
+    fun removeExplanationTableColumn(index: Int, col: Int) =
+        updateExplanationTable(index) { it.withColumnRemoved(col) }
 
     // ---- options ----
 
@@ -416,7 +811,8 @@ class EditorViewModel(
             .first { id -> id !in used }
         it.copy(options = it.options + OptionEditorState(
             id = nextId,
-            elements = listOf(ContentElement.TextElement(""))
+            elements = listOf(ContentElement.TextElement("")),
+            blockIds = freshBlockIds(1)
         ))
     }
 
@@ -426,15 +822,7 @@ class EditorViewModel(
      * option must avoid the ids already present: deriving it from `size` minted
      * a duplicate after a middle option was removed (`a, c` + Add → `"c"` twice).
      */
-    private fun optionIdAt(index: Int): String {
-        var n = index
-        val sb = StringBuilder()
-        do {
-            sb.append('a' + n % 26)
-            n = n / 26 - 1
-        } while (n >= 0)
-        return sb.reverse().toString()
-    }
+    private fun optionIdAt(index: Int): String = optionOrdinalLabel(index, lower = true)
 
     fun removeOption(optionId: String) = updateState {
         if (it.options.size <= 2) return@updateState it
@@ -468,8 +856,15 @@ class EditorViewModel(
         })
     }
 
-    fun addOptionBlock(optionId: String, type: EditorBlockType) =
-        updateOptionElements(optionId) { it + type.defaultElement() }
+    fun addOptionBlock(optionId: String, type: EditorBlockType) = updateState {
+        it.copy(options = it.options.map { o ->
+            if (o.id != optionId) o
+            else o.copy(
+                elements = o.elements + type.defaultElement(),
+                blockIds = o.blockIds + freshBlockIds(1)
+            )
+        })
+    }
 
     fun updateOptionBlock(optionId: String, index: Int, element: ContentElement) =
         updateOptionElements(optionId) { elements ->
@@ -477,34 +872,49 @@ class EditorViewModel(
             else elements.toMutableList().also { list -> list[index] = element }
         }
 
-    fun removeOptionBlock(optionId: String, index: Int) =
-        updateOptionElements(optionId) { elements ->
-            if (index !in elements.indices) elements
-            else elements.toMutableList().also { list -> list.removeAt(index) }
-        }
+    fun removeOptionBlock(optionId: String, index: Int) = updateState {
+        it.copy(options = it.options.map { o ->
+            if (o.id != optionId || index !in o.elements.indices) o
+            else o.copy(
+                elements = o.elements.toMutableList().also { list -> list.removeAt(index) },
+                blockIds = idsWithout(o.blockIds, index)
+            )
+        })
+    }
 
-    fun moveOptionBlockUp(optionId: String, index: Int) =
-        updateOptionElements(optionId) { elements ->
-            if (index <= 0 || index >= elements.size) elements
-            else elements.toMutableList().also { list ->
-                val item = list.removeAt(index)
-                list.add(index - 1, item)
-            }
-        }
+    fun moveOptionBlockUp(optionId: String, index: Int) = updateState {
+        it.copy(options = it.options.map { o ->
+            if (o.id != optionId || index <= 0 || index >= o.elements.size) o
+            else o.copy(
+                elements = o.elements.toMutableList().also { list ->
+                    val item = list.removeAt(index)
+                    list.add(index - 1, item)
+                },
+                blockIds = idsMoved(o.blockIds, index, index - 1)
+            )
+        })
+    }
 
-    fun moveOptionBlockDown(optionId: String, index: Int) =
-        updateOptionElements(optionId) { elements ->
-            if (index < 0 || index >= elements.size - 1) elements
-            else elements.toMutableList().also { list ->
-                val item = list.removeAt(index)
-                list.add(index + 1, item)
-            }
-        }
+    fun moveOptionBlockDown(optionId: String, index: Int) = updateState {
+        it.copy(options = it.options.map { o ->
+            if (o.id != optionId || index < 0 || index >= o.elements.size - 1) o
+            else o.copy(
+                elements = o.elements.toMutableList().also { list ->
+                    val item = list.removeAt(index)
+                    list.add(index + 1, item)
+                },
+                blockIds = idsMoved(o.blockIds, index, index + 1)
+            )
+        })
+    }
 
     // ---- explanation blocks ----
 
     fun addExplanationBlock(type: EditorBlockType) = updateState {
-        it.copy(explanationElements = it.explanationElements + type.defaultElement())
+        it.copy(
+            explanationElements = it.explanationElements + type.defaultElement(),
+            explanationBlockIds = it.explanationBlockIds + freshBlockIds(1)
+        )
     }
 
     fun updateExplanationBlock(index: Int, element: ContentElement) = updateState {
@@ -514,35 +924,80 @@ class EditorViewModel(
 
     fun removeExplanationBlock(index: Int) = updateState {
         if (index !in it.explanationElements.indices) return@updateState it
-        it.copy(explanationElements = it.explanationElements.toMutableList().also { list -> list.removeAt(index) })
+        it.copy(
+            explanationElements = it.explanationElements.toMutableList().also { list ->
+                list.removeAt(index)
+            },
+            explanationBlockIds = idsWithout(it.explanationBlockIds, index)
+        )
     }
 
     fun moveExplanationBlockUp(index: Int) = updateState {
         if (index <= 0 || index >= it.explanationElements.size) return@updateState it
-        it.copy(explanationElements = it.explanationElements.toMutableList().also { list ->
-            val item = list.removeAt(index)
-            list.add(index - 1, item)
-        })
+        it.copy(
+            explanationElements = it.explanationElements.toMutableList().also { list ->
+                val item = list.removeAt(index)
+                list.add(index - 1, item)
+            },
+            explanationBlockIds = idsMoved(it.explanationBlockIds, index, index - 1)
+        )
     }
 
     fun moveExplanationBlockDown(index: Int) = updateState {
         if (index < 0 || index >= it.explanationElements.size - 1) return@updateState it
-        it.copy(explanationElements = it.explanationElements.toMutableList().also { list ->
-            val item = list.removeAt(index)
-            list.add(index + 1, item)
-        })
+        it.copy(
+            explanationElements = it.explanationElements.toMutableList().also { list ->
+                val item = list.removeAt(index)
+                list.add(index + 1, item)
+            },
+            explanationBlockIds = idsMoved(it.explanationBlockIds, index, index + 1)
+        )
     }
 
     private fun updateState(block: (EditorUiState) -> EditorUiState) {
-        _state.update(block)
+        _state.update { current ->
+            val next = block(current)
+            if (next === current) current
+            else next.copy(isDirty = editorSnapshot(next) != cleanSignature)
+        }
     }
 
     companion object {
-        /** Display whole marks without a decimal point ("2", not "2.0"). */
-        fun formatMarks(marks: Double): String = com.mcqapp.domain.Marks.format(marks)
+        /**
+         * Display whole marks without a decimal point ("2", not "2.0").
+         * A negative or non-finite value inherited from imported/stored data is
+         * normalised to 1 on load, so an unrelated edit is never made unsavable
+         * by a stored value the user did not type.
+         */
+        fun formatMarks(marks: Double): String = com.mcqapp.domain.Marks.format(
+            if (marks.isFinite() && marks >= 0.0) marks else 1.0
+        )
 
         /** Invalid, non-finite or negative input falls back to 1 mark. */
         fun parseMarks(raw: String): Double = com.mcqapp.domain.Marks.parse(raw)
+    }
+
+    /**
+     * Re-anchors Browse's live cursor after a write. This is a cosmetic read of
+     * the result set: it must never fail the write that already succeeded, nor
+     * suppress the caller's onDone, so it owns its error handling. The live DB
+     * reads run off the main dispatcher (M-04).
+     */
+    private suspend fun reanchorAfterWrite(anchorId: String) {
+        try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                EditorSession.reanchor(anchorId)
+            }
+        } catch (e: CancellationException) {
+            // A cancelled scope is not a cosmetic read failure. Per the Kotlin
+            // coroutine cancellation contract this must propagate, or the caller
+            // mistakes a cancelled write for a completed one and still pops.
+            throw e
+        } catch (e: Exception) {
+            // Ordinary read failures stay cosmetic: a committed write and its
+            // onDone must not be turned into a failure by a stale count read.
+            Logger.w("EDITORVM", "reanchor($anchorId) failed after a successful write", e)
+        }
     }
 
     private fun buildDto(): QuestionDto? {
@@ -561,7 +1016,8 @@ class EditorViewModel(
             explanationImage = s.explanationImage.trim().ifBlank { null },
             difficulty = s.difficulty.label,
             marks = parseMarks(s.marks),
-            tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() }
+            tags = s.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() },
+            passageId = s.passageId?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -584,7 +1040,7 @@ class EditorViewModel(
             difficulty = Difficulty.fromLabel(dto.difficulty),
             marks = dto.marks,
             tags = dto.tags,
-            passageId = _state.value.passageId?.takeIf { it.isNotBlank() }
+            passageId = dto.passageId?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -592,12 +1048,17 @@ class EditorViewModel(
         val s = _state.value
         // A double-tap on Save used to run buildDto() twice while a new
         // question's id was still blank, minting two ids and two identical
-        // rows (consolidated_bugs.md J7). One save at a time.
-        if (s.saving) return
+        // rows (consolidated_bugs.md J7). One operation at a time.
+        if (s.busy) return
+        // An import edit whose draft is gone must not fall through to the
+        // database: the id may name a real, unrelated row (H-04).
+        if (importContextMissing) {
+            Logger.w("EDITORVM", "save() refused: import draft is missing")
+            return
+        }
         Logger.d("EDITORVM", "save() called: questionId='${s.questionId}', valid=${canProceed()}, " +
             "options=${s.options.size}, " +
-            "correctCount=${s.options.count { it.isCorrect }}, editingFromImport=" +
-            "${com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport}")
+            "correctCount=${s.options.count { it.isCorrect }}, source=$editorSource")
         val dto = buildDto()
         if (dto == null) {
             Logger.w("EDITORVM", "save() validation FAILED - not saving")
@@ -609,37 +1070,51 @@ class EditorViewModel(
         // Signature of exactly what is being persisted (state may keep
         // changing under an async save; snapshotting later would mark
         // unpersisted keystrokes as clean).
-        val savedSig = signatureOf(s)
+        val savedSig = editorSnapshot(s)
         if (fromImportSession) {
             // Live write-through as well: if the user moved Prev/Next before
             // saving, the holder alone would be discarded on return (id
             // mismatch with the original mark), so update the list directly.
             EditorSession.importWriter?.invoke(dto)
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = dto
-            cleanSignature = savedSig
+            markClean(savedSig)
             Logger.i("EDITORVM", "Saved question ${dto.id} to import holder (in-memory)")
             onDone()
             return
         }
         val question = domainFrom(dto, s.categoryId)
-        _state.update { it.copy(saving = true) }
+        _state.update { it.copy(operation = EditorOperation.SAVING, saveError = null) }
         viewModelScope.launch {
             try {
                 repository.saveQuestion(question)
-                cleanSignature = savedSig
+                markClean(savedSig)
                 // A new question's minted id is written back, so a second tap
                 // updates the same row instead of minting another (J7).
                 if (s.questionId.isBlank()) {
                     _state.update { it.copy(questionId = dto.id, isNew = false) }
                 }
-                onDone()
+                // The edit may have changed whether this question matches
+                // Browse's filter; re-read the live scope before the screen
+                // shows its counter and neighbours again (M-04). A failed read
+                // is cosmetic and must not turn a successful save into a
+                // failure (M2).
+                reanchorAfterWrite(dto.id)
+                // markClean() recomputed isDirty from the CURRENT form, so a
+                // keystroke typed during the async write is still dirty. Never
+                // pop on top of it: that silently discards what was not saved.
+                // The Save button and the dirty state stay in place.
+                if (!_state.value.isDirty) onDone()
+            } catch (e: CancellationException) {
+                // Cancellation is not a save failure (Kotlin's coroutine
+                // cancellation contract); let the scope unwind normally.
+                throw e
             } catch (e: Exception) {
                 // Any Room failure used to crash here with onDone() never run
                 // (consolidated_bugs.md J7).
                 Logger.e("EDITORVM", "save() failed", e)
                 _state.update { it.copy(saveError = "Could not save: ${e.message}") }
             } finally {
-                _state.update { it.copy(saving = false) }
+                _state.update { it.copy(operation = EditorOperation.IDLE) }
             }
         }
     }
@@ -657,29 +1132,42 @@ class EditorViewModel(
      * disabled. Only dirty-and-invalid edits block the move.
      */
     fun moveToQuestion(targetId: String, onMoved: (saved: Boolean) -> Unit = {}) {
-        // Prev/Next only ever pass a neighbour, so the move is a ±1 step even
-        // when the scope is a cursor that never held the full id list.
-        val delta = when (targetId) {
-            EditorSession.prevId -> -1
-            EditorSession.nextId -> 1
-            else -> {
-                Logger.w("EDITORVM", "moveToQuestion($targetId): not a session neighbour")
-                return
-            }
+        val current = _state.value
+        // One move at a time: a second tap while a save/load is in flight used
+        // to launch independent work that both captured the same target and
+        // advanced the session twice (question_editor_audit.md H-03).
+        if (current.busy) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId) refused: ${current.operation} in flight")
+            return
         }
-        val dirty = signatureOf(_state.value) != cleanSignature
+        if (importContextMissing) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId) refused: import draft is missing")
+            return
+        }
+        // Capture the neighbour and its index together, from the session as
+        // it is now. Recomputing the index later from mutable session state
+        // is what let two rapid Next taps advance twice onto one question.
+        val target = EditorSession.captureTarget(targetId)
+        if (target == null) {
+            Logger.w("EDITORVM", "moveToQuestion($targetId): not a session neighbour")
+            return
+        }
+        val dirty = current.isDirty
         // A clean form moves freely even when it is not savable (an edge-case
         // demo question, say): nothing is lost, and gating Prev/Next on
         // validity trapped the reader on such a question with every button
         // disabled. Only dirty-and-invalid edits block the move.
-        if (dirty && !canProceed()) {
+        if (dirty && !current.canSave) {
+            _state.update {
+                it.copy(moveError = "Save or fix the highlighted problem before moving to another question.")
+            }
             Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: unsaved edits are invalid")
             return
         }
         val dto = if (dirty) buildDto() else null
-        val savedSig = signatureOf(_state.value)
+        val savedSig = editorSnapshot(current)
         Logger.i("EDITORVM", "moveToQuestion: ${if (dirty) "saving" else "no changes, skipping save for"} " +
-            "${_state.value.questionId}, loading $targetId (fromImportSession=$fromImportSession)")
+            "${current.questionId}, loading $targetId (fromImportSession=$fromImportSession)")
         if (fromImportSession) {
             if (dirty && dto != null) {
                 val writer = EditorSession.importWriter
@@ -688,20 +1176,23 @@ class EditorViewModel(
                 } else {
                     com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = dto
                 }
-                cleanSignature = savedSig
+                markClean(savedSig)
             }
-            val next = EditorSession.importReader?.invoke(targetId)
+            val next = EditorSession.importReader?.invoke(target.id)
             if (next == null) {
-                Logger.w("EDITORVM", "moveToQuestion($targetId): not found via import reader")
+                _state.update { it.copy(moveError = "Could not open the next question in the import.") }
+                Logger.w("EDITORVM", "moveToQuestion($target.id): not found via import reader")
                 return
             }
-            EditorSession.go(EditorSession.index + delta)
+            EditorSession.go(target.index)
             _state.update {
                 it.copy(
                     questionId = next.id,
                     elements = next.elements,
+                    blockIds = freshBlockIds(next.elements.size),
                     image = next.image.orEmpty(),
                     explanationElements = next.explanationElements,
+                    explanationBlockIds = freshBlockIds(next.explanationElements.size),
                     explanationImage = next.explanationImage.orEmpty(),
                     difficulty = Difficulty.fromLabel(next.difficulty),
                     marks = formatMarks(next.marks),
@@ -710,6 +1201,7 @@ class EditorViewModel(
                         OptionEditorState(
                             id = o.id,
                             elements = o.elements,
+                            blockIds = freshBlockIds(o.elements.size),
                             image = o.image.orEmpty(),
                             isCorrect = o.id in next.correctOptionIds
                         )
@@ -717,26 +1209,59 @@ class EditorViewModel(
                     // The membership belongs to the loaded question; keeping
                     // the previous one silently reassigned on save.
                     passageId = next.passageId,
-                    categoryId = ""
+                    categoryId = "",
+                    // A previous question's failures do not belong here.
+                    moveError = null,
+                    imageError = null,
+                    saveError = null
                 )
             }
             snapshotClean()
-            Logger.i("EDITORVM", "moveToQuestion: now editing $targetId (in-memory)")
+            Logger.i("EDITORVM", "moveToQuestion: now editing ${target.id} (in-memory)")
             onMoved(dirty)
         } else {
+            _state.update { it.copy(operation = EditorOperation.MOVING, moveError = null) }
             viewModelScope.launch {
                 try {
                     if (dirty && dto != null) {
-                        val categoryId = _state.value.categoryId
+                        val categoryId = current.categoryId
                         repository.saveQuestion(domainFrom(dto, categoryId))
-                        cleanSignature = savedSig
+                        markClean(savedSig)
+                        // The save may have changed this question's filter
+                        // membership; re-anchor before resolving the target
+                        // so Prev/Next follow the live result set (M-04). The
+                        // re-anchor is isolated so it cannot fail the write.
+                        reanchorAfterWrite(dto.id)
+                        // A keystroke made while this write was in flight was
+                        // not persisted. Publishing the loaded question would
+                        // silently discard it, so stay on the still-dirty form
+                        // and let the user save before moving again.
+                        if (_state.value.isDirty) return@launch
                     }
-                    val next = repository.getQuestion(targetId)
+                    val next = repository.getQuestion(target.id)
                     if (next == null) {
-                        Logger.w("EDITORVM", "moveToQuestion($targetId): not found in DB")
+                        _state.update {
+                            it.copy(moveError = "Could not open that question: it no longer exists.")
+                        }
+                        Logger.w("EDITORVM", "moveToQuestion(${target.id}): not found in DB")
                         return@launch
                     }
-                    EditorSession.go(EditorSession.index + delta)
+                    // Same rule for a keystroke typed while the load itself was
+                    // in flight: it is not on either question's stored state,
+                    // so publishing the target would silently drop it.
+                    if (_state.value.isDirty) return@launch
+                    // Resolve the target against the LIVE scope. If it left the
+                    // result set when this question was saved, the captured
+                    // index is stale — do not anchor the session on it.
+                    val index = EditorSession.indexOfId(target.id)
+                    if (index == null) {
+                        _state.update {
+                            it.copy(moveError = "That question is no longer in the current list.")
+                        }
+                        Logger.w("EDITORVM", "moveToQuestion(${target.id}): target left the live scope")
+                        return@launch
+                    }
+                    EditorSession.go(index)
                     // Cursor scopes read their neighbours from the database;
                     // do it before publishing the new question, so the screen
                     // recomposes with the new Prev/Next already in place.
@@ -745,8 +1270,10 @@ class EditorViewModel(
                         it.copy(
                             questionId = next.id,
                             elements = next.elements,
+                            blockIds = freshBlockIds(next.elements.size),
                             image = next.image.orEmpty(),
                             explanationElements = next.explanationElements,
+                            explanationBlockIds = freshBlockIds(next.explanationElements.size),
                             explanationImage = next.explanationImage.orEmpty(),
                             difficulty = next.difficulty,
                             marks = formatMarks(next.marks),
@@ -755,6 +1282,7 @@ class EditorViewModel(
                                 OptionEditorState(
                                     id = o.id,
                                     elements = o.elements,
+                                    blockIds = freshBlockIds(o.elements.size),
                                     image = o.image.orEmpty(),
                                     isCorrect = o.id in next.correctOptionIds
                                 )
@@ -764,49 +1292,113 @@ class EditorViewModel(
                             // passage membership is its own.
                             isNew = false,
                             passageId = next.passageId,
-                            categoryId = next.categoryId
+                            categoryId = next.categoryId,
+                            // A failed write/load or image pick on the question
+                            // left behind must not follow us to this one.
+                            moveError = null,
+                            imageError = null,
+                            saveError = null
                         )
                     }
-                    snapshotClean()
-                    Logger.i("EDITORVM", "moveToQuestion: now editing $targetId (DB)")
+                    // Publishing the loaded question clears the dirty flag:
+                    // the form now equals what is stored.
+                    cleanSignature = editorSnapshot(_state.value)
+                    _state.update { it.copy(isDirty = false) }
+                    Logger.i("EDITORVM", "moveToQuestion: now editing ${target.id} (DB)")
                     onMoved(dirty)
+                } catch (e: CancellationException) {
+                    // Cancellation must not be reported as "Could not move".
+                    throw e
                 } catch (e: Exception) {
-                    Logger.e("EDITORVM", "moveToQuestion($targetId) failed", e)
+                    // The form is untouched: a failed save or load leaves the
+                    // current draft on screen, with a visible reason (M-07).
+                    _state.update {
+                        it.copy(moveError = "Could not move to the next question: ${e.message}")
+                    }
+                    Logger.e("EDITORVM", "moveToQuestion(${target.id}) failed", e)
+                } finally {
+                    _state.update { it.copy(operation = EditorOperation.IDLE) }
                 }
             }
         }
     }
 
+    /**
+     * Records which block a gallery pick is for. Kept in the ViewModel, so a
+     * rotation (or any configuration change) keeps the target; the Activity
+     * Result is then delivered into that block, not into a lost closure.
+     */
+    fun beginImagePick(target: ImageTarget) {
+        _state.update { it.copy(pendingImageTarget = target, imageError = null) }
+    }
+
+    /** The picker returned nothing: no target is left waiting. */
+    fun onImagePickCancelled() {
+        _state.update { it.copy(pendingImageTarget = null) }
+    }
+
+    /**
+     * Reads and encodes a picked URI off the main thread, then writes it into
+     * the block the pending target names. The utility used to run inline in
+     * the Activity Result callback, where a large photo froze the editor
+     * (question_editor_audit.md M-06); a failure now says so instead of only
+     * logging (M-12) and writes nothing.
+     */
+    fun onImagePicked(uri: android.net.Uri) {
+        val target = _state.value.pendingImageTarget ?: return
+        _state.update { it.copy(pendingImageTarget = null, imageError = null) }
+        viewModelScope.launch {
+            val encoded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.mcqapp.util.ImageUtils.encodeImageUri(getApplication(), uri)
+            }
+            if (encoded == null) {
+                Logger.e("EDITORVM", "Picked image could not be encoded; nothing written")
+                _state.update {
+                    it.copy(imageError = "That image could not be read. Try another image.")
+                }
+                return@launch
+            }
+            applyPickedImage(target, encoded)
+        }
+    }
+
+    private fun applyPickedImage(target: ImageTarget, src: String) =
+        updateState { applyImageTarget(it, target, src) }
+
     /** Whether this editor instance edits an import preview's in-memory copy
-     *  rather than a stored row (the Delete button hides for it — J2). */
-    val editingFromImport: Boolean get() = fromImportSession
+     *  rather than a stored row (the Delete button hides for it — J2). True
+     *  even when the draft is missing, so no delete affordance renders. */
+    val editingFromImport: Boolean get() = editorSource == EditorSource.IMPORT
 
     fun delete(onDone: () -> Unit) {
         // Delete has no import-session branch: on the preview screen it used
         // to delete the STORED row the preview question was imported from
-        // (consolidated_bugs.md J2).
-        if (fromImportSession) {
+        // (consolidated_bugs.md J2). A missing draft is the same refusal.
+        if (editorSource == EditorSource.IMPORT) {
             Logger.w("EDITORVM", "delete() refused: editing an import preview, not a stored row")
             return
         }
         val current = _state.value
-        if (current.saving) return
+        if (current.busy) return
         // Prev/Next retarget this same ViewModel via state.questionId; delete
         // read the constructor's immutable id, so it removed the question the
         // editor was opened with, not the one on screen (consolidated_bugs.md
         // J1).
         val targetId = current.questionId
         if (targetId.isBlank()) return
-        _state.update { it.copy(saving = true) }
+        _state.update { it.copy(operation = EditorOperation.DELETING, saveError = null) }
         viewModelScope.launch {
             try {
                 repository.deleteQuestion(targetId)
                 onDone()
+            } catch (e: CancellationException) {
+                // Cancellation is not a delete failure.
+                throw e
             } catch (e: Exception) {
                 Logger.e("EDITORVM", "delete($targetId) failed", e)
                 _state.update { it.copy(saveError = "Could not delete: ${e.message}") }
             } finally {
-                _state.update { it.copy(saving = false) }
+                _state.update { it.copy(operation = EditorOperation.IDLE) }
             }
         }
     }

@@ -22,6 +22,12 @@ domain-specific.
   when it merges and when a release is cut.
 - Releases tag the merge commit on `main` as `0.0.N`. The asset names and the
   release-notes shape are the project's own convention; see `PROJECT_NOTES.md`.
+- **Every release must publish user-facing notes** alongside the auto-generated
+  change list. Write them in plain language: what changed for the person using
+  the app, how the UI or behaviour will feel different, and at least one concrete
+  before/after example or short scenario. Avoid implementation terms (ViewModels,
+  schemas, migrations) — describe what the user sees and does. If nothing user-visible
+  changed, say so explicitly. Keep the project's exact notes shape in `PROJECT_NOTES.md`.
 
 ## Supervisor workflow (owner rule)
 
@@ -36,8 +42,9 @@ domain-specific.
   reviewers (design/domain, implementation/integration, tests/docs) for anything
   significant — a domain rule, the database schema, a backup or export format,
   or first-run defaults.
-- Subagents run **strictly sequentially**, never in parallel, even independent
-  ones.
+- Independent subagents may run **in parallel, up to 10 at a time**. A reviewer
+  still runs only after the implementation it reviews has finished; give every
+  agent a self-contained brief and never let two agents edit the same files.
 - **A subagent killed by a provider quota error is retried, not abandoned.** Try
   once to continue the same session (call `subagent` with its `sessionID` and the
   full remaining brief); if that session dies again, launch a **fresh** subagent
@@ -55,7 +62,7 @@ domain-specific.
   disagreement instead of assuming the local one is right.
 - Behaviour changes, user-facing copy, scope and release state are the owner's
   call. When the owner is away and a decision is unavoidable, launch three
-  decision subagents sequentially with the identical question, adopt the
+  decision subagents in parallel with the identical question, adopt the
   convergent answer, and report the decision and the split afterwards.
 
 ## Build and test (Android)

@@ -53,8 +53,8 @@ internal class PassageStore(
      * contiguous block (see [assignQuestions], [unassignAll] for explicit
      * membership changes).
      *
-     * A member that follows the passage into another paper loses its
-     * `review_log` rows on the way (see
+     * A member that follows the passage into another paper keeps its schedule
+     * and history, re-keyed to the new paper (see
      * [QuestionStore.moveQuestionsToCategory]), so the repository wrapper
      * invalidates the calibration cache once this call returns.
      */
@@ -134,9 +134,10 @@ internal class PassageStore(
      * bulk "move to category"), then placed right after the group's last
      * member.
      *
-     * An assignee that crosses a paper boundary loses its `review_log` rows
-     * on the way, so the repository wrapper invalidates the calibration cache
-     * once this call returns.
+     * An assignee that crosses a paper boundary has its card and `review_log`
+     * rows re-keyed to the new paper (or, on a destination-card collision, has
+     * its source history dropped), so the repository wrapper invalidates the
+     * calibration cache once this call returns.
      */
     suspend fun assignQuestions(questionIds: Collection<String>, passageId: String) {
         if (questionIds.isEmpty()) return

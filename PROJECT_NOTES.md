@@ -74,6 +74,34 @@ code or copy changes.
 - Room validates the schema after a migration chain completes, so a missing
   column or a wrong final schema fails the open rather than passing silently.
 
+## Cross-paper moves (owner decision, 2026-11-17)
+
+- A move to another paper **carries progress**: `card_state`, `review_log` and
+  `question_stats` rows are re-keyed to the destination paper in the move
+  transaction. The schedule (including due date and FSRS memory) and the review
+  history survive; the destination paper's statistics include those reviews,
+  which the owner explicitly accepted. A same-paper move changes only the
+  category and leaves all progress rows alone.
+- A question in a passage never moves alone: selecting one member re-homes the
+  passage row and moves every member. Browse's dialog and completion toast use
+  that passage-expanded count.
+- On the rare collision where the destination paper already has a `card_state`
+  row for that question, the **destination card and its own history win**, and
+  the source paper's review history is **dropped, not merged**. `question_stats`
+  keeps the destination counters but points at the destination paper/category.
+- `review_log` content stays immutable; `paperId` is the single column a move
+  may change (it is re-keyed for ordinary moves, deleted for collided sources).
+- `StatsStore`'s calibration cache must be invalidated after rows are re-keyed
+  or dropped: its key contains `scopePaperId` but no input moves when only
+  `review_log.paperId` changes. The move returns a count of changed rows for
+  that purpose.
+- Cross-paper changes are confirmed in Browse's move dialog and in
+  Library → Passages → edit (change Category). The editor's passage picker is
+  same-paper only; it re-verifies cached passages and ignores a stale
+  cross-paper pick rather than writing it silently.
+- No backup/export format bump: scheduling keys already use the current
+  `(paperId, questionId)`.
+
 ## Scheduling (FSRS-7)
 
 - The engine is FSRS-7: **34 weights**, two stability traces (`stability` slow,
@@ -242,6 +270,10 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   **`mcq-<tag>-signed.apk`** plus **`mcq-<tag>-signed.apk.sha256`**; it creates
   the release with auto-generated notes. A supervisor caveat, when there is one,
   is prepended afterwards with `gh release edit --notes-file`.
+- Every release also needs **user-facing notes** (AGENTS.md owner rule): plain
+  language, what changed for the learner, how the UI/behaviour will feel, and a
+  concrete before/after example or scenario. The auto-generated PR list is not
+  a substitute. Say "nothing user-visible changed" when that is true.
 - A release tags the **merge commit** on `main` as `0.0.N`; `0.0.52` is the
   current release and carries Room schema 28.
 - CI uploads the APKs as artifacts (`if: always()`). After every push, download

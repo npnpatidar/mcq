@@ -49,6 +49,21 @@ class RoutesTest {
     }
 
     @Test
+    fun theEditorRouteCarriesItsSourceWithoutChangingTheOldShape() {
+        // Pre-source callers (library, Browse) keep their URL byte-for-byte.
+        assertEquals(
+            "editor?questionId=q1&paperId=p1&categoryId=c1",
+            editorRoute("q1", "p1", "c1")
+        )
+        // An import edit must state itself: the id alone would load a
+        // same-id database row after process death (H-04).
+        assertEquals(
+            "editor?questionId=q1&paperId=&categoryId=&source=import",
+            editorRoute("q1", "", "", source = "import")
+        )
+    }
+
+    @Test
     fun ordinaryIdsAreUnchanged() {
         assertEquals("paper-1", Uri.decode(testRoute("paper-1").substringAfter("paperId=").substringBefore("&")))
         assertEquals("study/paper-1", studyRoute("paper-1"))

@@ -205,9 +205,55 @@ suspend fun CardStateDao.deleteByQuestionsChunked(questionIds: Collection<String
     questionIds.toList().chunks().forEach { deleteByQuestions(it) }
 }
 
+/** Which of [questionIds] already have a card in [paperId] (a move collision). */
+suspend fun CardStateDao.existingQuestionIdsInPaperChunked(
+    paperId: String,
+    questionIds: Collection<String>
+): Set<String> =
+    questionIds.toList().chunks().flatMap { existingQuestionIdsInPaper(paperId, it) }.toSet()
+
+suspend fun CardStateDao.rekeyToPaperChunked(
+    questionIds: Collection<String>,
+    targetPaperId: String
+) {
+    questionIds.toList().chunks().forEach { rekeyToPaper(it, targetPaperId) }
+}
+
+suspend fun CardStateDao.deleteOtherPapersChunked(
+    questionIds: Collection<String>,
+    targetPaperId: String
+) {
+    questionIds.toList().chunks().forEach { deleteOtherPapers(it, targetPaperId) }
+}
+
 /** Deletes in bind-safe chunks and returns the total number of rows removed. */
 suspend fun ReviewLogDao.deleteByQuestionsChunked(questionIds: Collection<String>): Int =
     questionIds.toList().chunks().sumOf { deleteByQuestions(it) }
+
+/** Re-keys in bind-safe chunks and returns how many history rows changed paper. */
+suspend fun ReviewLogDao.rekeyToPaperChunked(
+    questionIds: Collection<String>,
+    targetPaperId: String
+): Int =
+    questionIds.toList().chunks().sumOf { rekeyToPaper(it, targetPaperId) }
+
+/** Deletes in bind-safe chunks source-paper history of collided move ids. */
+suspend fun ReviewLogDao.deleteOtherPapersChunked(
+    questionIds: Collection<String>,
+    targetPaperId: String
+): Int =
+    questionIds.toList().chunks().sumOf { deleteOtherPapers(it, targetPaperId) }
+
+suspend fun QuestionStatsDao.rekeyToPaperChunked(
+    questionIds: Collection<String>,
+    paperId: String,
+    paperTitle: String,
+    categoryTitle: String
+) {
+    questionIds.toList().chunks().forEach {
+        rekeyToPaper(it, paperId, paperTitle, categoryTitle)
+    }
+}
 
 /**
  * Rewrites one question's exact-tag rows from its tag list (phase 3).

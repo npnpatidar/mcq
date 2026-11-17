@@ -267,9 +267,13 @@ data class CardStateEntity(
 /**
  * One graded study review, appended and never edited: the immutable history
  * the FSRS scheduler's future optimizer will need, and today's record of what
- * actually happened to a card. Deliberately local-only and autoincrement-keyed
- * (the `attempts` convention, not the spec's UUIDs), and scoped to the paper
- * like every other per-question row.
+ * actually happened to a card. "Never edited" means the review's content —
+ * rating, time and memory traces are fixed at write time. The one exception is
+ * [paperId] on a cross-paper move: the whole history is re-keyed to the
+ * destination paper so the card keeps it, and the destination's statistics
+ * then include reviews logged while the question lived elsewhere. Deliberately
+ * local-only and autoincrement-keyed (the `attempts` convention, not the spec's
+ * UUIDs), and scoped to the paper like every other per-question row.
  */
 @Entity(
     tableName = "review_log",

@@ -47,8 +47,10 @@ internal class StudyStore(
      * Papers whose schedules this process has already checked for stale
      * content hashes. The check is a join over the paper's whole study
      * history, so paying it on every pull made a 250k-card paper scan 250k
-     * rows per served card. Every content-changing write (the editor, imports,
-     * passage moves) already deletes the affected schedule rows, so one pass
+     * rows per served card. Content-changing writes (the editor, imports) delete
+     * the affected schedule rows, and a passage move across papers re-keys its
+     * members' history to the destination — on a destination-card collision that
+     * card and its history win and the source history is dropped — so one pass
      * per paper per process is enough to repair rows left by an older hash
      * formula; a process restart checks once more.
      */

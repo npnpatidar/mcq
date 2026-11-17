@@ -147,11 +147,19 @@ fun ImportScreen(
         )
         viewModel.markEditing(question.id)
         com.mcqapp.ui.importscreen.ImportDataHolder.pendingEditQuestion = question
-        com.mcqapp.ui.importscreen.ImportDataHolder.editingFromImport = true
-        Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}, " +
-            "editingFromImport=true; navigating to editor")
+        Logger.d("IMPORTSCREEN", "holder armed: id=${question.id}; navigating to editor")
         navController.navigate(
-            com.mcqapp.ui.navigation.editorRoute(question.id, "", "")
+            com.mcqapp.ui.navigation.editorRoute(
+                question.id,
+                "",
+                "",
+                // State the import source explicitly: it is what keeps the
+                // editor from loading a same-id database row after process
+                // death (question_editor_audit.md H-04).
+                source = com.mcqapp.ui.editor.EditorSource.token(
+                    com.mcqapp.ui.editor.EditorSource.IMPORT
+                )
+            )
         )
     }
 

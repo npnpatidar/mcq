@@ -6,7 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.CategoryEntity
+import com.mcqapp.data.local.ReviewLogEntity
+import com.mcqapp.data.repository.QuestionContentMapper
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.QuestionStore
+import com.mcqapp.domain.CardStateKind
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
@@ -30,11 +34,11 @@ private const val PNG = "data:image/png;base64,AAA"
  * single transaction. Their observable semantics — copy ids chain `-copy`
  * suffixes even when a same-named question lives in another paper, cloned
  * questions keep every field including the explanation image, copies append
- * after the target's current tail, cross-paper
- * moves reset the schedule while same-paper moves keep it, bulk edits keep
- * null fields — are pinned here through the real repository, so the SQL under
- * them cannot drift. Robolectric needs a real SQLite driver, so this test
- * only runs on x86_64 CI.
+ * after the target's current tail, a cross-paper move carries the schedule,
+ * history and statistics to the destination while a same-paper move is a no-op,
+ * bulk edits keep null fields — are pinned here through the real repository, so
+ * the SQL under them cannot drift. Robolectric needs a real SQLite driver, so
+ * this test only runs on x86_64 CI.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -82,20 +86,81 @@ class BulkOpsDbTest {
         tags = listOf("t$id")
     )
 
-    private suspend fun schedule(paperId: String, questionId: String) {
+    private suspend fun schedule(
+        paperId: String,
+        questionId: String,
+        dueAt: Long = 0L,
+        intervalDays: Int = 1,
+        difficulty: Double = 0.0,
+        stability: Double = 0.0,
+        stabilityFast: Double = 0.0,
+        reps: Int = 1,
+        reviewCount: Int = 1
+    ) {
         db.cardStateDao().upsert(
             CardStateEntity(
                 paperId = paperId,
                 questionId = questionId,
                 ease = 2.5,
-                intervalDays = 1,
-                dueAt = 0L,
-                reps = 1,
+                intervalDays = intervalDays,
+                dueAt = dueAt,
+                reps = reps,
                 lapses = 0,
                 leech = false,
                 lastReviewedAt = 0L,
-                contentHash = ""
+                contentHash = "",
+                difficulty = difficulty,
+                stability = stability,
+                stabilityFast = stabilityFast,
+                cardState = CardStateKind.REVIEW,
+                reviewCount = reviewCount
             )
+        )
+    }
+
+    private suspend fun seedReviews(paperId: String, questionId: String, count: Int = 2) {
+        db.reviewLogDao().insertAll(
+            (1..count).map { i ->
+                ReviewLogEntity(
+                    paperId = paperId,
+                    questionId = questionId,
+                    rating = 2 + i,
+                    reviewedAt = 1_000L * i,
+                    elapsedSeconds = 10L * i,
+                    stateBefore = "REVIEW",
+                    stabilityAfter = i.toDouble(),
+                    stabilityFastAfter = i / 2.0,
+                    difficultyAfter = 5.0,
+                    intervalDaysAfter = i,
+                    wasCorrect = true,
+                    gradeSource = "AUTO"
+                )
+            }
+        )
+    }
+
+    private suspend fun historyOf(questionId: String) =
+        db.reviewLogDao().historyForQuestion(questionId)
+            .map { Triple(it.id, it.rating, it.reviewedAt) }
+
+    private suspend fun seedStats(questionId: String) {
+        db.questionStatsDao().bumpQuestionStats(
+            questionId = questionId,
+            paperId = "p1",
+            paperTitle = "Paper 1",
+            categoryTitle = "Cat 1",
+            text = "Q $questionId",
+            total = 3,
+            graded = 3,
+            correct = 2,
+            wrong = 1,
+            skip = 0,
+            ungraded = 0,
+            repCorrect = 2,
+            repWrong = 1,
+            repSkip = 0,
+            isCorrect = true,
+            finishedAt = 5_000L
         )
     }
 
@@ -195,19 +260,162 @@ class BulkOpsDbTest {
         assertEquals(listOf("tq1"), q.tags)
     }
 
+    /**
+     * The move dialog asks for the real scope before it opens: one selected
+     * passage member moves its whole group, so counting only the ticked ids
+     * understated the move (question_actions_audit.md QA-02). Unknown ids are
+     * ignored and an empty selection resolves to an empty scope.
+     */
     @Test
-    fun moveResetsOnlyCrossPaperSchedules() = runBlocking {
-        schedule("p1", "q1")
-        schedule("p2", "q1")
-        // Same paper: the schedule still applies, so it is kept.
+    fun moveScopeExpandsPassageMembers() = runBlocking {
+        val passageId = repository.savePassage(
+            com.mcqapp.domain.Passage(id = "", categoryId = "c1", title = "Group")
+        )
+        repository.assignQuestionsToPassage(listOf("q1", "q2"), passageId)
+
+        assertEquals(setOf("q1", "q2"), repository.moveGroupIds(setOf("q1")))
+        assertEquals(setOf("q1", "q2"), repository.moveGroupIds(setOf("q1", "missing")))
+        assertTrue(repository.moveGroupIds(emptySet()).isEmpty())
+    }
+
+    @Test
+    fun moveTransfersScheduleHistoryAndStatsAcrossPapers() = runBlocking {
+        // q1 lives in c1 (paper p1). Give its card distinctive memory fields so
+        // a re-key can be told apart from a fabricated/new card.
+        schedule(
+            "p1", "q1", dueAt = 12_345L, intervalDays = 9, difficulty = 4.2,
+            stability = 12.5, stabilityFast = 6.25, reps = 7, reviewCount = 7
+        )
+        seedReviews("p1", "q1", 2)
+        seedStats("q1")
+        val source = db.cardStateDao().get("p1", "q1")!!
+        val historyBefore = historyOf("q1")
+        assertEquals(2, historyBefore.size)
+
+        // Same-paper move (c1 -> c1b, both p1): everything stays untouched.
         repository.moveQuestionsToCategory(listOf("q1", "missing"), "c1b")
-        assertNotNull(db.cardStateDao().get("p1", "q1"))
-        assertNotNull(db.cardStateDao().get("p2", "q1"))
-        // Another paper: the old rows would inflate the source paper's due
-        // count, so the card starts over.
+        assertEquals(source, db.cardStateDao().get("p1", "q1"))
+        assertNull("no destination row for a same-paper move", db.cardStateDao().get("p2", "q1"))
+        assertEquals(historyBefore, historyOf("q1"))
+        assertEquals("p1", db.questionStatsDao().get("q1")!!.paperId)
+        assertNull("an unknown id is ignored", repository.getQuestion("missing"))
+
+        // Cross-paper move (c1b -> c2, p2): schedule, history and stats follow.
         repository.moveQuestionsToCategory(listOf("q1"), "c2")
-        assertNull(db.cardStateDao().get("p1", "q1"))
-        assertNull(db.cardStateDao().get("p2", "q1"))
         assertEquals("c2", repository.getQuestion("q1")?.categoryId)
+
+        val moved = db.cardStateDao().get("p2", "q1")
+        assertNotNull(moved)
+        assertEquals(source.copy(paperId = "p2"), moved)
+        assertNull("no card left under the old paper", db.cardStateDao().get("p1", "q1"))
+
+        assertEquals("review ids, ratings and times survive", historyBefore, historyOf("q1"))
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+        assertEquals(2, db.reviewLogDao().countByPaper("p2"))
+
+        val stats = db.questionStatsDao().get("q1")!!
+        assertEquals("p2", stats.paperId)
+        assertEquals("Paper 2", stats.paperTitle)
+        assertEquals("Cat 2", stats.categoryTitle)
+        assertEquals("counters are unchanged", 3, stats.totalAttempts)
+    }
+
+    @Test
+    fun aPassageGroupMovesTogetherWithEveryMembersScheduleAndHistory() = runBlocking {
+        val passageId = repository.savePassage(
+            com.mcqapp.domain.Passage(id = "", categoryId = "c1", title = "Group")
+        )
+        // Assigning to a passage resets card_state on the membership change, so
+        // seed schedules and history only after the group is formed.
+        repository.assignQuestionsToPassage(listOf("q1", "q2"), passageId)
+        schedule("p1", "q1", dueAt = 111L, intervalDays = 3)
+        schedule("p1", "q2", dueAt = 222L, intervalDays = 5)
+        seedReviews("p1", "q1", 2)
+        seedReviews("p1", "q2", 3)
+
+        // Moving one member moves the whole group.
+        repository.moveQuestionsToCategory(listOf("q1"), "c2")
+
+        assertEquals("c2", repository.getQuestion("q1")?.categoryId)
+        assertEquals("c2", repository.getQuestion("q2")?.categoryId)
+        assertEquals(passageId, repository.getQuestion("q2")?.passageId)
+        assertEquals("c2", db.passageDao().getById(passageId)?.categoryId)
+
+        assertEquals(111L, db.cardStateDao().get("p2", "q1")!!.dueAt)
+        assertEquals(3, db.cardStateDao().get("p2", "q1")!!.intervalDays)
+        assertEquals(222L, db.cardStateDao().get("p2", "q2")!!.dueAt)
+        assertEquals(5, db.cardStateDao().get("p2", "q2")!!.intervalDays)
+        assertNull(db.cardStateDao().get("p1", "q1"))
+        assertNull(db.cardStateDao().get("p1", "q2"))
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+        assertEquals(5, db.reviewLogDao().countByPaper("p2"))
+    }
+
+    @Test
+    fun aCrossPaperMoveKeepsTheDestinationCardOnCollision() = runBlocking {
+        // q1 has a card in the source paper and a distinct card already in p2.
+        schedule("p1", "q1", dueAt = 111L, intervalDays = 3)
+        schedule("p2", "q1", dueAt = 999L, intervalDays = 7, difficulty = 9.9)
+        seedReviews("p1", "q1", 2) // source history — must be discarded
+        seedReviews("p2", "q1", 1) // destination's own history — must survive
+        seedStats("q1")
+        val destinationBefore = db.cardStateDao().get("p2", "q1")!!
+        val rowsBefore = db.reviewLogDao().getAll().filter { it.questionId == "q1" }
+        val destinationHistory = rowsBefore.filter { it.paperId == "p2" }
+        val sourceHistory = rowsBefore.filter { it.paperId == "p1" }
+        assertEquals(1, destinationHistory.size)
+        assertEquals(2, sourceHistory.size)
+
+        repository.moveQuestionsToCategory(listOf("q1"), "c2")
+
+        // The destination card wins untouched (no fabricated merge), and the
+        // source card is gone.
+        assertEquals(destinationBefore, db.cardStateDao().get("p2", "q1"))
+        assertNull(db.cardStateDao().get("p1", "q1"))
+        // The merge was DELIBERATELY REJECTED: those source reviews describe the
+        // card that lived in p1, not the destination card. Grafting them onto
+        // the kept card would invent a memory nobody earned, so the source
+        // history is dropped everywhere — not re-keyed under the destination
+        // and not left behind in p1 — while the destination's own rows stay.
+        val rowsAfter = db.reviewLogDao().getAll().filter { it.questionId == "q1" }
+        assertEquals(destinationHistory, rowsAfter)
+        assertTrue(
+            "no source history anywhere",
+            rowsAfter.none { it in sourceHistory }
+        )
+        assertEquals(1, db.reviewLogDao().countByPaper("p2"))
+        assertEquals(0, db.reviewLogDao().countByPaper("p1"))
+        // Counters belong to the kept card and stay; only the display paper /
+        // category re-point at the destination.
+        val stats = db.questionStatsDao().get("q1")!!
+        assertEquals("p2", stats.paperId)
+        assertEquals("Paper 2", stats.paperTitle)
+        assertEquals("Cat 2", stats.categoryTitle)
+        assertEquals("counters are unchanged", 3, stats.totalAttempts)
+    }
+
+    @Test
+    fun moveReportsRekeyedRowsOnlyForCrossPaperMoves() = runBlocking {
+        // The repository invalidates the calibration cache only when the store
+        // reports a changed row; assert that count directly.
+        val store = QuestionStore(db, QuestionContentMapper(db))
+        seedReviews("p1", "q1", 2)
+        assertEquals(0, store.moveQuestionsToCategory(listOf("q1"), "c1b"))
+        assertEquals(2, store.moveQuestionsToCategory(listOf("q1"), "c2"))
+
+        // A collision deletes the source's history instead of re-keying it;
+        // those deleted rows still count so the cache is invalidated.
+        schedule("p1", "q2")
+        schedule("p2", "q2")
+        seedReviews("p1", "q2", 3)
+        seedReviews("p2", "q2", 1)
+        assertEquals(3, store.moveQuestionsToCategory(listOf("q2"), "c2"))
+        // A drop and a re-key both report 3, so assert *where* the rows landed:
+        // the source rows are gone, not grafted under the kept p2 card, whose
+        // own single row survives.
+        val q2Rows = db.reviewLogDao().getAll().filter { it.questionId == "q2" }
+        assertEquals("source history dropped, destination's kept", 1, q2Rows.size)
+        assertEquals("p2", q2Rows.single().paperId)
+        assertTrue("no source rows left under p1", q2Rows.none { it.paperId == "p1" })
     }
 }

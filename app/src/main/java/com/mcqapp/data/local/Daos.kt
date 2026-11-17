@@ -1707,6 +1707,49 @@ interface CardStateDao {
     suspend fun deleteByQuestions(questionIds: List<String>)
 
     /**
+     * Question ids that already have a card in [paperId]. Used by a cross-paper
+     * move to spot a collision: the destination card must win, the displaced
+     * source row is dropped, and the collision is logged.
+     */
+    @Query(
+        "SELECT questionId FROM card_state WHERE paperId = :paperId " +
+            "AND questionId IN (:questionIds)"
+    )
+    suspend fun existingQuestionIdsInPaper(
+        paperId: String,
+        questionIds: Collection<String>
+    ): List<String>
+
+    /**
+     * Re-keys every card of [questionIds] to [targetPaperId], copying the whole
+     * memory state unchanged. A card already at the destination wins: `IGNORE`
+     * keeps it rather than overwriting the one the learner last studied there.
+     * The displaced source rows are removed separately by [deleteOtherPapers].
+     */
+    @Query(
+        "INSERT OR IGNORE INTO card_state " +
+            "(paperId, questionId, ease, intervalDays, dueAt, reps, lapses, leech, " +
+            "lastReviewedAt, contentHash, difficulty, stability, stabilityFast, " +
+            "cardState, reviewCount) " +
+            "SELECT :targetPaperId, questionId, ease, intervalDays, dueAt, reps, lapses, " +
+            "leech, lastReviewedAt, contentHash, difficulty, stability, stabilityFast, " +
+            "cardState, reviewCount FROM card_state " +
+            "WHERE questionId IN (:questionIds) AND paperId != :targetPaperId"
+    )
+    suspend fun rekeyToPaper(questionIds: Collection<String>, targetPaperId: String)
+
+    /**
+     * Drops the displaced rows of a cross-paper move, keeping the cards now at
+     * [targetPaperId]. Runs after [rekeyToPaper] so a re-keyed row's source (and
+     * any stale row in a third paper) is gone while the destination copy stays.
+     */
+    @Query(
+        "DELETE FROM card_state WHERE questionId IN (:questionIds) " +
+            "AND paperId != :targetPaperId"
+    )
+    suspend fun deleteOtherPapers(questionIds: Collection<String>, targetPaperId: String)
+
+    /**
      * Drops every card whose question lives in one category, resolved as a
      * subquery: a category can hold a million questions, and the relation is a
      * join, so the ids are never listed. Must run before the category (and its
@@ -2134,9 +2177,12 @@ interface ReviewLogDao {
 
     /**
      * Removes one question's logged reviews. The log is immutable per review,
-     * but it is not a graveyard: deleting a question, bulk-deleting or moving
-     * one across papers drops its schedule and its history in the same
-     * transaction, so the log never outlives the card it describes.
+     * but it is not a graveyard: deleting a question or bulk-deleting drops its
+     * schedule and its history in the same transaction, so the log never
+     * outlives a card that is gone. A cross-paper move is different — see
+     * [rekeyToPaper] — it keeps the history and only changes the owning paper,
+     * unless a destination card collides: that card and its own history win and
+     * the source's history is dropped (see [deleteOtherPapers]).
      */
     @Query("DELETE FROM review_log WHERE questionId = :questionId")
     suspend fun deleteByQuestion(questionId: String)
@@ -2144,6 +2190,37 @@ interface ReviewLogDao {
     /** The bulk form of [deleteByQuestion]; the caller keeps ids chunked. */
     @Query("DELETE FROM review_log WHERE questionId IN (:questionIds)")
     suspend fun deleteByQuestions(questionIds: Collection<String>): Int
+
+    /**
+     * Re-keys the owning paper of [questionIds]' history to [targetPaperId].
+     * The one deliberate exception to the log's immutability: only `paperId`
+     * changes on a cross-paper move, never a review's content — rating,
+     * timestamp and memory traces are carried over verbatim. The destination
+     * paper then honestly reports reviews that happened while the question
+     * lived in another paper.
+     *
+     * @return how many rows were re-keyed.
+     */
+    @Query(
+        "UPDATE review_log SET paperId = :targetPaperId " +
+            "WHERE questionId IN (:questionIds) AND paperId != :targetPaperId"
+    )
+    suspend fun rekeyToPaper(questionIds: Collection<String>, targetPaperId: String): Int
+
+    /**
+     * Drops the source-paper history of questions whose card collided on a
+     * cross-paper move. The destination already has its own card and history;
+     * grafting the source's reviews onto it would fabricate a merged memory, so
+     * those rows are deleted instead of re-keyed ([rekeyToPaper] covers the ids
+     * without a collision). The destination's own rows are untouched.
+     *
+     * @return how many rows were deleted.
+     */
+    @Query(
+        "DELETE FROM review_log WHERE questionId IN (:questionIds) " +
+            "AND paperId != :targetPaperId"
+    )
+    suspend fun deleteOtherPapers(questionIds: Collection<String>, targetPaperId: String): Int
 
     /**
      * Drops the history of every question in one category, resolved as a
@@ -2905,6 +2982,27 @@ interface QuestionStatsDao {
             "repSkip AS repSkip FROM question_stats WHERE questionId IN (:ids)"
     )
     suspend fun getCountersByIds(ids: List<String>): List<QuestionCounterRow>
+
+    /** One question's stored aggregate, including its display paper/category. */
+    @Query("SELECT * FROM question_stats WHERE questionId = :questionId")
+    suspend fun get(questionId: String): QuestionStatsEntity?
+
+    /**
+     * Re-points [questionIds]' lifetime aggregates at the destination paper and
+     * category. Only the display fields move: on a cross-paper move the
+     * destination paper now includes the reviews those counters summarise, so
+     * [paperId], [paperTitle] and [categoryTitle] must describe its new home.
+     */
+    @Query(
+        "UPDATE question_stats SET paperId = :paperId, paperTitle = :paperTitle, " +
+            "categoryTitle = :categoryTitle WHERE questionId IN (:questionIds)"
+    )
+    suspend fun rekeyToPaper(
+        questionIds: Collection<String>,
+        paperId: String,
+        paperTitle: String,
+        categoryTitle: String
+    ): Int
 
     /**
      * Lifetime totals for the Exam tab's counter-source line, scoped to one

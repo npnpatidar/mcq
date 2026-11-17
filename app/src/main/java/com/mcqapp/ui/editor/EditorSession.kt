@@ -1,6 +1,7 @@
 package com.mcqapp.ui.editor
 
 import com.mcqapp.data.io.QuestionDto
+import kotlin.jvm.Volatile
 
 /**
  * Which list the editor was opened from, so Prev/Next can walk it.
@@ -12,23 +13,39 @@ import com.mcqapp.data.io.QuestionDto
  *   materialised: the scope's size and the current index come from counts, and
  *   Prev/Next resolve one id at a time through the cursor's [Cursor.idAt].
  *
- * Only ever navigates within the scope captured at open time.
+ * Navigation starts within the scope captured at open time. A cursor scope
+ * re-reads its live count and the anchor's position after an edit ([reanchor]),
+ * so a question that leaves the result set is dropped rather than kept at a
+ * stale index.
  */
 object EditorSession {
-    /** A windowless view of a large scope: its size and an id-at-index read. */
+    /**
+     * A windowless view of a large scope: its size and an id-at-index read.
+     *
+     * [count] and [indexOf] are the live reads used to re-anchor after an
+     * edit that may change filter membership (question_editor_audit.md M-04);
+     * without them the stored size and index keep describing the result set
+     * from open time.
+     */
     class Cursor(
         val size: Int,
         val index: Int,
-        val idAt: suspend (Int) -> String?
+        val idAt: suspend (Int) -> String?,
+        val count: (suspend () -> Int)? = null,
+        val indexOf: (suspend (String) -> Int)? = null
     )
 
-    var index: Int = -1
+    /** A navigation target captured together with its position. */
+    data class MoveTarget(val id: String, val index: Int)
+
+    // Re-anchoring mutates these off Main; the screen reads them on Main.
+    @Volatile var index: Int = -1
         private set
-    var size: Int = 0
+    @Volatile var size: Int = 0
         private set
-    var prevId: String? = null
+    @Volatile var prevId: String? = null
         private set
-    var nextId: String? = null
+    @Volatile var nextId: String? = null
         private set
 
     /** Live read-through for import preview lists (set by ImportScreen). */
@@ -41,6 +58,8 @@ object EditorSession {
 
     private var ids: List<String> = emptyList()
     private var cursor: (suspend (Int) -> String?)? = null
+    private var cursorCount: (suspend () -> Int)? = null
+    private var cursorIndexOf: (suspend (String) -> Int)? = null
 
     val hasQueue: Boolean get() = index in 0 until size
 
@@ -59,6 +78,62 @@ object EditorSession {
         nextId = if (i < size - 1) idAt(i + 1) else null
     }
 
+    /**
+     * The neighbour named by [id], captured as one immutable target: the id
+     * AND the index it moves to. Resolving the index later from the mutable
+     * [index] is what let two rapid Next taps both land on the same question
+     * while the session advanced twice (question_editor_audit.md H-03).
+     */
+    fun captureTarget(id: String): MoveTarget? {
+        if (!hasQueue) return null
+        val delta = when (id) {
+            prevId -> -1
+            nextId -> 1
+            else -> return null
+        }
+        val target = index + delta
+        if (target !in 0 until size) return null
+        return MoveTarget(id, target)
+    }
+
+    /**
+     * Re-reads a cursor scope's live count and this anchor's position in it.
+     * An anchor that left the scope leaves no coherent index: [index]
+     * becomes -1 and the neighbours clear rather than describing the old
+     * result set. In-memory scopes are fixed lists and need no re-anchor.
+     */
+    suspend fun reanchor(anchorId: String) {
+        val count = cursorCount ?: return
+        val indexOf = cursorIndexOf ?: return
+        val newSize = count()
+        val newIndex = indexOf(anchorId)
+        if (newSize <= 0 || newIndex !in 0 until newSize || idAt(newIndex) != anchorId) {
+            size = newSize.coerceAtLeast(0)
+            index = -1
+            prevId = null
+            nextId = null
+            return
+        }
+        size = newSize
+        index = newIndex
+        refreshNeighbors()
+    }
+
+    /**
+     * Resolves [id]'s current position. A cursor scope re-verifies the row at
+     * the counted index, so a stale count can never move the session onto a
+     * different question.
+     */
+    suspend fun indexOfId(id: String): Int? {
+        val indexOf = cursorIndexOf
+        if (indexOf == null) {
+            val i = ids.indexOf(id)
+            return if (i >= 0) i else null
+        }
+        val i = indexOf(id)
+        return if (i in 0 until size && idAt(i) == id) i else null
+    }
+
     /** Opens the editor on a bounded in-memory list. */
     fun start(
         ids: List<String>,
@@ -68,6 +143,8 @@ object EditorSession {
     ) {
         this.ids = ids
         this.cursor = null
+        this.cursorCount = null
+        this.cursorIndexOf = null
         this.size = ids.size
         this.index = index.coerceIn(-1, ids.size - 1)
         this.importReader = reader
@@ -84,6 +161,8 @@ object EditorSession {
     ) {
         this.ids = emptyList()
         this.cursor = cursor.idAt
+        this.cursorCount = cursor.count
+        this.cursorIndexOf = cursor.indexOf
         this.size = cursor.size
         this.index = cursor.index.coerceIn(-1, cursor.size - 1)
         this.importReader = reader
@@ -108,6 +187,8 @@ object EditorSession {
     fun clear() {
         ids = emptyList()
         cursor = null
+        cursorCount = null
+        cursorIndexOf = null
         size = 0
         index = -1
         prevId = null

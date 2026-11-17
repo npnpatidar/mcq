@@ -7,6 +7,7 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.ui.editor.EditorBlockType
 import com.mcqapp.ui.editor.EditorSession
+import com.mcqapp.ui.editor.EditorSource
 import com.mcqapp.ui.editor.EditorViewModel
 import com.mcqapp.ui.importscreen.ImportDataHolder
 import org.junit.After
@@ -75,18 +76,22 @@ class EditorViewModelTest {
     }
 
     private fun vmFor(dto: QuestionDto, writer: ((QuestionDto) -> Unit)? = null): EditorViewModel {
-        ImportDataHolder.editingFromImport = true
         ImportDataHolder.pendingEditQuestion = dto
         if (writer != null) {
             EditorSession.start(ids = listOf(dto.id), index = 0, writer = writer)
         }
         val app = ApplicationProvider.getApplicationContext<Application>()
-        return EditorViewModel(app, questionId = dto.id, paperId = "", categoryId = "")
+        return EditorViewModel(
+            app,
+            questionId = dto.id,
+            paperId = "",
+            categoryId = "",
+            source = EditorSource.IMPORT
+        )
     }
 
     @After
     fun tearDown() {
-        ImportDataHolder.editingFromImport = false
         ImportDataHolder.pendingEditQuestion = null
         EditorSession.clear()
     }
@@ -424,5 +429,36 @@ class EditorViewModelTest {
         assertEquals(dto.options.map { it.elements }, saved.options.map { it.elements })
         assertEquals(dto.explanationElements, saved.explanationElements)
         assertEquals(dto.correctOptionIds, saved.correctOptionIds)
+    }
+
+    // --- import fidelity: passage membership (question_editor_audit.md H-01) ---
+
+    @Test
+    fun editingAnImportedMemberKeepsItsPassage() {
+        val dto = richDto("q-passage").copy(passageId = "pass-42")
+        var captured: QuestionDto? = null
+        val vm = vmFor(dto, writer = { captured = it })
+        assertEquals("the draft loads its passage", "pass-42", vm.state.value.passageId)
+        assertTrue(
+            "an import edit has no passage list (no paper context)",
+            vm.state.value.passages.isEmpty()
+        )
+
+        // Even an unrelated edit must not clear the membership on save.
+        vm.updateBlock(0, ContentElement.TextElement("edited stem"))
+        vm.save { }
+        val saved = captured ?: throw AssertionError("importWriter was not called")
+        assertEquals("pass-42", saved.passageId)
+    }
+
+    @Test
+    fun editingAnImportedStandaloneQuestionKeepsPassageNull() {
+        val dto = richDto("q-standalone")
+        var captured: QuestionDto? = null
+        val vm = vmFor(dto, writer = { captured = it })
+        assertEquals(null, vm.state.value.passageId)
+        vm.save { }
+        val saved = captured ?: throw AssertionError("importWriter was not called")
+        assertEquals(null, saved.passageId)
     }
 }

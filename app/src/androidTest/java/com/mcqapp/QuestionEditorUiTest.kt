@@ -304,7 +304,10 @@ class QuestionEditorUiTest {
         dialogNode("Cancel").performClick()
 
         compose.onNodeWithText("Delete question?").assertDoesNotExist()
-        compose.onNodeWithText("UITest UI question?").assertExists()
+        assertTrue(
+            "Cancel kept the question",
+            runBlocking { repository.getQuestion("uitest-ui-q1") != null }
+        )
     }
 
     // ---- review-fix batch (M3, M5c) ----

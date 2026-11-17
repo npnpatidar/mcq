@@ -37,8 +37,8 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/export/PaperStream.kt` | 90 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/export/PdfMath.kt` | 411 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/export/PdfPaperWriter.kt` | 756 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/export/ReportCsv.kt` | 79 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/export/ReportPdf.kt` | 202 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/export/ReportCsv.kt` | 79 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/export/ReportPdf.kt` | 202 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/export/ZipPaperWriter.kt` | 98 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/AnkiApkgImporter.kt` | 95 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/io/BookmarkExport.kt` | 35 | PENDING | — | — | — |
@@ -68,18 +68,18 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/Fsrs7Upgrade.kt` | 218 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/FsrsTuner.kt` | 269 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/GradingRulesStore.kt` | 278 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/HistoryStore.kt` | 1055 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/HistoryStore.kt` | 1055 | IN REVIEW | B4 | parallel reviewers | partial: result/bookmark paths |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/InstallFreshness.kt` | 131 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt` | 2422 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PaperStore.kt` | 457 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt` | 2422 | IN REVIEW | B1 | parallel reviewers | partial: Library/delete wrappers |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PaperStore.kt` | 457 | IN REVIEW | B1 | parallel reviewers | partial: cascade paths only |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PassageStore.kt` | 246 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/QuestionContentMapper.kt` | 107 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/QuestionStore.kt` | 743 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/QuestionStore.kt` | 743 | IN REVIEW | B1 | parallel reviewers | partial: delete paths only |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/RepositorySettings.kt` | 960 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/SignalStore.kt` | 126 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StatsStore.kt` | 865 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StudyStore.kt` | 635 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/TestProgressStore.kt` | 204 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/StudyStore.kt` | 635 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/TestProgressStore.kt` | 204 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/AnswerReview.kt` | 55 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/AutoAdvance.kt` | 15 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Blueprint.kt` | 57 | PENDING | — | — | — |
@@ -92,7 +92,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ExamMode.kt` | 19 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ExamTiming.kt` | 93 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Feedback.kt` | 33 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Fsrs.kt` | 750 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Fsrs.kt` | 750 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/FsrsOptimizer.kt` | 740 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ImportWarnings.kt` | 76 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Marks.kt` | 43 | PENDING | — | — | — |
@@ -109,13 +109,13 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ReviewFilters.kt` | 41 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/ScopeKey.kt` | 65 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Scoring.kt` | 60 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionClock.kt` | 19 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionClock.kt` | 19 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionOrder.kt` | 442 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SessionReviewPagingSource.kt` | 45 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Shuffle.kt` | 48 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SpacedRepetition.kt` | 673 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/SpacedRepetition.kt` | 673 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/StorageInfo.kt` | 54 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Submission.kt` | 40 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/Submission.kt` | 40 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/SubmitSummary.kt` | 60 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Tags.kt` | 38 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestPlan.kt` | 332 | PENDING | — | — | — |
@@ -123,7 +123,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestReport.kt` | 1395 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestSetup.kt` | 219 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestSnapshot.kt` | 237 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestTiming.kt` | 62 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestTiming.kt` | 62 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/TestType.kt` | 94 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/Trends.kt` | 60 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/signals/QuestionSignals.kt` | 337 | PENDING | — | — | — |
@@ -158,18 +158,18 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/HistoryViewModel.kt` | 55 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt` | 672 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt` | 974 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/BlueprintEditorSheet.kt` | 476 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDialogs.kt` | 267 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt` | 368 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt` | 738 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryScreen.kt` | 822 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryViewModel.kt` | 955 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/PickedArchive.kt` | 124 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/TestSetupSheet.kt` | 1302 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/BlueprintEditorSheet.kt` | 476 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDialogs.kt` | 267 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt` | 368 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryPaperCard.kt` | 738 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryScreen.kt` | 822 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryViewModel.kt` | 955 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/PickedArchive.kt` | 124 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/TestSetupSheet.kt` | 1302 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/navigation/McqNavHost.kt` | 270 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/navigation/Routes.kt` | 125 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsScreen.kt` | 1565 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsViewModel.kt` | 281 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsScreen.kt` | 1565 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsViewModel.kt` | 281 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchScreen.kt` | 204 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchViewModel.kt` | 97 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/sessions/SessionsScreen.kt` | 321 | PENDING | — | — | — |
@@ -203,10 +203,10 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/SessionsSection.kt` | 149 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/TestsSection.kt` | 255 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/WorkloadSection.kt` | 505 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyScreen.kt` | 1066 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyViewModel.kt` | 1400 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt` | 1280 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt` | 1469 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyScreen.kt` | 1066 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyViewModel.kt` | 1400 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt` | 1280 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestViewModel.kt` | 1469 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/AppThemes.kt` | 512 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/CustomTheme.kt` | 220 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/theme/Theme.kt` | 61 | PENDING | — | — | — |

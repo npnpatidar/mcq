@@ -264,6 +264,13 @@ internal class StudyPullGateForTests {
     val completed = CompletableDeferred<Unit>()
 }
 
+/** Test-only synchronisation for an in-flight grade write (see [StudyViewModel.gradeGateForTests]). */
+internal class StudyGradeGateForTests {
+    val reached = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val completed = CompletableDeferred<Unit>()
+}
+
 class StudyViewModel(
     application: Application,
     private val paperId: String,
@@ -318,8 +325,9 @@ class StudyViewModel(
     private val sittingEnded = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
-     * Owns the session-row write. Not [viewModelScope]: onCleared cancels that,
-     * and the last sitting must still be recorded.
+     * Durable scope for writes that must outlive the screen. Not
+     * [viewModelScope]: onCleared cancels that, so a grade write or the last
+     * sitting's row launched there would be lost when the card is popped mid-write.
      */
     private val sessionScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
@@ -843,6 +851,24 @@ class StudyViewModel(
      */
     internal var pullGateForTests: StudyPullGateForTests? = null
 
+    /**
+     * Test-only gate: when set, the next grade write signals
+     * [StudyGradeGateForTests.reached] and then suspends on
+     * [StudyGradeGateForTests.release] before calling [McqRepository.recordStudyReview],
+     * so a test can interleave a pop/back or a stop() with a write in flight.
+     * Cleared once used; nothing in the app sets it.
+     */
+    internal var gradeGateForTests: StudyGradeGateForTests? = null
+
+    /** Consumes [gradeGateForTests] once, just before a grade is persisted. */
+    private suspend fun awaitGradeGateForTests() {
+        val gate = gradeGateForTests ?: return
+        gradeGateForTests = null
+        gate.reached.complete(Unit)
+        gate.release.await()
+        gate.completed.complete(Unit)
+    }
+
     /** Banks the foreground segment and stops the sitting clock. */
     private fun bankSessionClock(now: Long = SystemClock.elapsedRealtime()) {
         if (!sessionRunning) return
@@ -1002,7 +1028,10 @@ class StudyViewModel(
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         val dwellSeconds = _state.value.gradedDwellSeconds
-        viewModelScope.launch {
+        // sessionScope, not viewModelScope: a pop of the screen clears the
+        // latter and would cancel this write after the tap was already spent.
+        sessionScope.launch {
+            awaitGradeGateForTests()
             var persisted = false
             try {
                 val next = repository.recordStudyReview(
@@ -1028,8 +1057,11 @@ class StudyViewModel(
                 )
                 advanceStats(proposed)
                 // stop() during the write ends the session; serving a new
-                // card would undo it (consolidated_bugs.md I4).
+                // card would undo it (consolidated_bugs.md I4). The stop may
+                // have ended the sitting before this review was tallied, so
+                // record the row now; endSitting's CAS keeps it to one row.
                 if (stopped.get()) {
+                    endSitting()
                     _state.update { it.copy(grading = false) }
                     return@launch
                 }
@@ -1079,7 +1111,9 @@ class StudyViewModel(
         val paused = _state.value
         val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
         _state.update { it.copy(gradedDwellSeconds = dwellSeconds) }
-        viewModelScope.launch {
+        // Durable scope so popping the screen mid-write cannot lose the grade.
+        sessionScope.launch {
+            awaitGradeGateForTests()
             // Persist and pull are split: a pull failure after a persisted
             // grade must not read as a failed grade — the review is already
             // stored, and retrying would write a second one
@@ -1109,7 +1143,11 @@ class StudyViewModel(
                         "leech=${next.leech}"
                 )
                 advanceStats(grade)
+                // A stop that landed during the write may have ended the
+                // sitting before this review was tallied; record the row now
+                // (the CAS guard keeps it to exactly one).
                 if (stopped.get()) {
+                    endSitting()
                     _state.update { it.copy(grading = false) }
                     return@launch
                 }
@@ -1202,7 +1240,8 @@ class StudyViewModel(
         }
         _state.update { it.copy(grading = true, gradeError = null) }
         val dwellSeconds = current.gradedDwellSeconds
-        viewModelScope.launch {
+        // Durable scope: "Done" can pop the screen while this write is in flight.
+        sessionScope.launch {
             try {
                 val next = repository.recordStudyReview(
                     paperId = paperId,
@@ -1459,15 +1498,16 @@ class StudyViewModel(
     }
 
     /**
-     * Writes this sitting's study time once. Called from both exit paths and
-     * from [onCleared]; the flag makes the race harmless. A sitting with no
-     * reviews is not recorded.
+     * Writes this sitting's study time once. Called from both exit paths, from
+     * the stopped branch of an in-flight grade, and from [onCleared]; the flag
+     * makes the race harmless. A sitting with no reviews is not recorded — and
+     * does not burn the flag — so on a stop the grade writes the row once its
+     * review is tallied. A bare clear has no such follow-up: a grade still in
+     * flight at the clear lands its review but leaves no session row, because
+     * nothing calls endSitting again after the tally.
      */
     private fun endSitting() {
-        if (_state.value.reviewed <= 0) {
-            sittingEnded.set(true)
-            return
-        }
+        if (_state.value.reviewed <= 0) return
         if (!sittingEnded.compareAndSet(false, true)) return
         val startedAt = sessionStartedAtWall
         val endedAt = System.currentTimeMillis()

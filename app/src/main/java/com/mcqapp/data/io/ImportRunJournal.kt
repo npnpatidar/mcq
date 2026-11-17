@@ -4,9 +4,9 @@ import android.content.Context
 
 /**
  * How far a streaming import got, persisted so an interrupted one is visible
- * after the process that ran it is gone. A re-run is safe because it continues
- * over what is already written (the importer skips questions that already
- * exist), so the journal is a record, not a resume pointer.
+ * after the process that ran it is gone. A re-run is safe because the whole run
+ * is one transaction: a failed run rolls every batch back, so no changes were
+ * saved and a retry starts fresh. The journal is a record, not a resume pointer.
  */
 data class ImportRunRecord(
     val sourceKey: String,
@@ -88,6 +88,5 @@ fun interruptedImportNotice(
     val recordedTotal = record.totalQuestions.takeIf { it > 0 } ?: totalQuestions
     if (recordedTotal <= 0 || record.questionsSeen >= recordedTotal) return null
     return "A previous import of this file stopped after ${record.questionsSeen} of " +
-        "$recordedTotal questions. Running it again is safe: it continues over " +
-        "whatever was already written."
+        "$recordedTotal questions. No changes were saved; running again starts fresh."
 }

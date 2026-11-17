@@ -1,5 +1,6 @@
 package com.mcqapp.data.io
 
+import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import java.io.InputStream
 import java.util.concurrent.ArrayBlockingQueue
@@ -42,9 +43,13 @@ data class ImportOverrides(
  * whole-file importer's own quirks create (see [StreamingImportSession]), and
  * they are documented there.
  *
- * Write atomicity is per batch, not per file: a crashed import leaves the
- * batches it already committed. That is the price of never holding the bank,
- * and it is stated in the import screen's report.
+ * Write atomicity is per file, not per batch: the whole run is one database
+ * transaction. The parser still streams the file and never holds it whole, but
+ * every paper, category, batch, passage and tail write joins the one
+ * transaction, so a parser error, a throwing [onProgress], cancellation or a
+ * write failure rolls back *everything* the run did. The library is left
+ * byte-for-byte as it was, including pre-existing rows the run would have
+ * updated (a matched paper's exam settings, a refreshed duplicate's key).
  */
 class StreamingImporter(
     private val db: AppDatabase,
@@ -74,7 +79,15 @@ class StreamingImporter(
         source: () -> InputStream,
         onProgress: ((Int) -> Unit)? = null
     ): ImportReport = withContext(Dispatchers.IO) {
-        importHere(source, onProgress)
+        // One transaction for the entire run. The session's per-batch
+        // `withTransaction` calls nest into this one (Room uses a savepoint),
+        // so a failure anywhere — including after batch 1 has been written —
+        // rolls the whole run back instead of leaving a half-import. Nothing is
+        // written from another thread: the parser only reads the file, and all
+        // database writes happen on this coroutine inside this transaction.
+        db.withTransaction {
+            importHere(source, onProgress)
+        }
     }
 
     /**

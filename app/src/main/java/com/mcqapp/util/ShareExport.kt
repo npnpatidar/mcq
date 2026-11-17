@@ -4,7 +4,11 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -123,6 +127,78 @@ fun copyBounded(
 
 /** Chunk for [copyBounded]; matches the constant in `BoundedRead.kt`. */
 private const val COPY_CHUNK_BYTES = 64 * 1024
+
+/** Prefix for the unique scratch file each export renders into before copying. */
+private const val EXPORT_TEMP_PREFIX = "export-"
+
+/**
+ * Renders an export into a unique scratch file under [cacheDir], then copies the
+ * *finished* bytes into the SAF document returned by [openUriOutput].
+ *
+ * The URI stream is opened only after [render] returns successfully, so a
+ * failure part-way through a PDF/ZIP/JSON render can never leave a truncated,
+ * unreadable document at the user's picker URI. The scratch file uses
+ * [File.createTempFile], so concurrent exports cannot collide, and is always
+ * deleted in `finally` — on success and on failure alike.
+ *
+ * [openUriOutput] receives the Android open mode and is invoked once on
+ * success, and again only as a best-effort cleanup if the copy itself fails:
+ * callers open the URI in `"wt"` mode, which asks the provider to discard any
+ * partial bytes. Truncation is provider-dependent and never guaranteed, so
+ * cleanup is best-effort and never masks the original failure. The original
+ * exception instance is propagated to the caller, which reports it.
+ *
+ * The bytes handed to the URI are exactly the bytes [render] wrote — the copy
+ * is a verbatim chunk pump, so format, MIME and naming logic stay unchanged.
+ */
+suspend fun <T> renderToTempThenCopy(
+    cacheDir: File,
+    openUriOutput: (mode: String) -> OutputStream,
+    render: suspend (OutputStream) -> T,
+    tempSuffix: String = ".tmp"
+): T {
+    // The outcome is carried out of `withContext` as a value rather than thrown
+    // through it: coroutine stack-trace recovery replaces a thrown exception
+    // with a copy, which would break identity for callers that report the
+    // original failure. Catching here and rethrowing after `withContext`
+    // preserves the exact instance.
+    val outcome = withContext(Dispatchers.IO) {
+        val temp = File.createTempFile(EXPORT_TEMP_PREFIX, tempSuffix, cacheDir)
+        var copyStarted = false
+        try {
+            val result = FileOutputStream(temp).use { sink ->
+                render(sink)
+            }
+            // Render succeeded: only now is the user's document touched.
+            val uriOut = openUriOutput("wt")
+            copyStarted = true
+            uriOut.use { out ->
+                FileInputStream(temp).use { input ->
+                    val buffer = ByteArray(COPY_CHUNK_BYTES)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        out.write(buffer, 0, read)
+                    }
+                    out.flush()
+                }
+            }
+            Result.success(result)
+        } catch (e: Exception) {
+            if (copyStarted) {
+                // The copy may have written partial bytes to the SAF document.
+                // Reopening in "wt" asks the provider to truncate them, but
+                // that is provider-dependent; this is best-effort and never
+                // masks the original failure.
+                runCatching { openUriOutput("wt").close() }
+            }
+            Result.failure(e)
+        } finally {
+            temp.delete()
+        }
+    }
+    return outcome.getOrThrow()
+}
 
 /**
  * The raw `ACTION_SEND` intent for a rendered shared file. The caller wraps

@@ -86,19 +86,23 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
                 val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val stream = com.mcqapp.data.io.Exporter(repository.db()).bookmarkStream()
                         ?: throw IllegalStateException("No bookmarked questions to export")
-                    (
-                        getApplication<Application>().contentResolver.openOutputStream(uri)
-                            ?: throw IllegalStateException("Could not open output stream")
-                        ).use { sink ->
-                        com.mcqapp.data.export.PaperExporter(repository.db())
-                            .exportStream(
-                                stream,
-                                com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
-                                format,
-                                sink,
-                                twoColumnPdf = repository.pdfTwoColumn().first()
-                            )
-                    }
+                    com.mcqapp.util.renderToTempThenCopy(
+                        cacheDir = getApplication<Application>().cacheDir,
+                        openUriOutput = { mode ->
+                            getApplication<Application>().contentResolver.openOutputStream(uri, mode)
+                                ?: throw IllegalStateException("Could not open output stream")
+                        },
+                        render = { sink ->
+                            com.mcqapp.data.export.PaperExporter(repository.db())
+                                .exportStream(
+                                    stream,
+                                    com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
+                                    format,
+                                    sink,
+                                    twoColumnPdf = repository.pdfTwoColumn().first()
+                                )
+                        }
+                    )
                 }
                 Logger.i("BOOKVM", "Exported ${file.fileName}")
                 _exportError.value = null

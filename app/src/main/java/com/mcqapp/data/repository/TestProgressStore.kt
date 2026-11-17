@@ -24,9 +24,9 @@ import kotlinx.coroutines.sync.withLock
  * Rows are keyed by `(paperId, questionId)`, so they cannot tell two *scopes* of
  * one paper apart — a whole-paper session and a mistakes-only one, say. Only
  * one session is saved at a time (the header slot is global), so the pair is
- * enough to decide when rows are leftovers; [discardStale] is what the caller
- * uses, and it deliberately leaves a same-paper document alone rather than
- * deleting answers an open screen did not create.
+ * enough to decide when rows are leftovers: [save] drops the outgoing paper's
+ * rows when a new header takes the slot, while a same-paper document is left
+ * alone rather than deleting answers an open screen did not create.
  */
 /**
  * The resume slot the header document lives in. A seam: the store's saves must
@@ -80,13 +80,25 @@ internal class TestProgressStore(
      * locked write: leaving them would join the abandoned session's answers
      * into this one on the next resume (section 7.6: a new test is not a
      * continuation of the old one).
+     *
+     * The slot is global, so it can also hold a *different paper's* header.
+     * That paper's rows have to be dropped by the very write that replaces its
+     * header, not left for a later open of that paper: once this header lands,
+     * nothing can join those rows to a header again. The outgoing paper id is
+     * read before the overwrite, under [writeLock], so no save can slip between
+     * the capture and the delete. A same-paper header is deliberately left
+     * alone — its rows may belong to this very session under another scope.
      */
     suspend fun save(
         snapshot: TestSnapshot,
         changed: List<TestAnswer>,
         takeOver: Boolean = false
     ) = writeLock.withLock {
+        val outgoingPaperId = currentPaperId()
         if (takeOver) db.testProgressDao().deleteForPaper(snapshot.paperId)
+        if (outgoingPaperId != null && outgoingPaperId != snapshot.paperId) {
+            db.testProgressDao().deleteForPaper(outgoingPaperId)
+        }
         if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
         settings.saveTestProgress(snapshot.header().toJson())
     }
@@ -95,10 +107,14 @@ internal class TestProgressStore(
     suspend fun offer(paperId: String): TestSnapshot? =
         snapshot()?.withAnswers(rows(paperId))
 
-    /** Writes a legacy snapshot's inline answers as rows; nothing for a row-based one. */
-    suspend fun adopt(snapshot: TestSnapshot) {
+    /**
+     * Writes a legacy snapshot's inline answers as rows; nothing for a row-based
+     * one. Joins [writeLock]: adopting between another save's rows and its
+     * header would leave rows the header does not describe.
+     */
+    suspend fun adopt(snapshot: TestSnapshot) = writeLock.withLock {
         val answers = snapshot.answers()
-        if (answers.isEmpty()) return
+        if (answers.isEmpty()) return@withLock
         Logger.i("REPO", "Adopting ${answers.size} inline answers of ${snapshot.paperId}")
         writeRows(snapshot.paperId, answers)
     }
@@ -123,8 +139,12 @@ internal class TestProgressStore(
      * global, so a paper whose document has been overwritten by another's can
      * only hold leftovers — merging them into its next session would show
      * answers the reader never gave there.
+     *
+     * Joins [writeLock] for the same reason as [clear]: an unlocked delete
+     * landing between another save's rows and its header would erase the rows
+     * that header is about to describe.
      */
-    suspend fun discardStale(paperId: String) {
+    suspend fun discardStale(paperId: String) = writeLock.withLock {
         db.testProgressDao().deleteForPaper(paperId)
     }
 
@@ -165,6 +185,12 @@ internal class TestProgressStore(
                 settings.saveTestProgress(document)
             }
         }
+    }
+
+    /** The paper named by the header currently in the global slot, if readable. */
+    private suspend fun currentPaperId(): String? {
+        val raw = settings.loadTestProgress() ?: return null
+        return TestSnapshot.fromJson(raw)?.paperId
     }
 
     private suspend fun rows(paperId: String): List<TestAnswer> =

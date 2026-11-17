@@ -303,6 +303,110 @@ class TestProgressStoreTest {
     }
 
     /**
+     * The slot is global: starting a session of another paper overwrites that
+     * paper's header, so the OUTGOING paper's rows must go in the same write.
+     * The old code's discardStale(takeOver) only deleted the INCOMING paper's
+     * rows, leaving paper A's answers orphaned until A was reopened or deleted.
+     *
+     * Opens SQLite: CI is the authority. Mutant: drop the outgoing-paper delete
+     * from [com.mcqapp.data.repository.TestProgressStore.save] — the qA row
+     * survives the p2 write and the "orphaned" assert goes red.
+     */
+    @Test
+    fun startingAnotherPaperDeletesTheOutgoingPapersAnswers() = runBlocking {
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        val slot = RecordingSlot(gated = false)
+        val store = com.mcqapp.data.repository.TestProgressStore(db, slot)
+
+        val paperA = TestSnapshot(paperId = "p1", categoryIds = listOf("c1"), currentIndex = 1)
+        store.save(paperA, listOf(TestAnswer("qA", selection = setOf("qA-a"), dwellSeconds = 3)))
+        assertEquals(
+            listOf("qA"),
+            db.testProgressDao().getForPaper("p1").map { it.questionId }
+        )
+
+        // What opening paper B does: clear its own leftovers, then start answering.
+        store.discardStale("p2")
+        val paperB = TestSnapshot(paperId = "p2", categoryIds = listOf("c2"), currentIndex = 0)
+        store.save(paperB, listOf(TestAnswer("qB", selection = setOf("qB-b"), dwellSeconds = 2)))
+
+        assertTrue(
+            "paper A's answers were left orphaned by the takeover",
+            db.testProgressDao().getForPaper("p1").isEmpty()
+        )
+        assertEquals("p2", TestSnapshot.fromJson(slot.loadTestProgress()!!)!!.paperId)
+        assertEquals(
+            "paper B must resume with only its own answer",
+            listOf("qB"), store.offer("p2")!!.selections.keys.toList()
+        )
+    }
+
+    /**
+     * [com.mcqapp.data.repository.TestProgressStore.adopt] and
+     * [com.mcqapp.data.repository.TestProgressStore.discardStale] replace the
+     * same rows a save writes, so they join writeLock too. The seam parks save
+     * #1 inside its header write (its q1 row is already down) and launches an
+     * adopt of p2's q2 and a discard of p1 behind it; while the save is held
+     * both must be no-ops. Releasing lets them run, in either order, to the same
+     * end state.
+     *
+     * Opens SQLite: CI is the authority. Mutant: drop the lock from either
+     * method — while-held rows change and the asserts go red.
+     */
+    @Test
+    fun adoptAndDiscardBehindAHeldSaveWaitForTheWholeSave() = runBlocking {
+        repository.ensurePaperAndCategory("p2", "Other", "c2", "Cat")
+        val slot = RecordingSlot(holdCall = 1)
+        val store = com.mcqapp.data.repository.TestProgressStore(db, slot)
+
+        val saveJob = launch {
+            saveOrThrow(
+                store, header(index = 0),
+                listOf(TestAnswer("q1", selection = setOf("q1-a"), dwellSeconds = 1))
+            )
+        }
+        var parked = false
+        repeat(128) {
+            if (slot.started.count { it == "held" } == 1) {
+                parked = true
+                return@repeat
+            }
+            delay(1)
+        }
+        assertTrue("save #1 must park inside its header write", parked)
+
+        val adoptJob = launch {
+            store.adopt(
+                TestSnapshot(
+                    paperId = "p2", categoryIds = listOf("c2"),
+                    selections = mapOf("q2" to listOf("q2-b"))
+                )
+            )
+        }
+        val discardJob = launch { store.discardStale("p1") }
+        repeat(128) {
+            yield()
+            delay(1)
+        }
+
+        val p1Rows = db.testProgressDao().getForPaper("p1").map { it.questionId }
+        val p2Rows = db.testProgressDao().getForPaper("p2").map { it.questionId }
+        assertTrue("discard ran while the save was held, got $p1Rows", "q1" in p1Rows)
+        assertTrue("adopt ran while the save was held, got $p2Rows", p2Rows.isEmpty())
+
+        slot.release()
+        saveJob.join()
+        adoptJob.join()
+        discardJob.join()
+
+        assertTrue("the discard ran after the save", db.testProgressDao().getForPaper("p1").isEmpty())
+        assertEquals(
+            "the adopt ran after the save",
+            listOf("q2"), db.testProgressDao().getForPaper("p2").map { it.questionId }
+        )
+    }
+
+    /**
      * The seam: records header-write stages. #24's tests need a header write
      * held on [hold] so they can park a write behind it; [holdCall] picks WHICH
      * header write holds (1 = the first call, 2 = after one completed save).

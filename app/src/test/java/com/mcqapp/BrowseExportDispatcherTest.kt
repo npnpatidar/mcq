@@ -8,6 +8,8 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.ui.browse.BrowseViewModel
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -16,6 +18,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.concurrent.Executors
 
 /**
@@ -73,5 +76,42 @@ class BrowseExportDispatcherTest {
         } finally {
             executor.shutdown()
         }
+    }
+
+    /**
+     * A render that dies part-way must not touch the SAF document: the scratch
+     * render runs before the URI is opened, so a failure leaves that byte stream
+     * empty and the open seam is never called (the two outputs cannot be mixed
+     * up by a failed export).
+     */
+    @Test
+    fun failingRenderLeavesTheUriUntouched() {
+        val app = ApplicationProvider.getApplicationContext<Context>() as McqApplication
+        val viewModel = BrowseViewModel(app, "p")
+        val uriOut = ByteArrayOutputStream()
+        var opened = false
+
+        runBlocking {
+            viewModel.exportSelectionOn(
+                uri = Uri.parse("content://unused/export.json"),
+                questionIds = setOf("q1"),
+                title = "Selected (1 question)",
+                format = ExportFormat.JSON_INLINE,
+                buildDto = { _, _ -> PaperDto(id = "p", title = "Selected") },
+                open = { mode ->
+                    assertEquals("wt", mode)
+                    opened = true
+                    uriOut
+                },
+                renderExport = { _, sink ->
+                    sink.write(ByteArray(64) { 0x41 })
+                    sink.flush()
+                    throw IOException("simulated mid-render failure")
+                }
+            )
+        }
+
+        assertFalse("the URI must never be opened when the render fails", opened)
+        assertEquals("no partial content may reach the SAF URI", 0, uriOut.size())
     }
 }

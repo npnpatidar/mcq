@@ -1,5 +1,6 @@
 package com.mcqapp.data.io
 
+import androidx.room.withTransaction
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.local.AppDatabase
 import java.io.InputStream
@@ -55,41 +56,49 @@ class AnkiApkgImporter(
         onProgress: ((Int) -> Unit)? = null,
         nowMillis: Long = System.currentTimeMillis()
     ): ImportReport = withContext(Dispatchers.IO) {
-        val session = StreamingImportSession(
-            db = db,
-            json = json,
-            updateAnswersOnDuplicate = updateAnswersOnDuplicate,
-            batchSize = batchSize,
-            overrides = ImportOverrides(),
-            onProgress = onProgress
-        )
-        val sink = object : AnkiPackageReader.StreamSink {
-            override suspend fun onPaper(header: LegacyParser.PaperHeader) = session.onPaper(header)
-
-            override suspend fun onCategory(category: CategoryDto) = session.onCategory(category)
-
-            override suspend fun onQuestions(
-                categoryId: String,
-                questions: List<QuestionDto>,
-                schedules: Map<String, CardScheduleDto>
-            ) = session.onQuestions(categoryId, questions, schedules)
-        }
-        val tail = source().use {
-            AnkiPackageReader.stream(
-                it, sink, batchSize, nowMillis,
-                parameters = schedulerConfig.fsrsParameters
+        // One transaction for the whole deck. The session's per-batch writes
+        // nest into it, so a failure after any batch rolls back every row this
+        // run created and restores every pre-existing row it updated — the
+        // library is unchanged on failure. The reader only reads the archive
+        // and calls the sink on this coroutine; it never writes to the database
+        // itself, so nothing escapes this transaction.
+        db.withTransaction {
+            val session = StreamingImportSession(
+                db = db,
+                json = json,
+                updateAnswersOnDuplicate = updateAnswersOnDuplicate,
+                batchSize = batchSize,
+                overrides = ImportOverrides(),
+                onProgress = onProgress
             )
-        }
-        session.finish(
-            LegacyParser.StreamedFile(
-                version = 1,
-                passages = tail.passages,
-                bookmarks = emptyList(),
-                attempts = emptyList(),
-                scheduling = emptyMap(),
-                warnings = emptyList()
+            val sink = object : AnkiPackageReader.StreamSink {
+                override suspend fun onPaper(header: LegacyParser.PaperHeader) = session.onPaper(header)
+
+                override suspend fun onCategory(category: CategoryDto) = session.onCategory(category)
+
+                override suspend fun onQuestions(
+                    categoryId: String,
+                    questions: List<QuestionDto>,
+                    schedules: Map<String, CardScheduleDto>
+                ) = session.onQuestions(categoryId, questions, schedules)
+            }
+            val tail = source().use {
+                AnkiPackageReader.stream(
+                    it, sink, batchSize, nowMillis,
+                    parameters = schedulerConfig.fsrsParameters
+                )
+            }
+            session.finish(
+                LegacyParser.StreamedFile(
+                    version = 1,
+                    passages = tail.passages,
+                    bookmarks = emptyList(),
+                    attempts = emptyList(),
+                    scheduling = emptyMap(),
+                    warnings = emptyList()
+                )
             )
-        )
-        session.report()
+            session.report()
+        }
     }
 }

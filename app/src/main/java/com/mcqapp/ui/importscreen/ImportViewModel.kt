@@ -908,26 +908,30 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             }
             importJournal.begin(runKey, s.totalQuestionCount, System.currentTimeMillis())
             viewModelScope.launch {
-                try {
-                    val currentIds = s.questions.mapTo(HashSet()) { it.id }
-                    val overrides = ImportOverrides(
-                        paperTitle = s.paperTitle.trim(),
-                        paperDescription = s.paperDescription.trim(),
-                        durationMinutes = s.durationMinutes,
-                        negativeMarking = s.negativeMarking,
-                        categoryTitle = if (s.singleCategoryPaper) {
-                            s.categoryName.trim().ifBlank { null }
-                        } else {
-                            null
-                        },
-                        deletedIds = s.previewSampleIds - currentIds,
-                        editedQuestions = s.questions.associateBy { it.id }
-                    )
-                    Logger.i("IMPORTVM", "import(): streaming ${s.totalQuestionCount} questions " +
-                        "with a ${s.questions.size}-question preview " +
-                        "(${overrides.deletedIds.size} deleted in preview" +
-                        (if (streamRestoreSchedules) ", restoring schedules" else "") + ")")
-                    val report = withContext(Dispatchers.Default) {
+                val currentIds = s.questions.mapTo(HashSet()) { it.id }
+                val overrides = ImportOverrides(
+                    paperTitle = s.paperTitle.trim(),
+                    paperDescription = s.paperDescription.trim(),
+                    durationMinutes = s.durationMinutes,
+                    negativeMarking = s.negativeMarking,
+                    categoryTitle = if (s.singleCategoryPaper) {
+                        s.categoryName.trim().ifBlank { null }
+                    } else {
+                        null
+                    },
+                    deletedIds = s.previewSampleIds - currentIds,
+                    editedQuestions = s.questions.associateBy { it.id }
+                )
+                Logger.i("IMPORTVM", "import(): streaming ${s.totalQuestionCount} questions " +
+                    "with a ${s.questions.size}-question preview " +
+                    "(${overrides.deletedIds.size} deleted in preview" +
+                    (if (streamRestoreSchedules) ", restoring schedules" else "") + ")")
+                // Only the import call is the transaction. If it fails, every
+                // batch was rolled back and "no changes were made" is true.
+                // Everything after it is bookkeeping: a failure there must not
+                // claim the library was left untouched when the run committed.
+                val report = try {
+                    withContext(Dispatchers.Default) {
                         StreamingImporter(
                             repository.db(),
                             updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
@@ -938,23 +942,45 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                             _state.update { it.copy(importedQuestions = seen) }
                         }
                     }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException ||
+                        e is java.util.concurrent.CancellationException
+                    ) {
+                        // Leaving the screen cancels the run; the transaction
+                        // rolls back, but a cancellation is not a failure to
+                        // show as an error dialog. No partial import remains,
+                        // so do not leave a stale journal for a retry either.
+                        importJournal.clear()
+                        throw e
+                    }
+                    // The whole run was one transaction, so a failure rolled
+                    // back every batch: nothing from this attempt reached the
+                    // library. Clear the journal too — there is no partial
+                    // import for a retry to continue over.
+                    importJournal.clear()
+                    Logger.e("IMPORTVM", "Streaming import failed", e)
+                    _state.update {
+                        it.copy(
+                            importing = false,
+                            error = "Import failed: ${e.message}. " +
+                                "No changes were made to your library."
+                        )
+                    }
+                    return@launch
+                }
+                try {
                     // Finished: the journal's job is done.
                     importJournal.clear()
                     Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
                         "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")
-                    _state.update { it.copy(importing = false, importDone = true, importReport = report) }
-                } catch (e: Exception) {
-                    // The run is left in the journal: a retry is safe and the
-                    // preview will say how far the interrupted one got.
-                    Logger.e("IMPORTVM", "Streaming import failed", e)
-                    val written = importJournal.current()?.questionsSeen ?: 0
-                    val partial = if (written > 0) {
-                        " $written questions may already have been added; " +
-                            "running the import again is safe."
-                    } else {
-                        ""
+                    _state.update {
+                        it.copy(importing = false, importDone = true, importReport = report)
                     }
-                    _state.update { it.copy(importing = false, error = "Import failed: ${e.message}.$partial") }
+                } catch (e: Exception) {
+                    // The run already committed. Do not tell the user no
+                    // changes were made — just stop the spinner and log it.
+                    Logger.e("IMPORTVM", "Streaming import bookkeeping failed", e)
+                    _state.update { it.copy(importing = false) }
                 }
             }
             return

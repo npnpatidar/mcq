@@ -8,14 +8,12 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.StudyMode
 import com.mcqapp.ui.settings.SettingsViewModel
-import com.mcqapp.util.ImportTooLargeException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -38,10 +36,6 @@ import org.robolectric.junit.rules.TimeoutRule
  * B: a generic Settings write may carry a snapshot that predates a Reset, a
  * restore or a cut save. Only the field the screen actually edits may land;
  * the rule and the cuts are re-based on the store.
- *
- * C: restore's completion callback clears the screen's busy flag on every
- * terminal path, so a failed/corrupt restore cannot leave Backup & data
- * controls disabled forever while the error dialog still shows.
  *
  * Robolectric + the real repository, so like every DB-backed test it runs on
  * CI's x86_64 runners and not on the ARM64 host.
@@ -266,66 +260,5 @@ class SettingsViewModelResetTest {
             assertEquals(40L, stored.slowSeconds)
             assertEquals(0.85, stored.desiredRetention, 0.0001)
         }
-    }
-
-    /**
-     * Mirrors the screen: busy goes true before restore and [onComplete]
-     * clears it. The fallible work is injected so either catch path (and the
-     * success path) can be driven without a real backup file.
-     */
-    private fun runRestore(restore: suspend () -> String): RestoreOutcome {
-        val viewModel = SettingsViewModel(app)
-        var busy = false
-        val reported = mutableListOf<String>()
-        val done = mutableListOf<String>()
-        busy = true // the screen sets this before calling restoreBackup
-        runBlocking {
-            viewModel.restoreBackupHandling(
-                onError = { reported += it },
-                onDone = { done += it },
-                onComplete = { busy = false },
-                restore = restore
-            )
-        }
-        return RestoreOutcome(busy, reported, done)
-    }
-
-    private fun runFailingRestore(failure: Throwable): RestoreOutcome =
-        runRestore { throw failure }
-
-    private data class RestoreOutcome(
-        val busy: Boolean,
-        val reported: List<String>,
-        val done: List<String>
-    )
-
-    @Test
-    fun busyIsClearedAndReportDeliveredOnSuccess() {
-        val result = runRestore { "restored 3 papers" }
-        assertFalse("busy must be cleared after a successful restore", result.busy)
-        assertEquals(emptyList<String>(), result.reported)
-        assertEquals(listOf("restored 3 papers"), result.done)
-    }
-
-    @Test
-    fun busyIsClearedWhenRestoreIsTooLarge() {
-        val result = runFailingRestore(ImportTooLargeException(limit = 256L * 1024 * 1024))
-        assertFalse("busy must be cleared after the too-large restore failure", result.busy)
-        assertEquals(1, result.reported.size)
-        assertTrue(
-            "the error dialog text must still be reported",
-            result.reported.single().contains("restore limit")
-        )
-    }
-
-    @Test
-    fun busyIsClearedWhenRestoreFailsGenerically() {
-        val result = runFailingRestore(IllegalStateException("corrupt backup"))
-        assertFalse("busy must be cleared after the generic restore failure", result.busy)
-        assertEquals(1, result.reported.size)
-        assertTrue(
-            "the error dialog text must still be reported",
-            result.reported.single().contains("Restore failed")
-        )
     }
 }

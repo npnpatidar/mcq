@@ -852,10 +852,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * The restore's error/completion handling, with the fallible work
-     * injected so a test can drive either catch path without a real backup
-     * file. The report produced by [restore] is passed to [onDone] on success;
-     * this function itself returns Unit.
+     * Wires the ViewModel's success side effect into the shared, testable
+     * restore handler. The fallible work is injected so a test can drive
+     * either catch path without a real backup file; this function returns Unit.
      */
     internal suspend fun restoreBackupHandling(
         onError: (String) -> Unit,
@@ -863,21 +862,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         onComplete: () -> Unit,
         restore: suspend () -> String
     ) {
-        try {
-            val report = restore()
-            refreshStorage()
-            Logger.i("SETTINGS", "Backup restored: $report")
-            onDone(report)
-        } catch (e: com.mcqapp.util.ImportTooLargeException) {
-            Logger.e("SETTINGS", "Restore failed", e)
-            val limitMb = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)
-            onError("That backup is over the $limitMb MB restore limit — it may be corrupt.")
-        } catch (e: Exception) {
-            Logger.e("SETTINGS", "Restore failed", e)
-            onError("Restore failed: ${e.message}")
-        } finally {
-            onComplete()
-        }
+        handleRestoreCompletion(
+            onError = onError,
+            onDone = onDone,
+            onComplete = onComplete,
+            onSuccess = { refreshStorage() },
+            restore = restore
+        )
     }
 
     /** The fallible restore core: read the streamed zip and apply it. */

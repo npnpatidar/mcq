@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.navigation.compose.NavHost
@@ -297,7 +298,7 @@ class QuestionEditorUiTest {
         setPlainEditor("uitest-ui-q1")
         waitFor("UITest UI question?")
 
-        compose.onNodeWithContentDescription("Delete question").performClick()
+        compose.onNodeWithContentDescription("Delete question").performScrollTo().performClick()
         compose.waitForIdle()
         waitForDialogTitle("Delete question?")
         dialogNode("Cancel").performClick()
@@ -330,7 +331,7 @@ class QuestionEditorUiTest {
         setPlainEditor("uitest-ui-q1")
         waitFor("UITest UI question?")
 
-        compose.onNodeWithContentDescription("Delete question").performClick()
+        compose.onNodeWithContentDescription("Delete question").performScrollTo().performClick()
         compose.waitForIdle()
         waitForDialogTitle("Delete question?")
         dialogNode("Delete").performClick()

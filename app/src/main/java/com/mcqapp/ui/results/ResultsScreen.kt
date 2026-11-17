@@ -35,6 +35,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -63,6 +64,8 @@ import com.mcqapp.domain.Dwell
 import com.mcqapp.domain.QuestionResult
 import com.mcqapp.domain.QuestionReview
 import com.mcqapp.domain.ReportFamily
+import com.mcqapp.domain.RecommendedAction
+import com.mcqapp.domain.RelaunchPlanner
 import com.mcqapp.domain.ReviewTag
 import com.mcqapp.domain.ReviewFilters
 import kotlinx.coroutines.launch
@@ -116,6 +119,39 @@ fun ResultsScreen(
     val shareNoAppText = stringResource(R.string.share_no_app)
     val reportExportFailedText = stringResource(R.string.report_export_failed)
     var showExportMenu by remember { mutableStateOf(false) }
+    // Synchronous double-tap guard: set before the coroutine starts, so a
+    // second tap in the same frame cannot launch a second export. The ViewModel
+    // has its own gate as defence in depth; the UI flag also drives the visible
+    // disabled/progress state.
+    var exportRunning by remember { mutableStateOf(false) }
+    val exportBusy = exportRunning || state.exporting
+
+    fun launchExport(csv: Boolean) {
+        if (exportRunning || state.exporting) return
+        exportRunning = true
+        showExportMenu = false
+        scope.launch {
+            try {
+                val intent = if (csv) viewModel.exportCsvIntent() else viewModel.exportPdfIntent()
+                if (intent != null) {
+                    try {
+                        context.startActivity(
+                            android.content.Intent.createChooser(
+                                intent,
+                                resources.getString(R.string.report_export_share)
+                            )
+                        )
+                    } catch (_: android.content.ActivityNotFoundException) {
+                        sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
+                    }
+                } else {
+                    sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
+                }
+            } finally {
+                exportRunning = false
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -133,8 +169,18 @@ fun ResultsScreen(
                     }
                 },
                 actions = {
+                    if (exportBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(20.dp)
+                        )
+                    }
                     if (state.report != null) {
-                        IconButton(onClick = { showExportMenu = true }) {
+                        IconButton(
+                            onClick = { showExportMenu = true },
+                            enabled = !exportBusy
+                        ) {
                             Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.report_export))
                         }
                         DropdownMenu(
@@ -142,50 +188,28 @@ fun ResultsScreen(
                             onDismissRequest = { showExportMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.report_export_csv)) },
-                                onClick = {
-                                    showExportMenu = false
-                                    scope.launch {
-                                        val intent = viewModel.exportCsvIntent()
-                                        if (intent != null) {
-                                            try {
-                                                context.startActivity(
-                                                    android.content.Intent.createChooser(
-                                                        intent,
-                                                        resources.getString(R.string.report_export_share)
-                                                    )
-                                                )
-                                            } catch (_: android.content.ActivityNotFoundException) {
-                                                sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
-                                            }
-                                        } else {
-                                            sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
-                                        }
-                                    }
-                                }
+                                enabled = !exportBusy,
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            if (exportBusy) R.string.report_export_in_progress
+                                            else R.string.report_export_csv
+                                        )
+                                    )
+                                },
+                                onClick = { launchExport(csv = true) }
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.report_export_pdf)) },
-                                onClick = {
-                                    showExportMenu = false
-                                    scope.launch {
-                                        val intent = viewModel.exportPdfIntent()
-                                        if (intent != null) {
-                                            try {
-                                                context.startActivity(
-                                                    android.content.Intent.createChooser(
-                                                        intent,
-                                                        resources.getString(R.string.report_export_share)
-                                                    )
-                                                )
-                                            } catch (_: android.content.ActivityNotFoundException) {
-                                                sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
-                                            }
-                                        } else {
-                                            sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
-                                        }
-                                    }
-                                }
+                                enabled = !exportBusy,
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            if (exportBusy) R.string.report_export_in_progress
+                                            else R.string.report_export_pdf
+                                        )
+                                    )
+                                },
+                                onClick = { launchExport(csv = false) }
                             )
                         }
                     }
@@ -213,13 +237,19 @@ fun ResultsScreen(
         }
 
         state.loadError?.let { error ->
-            Text(
-                error,
-                color = MaterialTheme.colorScheme.error,
+            // In-place retry: the error text stays, and the same load that
+            // failed can be attempted again without leaving the screen.
+            Column(
                 modifier = Modifier
                     .padding(padding)
                     .padding(16.dp)
-            )
+            ) {
+                Text(error, color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = { viewModel.reload() }) {
+                    Text(stringResource(R.string.retry))
+                }
+            }
             return@Scaffold
         }
 
@@ -297,18 +327,27 @@ fun ResultsScreen(
                     item(contentType = "actions") {
                         ActionsCard(
                             report = report,
-                            onStudy = { ids ->
+                            onStudy = { action ->
+                                val plan = action.relaunch ?: RelaunchPlanner.from(report.attempt)
                                 navController.navigate(
-                                    com.mcqapp.ui.navigation.studyRoute(report.attempt.paperId, ids)
+                                    com.mcqapp.ui.navigation.studyRoute(plan.paperId, plan.scopeCategoryIds)
                                 )
                             },
-                            onTest = { type, count, ids ->
+                            onTest = { action ->
+                                val plan = action.relaunch ?: RelaunchPlanner.from(report.attempt)
+                                // Type and count are the recommendation's own
+                                // values; the rest is the original plan, so the
+                                // relaunch matches what the report describes.
                                 navController.navigate(
                                     com.mcqapp.ui.navigation.testRoute(
-                                        paperId = report.attempt.paperId,
-                                        categoryIds = ids,
-                                        type = type.name,
-                                        count = count
+                                        paperId = plan.paperId,
+                                        categoryIds = plan.scopeCategoryIds,
+                                        minutes = plan.minutes,
+                                        type = (action.testType ?: TestType.RANDOM).name,
+                                        count = action.testCount,
+                                        exclusion = plan.exclusionMode,
+                                        breadth = plan.breadth,
+                                        variant = plan.variant.orEmpty()
                                     )
                                 )
                             },
@@ -361,7 +400,7 @@ fun ResultsScreen(
             if (refresh is LoadState.NotLoading && items.itemCount == 0) {
                 item(contentType = "empty") {
                     Text(
-                        "No ${filterValue.lowercase()} questions",
+                        stringResource(R.string.report_no_filter_questions, filterValue.lowercase()),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
@@ -876,15 +915,15 @@ private fun TimingCard(report: TestReport) {
 @Composable
 private fun ActionsCard(
     report: TestReport,
-    onStudy: (List<String>) -> Unit,
-    onTest: (TestType, Int, List<String>) -> Unit,
+    onStudy: (RecommendedAction) -> Unit,
+    onTest: (RecommendedAction) -> Unit,
     onReview: (String) -> Unit
 ) {
     ReportSection(R.string.report_actions_title) {
         report.actions.forEachIndexed { index, action ->
             Column(modifier = Modifier.padding(vertical = 6.dp)) {
                 Text(
-                    "${index + 1}. ${actionTitle(action.rule)}",
+                    stringResource(R.string.report_numbered_action, index + 1, actionTitle(action.rule)),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
@@ -897,15 +936,9 @@ private fun ActionsCard(
                 Button(
                     onClick = {
                         when (action.kind) {
-                            com.mcqapp.domain.RecommendedAction.Kind.STUDY ->
-                                onStudy(action.categoryIds)
-                            com.mcqapp.domain.RecommendedAction.Kind.TEST ->
-                                onTest(
-                                    action.testType ?: TestType.RANDOM,
-                                    action.testCount,
-                                    action.categoryIds
-                                )
-                            com.mcqapp.domain.RecommendedAction.Kind.REVIEW ->
+                            RecommendedAction.Kind.STUDY -> onStudy(action)
+                            RecommendedAction.Kind.TEST -> onTest(action)
+                            RecommendedAction.Kind.REVIEW ->
                                 onReview(action.filter ?: ReviewFilters.ALL)
                         }
                     }
@@ -1051,14 +1084,14 @@ private fun headerLine(report: TestReport): String {
         report.family == ReportFamily.SHORT ->
             stringResource(R.string.report_short_test) + " · " +
                 attemptTypeLine(report.attempt) + " · " +
-                stringResource(R.string.report_header_questions, report.shownCount)
+                pluralStringResource(R.plurals.report_header_questions, report.shownCount, report.shownCount)
         report.family == ReportFamily.LEGACY ->
             stringResource(R.string.report_legacy_attempt) + " · " +
-                stringResource(R.string.report_header_questions, report.shownCount)
+                pluralStringResource(R.plurals.report_header_questions, report.shownCount, report.shownCount)
         report.family == ReportFamily.PRACTICE ->
             stringResource(R.string.report_practice) + " · " +
                 attemptTypeLine(report.attempt) + " · " +
-                stringResource(R.string.report_header_questions, report.shownCount)
+                pluralStringResource(R.plurals.report_header_questions, report.shownCount, report.shownCount)
         report.scopeSize > 0 ->
             stringResource(reportKind(report.family)) + " · " +
                 attemptTypeLine(report.attempt) + " · " +
@@ -1070,7 +1103,7 @@ private fun headerLine(report: TestReport): String {
         else ->
             stringResource(reportKind(report.family)) + " · " +
                 attemptTypeLine(report.attempt) + " · " +
-                stringResource(R.string.report_header_questions, report.shownCount)
+                pluralStringResource(R.plurals.report_header_questions, report.shownCount, report.shownCount)
     }
     val badge = when {
         report.family == ReportFamily.MOCK -> stringResource(R.string.report_comparable)
@@ -1365,6 +1398,41 @@ private fun IntervalCard(report: TestReport) {
     }
 }
 
+/** The accessible state of one option in a result card. */
+internal enum class OptionState {
+    CORRECT_CHOSEN, CORRECT_MISSED, WRONG_CHOSEN, NOT_CHOSEN,
+    UNGRADED_CHOSEN, UNGRADED_NOT_CHOSEN
+}
+
+/**
+ * Pure so the spoken-state mapping can be pinned by a JVM test. Colour and the
+ * glyph alone never tell a screen-reader user which option was correct or which
+ * the learner picked, so every option gets a state to announce.
+ */
+internal fun optionStateOf(
+    isCorrect: Boolean,
+    wasSelected: Boolean,
+    ungraded: Boolean
+): OptionState = when {
+    ungraded -> if (wasSelected) OptionState.UNGRADED_CHOSEN else OptionState.UNGRADED_NOT_CHOSEN
+    isCorrect && wasSelected -> OptionState.CORRECT_CHOSEN
+    isCorrect -> OptionState.CORRECT_MISSED
+    wasSelected -> OptionState.WRONG_CHOSEN
+    else -> OptionState.NOT_CHOSEN
+}
+
+@Composable
+private fun optionStateLabel(state: OptionState): String = stringResource(
+    when (state) {
+        OptionState.CORRECT_CHOSEN -> R.string.option_correct_chosen
+        OptionState.CORRECT_MISSED -> R.string.option_correct_missed
+        OptionState.WRONG_CHOSEN -> R.string.option_wrong_chosen
+        OptionState.NOT_CHOSEN -> R.string.option_not_chosen
+        OptionState.UNGRADED_CHOSEN -> R.string.option_ungraded_chosen
+        OptionState.UNGRADED_NOT_CHOSEN -> R.string.option_not_chosen
+    }
+)
+
 @Composable
 private fun ResultCard(
     index: Int,
@@ -1388,7 +1456,7 @@ private fun ResultCard(
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "$index.",
+                    stringResource(R.string.editor_index, index),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(end = 8.dp)
                 )
@@ -1476,15 +1544,15 @@ private fun ResultCard(
             if (discrimination != null) {
                 // An estimate from repeated same-family attempts, not a verdict
                 // on the question: the label never says "bad".
-                val flag = when (discriminationFlag) {
+                val flagLine = when (discriminationFlag) {
                     com.mcqapp.domain.stats.Reliability.Discrimination.Flag.REVIEW ->
-                        stringResource(R.string.report_discrimination_review)
+                        stringResource(R.string.report_discrimination_review_line, discrimination)
                     com.mcqapp.domain.stats.Reliability.Discrimination.Flag.WEAK ->
-                        stringResource(R.string.report_discrimination_weak)
-                    else -> ""
+                        stringResource(R.string.report_discrimination_weak_line, discrimination)
+                    else -> stringResource(R.string.report_discrimination_line, discrimination)
                 }
                 Text(
-                    stringResource(R.string.report_discrimination_line, discrimination) + flag,
+                    flagLine,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1495,14 +1563,27 @@ private fun ResultCard(
             result.options.forEach { option ->
                 val isCorrect = option.id in result.correctOptionIds
                 val wasSelected = option.id in result.selectedOptionIds
-                Row(modifier = Modifier.padding(top = 4.dp)) {
+                val ungraded = verdict == Verdict.UNGRADED
+                val state = optionStateOf(isCorrect, wasSelected, ungraded)
+                // One merged node reads the option text and its state together,
+                // so TalkBack cannot just see a bare tick or a coloured bullet.
+                val spoken = stringResource(
+                    R.string.option_spoken,
+                    option.text,
+                    optionStateLabel(state)
+                )
+                Row(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .clearAndSetSemantics { contentDescription = spoken }
+                ) {
                     Text(
-                        if (isCorrect) "✓" else if (wasSelected && verdict != Verdict.UNGRADED) "✗"
+                        if (isCorrect) "✓" else if (wasSelected && !ungraded) "✗"
                         // Filled circle, matching study: a bullet renders smaller.
                         else if (wasSelected) "●" else "○",
                         color = if (isCorrect)
                             MaterialTheme.colorScheme.primary
-                        else if (wasSelected && verdict != Verdict.UNGRADED)
+                        else if (wasSelected && !ungraded)
                             MaterialTheme.colorScheme.error
                         else
                             MaterialTheme.colorScheme.onSurface,
@@ -1533,7 +1614,7 @@ private fun ResultCard(
             if (showDwell) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Time spent: ${Dwell.format(result.dwellSeconds)}",
+                    stringResource(R.string.report_time_spent, Dwell.format(result.dwellSeconds)),
                     style = MaterialTheme.typography.labelSmall
                 )
             }

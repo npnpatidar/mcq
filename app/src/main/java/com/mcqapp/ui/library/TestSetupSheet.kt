@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
@@ -570,7 +571,7 @@ internal fun TestSetupSheet(
                                     },
                                     label = {
                                         Text(
-                                            "${counted.tag} · ${counted.count}"
+                                            stringResource(R.string.name_count_line, counted.tag, counted.count)
                                         )
                                     }
                                 )
@@ -632,7 +633,7 @@ internal fun TestSetupSheet(
                                         onClick = {
                                             variant = if (variant == id) null else id
                                         },
-                                        label = { Text("${panel.name} · ${panel.size}") }
+                                        label = { Text(stringResource(R.string.name_count_line, panel.name, panel.size)) }
                                     )
                                     // A panel is just a saved id set, but it is
                                     // not reproducible once the metrics move;
@@ -678,7 +679,7 @@ internal fun TestSetupSheet(
                                             variant = if (variant == id) null else id
                                         },
                                         label = {
-                                            Text("${blueprint.name} · ${blueprint.sectionCount}")
+                                            Text(stringResource(R.string.name_count_line, blueprint.name, blueprint.sectionCount))
                                         }
                                     )
                                     IconButton(onClick = {
@@ -762,20 +763,20 @@ internal fun TestSetupSheet(
                 } else if (categoryIds.isEmpty()) {
                     stringResource(R.string.test_setup_scope_whole_paper)
                 } else {
-                    stringResource(R.string.test_setup_scope_categories, categoryIds.size)
+                    pluralStringResource(R.plurals.test_setup_scope_categories, categoryIds.size, categoryIds.size)
                 },
                 style = MaterialTheme.typography.labelLarge
             )
             Text(
                 when {
                     poolLoading -> stringResource(R.string.test_setup_counting)
-                    type == TestType.MISTAKES -> stringResource(
-                        R.string.test_setup_pool_mistakes, mistakePool ?: 0
+                    type == TestType.MISTAKES -> pluralStringResource(
+                        R.plurals.test_setup_pool_mistakes, mistakePool ?: 0, mistakePool ?: 0
                     )
                     type.usesSignalSelector && selectionPreview != null -> stringResource(
                         R.string.test_setup_pool_type, available
                     )
-                    else -> stringResource(R.string.test_setup_pool_questions, questionPool)
+                    else -> pluralStringResource(R.plurals.test_setup_pool_questions, questionPool, questionPool)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -837,7 +838,7 @@ internal fun TestSetupSheet(
                 // blueprint is refused instead, so calling it a "short test"
                 // next to "at least 20 are needed" contradicts itself.
                 Text(
-                    stringResource(R.string.test_setup_short_test, setup.resolvedCount()),
+                    pluralStringResource(R.plurals.test_setup_short_test, setup.resolvedCount(), setup.resolvedCount()),
                     style = MaterialTheme.typography.labelLarge
                 )
             } else {
@@ -853,7 +854,7 @@ internal fun TestSetupSheet(
                             setup.resolvedCount()
                         )
                     } else {
-                        stringResource(R.string.test_setup_count_label, requestedCount)
+                        pluralStringResource(R.plurals.test_setup_count_label, requestedCount, requestedCount)
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -925,7 +926,7 @@ internal fun TestSetupSheet(
                         append(blueprintName)
                     }
                     append(" · ")
-                    append(stringResource(R.string.test_setup_count_label, setup.resolvedCount()))
+                    append(pluralStringResource(R.plurals.test_setup_count_label, setup.resolvedCount(), setup.resolvedCount()))
                     append(" · ")
                     append(if (setup.minutes() <= 0) {
                         stringResource(R.string.test_setup_untimed)
@@ -933,15 +934,14 @@ internal fun TestSetupSheet(
                         stringResource(R.string.test_setup_minutes_label, setup.minutes())
                     })
                     append(" · ")
-                    append(stringResource(
-                        when (setup.comparability()) {
-                            TestComparability.COMPARABLE -> R.string.test_preview_comparable
-                            TestComparability.FRESH -> R.string.test_preview_fresh
-                            TestComparability.PRACTICE -> R.string.test_preview_practice
-                            TestComparability.SHORT -> R.string.test_preview_short
-                        },
-                        setup.resolvedCount()
-                    ))
+                    append(when (setup.comparability()) {
+                        TestComparability.COMPARABLE -> stringResource(R.string.test_preview_comparable)
+                        TestComparability.FRESH -> stringResource(R.string.test_preview_fresh)
+                        TestComparability.PRACTICE -> stringResource(R.string.test_preview_practice)
+                        TestComparability.SHORT -> pluralStringResource(
+                            R.plurals.test_preview_short, setup.resolvedCount(), setup.resolvedCount()
+                        )
+                    })
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -1000,8 +1000,7 @@ internal fun TestSetupSheet(
                         )
                         else -> stringResource(
                             R.string.test_setup_start,
-                            setup.resolvedCount(),
-                            setup.minutes()
+                            setup.resolvedCount(), setup.minutes()
                         )
                     }
                 )

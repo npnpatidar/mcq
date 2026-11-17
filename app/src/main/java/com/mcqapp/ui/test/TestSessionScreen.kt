@@ -254,7 +254,7 @@ fun TestSessionScreen(
                 TextButton(onClick = { viewModel.resume() }) {
                     Text(
                         if (short || legacy) {
-                            stringResource(R.string.resume_with_n, state.resumeOfferCount)
+                            pluralStringResource(R.plurals.resume_with_n, state.resumeOfferCount, state.resumeOfferCount)
                         } else {
                             stringResource(R.string.resume)
                         }
@@ -458,6 +458,11 @@ fun TestSessionScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // The palette is an inline Card, not a dialog, so nothing consumed
+            // system Back while it was open and the NavController popped the
+            // whole test. Close the palette first; the submit-confirm handler
+            // above still owns Back once the palette is gone.
+            BackHandler(enabled = showPalette) { showPalette = false }
             if (showPalette) {
                 QuestionPalette(
                     state = state,
@@ -624,10 +629,10 @@ fun TestSessionScreen(
                     Text(
                         when {
                             shown < com.mcqapp.domain.TestPlan.MIN_LENGTH ->
-                                stringResource(R.string.test_banner_short, shown)
+                                pluralStringResource(R.plurals.test_banner_short, shown, shown)
                             bounded == com.mcqapp.domain.TestType.MISTAKES ->
-                                stringResource(
-                                    R.string.test_banner_mistakes, minOf(asked, shown)
+                                pluralStringResource(
+                                    R.plurals.test_banner_mistakes, minOf(asked, shown), minOf(asked, shown)
                                 )
                             // Everything except a plain Random run names its
                             // type: the focus selectors, Balanced, the
@@ -663,8 +668,8 @@ fun TestSessionScreen(
                                 minOf(asked, shown)
                             )
                             else ->
-                                stringResource(
-                                    R.string.test_banner_random, minOf(asked, shown)
+                                pluralStringResource(
+                                    R.plurals.test_banner_random, minOf(asked, shown), minOf(asked, shown)
                                 )
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -698,7 +703,7 @@ fun TestSessionScreen(
                 }
                 if (state.isDrill) {
                     Text(
-                        stringResource(R.string.drill_banner_text, state.questionCount),
+                        pluralStringResource(R.plurals.drill_banner_text, state.questionCount, state.questionCount),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -1264,7 +1269,7 @@ private fun QuestionPalette(
                             .clickable { onPick(index) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("${index + 1}", color = fg, style = MaterialTheme.typography.labelMedium)
+                        Text((index + 1).toString(), color = fg, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }

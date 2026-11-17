@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -169,7 +170,7 @@ fun QuestionEditorScreen(
                 actions = {
                     if (EditorSession.hasQueue && queueSize > 0) {
                         Text(
-                            "${queueIndex + 1}/$queueSize",
+                            stringResource(R.string.editor_queue_position, queueIndex + 1, queueSize),
                             style = MaterialTheme.typography.labelMedium,
                             // The counter changes asynchronously when Prev/Next
                             // advances the queue; speak the new position.
@@ -446,8 +447,11 @@ fun QuestionEditorScreen(
             // Phase-3 tag chips: the comma string stays the state, but adding
             // and removing one label at a time keeps the editor's intent
             // explicit; the same list is what the Tag test filters on.
-            // A typed tag survives rotation (question_editor_audit.md L-02).
-            var newTag by rememberSaveable { mutableStateOf("") }
+            // A typed tag survives rotation (question_editor_audit.md L-02),
+            // but it belongs to the question on screen. Keying it by the
+            // question id resets it on Prev/Next: a half-typed tag on A must
+            // never appear on B, while rotating on A keeps A's draft.
+            var newTag by rememberSaveable(state.questionId) { mutableStateOf("") }
             val tagLabels = remember(state.tags) {
                 com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
             }
@@ -476,7 +480,7 @@ fun QuestionEditorScreen(
                     onValueChange = { newTag = it },
                     label = { Text(stringResource(R.string.add_tag)) },
                     singleLine = true,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).testTag("new-tag-field")
                 )
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(

@@ -98,7 +98,14 @@ class AnkiApkgImporter(
                     warnings = emptyList()
                 )
             )
-            session.report()
+            // The reader owns these two counts: a dropped blank-stem card and a
+            // recall-converted note are reader decisions, not database outcomes.
+            // Carrying them on the report makes the completion dialog able to
+            // say what the deck conversion did, not just what rows were written.
+            session.report().copy(
+                droppedAnkiStems = tail.droppedStems,
+                recallConverted = tail.recallCount
+            )
         }
     }
 }

@@ -14,7 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -180,13 +180,12 @@ private fun AnkiSchedulerBody(
         )
     }
     Text(
-        stringResource(R.string.sm_2_scheduling_for_study_these_match_anki_s_review_options_) +
-            stringResource(R.string.sm_2_scheduling_tail_the_same_values_work_in_both_apps),
+        stringResource(R.string.fsrs_scheduling_help),
         style = MaterialTheme.typography.bodySmall
     )
     Spacer(Modifier.height(12.dp))
     SwitchSettingRow(
-        label = stringResource(R.string.simplified_anki),
+        label = stringResource(R.string.simplified_study),
         help = stringResource(R.string.grade_study_cards_automatically_from_your_answers_instead_of_),
         checked = simplifiedStudy,
         onChange = onSimplifiedChange,
@@ -454,7 +453,7 @@ private fun AnkiSchedulerBody(
     ) {
         Icon(
             if (advancedExpanded) Icons.Default.KeyboardArrowDown
-            else Icons.Default.KeyboardArrowRight,
+            else Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null
         )
         Spacer(Modifier.width(8.dp))

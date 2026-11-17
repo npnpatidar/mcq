@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Strings for the results follow-up fixes. Kept in their own file so the
+  shared strings.xml is untouched; names are additive and never override it.
+-->
+<resources>
+    <!-- Export: shown while an export is running, with the controls disabled. -->
+    <string name="report_export_in_progress">Exporting…</string>
+
+    <!-- One option row in a result card, spoken as text + state. -->
+    <string name="option_spoken">%1$s — %2$s</string>
+    <string name="option_correct_chosen">correct answer, you chose this</string>
+    <string name="option_correct_missed">correct answer, you did not choose this</string>
+    <string name="option_wrong_chosen">not the correct answer, you chose this</string>
+    <string name="option_not_chosen">not chosen</string>
+    <string name="option_ungraded_chosen">you chose this, not graded</string>
+</resources>

@@ -508,7 +508,7 @@ fun PassagesScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        "${index + 1}.",
+                                        stringResource(R.string.editor_index, index + 1),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.tertiary,
                                         modifier = Modifier.padding(end = 8.dp)
@@ -690,7 +690,13 @@ private fun PassageEditDialog(
                     // text (and then accept that rich markup is lost, as it is
                     // for questions).
                     val edited = text.trim()
-                    val elements = if (edited == initial?.text) {
+                    // Compare like with like. `initial.text` is the flattened
+                    // textContent and may carry edge whitespace; comparing the
+                    // trimmed field to the untrimmed text made an untouched
+                    // rich passage look edited, flattening its tables, formulas
+                    // and images on a no-op save. A whitespace-only difference
+                    // is not a content edit, so keep the original elements.
+                    val elements = if (initial != null && edited == initial.text.trim()) {
                         initial.elements
                     } else {
                         listOf(com.mcqapp.domain.ContentElement.TextElement(edited))

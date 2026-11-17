@@ -249,6 +249,14 @@ class TestViewModel(
          */
         @VisibleForTesting
         var beforeSaveForTest: (suspend () -> Unit)? = null
+
+        /**
+         * Test-only seam: when it returns true the next attempt write throws,
+         * driving the failed-save/retry path without breaking the database.
+         * Production never sets it; a null hook is a no-op.
+         */
+        @VisibleForTesting
+        var failSaveForTest: (() -> Boolean)? = null
     }
     // Monotonic anchors (consolidated_bugs.md D10): the countdown already
     // ran on elapsedRealtime; dwell and the untimed duration join it, so an
@@ -912,6 +920,10 @@ class TestViewModel(
         val paused = !_state.value.dwellPausedByUser
         _state.update { it.copy(dwellPausedByUser = paused) }
         setDwellActive(!paused)
+        // A deliberate pause is as kill-prone as backgrounding: banking the
+        // dwell in memory alone lets a kill restore the older value from disk
+        // (same path as onAppBackgrounded). Persist before returning.
+        if (paused) persistProgress()
     }
 
     fun toggleOption(optionId: String) {
@@ -1109,6 +1121,10 @@ class TestViewModel(
     fun submit() {
         val snapshot = _state.value
         if (snapshot.submitted || snapshot.saving || snapshot.questionCount == 0) return
+        // Monotonic moment this attempt's write began. If that write fails, the
+        // window until it unwinds was not exam time and must be taken back out
+        // of every clock before the learner is allowed to retry (see below).
+        val submittedAtElapsed = SystemClock.elapsedRealtime()
         Logger.i("TESTVM", "submit() called: answered=${snapshot.answeredCount}/${snapshot.questionCount}, " +
             "remaining=${snapshot.remainingSeconds}s")
         timerJob?.cancel()
@@ -1138,6 +1154,9 @@ class TestViewModel(
             // would lose the whole exam on a storage error or process death.
             val outcome = com.mcqapp.domain.submitAttempt(
                 save = {
+                    if (failSaveForTest?.invoke() == true) {
+                        throw java.io.IOException("simulated save failure")
+                    }
                     repository.saveAttemptStreamed(
                         paperId = paperId,
                         paperTitle = current.paper?.title ?: "Test",
@@ -1171,6 +1190,16 @@ class TestViewModel(
                             saveError = "Could not save your result: ${outcome.message}"
                         )
                     }
+                    // submit() stopped both clocks at `submittedAtElapsed`, but
+                    // the save itself kept ticking the monotonic wall. Shift the
+                    // duration and dwell anchors forward by exactly that gap:
+                    // the failed write is not exam time, so charging it made the
+                    // retry's recorded duration (and resumed elapsed) too long.
+                    // setDwellActive/startTimer below then re-anchor their own
+                    // clocks from this same moment (L3).
+                    val gap = (SystemClock.elapsedRealtime() - submittedAtElapsed).coerceAtLeast(0L)
+                    startElapsedMs += gap
+                    lastNavElapsedMs += gap
                     // submit() cancelled both timers up front; without this the
                     // countdown froze and auto-submit stayed dead while the
                     // user kept answering, and the recorded duration stopped

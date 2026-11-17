@@ -33,7 +33,9 @@ data class AnkiReadResult(
      * for months keeps its intervals instead of restarting at zero. Empty when
      * a package carries no schedule, such as a shared deck of new cards.
      */
-    val scheduling: Map<String, com.mcqapp.data.io.CardScheduleDto> = emptyMap()
+    val scheduling: Map<String, com.mcqapp.data.io.CardScheduleDto> = emptyMap(),
+    /** Card instances whose entire stem was empty (no text, no image) and were dropped. */
+    val droppedStems: Int = 0
 )
 
 /** Raised when a package cannot be read at all. */
@@ -143,6 +145,9 @@ object AnkiPackageReader {
 
         var recallCount = 0
         var unscheduled = 0
+        // Per-read counter: the singleton reader used to keep this in a mutable
+        // field, so a later import's log inherited an earlier deck's drops.
+        val droppedStems = IntArray(1)
         val questionsByDeck = LinkedHashMap<Long, MutableList<QuestionDto>>()
         val scheduling = LinkedHashMap<String, com.mcqapp.data.io.CardScheduleDto>()
         notes.forEach { note ->
@@ -150,7 +155,7 @@ object AnkiPackageReader {
             val noteCards = cardsByNote[note.id].orEmpty()
             val instances = if (noteCards.isEmpty()) listOf(null) else noteCards.map { it.ord }
             instances.forEach { ord ->
-                val parsed = toQuestion(note, template, ord, media) ?: return@forEach
+                val parsed = toQuestion(note, template, ord, media, droppedStems) ?: return@forEach
                 if (parsed.isRecall) recallCount++
                 val card = noteCards.firstOrNull { it.ord == ord }
                 val deckId = card?.did ?: DEFAULT_DECK_ID
@@ -197,6 +202,7 @@ object AnkiPackageReader {
         Logger.i(
             "IMPORT",
             "Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options, " +
+                "${droppedStems[0]} blank stems dropped, " +
                 "${scheduling.size} scheduled, $unscheduled new or not due"
         )
         return AnkiReadResult(
@@ -204,7 +210,8 @@ object AnkiPackageReader {
             noteCount = noteCount,
             recallCount = recallCount,
             deckCount = decks.size,
-            scheduling = scheduling
+            scheduling = scheduling,
+            droppedStems = droppedStems[0]
         )
     }
 
@@ -231,7 +238,9 @@ object AnkiPackageReader {
         val passages: List<PassageDto>,
         val deckCount: Int,
         val noteCount: Int,
-        val recallCount: Int
+        val recallCount: Int,
+        /** Card instances dropped for a completely empty stem, for the import report. */
+        val droppedStems: Int = 0
     )
 
     /**
@@ -326,6 +335,7 @@ object AnkiPackageReader {
         val passages = LinkedHashMap<String, PassageDto>()
         var noteCount = 0
         var recallCount = 0
+        var droppedStems = 0
         for (root in roots) {
             val rootDeck = idByName[root]
             val paperDeckIds = allDecks
@@ -350,20 +360,22 @@ object AnkiPackageReader {
                 sink.onCategory(CategoryDto(id = categoryId, title = "Uncategorized"))
                 val counts = streamDeck(
                     db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId,
-                    sink, batchSize, nowMillis, parameters
+                    sink, batchSize, nowMillis, parameters, IntArray(1)
                 )
                 noteCount += counts.total
                 recallCount += counts.recall
+                droppedStems += counts.dropped
             } else {
                 for (node in nodes) {
                     // A level with no deck row of its own holds no questions.
                     sink.onCategory(node.dto)
                     val counts = streamDeck(
                         db, notetypes, media, col, revlog, passages, node.deck?.id, node.dto.id,
-                        sink, batchSize, nowMillis, parameters
+                        sink, batchSize, nowMillis, parameters, IntArray(1)
                     )
                     noteCount += counts.total
                     recallCount += counts.recall
+                    droppedStems += counts.dropped
                 }
                 // The paper's own deck, after the nodes: its notes are the
                 // paper's uncategorised questions. The whole-file reader
@@ -378,21 +390,23 @@ object AnkiPackageReader {
                     sink.onCategory(CategoryDto(id = rootCategoryId, title = "Uncategorized"))
                     val counts = streamDeck(
                         db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId,
-                        sink, batchSize, nowMillis, parameters
+                        sink, batchSize, nowMillis, parameters, IntArray(1)
                     )
                     noteCount += counts.total
                     recallCount += counts.recall
+                    droppedStems += counts.dropped
                 }
             }
         }
         Logger.i(
             "IMPORT",
-            "Streamed Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options"
+            "Streamed Anki package: ${decks.size} decks, $noteCount questions, " +
+                "$recallCount without options, $droppedStems blank stems dropped"
         )
-        return AnkiStreamTail(passages.values.toList(), decks.size, noteCount, recallCount)
+        return AnkiStreamTail(passages.values.toList(), decks.size, noteCount, recallCount, droppedStems)
     }
 
-    private class DeckCounts(val total: Int, val recall: Int)
+    private class DeckCounts(val total: Int, val recall: Int, val dropped: Int = 0)
 
     /** Which decks hold a question ([order] is first-question order), and how many. */
     private class DeckScan(val order: List<Long>, val counts: Map<Long, Int>)
@@ -416,9 +430,10 @@ object AnkiPackageReader {
         sink: StreamSink,
         batchSize: Int,
         nowMillis: Long,
-        parameters: List<Double>?
+        parameters: List<Double>?,
+        dropped: IntArray
     ): DeckCounts {
-        if (deckId == null) return DeckCounts(0, 0)
+        if (deckId == null) return DeckCounts(0, 0, 0)
         var total = 0
         var recall = 0
         val batch = ArrayList<QuestionDto>()
@@ -438,7 +453,7 @@ object AnkiPackageReader {
                 val instances: List<Int?> =
                     if (deckCards.isEmpty()) listOf(null) else deckCards.map { it.ord }
                 for (ord in instances) {
-                    val parsed = toQuestion(note, notetypes[note.mid], ord, media) ?: continue
+                    val parsed = toQuestion(note, notetypes[note.mid], ord, media, dropped) ?: continue
                     if (parsed.isRecall) recall++
                     total++
                     parsed.question.passageId?.let { passageId ->
@@ -470,7 +485,7 @@ object AnkiPackageReader {
             }
         }
         if (batch.isNotEmpty()) sink.onQuestions(categoryId, batch, schedules)
-        return DeckCounts(total, recall)
+        return DeckCounts(total, recall, dropped[0])
     }
 
     /**
@@ -527,7 +542,9 @@ object AnkiPackageReader {
                 val instances: List<Int?> =
                     if (noteCards.isEmpty()) listOf(null) else noteCards.map { it.ord }
                 for (ord in instances) {
-                    if (toQuestion(note, notetypes[note.mid], ord, PROBE_MEDIA) == null) continue
+                    // The probe must not count drops: streamDeck walks the same
+                    // notes again and owns the count reported to the user.
+                    if (toQuestion(note, notetypes[note.mid], ord, PROBE_MEDIA, IntArray(1)) == null) continue
                     val card = ord?.let { o -> noteCards.firstOrNull { it.ord == o } }
                     val deckId = card?.did ?: DEFAULT_DECK_ID
                     if (deckId !in counts) order += deckId
@@ -855,9 +872,6 @@ object AnkiPackageReader {
     /** A question plus whether it had to be reduced to a single option. */
     private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
 
-    /** Notes whose entire stem is empty (neither text nor image), for the log. */
-    private var droppedEmptyStems = 0
-
     /**
      * The stem-image fallback for a payload that omits `image` (older or
      * hand-edited one). buildFront embeds the passage — with its picture —
@@ -887,7 +901,8 @@ object AnkiPackageReader {
         note: AnkiNote,
         notetype: AnkiNotetype?,
         ord: Int?,
-        media: MediaIndex
+        media: MediaIndex,
+        dropped: IntArray
     ): ParsedQuestion? {
         val payload = payloadFromField(note.fields.getOrNull(2))
         val frontHtml = note.fields.firstOrNull().orEmpty()
@@ -901,11 +916,11 @@ object AnkiPackageReader {
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
         if (front.first.isBlank() && front.second == null) {
-            droppedEmptyStems++
+            val droppedNumber = ++dropped[0]
             Logger.w(
                 "IMPORT",
-                "Dropped a note with a completely empty stem (no text, no image): " +
-                    "${note.guid.ifBlank { note.id }} — dropped #$droppedEmptyStems"
+                "Dropped an Anki card instance with a completely empty stem (no text, no image): " +
+                    "${note.guid.ifBlank { note.id }} — dropped #$droppedNumber"
             )
             return null
         }

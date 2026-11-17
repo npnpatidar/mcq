@@ -112,9 +112,9 @@ class ReportPdfTest {
         val lines = ReportPdf.lines(report(rows = emptyList()))
         val text = texts(lines)
         assertTrue(text.contains("Score"))
-        // With no rows the header still counts the questions the attempt
-        // recorded, so the denominator is the attempt's total, not zero.
-        assertTrue(text.contains("0/2 correct · 0% accuracy"))
+        // The fraction and the percentage share the answered denominator:
+        // no rows were answered, so both read 0/0 and 0%.
+        assertTrue(text.contains("0/0 correct · 0% accuracy"))
         assertTrue(text.contains("No timing data recorded."))
         assertFalse(text.contains("Topics"))
         assertFalse(text.contains("Recommended actions"))

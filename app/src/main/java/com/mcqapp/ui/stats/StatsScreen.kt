@@ -130,6 +130,15 @@ fun StatsScreen(
             }
             if (state.tab != StatsViewModel.Tab.TESTS) {
                 RangeSelector(state.range, viewModel::setRange)
+            } else {
+                // Tests is lifetime-only: say so where the chips would have
+                // been, instead of leaving the picker's absence unexplained.
+                Text(
+                    stringResource(R.string.stats_tests_all_time),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
             }
             when {
                 state.loadError != null -> Box(
@@ -219,7 +228,11 @@ fun StatsScreen(
     }
 
     cardDetail?.let { detail ->
-        CardInfoSheet(detail = detail, onDismiss = viewModel::dismissCard)
+        CardInfoSheet(
+            detail = detail,
+            onDismiss = viewModel::dismissCard,
+            onRetry = viewModel::retryCard
+        )
     }
 }
 

@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -102,7 +103,7 @@ internal fun CalibrationChart(
     val bandPoints = ArrayList<Pair<String, String>>(points.size)
     for ((predicted, actual, count) in points) {
         val band = stringResource(R.string.a11y_chart_band, formatPct(predicted), formatPct(actual))
-        bandPoints.add(band to stringResource(R.string.a11y_chart_n_reviews, count))
+        bandPoints.add(band to pluralStringResource(R.plurals.a11y_chart_n_reviews, count, count))
     }
     val summary = chartSummary(
         kindRes = R.string.a11y_chart_calibration,

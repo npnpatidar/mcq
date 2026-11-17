@@ -174,7 +174,14 @@ data class RecommendedAction(
     val categoryIds: List<String> = emptyList(),
     val filter: String? = null,
     val testType: TestType? = null,
-    val testCount: Int = 0
+    val testCount: Int = 0,
+    /**
+     * The parts of the original attempt's plan that a Study/Test relaunch must
+     * carry forward. Type and count are deliberately not here: those come from
+     * the recommendation itself (a longer mock, a repeat practice, a transfer
+     * check). This is the rest of the plan the action would otherwise drop.
+     */
+    val relaunch: RelaunchPlan? = null
 ) {
     enum class Kind { STUDY, TEST, REVIEW }
 
@@ -218,6 +225,53 @@ data class RecommendedAction(
 
         data object KeepGoing : Rule
     }
+}
+
+/**
+ * The part of the original attempt's plan a "Study these"/"Test these" action
+ * relaunches with. The type and count are not included: those are the
+ * recommendation's own values (a longer mock, a repeat practice, a transfer
+ * check), not the attempt's. Only the parts the old action dropped are here.
+ *
+ * Attempts do not persist a configured minute or breadth value. Preserving
+ * [ExamTiming.USE_PAPER_DURATION] and an empty breadth means the relaunch uses
+ * the paper's own duration and the default breadth rather than inventing one.
+ */
+data class RelaunchPlan(
+    val paperId: String,
+    val scopeCategoryIds: List<String>,
+    val exclusionMode: String,
+    val variant: String?,
+    val minutes: Int,
+    val breadth: String = ""
+)
+
+/** Builds a [RelaunchPlan] from a stored attempt and one recommended action. */
+object RelaunchPlanner {
+
+    /** The plan parts recoverable from a stored attempt. */
+    fun from(attempt: Attempt): RelaunchPlan = RelaunchPlan(
+        paperId = attempt.paperId,
+        scopeCategoryIds = splitIds(attempt.scopeCategoryIds),
+        exclusionMode = attempt.exclusionMode,
+        variant = attempt.variant,
+        minutes = ExamTiming.USE_PAPER_DURATION
+    )
+
+    /**
+     * The action's targeted categories win when it has any. When they are
+     * empty because the topic's questions were moved or deleted
+     * (`currentCategoryId == null`), fall back to the attempt's recorded scope
+     * — never to an empty list, which the routes read as "whole paper".
+     */
+    fun forAction(action: RecommendedAction, attempt: Attempt): RelaunchPlan {
+        val plan = from(attempt)
+        return if (action.categoryIds.isEmpty()) plan
+        else plan.copy(scopeCategoryIds = action.categoryIds)
+    }
+
+    private fun splitIds(raw: String): List<String> =
+        raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 }
 
 /**
@@ -1153,7 +1207,12 @@ object RecommendationEngine {
             ReportFamily.PRACTICE -> practiceActions(report)
             ReportFamily.MOCK, ReportFamily.FRESH_SAMPLE -> mockActions(report)
         }
-        return actions.take(MAX_ACTIONS)
+        // Every Study/Test action carries the original plan so the relaunch can
+        // match what the report describes. Review actions stay in-page.
+        return actions.take(MAX_ACTIONS).map { action ->
+            if (action.kind == RecommendedAction.Kind.REVIEW) action
+            else action.copy(relaunch = RelaunchPlanner.forAction(action, report.attempt))
+        }
     }
 
     private fun reviewOnly(report: TestReport): List<RecommendedAction> = buildList {

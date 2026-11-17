@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Tests tab is lifetime-only: its range chips are hidden, so say why. -->
+    <string name="stats_tests_all_time">All time · every attempt</string>
+
+    <!-- Inline failure state for the card drill-down sheet (kept mounted). -->
+    <string name="stats_card_detail_error">Card details could not be loaded.</string>
+
+    <!-- Trend line labels: the scope and custom choice a line actually covers. -->
+    <string name="stats_trend_scope_whole">whole paper</string>
+    <string name="stats_trend_scope_topics">topics</string>
+    <string name="stats_trend_scope_topics_detail">topics: %1$s</string>
+</resources>

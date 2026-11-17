@@ -150,10 +150,12 @@ class StringResourceUsageTest {
                         val outerBefore = src.substring(0, outerStart).trimEnd()
                         return isRenderedConfirmed(outerBefore, src, outerStart)
                     }
-                    // Buttons/labels render their text argument too.
+                    // Buttons/labels render their text argument too. `append`
+                    // and `add` feed a buildString/buildList whose result is
+                    // handed to Text, so a resource there is rendered as well.
                     return name in setOf("Text", "TextButton", "Button", "FilledToneButton",
                         "OutlinedButton", "AlertDialog", "FilterChip", "DropdownMenuItem",
-                        "title", "text", "label")
+                        "title", "text", "label", "append", "add")
                 }
                 depth--
             }
@@ -162,19 +164,95 @@ class StringResourceUsageTest {
         return false
     }
 
-    private fun definedResources(): Set<String> {
-        // Resources may live in feature files as well as strings.xml: each
-        // disclosure keeps its captions in its own strings_*.xml, so discover
-        // them all rather than maintaining a list that drifts out of date.
-        val files = File("src/main/res/values").walkTopDown()
+    /** Every strings file, including the feature-owned strings_*.xml files. */
+    private fun resourceFiles(): List<File> =
+        File("src/main/res/values").walkTopDown()
             .filter { it.isFile && it.name.startsWith("strings") && it.extension == "xml" }
             .toList()
-        return files.flatMap { file ->
-            Regex("""<string name="([a-z0-9_]+)">""")
-                .findAll(file.readText())
-                .map { it.groupValues[1] }.toList()
-        }.toSet()
+
+    private fun definedStrings(): Set<String> = resourceFiles().flatMap { file ->
+        // `translatable="false"` is a valid attribute, so do not require the
+        // tag to end immediately after the name.
+        Regex("""<string name="([a-z0-9_]+)"[^>]*>""")
+            .findAll(file.readText()).map { it.groupValues[1] }.toList()
+    }.toSet()
+
+    private fun definedPlurals(): Set<String> = resourceFiles().flatMap { file ->
+        Regex("""<plurals name="([a-z0-9_]+)"[^>]*>""")
+            .findAll(file.readText()).map { it.groupValues[1] }.toList()
+    }.toSet()
+
+    private fun definedResources(): Set<String> = definedStrings() + definedPlurals()
+
+    private fun mainSources(): List<File> =
+        File("src/main/java/com/mcqapp").walkTopDown().filter { it.extension == "kt" }.toList()
+
+    /** Format specifiers are removed before looking for raw Kotlin templates or checking plural consistency. */
+    private val formatSpecifier = Regex("""%\d+\$[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z]""")
+
+    /** The value of every <string> and the first <item> of every <plurals>, keyed by (type, name). */
+    private fun resourceValues(): Map<Pair<String, String>, String> =
+        resourceFiles().flatMap { file ->
+            val xml = file.readText()
+            val strings = Regex("""<string name="([a-z0-9_]+)"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(xml).map { "string" to it.groupValues[1] to it.groupValues[2] }.toList()
+            val plurals = Regex("""<plurals name="([a-z0-9_]+)"[^>]*>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(xml).map { m ->
+                    val first = Regex("""<item quantity="[a-z]+">(.*?)</item>""", RegexOption.DOT_MATCHES_ALL)
+                        .find(m.groupValues[2])?.groupValues?.get(1).orEmpty()
+                    "plurals" to m.groupValues[1] to first
+                }.toList()
+            strings + plurals
+        }.toMap()
+
+    /** (position, conversion) for each format specifier; position is null when implicit. */
+    private fun specifiersOf(value: String): List<Pair<Int?, Char>> =
+        Regex("""%(?:(\d+)\$)?[-#+ 0,(]*\d*(?:\.\d+)?([a-zA-Z])""")
+            .findAll(value).map { m ->
+                (m.groupValues[1].ifEmpty { null }?.toInt()) to m.groupValues[2][0]
+            }.toList()
+
+    /** Top-level arguments of a call: nested calls stay a single argument. */
+    private fun callArguments(src: String, openParen: Int): List<String> {
+        val args = mutableListOf<String>()
+        var depth = 0
+        var start = openParen + 1
+        var i = start
+        var done = false
+        while (i < src.length && !done) {
+            when (src[i]) {
+                '(', '{', '[' -> depth++
+                ')' -> if (depth == 0) {
+                    args += src.substring(start, i).trim()
+                    done = true
+                } else depth--
+                '}', ']' -> depth--
+                ',' -> if (depth == 0) {
+                    args += src.substring(start, i).trim()
+                    start = i + 1
+                }
+            }
+            i++
+        }
+        return args
     }
+
+    /** Expressions that are certainly String, never a legal argument for a %d specifier. */
+    private val certainlyStringArgument = Regex(
+        """^"|\bString\.format\s*\(|\bformatPercent\s*\(|\bDwell\.format\s*\(|\b(?:stringResource|pluralStringResource)\s*\(|\.\s*(?:lowercase|uppercase|trim)\s*\(|\.(?:title|name|paperTitle|explanation|nextIn|tag|label)\b"""
+    )
+
+    /** All `<plurals>` blocks in every strings file, with their quantity items. */
+    private fun pluralBlocks(): List<Pair<String, List<Pair<String, String>>>> =
+        resourceFiles().flatMap { file ->
+            Regex("""<plurals name="([a-z0-9_]+)"[^>]*>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(file.readText()).map { match ->
+                    val items = Regex("""<item quantity="([a-z]+)">(.*?)</item>""", RegexOption.DOT_MATCHES_ALL)
+                        .findAll(match.groupValues[2])
+                        .map { it.groupValues[1] to it.groupValues[2] }.toList()
+                    match.groupValues[1] to items
+                }.toList()
+        }
 
     @Test
     fun everyStringResourceIsRenderedInsideATextOrAsADescription() {
@@ -241,15 +319,19 @@ val answer = 42"""
 
     @Test
     fun everyReferencedResourceExists() {
-        val defined = definedResources()
-        val referenced = sources().flatMap { file ->
+        val strings = definedStrings()
+        val plurals = definedPlurals()
+        val files = sources()
+        val missingStrings = files.flatMap { file ->
             Regex("""R\.string\.([a-z0-9_]+)""").findAll(file.readText())
                 .map { it.groupValues[1] }.toList()
-        }.toSet()
-        assertTrue(
-            "referenced but not defined: ${referenced - defined}",
-            (referenced - defined).isEmpty()
-        )
+        }.toSet() - strings
+        val missingPlurals = files.flatMap { file ->
+            Regex("""R\.plurals\.([a-z0-9_]+)""").findAll(file.readText())
+                .map { it.groupValues[1] }.toList()
+        }.toSet() - plurals
+        assertTrue("referenced but undefined strings: $missingStrings", missingStrings.isEmpty())
+        assertTrue("referenced but undefined plurals: $missingPlurals", missingPlurals.isEmpty())
     }
 
     @Test
@@ -257,16 +339,14 @@ val answer = 42"""
         // A literal like "$mistakeCount" must never be extracted: it rendered
         // on screen as the text "$mistakeCount" instead of the count. This also
         // caught the version resource when "%1$s" was first added.
-        val xml = File("src/main/res/values/strings.xml").readText()
         // A legitimate format specifier ("%1$s", "%2$02d") also contains a
         // '$', so those are removed before looking for a raw Kotlin template.
-        val formatSpecifier = Regex("""%\d+\$[-#+ 0,(]*\d*(?:\.\d+)?[a-zA-Z]""")
-        val offenders = Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
-            .findAll(xml)
-            .map { it.groupValues[1] to it.groupValues[2] }
-            .filter { (_, value) -> value.replace(formatSpecifier, "").contains('$') }
+        val offenders = resourceFiles().flatMap { file ->
+            Regex("""<string name="([a-z0-9_]+)"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(file.readText())
+                .map { it.groupValues[1] to it.groupValues[2] }.toList()
+        }.filter { (_, value) -> value.replace(formatSpecifier, "").contains('$') }
             .map { it.first }
-            .toList()
         assertTrue("these resources hold a raw Kotlin template: $offenders", offenders.isEmpty())
     }
 
@@ -275,5 +355,146 @@ val answer = 42"""
         val defined = definedResources()
         assertTrue("strings.xml looks truncated: ${defined.size} entries", defined.size > 150)
         assertTrue("app_name must survive", "app_name" in defined)
+    }
+
+    /**
+     * Regression: an incomplete or inconsistent plural reads "1 questions" or
+     * loses a format argument in one language. Both quantity forms must exist
+     * and carry the same format specifiers.
+     */
+    @Test
+    fun everyPluralHasBothQuantitiesAndMatchingFormatSpecifiers() {
+        val offenders = mutableListOf<String>()
+        for ((name, items) in pluralBlocks()) {
+            val quantities = items.map { it.first }.toSet()
+            if (!quantities.containsAll(setOf("one", "other"))) {
+                offenders += "$name: quantities $quantities"
+            }
+            val specSets = items.map { (_, value) ->
+                formatSpecifier.findAll(value).map { it.value }.toSet()
+            }.toSet()
+            if (specSets.size > 1) offenders += "$name: format specifiers differ between items"
+        }
+        assertTrue("malformed plurals: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Regression for the count strings that used to read "Edit 1 questions",
+     * "1 categories" and "Sittings: 1" — they must be plurals, not strings.
+     * Fails on the pre-localisation strings.xml.
+     */
+    @Test
+    fun convertedCountNamesArePluralsWithDistinctForms() {
+        val names = setOf(
+            "edit_n_questions", "delete_n_questions", "move_includes_passage", "resume_with_n",
+            "break_suggestion", "study_scope_many", "test_setup_scope_categories",
+            "test_setup_pool_questions", "test_setup_pool_mistakes", "test_setup_count_label",
+            "test_setup_short_test", "test_preview_short", "test_banner_random",
+            "test_banner_mistakes", "test_banner_short", "drill_banner_text",
+            "stats_n_reviews", "stats_leeches_count", "storage_show_all_papers",
+            "a11y_chart_n_reviews", "report_header_questions", "export_n_selected",
+            "past_attempts_count", "search_result_count", "attempts_count"
+        )
+        val strings = definedStrings()
+        val plurals = definedPlurals()
+        assertTrue("count names not declared as plurals: ${names - plurals}", (names - plurals).isEmpty())
+        assertTrue("count names still declared as strings: ${names intersect strings}", (names intersect strings).isEmpty())
+        val identical = pluralBlocks().filter { (name, items) ->
+            name in names && items.map { it.second }.toSet().size == 1
+        }.map { it.first }
+        assertTrue("plurals whose one/other forms are identical: $identical", identical.isEmpty())
+    }
+
+    /** Regression for the runtime-concatenated fragments with trailing/leading spaces. */
+    @Test
+    fun noTranslatableStringHasLeadingOrTrailingWhitespace() {
+        val offenders = resourceFiles().flatMap { file ->
+            Regex("""<string name="([a-z0-9_]+)"([^>]*)>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+                .findAll(file.readText()).map { Triple(it.groupValues[1], it.groupValues[2], it.groupValues[3]) }.toList()
+        }.filter { (_, attrs, value) ->
+            "translatable=\"false\"" !in attrs && value != value.trim()
+        }.map { it.first }
+        assertTrue("strings with stray whitespace: $offenders", offenders.isEmpty())
+    }
+
+    /** Brand names and format fragments must never reach a translator. */
+    @Test
+    fun brandAndTechnicalStringsAreNotTranslatable() {
+        val names = setOf(
+            "app_name", "mcq_app", "theme_material", "theme_nord", "theme_dracula",
+            "theme_tokyo_night", "theme_catppuccin", "theme_gruvbox", "theme_one_dark",
+            "theme_monokai", "theme_solarized", "theme_everforest", "theme_rose_pine",
+            "theme_ayu", "theme_night_owl", "theme_kanagawa", "theme_github",
+            "l_02d_02d", "l_1f_0f", "label"
+        )
+        val xml = resourceFiles().joinToString("\n") { it.readText() }
+        val offenders = names.filter { name ->
+            !Regex("""<string name="$name"[^>]*translatable="false"[^>]*>""").containsMatchIn(xml)
+        }
+        assertTrue("brand/technical strings missing translatable=false: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Catches the literals that used to sit inside Compose Text/contentDescription
+     * and feedback sinks — invisible to the `stringResource(...)` checks above.
+     */
+    @Test
+    fun noHardcodedUserFacingLiteralInComposeTextOrFeedback() {
+        val patterns = listOf(
+            Regex("""\bText\(\s*"([^"\\]*(?:\\.[^"\\]*)*)"""),
+            Regex("""contentDescription\s*=\s*"([^"\\]*(?:\\.[^"\\]*)*)"""),
+            Regex("""UiMessage\(\s*"([^"\\]*(?:\\.[^"\\]*)*)"""),
+            Regex("""Toast\.makeText\([^,]+,\s*"([^"\\]*(?:\\.[^"\\]*)*)""")
+        )
+        val offenders = mutableListOf<String>()
+        for (file in mainSources()) {
+            val src = file.readText()
+            for (pattern in patterns) for (match in pattern.findAll(src)) {
+                if (Regex("[A-Za-z]{2,}").containsMatchIn(match.groupValues[1])) {
+                    val line = src.substring(0, match.range.first).count { it == '\n' } + 1
+                    offenders += "${file.name}:$line: ${match.groupValues[1]}"
+                }
+            }
+        }
+        assertTrue("hardcoded user-facing literals: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Regression: history_delta_points declared %2$d while its call site passed
+     * String.format(...), throwing IllegalFormatConversionException on every
+     * trend row with more than one attempt. Check every call site's numeric
+     * specifiers against arguments that are certainly Strings.
+     */
+    @Test
+    fun formatSpecifiersMatchArgumentsSuppliedAtCallSites() {
+        val values = resourceValues()
+        assertTrue(
+            "history_delta_points must format both arguments as strings",
+            "%2\$s" in values["string" to "history_delta_points"].orEmpty()
+        )
+        val call = Regex("""(?:pluralStringResource|stringResource)\s*\(\s*R\.(string|plurals)\.([a-z0-9_]+)""")
+        val integerConversions = setOf('d', 'i', 'o', 'u', 'x', 'X')
+        val offenders = mutableListOf<String>()
+        for (file in mainSources()) {
+            val src = file.readText()
+            for (m in call.findAll(src)) {
+                val kind = m.groupValues[1]
+                val name = m.groupValues[2]
+                val value = values[kind to name] ?: continue
+                val open = src.indexOf('(', m.range.first)
+                if (open < 0) continue
+                val formatArgs = callArguments(src, open).let { if (kind == "plurals") it.drop(2) else it.drop(1) }
+                specifiersOf(value).forEachIndexed { index, (position, type) ->
+                    val at = (position ?: index + 1) - 1
+                    if (type in integerConversions && at in formatArgs.indices &&
+                        certainlyStringArgument.containsMatchIn(formatArgs[at])
+                    ) {
+                        val line = src.substring(0, m.range.first).count { it == '\n' } + 1
+                        offenders += "${file.name}:$line: $name %${at + 1}$type <- ${formatArgs[at]}"
+                    }
+                }
+            }
+        }
+        assertTrue("a numeric format specifier was given a String: $offenders", offenders.isEmpty())
     }
 }

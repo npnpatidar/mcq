@@ -36,6 +36,7 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.mcqapp.data.io.ImportReport
 import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.ContentElements
@@ -115,24 +117,7 @@ fun ImportScreen(
         AlertDialog(
             onDismissRequest = { },
             title = { Text(stringResource(R.string.import_complete)) },
-            text = {
-                Text(
-                    "• ${report.newQuestions} new questions added\n" +
-                        "• ${report.updatedQuestions} updated\n" +
-                        "• ${report.duplicateQuestions} already existed (skipped)" +
-                        (if (report.answersRefreshed > 0) {
-                            " • ${report.answersRefreshed} answers refreshed"
-                        } else {
-                            ""
-                        }) +
-                        if (report.restoredBookmarks > 0 || report.restoredAttempts > 0) {
-                            "\n• ${report.restoredBookmarks} bookmarks restored\n" +
-                                "• ${report.restoredAttempts} attempts restored"
-                        } else {
-                            ""
-                        }
-                )
-            },
+            text = { ImportReportDetails(report) },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.consumeImportResult()
@@ -347,9 +332,10 @@ fun ImportScreen(
                             )
                         ) {
                             Text(
-                                "Large bank: previewing the first ${state.questions.size} of " +
-                                    "${state.totalQuestionCount} questions. Edits and deletions apply " +
-                                    "to the previewed ones; the rest import exactly as they are in the file.",
+                                stringResource(
+                                    R.string.import_large_bank_notice,
+                                    state.questions.size, state.totalQuestionCount
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(12.dp)
                             )
@@ -360,7 +346,9 @@ fun ImportScreen(
                 item(contentType = "list-header") {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "New questions (${newQuestions.size}) — will be added",
+                        pluralStringResource(
+                            R.plurals.import_preview_new_count, newQuestions.size, newQuestions.size
+                        ),
                         style = MaterialTheme.typography.titleSmall
                     )
                     Spacer(Modifier.height(4.dp))
@@ -369,14 +357,14 @@ fun ImportScreen(
                 // to a second red list saying the import is fine. Most are
                 // advisory and nothing was skipped, so the two are separated:
                 // a real drop in red, a note in neutral.
-                val warningGroups = com.mcqapp.domain.splitImportWarnings(parseWarnings)
+                val warningGroups = com.mcqapp.domain.splitTypedImportWarnings(parseWarnings)
                 val skippedNotes = warningGroups.skipped
                 val advisoryNotes = warningGroups.notes
                 if (skippedNotes.isNotEmpty()) {
                     item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Skipped (${skippedNotes.size}) — content dropped from the file",
+                            stringResource(R.string.import_preview_skipped_count, skippedNotes.size),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -403,7 +391,7 @@ fun ImportScreen(
                     if (skippedNotes.size > 20) {
                         item(contentType = "more") {
                             Text(
-                                "+${skippedNotes.size - 20} more skipped",
+                                stringResource(R.string.import_more_skipped, skippedNotes.size - 20),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
@@ -414,7 +402,7 @@ fun ImportScreen(
                     item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Notes from the file (${advisoryNotes.size}) — nothing was dropped",
+                            stringResource(R.string.import_preview_notes_count, advisoryNotes.size),
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(Modifier.height(4.dp))
@@ -436,7 +424,7 @@ fun ImportScreen(
                     if (advisoryNotes.size > 20) {
                         item(contentType = "more") {
                             Text(
-                                "+${advisoryNotes.size - 20} more notes",
+                                stringResource(R.string.import_more_notes, advisoryNotes.size - 20),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
@@ -447,7 +435,7 @@ fun ImportScreen(
                     item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Warnings (${warnings.size}) — imports fine, but check these",
+                            stringResource(R.string.import_preview_warnings_count, warnings.size),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -482,7 +470,7 @@ fun ImportScreen(
                     if (warnings.size > 20) {
                         item(contentType = "more") {
                             Text(
-                                "+${warnings.size - 20} more warnings",
+                                stringResource(R.string.import_more_warnings, warnings.size - 20),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
@@ -503,7 +491,7 @@ fun ImportScreen(
                     item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Changed (${changedQuestions.size}) — will update the existing question",
+                            stringResource(R.string.import_preview_changed_count, changedQuestions.size),
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(Modifier.height(4.dp))
@@ -524,7 +512,7 @@ fun ImportScreen(
                     item(contentType = "list-header") {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Duplicates (${dupQuestions.size}) — already in library, will be skipped",
+                            stringResource(R.string.import_preview_duplicate_count, dupQuestions.size),
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
@@ -560,7 +548,10 @@ fun ImportScreen(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Importing ${state.importedQuestions} of ${state.totalQuestionCount} questions…",
+                    stringResource(
+                        R.string.import_importing_progress,
+                        state.importedQuestions, state.totalQuestionCount
+                    ),
                     style = MaterialTheme.typography.labelSmall
                 )
                 Spacer(Modifier.height(8.dp))
@@ -581,6 +572,34 @@ fun ImportScreen(
                 Text(importAction.label)
             }
         }
+    }
+}
+
+/**
+ * The completion report, one plural-aware line per non-zero count. Backed by
+ * [importReportLines] so what the user reads is the tested enumeration — in
+ * particular the restored schedules and paper counts a backup restore earns.
+ */
+@Composable
+internal fun ImportReportDetails(report: ImportReport) {
+    importReportLines(report).forEach { line ->
+        val resId = when (line.kind) {
+            ImportReportLineKind.NEW_PAPERS -> R.plurals.followup_import_new_papers
+            ImportReportLineKind.UPDATED_PAPERS -> R.plurals.followup_import_updated_papers
+            ImportReportLineKind.NEW_QUESTIONS -> R.plurals.followup_import_new_questions
+            ImportReportLineKind.UPDATED_QUESTIONS -> R.plurals.followup_import_updated_questions
+            ImportReportLineKind.DUPLICATE_QUESTIONS -> R.plurals.followup_import_duplicate_questions
+            ImportReportLineKind.ANSWERS_REFRESHED -> R.plurals.followup_import_answers_refreshed
+            ImportReportLineKind.RESTORED_SCHEDULES -> R.plurals.followup_import_restored_schedules
+            ImportReportLineKind.RESTORED_BOOKMARKS -> R.plurals.followup_import_restored_bookmarks
+            ImportReportLineKind.RESTORED_ATTEMPTS -> R.plurals.followup_import_restored_attempts
+            ImportReportLineKind.DROPPED_ANKI_STEMS -> R.plurals.followup_import_dropped_stems
+            ImportReportLineKind.RECALL_CONVERTED -> R.plurals.followup_import_recall_converted
+        }
+        Text(
+            text = pluralStringResource(resId, line.count, line.count),
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
@@ -649,7 +668,7 @@ private fun PreviewQuestionCard(
             }
             if (question.explanation.isNotBlank()) {
                 Text(
-                    "Explanation: ${question.explanation}",
+                    stringResource(R.string.import_explanation_label, question.explanation),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(top = 2.dp)
                 )

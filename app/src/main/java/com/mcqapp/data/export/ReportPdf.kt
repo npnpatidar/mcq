@@ -55,8 +55,13 @@ object ReportPdf {
         )
 
         heading("Score")
+        // Owner decision: the fraction and the percentage use the same
+        // denominator — the questions the learner actually answered. `shown`
+        // also counts skips and ungraded rows, which are not answers, so a
+        // "1/4 correct · 50%" line contradicted itself. `score.accuracy` is
+        // already correct/answered, so the percentage follows the fraction.
         val pct = (report.score.accuracy * 100).roundToInt()
-        body("${report.score.correct}/${report.score.shown} correct · $pct% accuracy")
+        body("${report.score.correct}/${report.score.answered} correct · $pct% accuracy")
         body(
             "Correct ${report.score.correct}, wrong ${report.score.wrong}, " +
                 "skipped ${report.score.skipped}, ungraded ${report.score.ungraded}"

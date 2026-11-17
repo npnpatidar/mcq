@@ -434,7 +434,7 @@ private fun ResponseTimeCard(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "${grade.avgSeconds!!.roundToInt()}s · ${grade.reviews}×",
+                        stringResource(R.string.stats_grade_line, grade.avgSeconds!!.roundToInt(), grade.reviews),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

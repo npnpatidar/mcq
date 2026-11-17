@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Strings extracted from inline Compose literals during the localisation pass.
+  Each entry is plain English so a translator can move it to a values-<locale>
+  file without touching code; counts use <plurals> rather than "1 questions".
+-->
+<resources>
+    <!-- Browse: export / move dialogs -->
+    <plurals name="export_n_selected">
+        <item quantity="one">Export %1$d selected question</item>
+        <item quantity="other">Export %1$d selected questions</item>
+    </plurals>
+    <plurals name="move_n_questions_to">
+        <item quantity="one">Move %1$d question to…</item>
+        <item quantity="other">Move %1$d questions to…</item>
+    </plurals>
+    <plurals name="copy_n_questions_to">
+        <item quantity="one">Copy %1$d question to…</item>
+        <item quantity="other">Copy %1$d questions to…</item>
+    </plurals>
+
+    <!-- Library: paper deletion impact dialog -->
+    <string name="delete_paper_confirm_title">Delete “%1$s”?</string>
+    <string name="delete_paper_also_deletes">This also deletes:</string>
+    <plurals name="past_attempts_count">
+        <item quantity="one">%1$d past attempt</item>
+        <item quantity="other">%1$d past attempts</item>
+    </plurals>
+    <plurals name="bookmarks_count">
+        <item quantity="one">%1$d bookmark</item>
+        <item quantity="other">%1$d bookmarks</item>
+    </plurals>
+    <plurals name="review_schedules_count">
+        <item quantity="one">%1$d review schedule</item>
+        <item quantity="other">%1$d review schedules</item>
+    </plurals>
+    <string name="bullet_item">• %1$s</string>
+
+    <!-- Import: preview -->
+    <string name="import_large_bank_notice">Large bank: previewing the first %1$d of %2$d questions. Edits and deletions apply to the previewed ones; the rest import exactly as they are in the file.</string>
+    <plurals name="import_preview_new_count">
+        <item quantity="one">New question (%1$d) — will be added</item>
+        <item quantity="other">New questions (%1$d) — will be added</item>
+    </plurals>
+    <string name="import_preview_skipped_count">Skipped (%1$d) — content dropped from the file</string>
+    <string name="import_preview_notes_count">Notes from the file (%1$d) — nothing was dropped</string>
+    <string name="import_preview_warnings_count">Warnings (%1$d) — imports fine, but check these</string>
+    <string name="import_preview_changed_count">Changed (%1$d) — will update the existing question</string>
+    <string name="import_preview_duplicate_count">Duplicates (%1$d) — already in library, will be skipped</string>
+    <string name="import_more_skipped">+%1$d more skipped</string>
+    <string name="import_more_notes">+%1$d more notes</string>
+    <string name="import_more_warnings">+%1$d more warnings</string>
+    <string name="import_importing_progress">Importing %1$d of %2$d questions…</string>
+    <string name="import_explanation_label">Explanation: %1$s</string>
+
+    <!-- Results: empty filter row, numbered actions, dwell -->
+    <string name="report_no_filter_questions">No %1$s questions</string>
+    <string name="report_numbered_action">%1$d. %2$s</string>
+    <string name="report_time_spent">Time spent: %1$s</string>
+
+    <!-- Study: clock and session summary -->
+    <string name="study_next_in">Next in %1$s</string>
+    <string name="study_session_summary">%1$d reviewed • %2$d again • %3$d remembered</string>
+
+    <!-- History: family/attempt rows -->
+    <string name="history_mastery_line">%1$s · %2$s · %3$d/%4$d</string>
+    <string name="history_wrong_skipped_line">%1$s wrong · %2$s skipped · %3$d attempts</string>
+    <string name="history_correct_line">%1$d/%2$d correct</string>
+    <string name="history_trend_attempts_best">%1$s · best %2$s</string>
+    <string name="history_delta_points">%1$s %2$s pts</string>
+
+    <!-- Search / stats / editor / misc -->
+    <plurals name="search_result_count">
+        <item quantity="one">%1$d match</item>
+        <item quantity="other">%1$d matches</item>
+    </plurals>
+    <plurals name="search_result_count_more">
+        <item quantity="one">%1$d+ match</item>
+        <item quantity="other">%1$d+ matches</item>
+    </plurals>
+    <plurals name="attempts_count">
+        <item quantity="one">%1$d attempt</item>
+        <item quantity="other">%1$d attempts</item>
+    </plurals>
+    <string name="stats_grade_line">%1$ds · %2$d×</string>
+    <string name="name_count_line">%1$s · %2$d</string>
+    <string name="editor_index">%1$d.</string>
+    <string name="editor_queue_position">%1$d/%2$d</string>
+    <string name="invalid_image_data">Invalid image data</string>
+</resources>

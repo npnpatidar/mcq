@@ -52,15 +52,23 @@ object ImportWarnings {
 }
 
 /**
+ * Whether a parse/log warning reports content that was actually dropped, or
+ * is only advisory. This is data produced alongside the message, not something
+ * inferred from the message's wording: rewording a message must never move it
+ * between the two panels.
+ */
+enum class ImportWarningSeverity { DROPPED, ADVISORY }
+
+/** A warning plus the severity its producer assigned it. */
+data class ParserWarning(val message: String, val severity: ImportWarningSeverity)
+
+/**
  * Parser warnings split by whether anything was actually dropped.
  *
  * They used to share one panel headed "Skipped rows", in error red, right
  * beside a second red panel saying the import was fine. Most of these are
  * advisory — an unreadable answer key, a root that is not a paper file — so
  * the heading told the user content had been lost when it had not.
- *
- * A message counts as a drop when it says so. Being wrong only moves a
- * message between two panels; every message is still shown either way.
  */
 data class ImportWarningGroups(
     val skipped: List<String>,
@@ -69,8 +77,27 @@ data class ImportWarningGroups(
     val isEmpty: Boolean get() = skipped.isEmpty() && notes.isEmpty()
 }
 
-fun splitImportWarnings(warnings: List<String>): ImportWarningGroups =
+/** The authoritative split: severity decides, never the message text. */
+fun splitTypedImportWarnings(warnings: List<ParserWarning>): ImportWarningGroups =
     ImportWarningGroups(
-        skipped = warnings.filter { it.contains("skipped", ignoreCase = true) },
-        notes = warnings.filterNot { it.contains("skipped", ignoreCase = true) }
+        skipped = warnings.filter { it.severity == ImportWarningSeverity.DROPPED }
+            .map { it.message },
+        notes = warnings.filter { it.severity == ImportWarningSeverity.ADVISORY }
+            .map { it.message }
     )
+
+/**
+ * Legacy adapter for callers that still hand us bare strings. The parsers'
+ * current drop messages announce themselves with the word "skipped"; new
+ * producers should call [splitTypedImportWarnings] with an explicit severity.
+ */
+fun splitImportWarnings(warnings: List<String>): ImportWarningGroups =
+    splitTypedImportWarnings(warnings.map { ParserWarning(it, severityOfParserWarning(it)) })
+
+/** Severity for the legacy bare-string warnings emitted by the parsers. */
+fun severityOfParserWarning(message: String): ImportWarningSeverity =
+    if (message.contains("skipped", ignoreCase = true)) {
+        ImportWarningSeverity.DROPPED
+    } else {
+        ImportWarningSeverity.ADVISORY
+    }

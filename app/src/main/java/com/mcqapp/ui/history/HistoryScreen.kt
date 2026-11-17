@@ -27,6 +27,7 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -142,8 +143,11 @@ fun HistoryScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    "${mastery.paperTitle} · ${formatPercent(mastery.rate * 100)}" +
-                                        " · ${mastery.correct}/${mastery.graded}",
+                                    stringResource(
+                                        R.string.history_mastery_line,
+                                        mastery.paperTitle, formatPercent(mastery.rate * 100),
+                                        mastery.correct, mastery.graded
+                                    ),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                                 Spacer(Modifier.height(4.dp))
@@ -173,9 +177,11 @@ fun HistoryScreen(
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    "${formatPercent(stat.wrongRate * 100)} wrong" +
-                                        " · ${formatPercent(stat.skipRate * 100)} skipped" +
-                                        " · ${stat.gradedAttempts} attempts",
+                                    stringResource(
+                                        R.string.history_wrong_skipped_line,
+                                        formatPercent(stat.wrongRate * 100),
+                                        formatPercent(stat.skipRate * 100), stat.gradedAttempts
+                                    ),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
@@ -220,7 +226,10 @@ fun HistoryScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    "${attempt.correctCount}/${attempt.totalQuestions} correct",
+                                    stringResource(
+                                        R.string.history_correct_line,
+                                        attempt.correctCount, attempt.totalQuestions
+                                    ),
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
@@ -248,15 +257,40 @@ private fun TrendCard(trend: Trends.FamilyTrend) {
                         append(com.mcqapp.ui.common.familyLabel(trend.family))
                         trend.type?.let { append(" · ").append(testTypeLabel(it)) }
                         if (trend.requestedCount > 0) {
-                            append(" · ").append(trend.requestedCount).append(" questions")
+                            append(" · ").append(
+                                pluralStringResource(
+                                    R.plurals.test_setup_pool_questions,
+                                    trend.requestedCount, trend.requestedCount
+                                )
+                            )
                         }
-                        if (trend.freshSample) append(" · fresh sample")
+                        // Two lines with the same title/type are still distinct:
+                        // name the exact scope and the custom choice they cover.
+                        // A custom scope carries its category ids so two topic
+                        // scopes of one paper never read as identical cards.
+                        val scopeSuffix = trend.scopeSuffix()
+                        append(" · ").append(
+                            when {
+                                trend.isWholePaper -> stringResource(R.string.stats_trend_scope_whole)
+                                scopeSuffix == null -> stringResource(R.string.stats_trend_scope_topics)
+                                else -> stringResource(R.string.stats_trend_scope_topics_detail, scopeSuffix)
+                            }
+                        )
+                        trend.variant?.let { append(" · ").append(it) }
+                        if (trend.freshSample) {
+                            append(" · ").append(stringResource(R.string.report_fresh_sample))
+                        }
                     },
                     style = MaterialTheme.typography.labelSmall
                 )
                 Text(
-                    "${trend.attempts} attempt${if (trend.attempts == 1) "" else "s"}" +
-                        " · best ${formatPercent(trend.bestPercent)}",
+                    stringResource(
+                        R.string.history_trend_attempts_best,
+                        pluralStringResource(
+                            R.plurals.attempts_count, trend.attempts, trend.attempts
+                        ),
+                        formatPercent(trend.bestPercent)
+                    ),
                     style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -273,11 +307,11 @@ private fun TrendCard(trend: Trends.FamilyTrend) {
                         else -> "=" to Color.Gray
                     }
                     Text(
-                        "$arrow ${String.format(
-                            Locale.ROOT,
-                            "%.0f",
-                            kotlin.math.abs(trend.deltaPoints)
-                        )} pts",
+                        stringResource(
+                            R.string.history_delta_points,
+                            arrow,
+                            String.format(Locale.ROOT, "%.0f", kotlin.math.abs(trend.deltaPoints))
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = color
                     )

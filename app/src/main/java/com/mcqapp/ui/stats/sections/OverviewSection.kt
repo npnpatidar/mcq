@@ -208,7 +208,7 @@ private fun CalendarCard(bundle: OverviewData) {
         val resources = LocalContext.current.resources
         HeatmapChart(
             days = bundle.heatmap.days,
-            tooltipCount = { resources.getString(R.string.stats_n_reviews, it) }
+            tooltipCount = { resources.getQuantityString(R.plurals.stats_n_reviews, it, it) }
         )
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Text(

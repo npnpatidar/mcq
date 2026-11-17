@@ -11,7 +11,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,7 +56,7 @@ fun CollapsibleSettingsSection(
             ) {
                 Icon(
                     if (expanded) Icons.Default.KeyboardArrowDown
-                    else Icons.Default.KeyboardArrowRight,
+                    else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null
                 )
                 Spacer(Modifier.width(8.dp))

@@ -68,17 +68,6 @@
     </issue>
 
     <issue
-        id="AndroidGradlePluginVersion"
-        message="A newer version of Gradle than 9.6.1 is available: 9.9.1"
-        errorLine1="distributionUrl=https\://services.gradle.org/distributions/gradle-9.6.1-bin.zip"
-        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
-        <location
-            file="$HOME/repo/mcq/gradle/wrapper/gradle-wrapper.properties"
-            line="3"
-            column="17"/>
-    </issue>
-
-    <issue
         id="GradleDependency"
         message="A newer version of androidx.core:core-ktx than 1.17.0 is available: 1.19.1"
         errorLine1="    implementation(&quot;androidx.core:core-ktx:1.17.0&quot;)"

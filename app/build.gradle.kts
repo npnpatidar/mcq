@@ -182,6 +182,11 @@ android {
         // New warnings must fail CI too; the baseline filters the frozen ones
         // out before this severity check, so only regressions fail the build.
         warningsAsErrors = true
+        // Advisory "a newer Gradle/AGP is available" notice, not a correctness
+        // problem. Its baseline location is the wrapper path, which lint
+        // normalises relative to $HOME and therefore differs on CI runners —
+        // freeze it by disabling this one check instead of baselining it.
+        disable += "AndroidGradlePluginVersion"
     }
 }
 

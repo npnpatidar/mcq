@@ -173,6 +173,16 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    lint {
+        // Freeze today's warnings so CI fails only on NEW lint problems.
+        // Regenerate with: sh gradlew :app:updateLintBaselineDebug ...
+        baseline = file("lint-baseline.xml")
+        abortOnError = true
+        // New warnings must fail CI too; the baseline filters the frozen ones
+        // out before this severity check, so only regressions fail the build.
+        warningsAsErrors = true
+    }
 }
 
 // Room schema export (AppDatabase.exportSchema = true): each version lands as
@@ -287,3 +297,82 @@ tasks.withType<Test>().configureEach {
     // times the whole suite's normal wall clock.
     timeout.set(Duration.ofMinutes(10))
 }
+
+// ----- Pure-JVM test selection (for ARM64 hosts) ----------------------------
+// Robolectric/SQLite tests cannot run on ARM64 Linux. Select only pure-JVM test
+// classes: those containing @Test and WITHOUT an `import org.robolectric` line.
+// This mirrors run-jvm-tests.sh's documented `^import org.robolectric` rule —
+// a word match here would silently drop classes that merely mention Robolectric
+// in a comment (the exact bug that script was fixed for).
+private fun pureJvmTestSourceDir() =
+    layout.projectDirectory.dir("src/test/java").asFile
+
+private fun String.hasRobolectricImport(): Boolean =
+    lineSequence().any { it.startsWith("import org.robolectric") }
+
+/** Fully-qualified names of pure-JVM test classes, derived from source. */
+private fun pureJvmTestClasses(): List<String> {
+    val root = pureJvmTestSourceDir()
+    if (!root.isDirectory) return emptyList()
+    return root.walkTopDown()
+        .filter { it.isFile && it.extension == "kt" }
+        .mapNotNull { file ->
+            val text = file.readText()
+            if ("@Test" !in text || text.hasRobolectricImport()) return@mapNotNull null
+            file.relativeTo(root).invariantSeparatorsPath
+                .removeSuffix(".kt").replace('/', '.')
+        }
+        .sorted()
+        .toList()
+}
+
+/** Fully-qualified names of the Robolectric test classes we must never select. */
+private fun robolectricTestClasses(): Set<String> {
+    val root = pureJvmTestSourceDir()
+    if (!root.isDirectory) return emptySet()
+    return root.walkTopDown()
+        .filter { it.isFile && it.extension == "kt" }
+        .filter { it.readText().hasRobolectricImport() }
+        .map { it.relativeTo(root).invariantSeparatorsPath.removeSuffix(".kt").replace('/', '.') }
+        .toSet()
+}
+
+val testPureJvm = tasks.register<Test>("testPureJvm") {
+    group = "verification"
+    description = "Runs only pure-JVM unit tests (excludes Robolectric/SQLite), for ARM64 hosts."
+    val debugUnitTest = tasks.named<Test>("testDebugUnitTest").get()
+    // Reuse the debug variant's compiled test classes and runtime classpath so
+    // this is the same suite, just with an explicit --tests-style filter.
+    testClassesDirs = debugUnitTest.testClassesDirs
+    classpath = debugUnitTest.classpath
+    dependsOn(debugUnitTest.dependsOn)
+    val selected = pureJvmTestClasses()
+    filter {
+        isFailOnNoMatchingTests = true
+        selected.forEach { includeTestsMatching(it) }
+    }
+    doFirst {
+        check(selected.isNotEmpty()) { "testPureJvm: no pure-JVM test classes were found." }
+        // Guard the selection rule itself: no Robolectric class may slip in.
+        val leaked = selected.intersect(robolectricTestClasses())
+        check(leaked.isEmpty()) { "testPureJvm selected Robolectric classes: $leaked" }
+        logger.lifecycle("testPureJvm: selected ${selected.size} pure-JVM test classes")
+    }
+}
+
+// Gradle-side assertion that the frozen baseline is present (CI would fail on
+// the existing warnings without it).
+val checkLintBaseline = tasks.register("checkLintBaseline") {
+    group = "verification"
+    description = "Fails if app/lint-baseline.xml is missing."
+    doLast {
+        val baseline = file("lint-baseline.xml")
+        check(baseline.isFile) {
+            "Missing app/lint-baseline.xml — lint warnings are no longer frozen; " +
+                "regenerate with :app:updateLintBaseline."
+        }
+        logger.lifecycle("lint baseline present: ${baseline.length()} bytes")
+    }
+}
+
+tasks.named("check") { dependsOn(checkLintBaseline) }

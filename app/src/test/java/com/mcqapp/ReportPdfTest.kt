@@ -16,7 +16,8 @@ import org.junit.Test
 
 /**
  * Plan §9.4: the report PDF's laid-out text. `PdfDocument` cannot be built on
- * this host (see `PdfPaperWriterTest`), so the content is asserted through the
+ * this host (the PDF byte checks live in `PdfPaperWriterDeviceTest`, which runs
+ * on the emulator), so the content is asserted through the
  * pure [ReportPdf.lines] seam the writer draws from.
  */
 class ReportPdfTest {

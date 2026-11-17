@@ -116,7 +116,20 @@ class BrowseCategoryMoveUiTest {
             runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } } ==
                 listOf("ub-q1", "ub-q2")
         }
-        assertTrue(true)
+        // The round trip must land back at the starting order, and both
+        // section-edge moves must still be present and enabled (one per
+        // direction) — the labels alone would not catch a lost button.
+        assertEquals(
+            listOf("ub-q1", "ub-q2"),
+            runBlocking { repository.getQuestionsForPaper("uitest-browse-paper").map { it.id } }
+        )
+        assertTrue(
+            "both category section moves should still be available after the round trip",
+            compose.onAllNodes(hasContentDescription("Move the whole category up") and isEnabled())
+                .fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodes(hasContentDescription("Move the whole category down") and isEnabled())
+                    .fetchSemanticsNodes().isNotEmpty()
+        )
     }
 
     /** Waits until a section-move button exists and is enabled. */

@@ -23,7 +23,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
@@ -673,14 +672,8 @@ class ExportWritersTest {
         )
     }
 
-    @Ignore(
-        "android.graphics.pdf.PdfDocument is not mockable in the plain JVM suite (see " +
-            "PdfPaperWriterTest); this stays structural-only on a host where PdfDocument works."
-    )
-    @Test
-    fun pdfWithPassagesStaysAValidPdf() {
-        val bytes = pdfOf(passagePaper())
-        assertTrue(bytes.size > 400)
-        assertTrue(String(bytes, Charsets.ISO_8859_1).contains("%%EOF"))
-    }
+    // pdfWithPassagesStaysAValidPdf moved to PdfPaperWriterDeviceTest in
+    // app/src/androidTest: the PDF byte assertions only run where the real
+    // android.graphics.pdf.PdfDocument works (the CI emulator), not under
+    // Robolectric, so they no longer sit here behind @Ignore.
 }

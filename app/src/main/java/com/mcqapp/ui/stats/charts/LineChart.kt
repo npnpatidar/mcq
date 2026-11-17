@@ -10,18 +10,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mcqapp.R
 
 /** One polyline in a [LineChart]; null values are gaps. */
 internal data class LineSeries(
     val values: List<Double?>,
     val color: Color,
     /** Shade the area under the line. */
-    val fill: Boolean = false
+    val fill: Boolean = false,
+    /** Spoken name for this series, e.g. "introduced". Blank falls back to
+     *  "Series N" so a caller without a label still names every line. */
+    val name: String = ""
 )
 
 /**
@@ -57,11 +64,25 @@ internal fun LineChart(
     val dataMax = series.flatMap { it.values }.filterNotNull().maxOrNull() ?: 1.0
     val top = fixedMax ?: niceMax(dataMax.coerceAtLeast(1.0))
     val ticks = yTicks(top)
+    // One named group per series, each with a label/value pair for every x
+    // point it has. The old code folded all series into a single value and kept
+    // only the first, so a second or third line was never spoken at all. Each
+    // group is bounded separately, so every series survives truncation.
+    val spokenSeries = ArrayList<ChartSeriesSummary>(series.size)
+    series.forEachIndexed { index, s ->
+        val name = s.name.ifBlank { stringResource(R.string.a11y_chart_series, index + 1) }
+        val points = labels.mapIndexedNotNull { pointIndex, label ->
+            s.values.getOrNull(pointIndex)?.let { label to yLabel(it) }
+        }
+        spokenSeries.add(ChartSeriesSummary(name, points))
+    }
+    val summary = chartSummary(kindRes = R.string.a11y_chart_line, series = spokenSeries)
 
     Canvas(
         modifier = modifier
             .fillMaxWidth()
             .height(200.dp)
+            .semantics { contentDescription = summary }
     ) {
         val leftPad = 40.dp.toPx()
         val rightPad = 8.dp.toPx()

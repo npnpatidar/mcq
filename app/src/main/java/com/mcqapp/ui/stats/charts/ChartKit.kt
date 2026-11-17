@@ -21,11 +21,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.ui.theme.contrastRatio
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.log10
@@ -43,14 +45,27 @@ internal fun ChartCard(
     modifier: Modifier = Modifier,
     title: @Composable () -> Unit,
     subtitle: (@Composable () -> Unit)? = null,
+    /** An optional human-readable summary spoken for the whole card. */
+    description: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(modifier = modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .semantics { contentDescription = testTag }
-        ) {
+    // The tag used to be the card's contentDescription, so TalkBack read
+    // "stats-heatmap" instead of the chart. A tag is a test hook, not a label:
+    // keep it on testTag and only set contentDescription when a real summary
+    // is supplied. The visible title/subtitle stay readable either way.
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .then(
+                if (description != null) {
+                    Modifier.semantics { contentDescription = description }
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             title()
             if (subtitle != null) {
                 subtitle()
@@ -97,6 +112,81 @@ internal fun ChartEmpty(@StringRes textRes: Int = R.string.stats_no_data, modifi
     }
 }
 
+/**
+ * Canvas charts draw into one semantics node, so a screen reader cannot reach
+ * the bars or points a sighted user reads off the axes and tooltip. Build one
+ * spoken sentence from the chart kind, one named group per series, a
+ * label/value pair per point, and an optional note.
+ *
+ * A multi-series line chart used to collapse to its first series only, which
+ * silently dropped the other lines. Each series is now named and bounded
+ * independently to the latest [CHART_SUMMARY_POINTS] points: a 365-day calendar
+ * would otherwise produce a sentence nobody could listen to, and the omitted
+ * counts are spoken so the summary never implies it is complete.
+ */
+internal const val CHART_SUMMARY_POINTS = 8
+
+/** One series' contribution to a spoken summary. A blank [name] means "do not
+ * speak a group label" — single-series charts keep their old flat wording. */
+internal data class ChartSeriesSummary(
+    val name: String = "",
+    val points: List<Pair<String, String>> = emptyList()
+)
+
+/** The bounded view of one series, with the number of points left out. */
+internal data class SeriesWindow(
+    val name: String,
+    val shown: List<Pair<String, String>>,
+    val hidden: Int
+)
+
+/**
+ * Pure bounding step, shared with the JVM tests: each series keeps only its
+ * last [maxPoints] points and reports how many it dropped. Bounding *per
+ * series* is what keeps every line represented after the old first-only bug.
+ */
+internal fun windowSeries(
+    series: List<ChartSeriesSummary>,
+    maxPoints: Int = CHART_SUMMARY_POINTS
+): List<SeriesWindow> = series.map { s ->
+    val shown = s.points.takeLast(maxPoints)
+    SeriesWindow(s.name, shown, s.points.size - shown.size)
+}
+
+@Composable
+internal fun chartSummary(
+    @StringRes kindRes: Int,
+    series: List<ChartSeriesSummary>,
+    note: String = ""
+): String {
+    val windows = windowSeries(series)
+    // A plain loop, not buildString {}: stringResource is a composable and
+    // must be called directly in the composable body, not from an inline
+    // lambda.
+    val parts = ArrayList<String>(windows.size + 2)
+    if (note.isNotEmpty()) parts.add(note)
+    for (window in windows) {
+        val rendered = window.shown.map { (label, value) ->
+            stringResource(R.string.a11y_chart_point, label, value)
+        }
+        if (rendered.isEmpty()) continue
+        if (window.name.isBlank()) {
+            parts.addAll(rendered)
+        } else {
+            parts.add(
+                stringResource(
+                    R.string.a11y_chart_series_points,
+                    window.name,
+                    rendered.joinToString(", ")
+                )
+            )
+        }
+    }
+    val hidden = windows.sumOf { it.hidden }
+    if (hidden > 0) parts.add(stringResource(R.string.a11y_chart_more, hidden))
+    return stringResource(R.string.a11y_chart_summary, stringResource(kindRes), parts.joinToString(". "))
+}
+
 /** One legend entry's colour dot; sections pair it with their own label. */
 @Composable
 internal fun LegendDot(color: Color, modifier: Modifier = Modifier) {
@@ -126,16 +216,40 @@ internal fun LegendRow(entries: List<Pair<Color, @Composable RowScope.() -> Unit
     }
 }
 
+/**
+ * WCAG 2.1 SC 1.4.11: a graphical object that conveys information (a chart
+ * series) needs 3:1 against the colour next to it, here the card surface.
+ */
+internal const val CHART_MIN_NON_TEXT_CONTRAST = 3.0
+
+/**
+ * Custom themes can wash out any role against `surface`, so every series role
+ * is checked. Keep the role when it clears 3:1; otherwise fall back to a
+ * near-on-surface role so the series stays visible by lightness as well as
+ * hue. Returns [candidate] when it is already safe.
+ */
+internal fun chartSeriesColor(candidate: Color, background: Color, fallback: Color): Color =
+    if (contrastRatio(candidate, background) >= CHART_MIN_NON_TEXT_CONTRAST) candidate else fallback
+
 /** The palette charts cycle through, in legend order. */
 @Composable
-internal fun seriesColors(): List<Color> = listOf(
-    MaterialTheme.colorScheme.primary,
-    MaterialTheme.colorScheme.tertiary,
-    MaterialTheme.colorScheme.secondary,
-    MaterialTheme.colorScheme.error,
-    MaterialTheme.colorScheme.outline,
-    MaterialTheme.colorScheme.inversePrimary
-)
+internal fun seriesColors(): List<Color> {
+    val surface = MaterialTheme.colorScheme.surface
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    // All six roles, not just the last two, go through the contrast guard: a
+    // custom theme can wash out primary/tertiary/secondary/error just as easily
+    // as outline/inversePrimary, and a series that vanishes against the card
+    // surface is unusable whatever its role.
+    return listOf(
+        chartSeriesColor(MaterialTheme.colorScheme.primary, surface, onSurface),
+        chartSeriesColor(MaterialTheme.colorScheme.tertiary, surface, onSurface),
+        chartSeriesColor(MaterialTheme.colorScheme.secondary, surface, onSurface),
+        chartSeriesColor(MaterialTheme.colorScheme.error, surface, onSurface),
+        chartSeriesColor(MaterialTheme.colorScheme.outline, surface, onSurfaceVariant),
+        chartSeriesColor(MaterialTheme.colorScheme.inversePrimary, surface, onSurface)
+    )
+}
 
 @Composable
 internal fun gridColor(): Color = MaterialTheme.colorScheme.surfaceVariant
@@ -207,11 +321,23 @@ internal fun formatSeconds(value: Double): String = "${value.roundToInt()}s"
  * [color] at [fraction] of the width.
  */
 @Composable
-internal fun MeterBar(fraction: Double, color: Color, modifier: Modifier = Modifier) {
+internal fun MeterBar(
+    fraction: Double,
+    color: Color,
+    modifier: Modifier = Modifier,
+    description: String? = null
+) {
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(8.dp)
+            .then(
+                if (description != null) {
+                    Modifier.semantics { contentDescription = description }
+                } else {
+                    Modifier
+                }
+            )
             .clip(RoundedCornerShape(4.dp))
             .background(gridColor())
     ) {

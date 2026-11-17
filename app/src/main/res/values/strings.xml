@@ -254,6 +254,8 @@
     <string name="wrong">Wrong</string>
     <string name="skipped">Skipped</string>
     <string name="ungraded">Ungraded</string>
+    <!-- Spoken verdict on a result card: the word first, then its glyph. -->
+    <string name="verdict_spoken">%1$s %2$s</string>
     <string name="uncategorized">Uncategorized</string>
     <string name="guessing">Guessing</string>
     <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Again.</string>
@@ -1011,6 +1013,7 @@
     </plurals>
     <string name="drill_banner_text">Drill — %1$d questions on the clock</string>
     <string name="saving">Saving…</string>
+    <string name="saved">Saved</string>
     <string name="deleting">Deleting…</string>
     <string name="moving_progress">Moving…</string>
     <string name="saving_progress_text">Saving result… %1$d of %2$d</string>
@@ -1217,4 +1220,22 @@
     <string name="storage_show_fewer">Show fewer</string>
     <string name="decrease_label">Decrease %1$s</string>
     <string name="increase_label">Increase %1$s</string>
+
+    <!-- Accessibility: WebViews and canvas charts cannot be read by TalkBack on their own. -->
+    <string name="a11y_formula_editor">Formula editor. Type a mathematical expression.</string>
+    <string name="a11y_formula_editor_value">Formula editor. Current formula: %1$s</string>
+    <string name="a11y_rich_content">Rendered question content with formulas</string>
+    <string name="a11y_chart_bar">Bar chart</string>
+    <string name="a11y_chart_line">Line chart</string>
+    <string name="a11y_chart_calendar">Review calendar</string>
+    <string name="a11y_chart_donut">Donut chart</string>
+    <string name="a11y_chart_calibration">Calibration chart</string>
+    <string name="a11y_chart_summary">%1$s. %2$s</string>
+    <string name="a11y_chart_point">%1$s: %2$s</string>
+    <string name="a11y_chart_series">Series %1$d</string>
+    <string name="a11y_chart_series_points">%1$s: %2$s</string>
+    <string name="a11y_chart_more">and %1$d more</string>
+    <string name="a11y_chart_total">Total %1$s</string>
+    <string name="a11y_chart_band">Predicted %1$s, observed %2$s</string>
+    <string name="a11y_chart_n_reviews">%1$d reviews</string>
 </resources>

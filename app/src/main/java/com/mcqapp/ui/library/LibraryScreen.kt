@@ -3,7 +3,6 @@ package com.mcqapp.ui.library
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -42,6 +41,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +65,10 @@ import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
+import com.mcqapp.ui.common.LocalAnnouncer
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.library.TestSetupSheet
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
@@ -86,6 +90,14 @@ fun LibraryScreen(
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val categoryCounts by viewModel.categoryCounts.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val sendMessage = LocalUiMessageSender.current
+    val announcer = LocalAnnouncer.current
+    // Export/delete failures already have a persistent error dialog; announce
+    // the new message so screen readers hear it without a duplicate snackbar.
+    LaunchedEffect(exportError) {
+        val error = exportError
+        if (error != null) announcer.announce(error)
+    }
     val pendingDelete by viewModel.pendingDelete.collectAsStateWithLifecycle()
     val importReport by viewModel.importReport.collectAsStateWithLifecycle()
     val importReportTitle by viewModel.importReportTitle.collectAsStateWithLifecycle()
@@ -110,6 +122,7 @@ fun LibraryScreen(
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
+    val shareNoAppText = stringResource(R.string.share_no_app)
 
     // Dialog flags ride rotation (plain `remember` closed them and
     // discarded typed input) — consolidated_bugs.md F12.
@@ -748,7 +761,7 @@ fun LibraryScreen(
                             )
                         )
                     } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                        sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
                     }
                 }
             }

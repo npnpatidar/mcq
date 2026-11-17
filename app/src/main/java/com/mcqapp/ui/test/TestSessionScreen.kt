@@ -93,6 +93,7 @@ import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.SubmitSummary
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.ui.TestViewModelFactory
+import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
@@ -144,6 +145,16 @@ fun TestSessionScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
+
+    // Load and save failures already render inline with Retry/Try again; speak
+    // them as well so the failure is not silent for screen-reader users.
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(state.loadError) {
+        state.loadError?.let { announcer.announce(it) }
+    }
+    LaunchedEffect(state.saveError) {
+        state.saveError?.let { announcer.announce(it) }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {

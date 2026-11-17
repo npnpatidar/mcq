@@ -25,6 +25,7 @@ import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestReportBuilder
 import com.mcqapp.domain.TestReportInput
+import com.mcqapp.ui.Verdict
 import com.mcqapp.util.Logger
 import androidx.paging.PagingSource
 import kotlinx.coroutines.Dispatchers
@@ -290,12 +291,13 @@ internal fun buildCsvRows(
     entities: List<QuestionResultEntity>,
     tagsById: Map<String, String>
 ): List<ReportCsvRow> = entities.mapIndexed { index, entity ->
-    val result = when {
-        entity.correctOptionIds.isBlank() -> "ungraded"
-        entity.selectedOptionIds.isBlank() -> "skipped"
-        entity.isCorrect -> "correct"
-        else -> "wrong"
-    }
+    // Same predicate as the on-screen verdict and the report: one place decides
+    // what ungraded / skipped / correct / wrong mean.
+    val result = Verdict.of(
+        entity.correctOptionIds,
+        entity.selectedOptionIds,
+        entity.isCorrect
+    ).csvValue
     ReportCsvRow(
         number = index + 1,
         questionId = entity.questionId,

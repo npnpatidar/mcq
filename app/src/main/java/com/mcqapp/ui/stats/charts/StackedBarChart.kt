@@ -17,11 +17,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mcqapp.R
 import com.mcqapp.domain.stats.StackedPoint
 import kotlin.math.roundToInt
 
@@ -56,6 +59,18 @@ internal fun StackedBarChart(
     val overlayColor = MaterialTheme.colorScheme.onSurfaceVariant
     val tooltipBg = MaterialTheme.colorScheme.surface
     var selected by remember(points) { mutableIntStateOf(-1) }
+    // Spoken summary of the bars: each bar's own label and total, capped to
+    // the latest few by [chartSummary]. Replaces the old test-tag label.
+    val summary = chartSummary(
+        kindRes = R.string.a11y_chart_bar,
+        series = listOf(
+            ChartSeriesSummary(
+                points = points.map { bar ->
+                    bar.label to totalLabel(bar.segments.take(segmentCount).sum())
+                }
+            )
+        )
+    )
 
     if (points.isEmpty()) {
         if (emptyText != null) {
@@ -85,6 +100,7 @@ internal fun StackedBarChart(
         modifier = modifier
             .fillMaxWidth()
             .height(200.dp)
+            .semantics { contentDescription = summary }
             .pointerInput(points, overlay) {
                 detectTapGestures { tap ->
                     val left = leftPad(density)

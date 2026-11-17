@@ -7,9 +7,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
+import com.mcqapp.R
 import org.json.JSONObject
 
 // TRIAL prototype: MathLive WYSIWYG formula editor in a WebView.
@@ -123,13 +127,24 @@ fun MathLiveEditor(
     val initialJson = remember(initialLatex) { JSONObject.quote(initialLatex) }
     // Latches on the first keystroke; see [shouldPushLatex].
     val userEdited = remember { mutableStateOf(false) }
+    // The WebView is one view with no semantics of its own, so a static label
+    // left TalkBack saying only "Formula editor" while hiding both the typed
+    // formula and MathLive's virtual-keyboard children. Name the node without
+    // merging descendants (so the keys stay reachable) and speak the current
+    // LaTeX. The spoken value mirrors what `update` actually pushed into the
+    // WebView; writing it there recomposes the description without remounting
+    // this identity-keyed WebView or touching its bridge/teardown.
+    val spokenLatex = remember { mutableStateOf(initialLatex) }
+    val editorDescription = stringResource(R.string.a11y_formula_editor_value, spokenLatex.value)
     AndroidView(
         // The virtual keyboard panel is absolutely positioned at the
         // bottom of the page; the WebView must be tall enough to show
         // the field plus the whole keyboard without clipping.
         // Tall enough for the formula plus MathLive's keyboard panel; the
         // page scrolls if the layout is bigger than that.
-        modifier = modifier.height(560.dp),
+        modifier = modifier
+            .height(560.dp)
+            .semantics { contentDescription = editorDescription },
         factory = { ctx ->
             val view = WebView(ctx)
             view.settings.javaScriptEnabled = true
@@ -186,6 +201,10 @@ fun MathLiveEditor(
                 view.tag = initialLatex
                 view.evaluateJavascript("window.setLatex && window.setLatex(${initialJson});", null)
             }
+            // Keep the spoken description in step with the value the field now
+            // holds. No remount: `factory` runs once and `onRelease` is
+            // untouched; only this snapshot-backed label changes.
+            if (spokenLatex.value != initialLatex) spokenLatex.value = initialLatex
         },
         // Same reason as the preview WebView: without an explicit teardown the
         // renderer and JS heap survive for the life of the process, once per

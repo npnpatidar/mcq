@@ -200,10 +200,11 @@ class FreshStartupApplication : McqApplication() {
             description = "FreshStartupApplication.onCreate"
         ) {
             runOffMainWhilePumping(
+                timeoutMs = SettingsResetRule.CLEAR_DEADLINE_MS,
                 condition = "FreshStartupApplication.onCreate key clear and DB reset before super.onCreate()"
             ) {
                 withContext(Dispatchers.IO) {
-                    withTimeout(30_000) {
+                    withTimeout(SettingsResetRule.CLEAR_DEADLINE_MS) {
                         SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
                     }
                 }
@@ -232,10 +233,11 @@ class UpgradeStartupApplication : McqApplication() {
             description = "UpgradeStartupApplication.onCreate"
         ) {
             runOffMainWhilePumping(
+                timeoutMs = SettingsResetRule.CLEAR_DEADLINE_MS,
                 condition = "UpgradeStartupApplication.onCreate setup before super.onCreate()"
             ) {
                 withContext(Dispatchers.IO) {
-                    withTimeout(30_000) {
+                    withTimeout(SettingsResetRule.CLEAR_DEADLINE_MS) {
                         SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
                         // Reset and seed the paper on IO; must complete before super.onCreate().
                         AppDatabase.resetInstanceForTests()

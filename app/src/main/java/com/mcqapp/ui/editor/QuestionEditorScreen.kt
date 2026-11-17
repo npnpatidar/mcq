@@ -41,12 +41,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,12 +61,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import android.app.Application
-import android.widget.Toast
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.ui.EditorViewModelFactory
+import com.mcqapp.ui.common.LocalAnnouncer
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -93,6 +99,18 @@ fun QuestionEditorScreen(
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val sendMessage = LocalUiMessageSender.current
+    val announcer = LocalAnnouncer.current
+    // Resolved here (a composable scope) so the move callbacks can stay plain
+    // non-composable lambdas.
+    val savedText = stringResource(R.string.saved)
+
+    // The load failure already has a persistent inline Text; announce it so a
+    // screen reader hears why the form is empty, without a duplicate snackbar.
+    val loadError = state.loadError
+    LaunchedEffect(loadError) {
+        if (loadError != null) announcer.announce(loadError)
+    }
 
     // Leaving: a dirty editor asks Save / Discard / Cancel instead of losing
     // the edit in one tap (question_editor_audit.md H-02). A write in flight
@@ -153,7 +171,12 @@ fun QuestionEditorScreen(
                         Text(
                             "${queueIndex + 1}/$queueSize",
                             style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                            // The counter changes asynchronously when Prev/Next
+                            // advances the queue; speak the new position.
+                            // See https://developer.android.com/reference/kotlin/androidx/compose/ui/semantics/LiveRegionMode
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .semantics { liveRegion = LiveRegionMode.Polite }
                         )
                         // Navigation is never gated on the form's validity:
                         // moveToQuestion only blocks dirty-and-invalid edits,
@@ -162,7 +185,9 @@ fun QuestionEditorScreen(
                             onClick = {
                                 prevId?.let {
                                     viewModel.moveToQuestion(it) { saved ->
-                                        if (saved) Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                                        if (saved) sendMessage(
+                                            UiMessage(savedText, UiMessageTone.Success)
+                                        )
                                     }
                                 }
                             },
@@ -174,7 +199,9 @@ fun QuestionEditorScreen(
                             onClick = {
                                 nextId?.let {
                                     viewModel.moveToQuestion(it) { saved ->
-                                        if (saved) Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
+                                        if (saved) sendMessage(
+                                            UiMessage(savedText, UiMessageTone.Success)
+                                        )
                                     }
                                 }
                             },

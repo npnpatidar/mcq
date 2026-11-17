@@ -81,6 +81,7 @@ import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.Scoring
 import com.mcqapp.ui.StudyViewModelFactory
+import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
 import com.mcqapp.ui.theme.clockBandColors
 import com.mcqapp.util.ContentElements
@@ -116,6 +117,17 @@ fun StudyScreen(
     val liveDwell by viewModel.liveDwell.collectAsStateWithLifecycle()
     val liveDwellMillis by viewModel.liveDwellMillis.collectAsStateWithLifecycle()
     val sessionSeconds by viewModel.sessionSeconds.collectAsStateWithLifecycle()
+
+    // Failures already render inline (with retry) on the card/load state; keep
+    // that Text and additionally speak it so screen readers are not left
+    // guessing why grading or loading stalled.
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(state.loadError) {
+        state.loadError?.let { announcer.announce(it) }
+    }
+    LaunchedEffect(state.gradeError) {
+        state.gradeError?.let { announcer.announce(it) }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {

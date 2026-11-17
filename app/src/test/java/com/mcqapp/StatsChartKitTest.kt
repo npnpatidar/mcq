@@ -1,10 +1,15 @@
 package com.mcqapp
 
+import androidx.compose.ui.graphics.Color
 import com.mcqapp.domain.stats.WeakCard
+import com.mcqapp.ui.stats.charts.CHART_MIN_NON_TEXT_CONTRAST
+import com.mcqapp.ui.stats.charts.ChartSeriesSummary
+import com.mcqapp.ui.stats.charts.chartSeriesColor
 import com.mcqapp.ui.stats.charts.formatCount
 import com.mcqapp.ui.stats.charts.formatDuration
 import com.mcqapp.ui.stats.charts.formatPct
 import com.mcqapp.ui.stats.charts.niceMax
+import com.mcqapp.ui.stats.charts.windowSeries
 import com.mcqapp.ui.stats.charts.xAxisLabelIndices
 import com.mcqapp.ui.stats.charts.xAxisLabelStep
 import com.mcqapp.ui.stats.charts.yTicks
@@ -48,6 +53,60 @@ class StatsChartKitTest {
     fun yTicksOfANonPositiveCeilingIsJustZero() {
         assertEquals(listOf(0.0), yTicks(0.0))
         assertEquals(listOf(0.0), yTicks(-3.0))
+    }
+
+    // --- non-text contrast for the series palette ---------------------------
+
+    @Test
+    fun seriesRolesKeepTheirColourWhenTheyClearNonTextContrast() {
+        assertEquals(3.0, CHART_MIN_NON_TEXT_CONTRAST, 1e-9)
+        // Black on white is 21:1, far above 3:1 — the role is kept.
+        assertEquals(Color.Black, chartSeriesColor(Color.Black, Color.White, Color.Red))
+    }
+
+    @Test
+    fun washedOutSeriesRolesFallBackToAReadableRole() {
+        // White on white is 1:1. A washed-out role in a badly contrasting
+        // custom theme gets swapped for a near-on-surface role, not dropped.
+        assertEquals(Color.Red, chartSeriesColor(Color.White, Color.White, Color.Red))
+    }
+
+    // --- per-series spoken summary -----------------------------------------
+
+    @Test
+    fun windowSeriesKeepsEverySeriesAndBoundsEachIndependently() {
+        val windows = windowSeries(
+            listOf(
+                ChartSeriesSummary("introduced", (1..10).map { "d$it" to "$it" }),
+                ChartSeriesSummary("graduated", (1..3).map { "d$it" to "$it" }),
+                ChartSeriesSummary("relapsed", emptyList())
+            ),
+            maxPoints = 4
+        )
+        // The old firstNotNullOfOrNull summary spoke only the first series;
+        // every series must survive, each with its own name and value pairs.
+        assertEquals(3, windows.size)
+        assertEquals("introduced", windows[0].name)
+        assertEquals(
+            listOf("d7" to "7", "d8" to "8", "d9" to "9", "d10" to "10"),
+            windows[0].shown
+        )
+        assertEquals(6, windows[0].hidden)
+        assertEquals("graduated", windows[1].name)
+        assertEquals(3, windows[1].shown.size)
+        assertEquals(0, windows[1].hidden)
+        assertEquals("relapsed", windows[2].name)
+        assertTrue(windows[2].shown.isEmpty())
+        assertEquals(0, windows[2].hidden)
+    }
+
+    @Test
+    fun windowSeriesHandlesNoSeriesAndUnnamedSingleSeries() {
+        assertTrue(windowSeries(emptyList()).isEmpty())
+        val one = windowSeries(listOf(ChartSeriesSummary(points = listOf("a" to "1"))))
+        assertEquals("", one.single().name)
+        assertEquals(listOf("a" to "1"), one.single().shown)
+        assertEquals(0, one.single().hidden)
     }
 
     // --- xAxisLabelStep -----------------------------------------------------

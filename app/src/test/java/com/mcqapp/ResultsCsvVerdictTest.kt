@@ -8,8 +8,9 @@ import org.junit.Test
 /**
  * The result screen tags a question with no answer key as "Not scored" even
  * when the learner picked an option. The CSV export must report the same
- * verdict; before the fix it fell through to "wrong" for an answered ungraded
- * question, contradicting what the learner saw on screen.
+ * verdict. The ungraded-first predicate was already correct on this branch;
+ * these tests now pin it through the shared Verdict enum used by both the
+ * screen and the export, so a later regression in either is caught.
  *
  * Pure JVM: [buildCsvRows] is the pure VM-to-CSV-row mapping, so no Robolectric
  * or FileProvider is needed.

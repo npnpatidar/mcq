@@ -31,6 +31,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -113,7 +116,10 @@ fun SearchScreen(
                     Text(
                         "${hits.itemCount}${if (possiblyMore) "+" else ""} " +
                             "match${if (hits.itemCount == 1 && !possiblyMore) "" else "es"}",
-                        style = MaterialTheme.typography.labelMedium
+                        style = MaterialTheme.typography.labelMedium,
+                        // The count changes as paged results arrive; speak the
+                        // new total without stealing focus.
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
             }
             Spacer(Modifier.height(8.dp))

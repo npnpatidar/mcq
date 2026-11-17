@@ -54,6 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.domain.ImportWarnings
+import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
@@ -68,6 +69,13 @@ fun ImportScreen(
     viewModel: ImportViewModel = viewModel(key = "import-direct")
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // A fatal parse/IO error shows a blocking dialog; announce it as well so a
+    // screen reader is told why the import stopped.
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(state.error) {
+        state.error?.let { announcer.announce(it) }
+    }
 
     // Memoized: these re-ran over all rows on every recomposition (frames
     // dropped while scrolling big previews).

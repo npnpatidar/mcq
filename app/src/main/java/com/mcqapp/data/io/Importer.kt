@@ -46,6 +46,12 @@ data class ImportReport(
  * constructed for every import — reusing one across imports would collide
  * questions against the previous file's written hashes and cached candidates.
  * It is also not safe to run two imports concurrently on one instance.
+ *
+ * The whole import runs in one `db.withTransaction` block, so a failure at any point
+ * rolls back every paper, category, question, passage, schedule, bookmark,
+ * attempt and pre-existing row it touched. The streamed path (`StreamingImporter`
+ * / `AnkiApkgImporter`) gives the same per-file atomicity by wrapping its whole
+ * run in one transaction too; only the memory profile differs.
  */
 class Importer(
     private val db: AppDatabase,

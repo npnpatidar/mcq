@@ -611,7 +611,8 @@ class McqRepository internal constructor(
      * database half of a full restore has already committed by the time this
      * runs, so the pre-restore answer no longer describes the install, and a
      * report built from pre-restore rows can no longer be keyed apart from the
-     * post-restore one now that the id and epoch survive.
+     * post-restore one now that the id and epoch survive. The stale-hash scan
+     * cache is dropped too, so reloaded study rows get a fresh repair pass.
      */
     suspend fun settingsRestore(snapshot: com.mcqapp.data.backup.McqBackupFormat.SettingsFile) {
         schedulerWriteMutex.withLock {
@@ -621,6 +622,9 @@ class McqRepository internal constructor(
             } finally {
                 statsStore.invalidateCalibrationCache()
                 installFreshness.invalidate()
+                // Replaced study rows need a fresh stale-hash repair pass this
+                // process; the query-time hash predicate still guards reads.
+                studyStore.clearStaleChecked()
             }
         }
         // A restored install can carry pre-FSRS-7 card rows — a v26 backup, or

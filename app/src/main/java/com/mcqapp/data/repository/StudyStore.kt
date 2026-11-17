@@ -316,6 +316,17 @@ internal class StudyStore(
         Logger.i("REPO", "resetEdited($paperId): ${stale.size} edited card(s) reset")
     }
 
+    /**
+     * Forgets which papers were already scanned for stale hashes this process.
+     * A restore replaces the study rows wholesale, so the pre-restore "already
+     * checked" answer no longer describes them and the repair pass must run
+     * again; correctness in the meantime is still covered by the query-time
+     * hash predicate the stale-row query applies.
+     */
+    internal fun clearStaleChecked() {
+        staleChecked.clear()
+    }
+
     /** The learning and review pools of [due], read through the pure pools. */
     private fun poolsOf(
         config: com.mcqapp.domain.SchedulerConfig,

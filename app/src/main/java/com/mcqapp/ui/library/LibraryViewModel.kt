@@ -560,17 +560,23 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Streams one export straight into [uri]: the exporter renders into the
-     * resolver's stream, so the finished file is never held in memory here.
+     * Renders one export into a scratch file under `cacheDir`, then copies the
+     * finished bytes into [uri]. The resolver's stream is opened only after a
+     * successful render, so a mid-render failure never leaves a partial
+     * document at the user's SAF URI. Format/MIME/name logic is unchanged.
      */
     private suspend fun writeExport(
         uri: Uri,
         export: suspend (java.io.OutputStream) -> com.mcqapp.data.export.ExportFile
     ): com.mcqapp.data.export.ExportFile =
-        (
-            getApplication<Application>().contentResolver.openOutputStream(uri)
-                ?: throw IllegalStateException("Could not open output stream")
-            ).use { export(it) }
+        com.mcqapp.util.renderToTempThenCopy(
+            cacheDir = getApplication<Application>().cacheDir,
+            openUriOutput = { mode ->
+                getApplication<Application>().contentResolver.openOutputStream(uri, mode)
+                    ?: throw IllegalStateException("Could not open output stream")
+            },
+            render = export
+        )
 
     private suspend fun writeUri(uri: Uri, text: String) {
         getApplication<Application>().contentResolver.openOutputStream(uri)?.use {
@@ -784,15 +790,41 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun importAnkiPackage(title: String, source: () -> InputStream?) {
         viewModelScope.launch {
-            try {
-                Logger.i("LIBVM", "Reading Anki package '$title'")
-                val report = AnkiApkgImporter(
+            Logger.i("LIBVM", "Reading Anki package '$title'")
+            // Only the import call is the transaction: a failure there rolls
+            // every batch back, so the "no changes" note is true. The report
+            // writes below are bookkeeping after the commit and must not claim
+            // the library was untouched if one of them fails.
+            val report = try {
+                AnkiApkgImporter(
                     repository.db(),
                     repository.updateAnswersOnDuplicate().first(),
                     schedulerConfig = repository.schedulerConfigNow()
                 ).import({
                     source() ?: throw AnkiPackageException("Could not open $title.")
                 })
+            } catch (e: AnkiPackageException) {
+                // Already phrased for the user; these are format problems a user can act on
+                // (export the deck as .apkg), not a bug.
+                Logger.e("LIBVM", "Anki package rejected", e)
+                _exportError.value = e.message
+                return@launch
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException ||
+                    e is java.util.concurrent.CancellationException
+                ) {
+                    // Leaving the screen cancels the import; a cancellation is
+                    // not a user-facing failure to show as an error.
+                    throw e
+                }
+                // The whole deck was one transaction; a failure rolled every
+                // batch back, so the library is exactly as it was before.
+                Logger.e("LIBVM", "Anki import failed", e)
+                _exportError.value = "Import failed: ${e.message}. " +
+                    "No changes were made to your library."
+                return@launch
+            }
+            try {
                 Logger.i(
                     "LIBVM",
                     "Anki import done: ${report.newPapers} new, ${report.updatedPapers} updated papers, " +
@@ -802,14 +834,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
                 _importReport.value = report
                 _importReportTitle.value = title
-            } catch (e: AnkiPackageException) {
-                // Already phrased for the user; these are format problems a user can act on
-                // (export the deck as .apkg), not a bug.
-                Logger.e("LIBVM", "Anki package rejected", e)
-                _exportError.value = e.message
             } catch (e: Exception) {
-                Logger.e("LIBVM", "Anki import failed", e)
-                _exportError.value = "Import failed: ${e.message}"
+                // The deck already imported; do not tell the user nothing was
+                // saved just because showing the report failed.
+                Logger.e("LIBVM", "Anki import bookkeeping failed", e)
             }
         }
     }

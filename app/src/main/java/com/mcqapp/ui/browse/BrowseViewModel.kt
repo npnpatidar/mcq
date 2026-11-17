@@ -772,15 +772,20 @@ class BrowseViewModel(
     }
 
     /**
-     * The whole selection render — including [buildSelectionDto]'s per-id
-     * position lookups — runs in one IO context, exactly like
-     * [shareSelectionIntent]. This used to run [buildSelectionDto] on Main,
-     * where an O(n) query-per-id loop janked the list being exported.
+     * The selection DTO build — including [buildSelectionDto]'s per-id position
+     * lookups — runs in [dispatcher], exactly like [shareSelectionIntent]. This
+     * used to run [buildSelectionDto] on Main, where an O(n) query-per-id loop
+     * janked the list being exported.
      *
-     * [dispatcher], [buildDto] and [open] are seams: the public
+     * The finished export is rendered to a scratch file first and only then
+     * copied into the SAF document, so a render that fails part-way can never
+     * leave a truncated document at the user's picker URI. Format/MIME/selection
+     * logic is unchanged.
+     *
+     * [dispatcher], [buildDto], [open] and [renderExport] are seams: the public
      * [exportSelection] passes [Dispatchers.IO] and the real repository/file,
-     * while a test records which thread the body actually ran on (the
-     * `SettingsExportDispatcherTest` precedent).
+     * while a test records which thread the body ran on (the
+     * `SettingsExportDispatcherTest` precedent) or injects a failing render.
      */
     internal suspend fun exportSelectionOn(
         uri: android.net.Uri,
@@ -790,19 +795,27 @@ class BrowseViewModel(
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
         buildDto: suspend (Set<String>, String) -> com.mcqapp.data.io.PaperDto =
             { ids, t -> buildSelectionDto(ids, t) },
-        open: () -> java.io.OutputStream? = {
-            getApplication<Application>().contentResolver.openOutputStream(uri)
-        }
+        open: (mode: String) -> java.io.OutputStream? = { mode ->
+            getApplication<Application>().contentResolver.openOutputStream(uri, mode)
+        },
+        renderExport: suspend (
+            dto: com.mcqapp.data.io.PaperDto, sink: java.io.OutputStream
+        ) -> com.mcqapp.data.export.ExportFile =
+            { dto, sink ->
+                com.mcqapp.data.export.PaperExporter(repository.db())
+                    .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
+            }
     ) {
         withContext(dispatcher) {
             try {
                 val dto = buildDto(questionIds, title)
-                val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
-                val file = (
-                    open() ?: throw IllegalStateException("Could not open output stream")
-                    ).use { sink ->
-                    exporter.exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
-                }
+                val file = com.mcqapp.util.renderToTempThenCopy(
+                    cacheDir = getApplication<Application>().cacheDir,
+                    openUriOutput = { mode ->
+                        open(mode) ?: throw IllegalStateException("Could not open output stream")
+                    },
+                    render = { sink -> renderExport(dto, sink) }
+                )
                 Logger.i("BROWSEVM", "Exported ${questionIds.size} questions as ${file.fileName}")
                 clearError(R.string.export)
             } catch (e: Exception) {

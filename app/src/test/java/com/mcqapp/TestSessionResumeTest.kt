@@ -186,7 +186,10 @@ class TestSessionResumeTest {
                 com.mcqapp.domain.TestSnapshot(paperId = "p2", categoryIds = listOf("c2")),
                 emptyList()
             )
-            assertEquals(listOf("q0"), answerRows())
+            // The outgoing paper's rows now go in the same write that installs
+            // p2's header; they no longer wait for p1 to be reopened (and then
+            // silently lose its answers).
+            assertTrue("p1's answers were orphaned by the takeover", answerRows().isEmpty())
         }
 
         val vm = TestViewModel(app, "p1", listOf("c1"))

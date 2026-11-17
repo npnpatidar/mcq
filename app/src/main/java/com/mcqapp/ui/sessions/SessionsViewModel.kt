@@ -8,6 +8,7 @@ import com.mcqapp.R
 import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,18 +50,19 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * [loader] is injectable so a failure can be reproduced without relying on
-     * a real database; production always uses the repository default.
+     * [loader] and [dispatcher] are injectable so a failure can be reproduced
+     * synchronously in tests; production uses the repository/default dispatcher.
      */
     internal fun load(
         range: StatsAggregator.Range,
         loader: suspend (now: Long) -> SessionsData =
-            { now -> repository.sessionHistory(null, range, now) }
+            { now -> repository.sessionHistory(null, range, now) },
+        dispatcher: CoroutineDispatcher = Dispatchers.Default
     ) {
         loadJob?.cancel()
         val gen = ++generation
         _state.update { it.copy(loading = true, error = null) }
-        loadJob = viewModelScope.launch(Dispatchers.Default) {
+        loadJob = viewModelScope.launch(dispatcher) {
             try {
                 val now = System.currentTimeMillis()
                 val data = loader(now)

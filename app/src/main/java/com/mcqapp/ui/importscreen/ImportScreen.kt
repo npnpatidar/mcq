@@ -424,7 +424,7 @@ fun ImportScreen(
                     if (advisoryNotes.size > 20) {
                         item(contentType = "more") {
                             Text(
-                                stringResource(R.string.import_more_notes, advisoryNotes.size - 20),
+                                pluralStringResource(R.plurals.import_more_notes, advisoryNotes.size - 20, advisoryNotes.size - 20),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
@@ -470,7 +470,7 @@ fun ImportScreen(
                     if (warnings.size > 20) {
                         item(contentType = "more") {
                             Text(
-                                stringResource(R.string.import_more_warnings, warnings.size - 20),
+                                pluralStringResource(R.plurals.import_more_warnings, warnings.size - 20, warnings.size - 20),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )

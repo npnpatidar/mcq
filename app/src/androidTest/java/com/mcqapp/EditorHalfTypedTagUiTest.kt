@@ -2,13 +2,13 @@ package com.mcqapp
 
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,6 +18,7 @@ import com.mcqapp.ui.editor.EditorSession
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -100,9 +101,13 @@ class EditorHalfTypedTagUiTest {
         waitFor("Second tag question?")
 
         // A's draft must not appear on B: the field is keyed by question id.
+        // Assert the editable value, not the merged Text semantics — an empty
+        // field still shows the "Add a tag…" placeholder as its Text.
         // On the old unkeyed rememberSaveable this still read "half-tag" and
         // the Add button stayed enabled.
-        compose.onNodeWithTag("new-tag-field").assertTextEquals("")
+        val editable = compose.onNodeWithTag("new-tag-field")
+            .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertEquals("", editable)
         compose.onNodeWithText("Add").assertIsNotEnabled()
     }
 }

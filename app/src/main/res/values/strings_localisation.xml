@@ -4,7 +4,7 @@
   Each entry is plain English so a translator can move it to a values-<locale>
   file without touching code; counts use <plurals> rather than "1 questions".
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Browse: export / move dialogs -->
     <plurals name="export_n_selected">
         <item quantity="one">Export %1$d selected question</item>
@@ -37,7 +37,7 @@
     <string name="bullet_item">• %1$s</string>
 
     <!-- Import: preview -->
-    <string name="import_large_bank_notice">Large bank: previewing the first %1$d of %2$d questions. Edits and deletions apply to the previewed ones; the rest import exactly as they are in the file.</string>
+    <string name="import_large_bank_notice" tools:ignore="PluralsCandidate">Large bank: previewing the first %1$d of %2$d questions. Edits and deletions apply to the previewed ones; the rest import exactly as they are in the file.</string>
     <plurals name="import_preview_new_count">
         <item quantity="one">New question (%1$d) — will be added</item>
         <item quantity="other">New questions (%1$d) — will be added</item>
@@ -47,10 +47,16 @@
     <string name="import_preview_warnings_count">Warnings (%1$d) — imports fine, but check these</string>
     <string name="import_preview_changed_count">Changed (%1$d) — will update the existing question</string>
     <string name="import_preview_duplicate_count">Duplicates (%1$d) — already in library, will be skipped</string>
-    <string name="import_more_skipped">+%1$d more skipped</string>
-    <string name="import_more_notes">+%1$d more notes</string>
-    <string name="import_more_warnings">+%1$d more warnings</string>
-    <string name="import_importing_progress">Importing %1$d of %2$d questions…</string>
+    <string name="import_more_skipped" tools:ignore="PluralsCandidate">+%1$d more skipped</string>
+    <plurals name="import_more_notes">
+        <item quantity="one">+%1$d more note</item>
+        <item quantity="other">+%1$d more notes</item>
+    </plurals>
+    <plurals name="import_more_warnings">
+        <item quantity="one">+%1$d more warning</item>
+        <item quantity="other">+%1$d more warnings</item>
+    </plurals>
+    <string name="import_importing_progress" tools:ignore="PluralsCandidate">Importing %1$d of %2$d questions…</string>
     <string name="import_explanation_label">Explanation: %1$s</string>
 
     <!-- Results: empty filter row, numbered actions, dwell -->
@@ -60,12 +66,12 @@
 
     <!-- Study: clock and session summary -->
     <string name="study_next_in">Next in %1$s</string>
-    <string name="study_session_summary">%1$d reviewed • %2$d again • %3$d remembered</string>
+    <string name="study_session_summary" tools:ignore="PluralsCandidate">%1$d reviewed • %2$d again • %3$d remembered</string>
 
     <!-- History: family/attempt rows -->
     <string name="history_mastery_line">%1$s · %2$s · %3$d/%4$d</string>
-    <string name="history_wrong_skipped_line">%1$s wrong · %2$s skipped · %3$d attempts</string>
-    <string name="history_correct_line">%1$d/%2$d correct</string>
+    <string name="history_wrong_skipped_line" tools:ignore="PluralsCandidate">%1$s wrong · %2$s skipped · %3$d attempts</string>
+    <string name="history_correct_line" tools:ignore="PluralsCandidate">%1$d/%2$d correct</string>
     <string name="history_trend_attempts_best">%1$s · best %2$s</string>
     <string name="history_delta_points">%1$s %2$s pts</string>
 

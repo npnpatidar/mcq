@@ -201,7 +201,7 @@ class ImportUiTest {
             compose.onAllNodesWithText(app.getString(R.string.import_complete))
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("1 new questions added", substring = true).assertExists()
+        compose.onNodeWithText("1 new question added", substring = true).assertExists()
         compose.onNodeWithText("already existed (skipped)", substring = true).assertExists()
     }
 

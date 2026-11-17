@@ -48,14 +48,22 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         load(range)
     }
 
-    private fun load(range: StatsAggregator.Range) {
+    /**
+     * [loader] is injectable so a failure can be reproduced without relying on
+     * a real database; production always uses the repository default.
+     */
+    internal fun load(
+        range: StatsAggregator.Range,
+        loader: suspend (now: Long) -> SessionsData =
+            { now -> repository.sessionHistory(null, range, now) }
+    ) {
         loadJob?.cancel()
         val gen = ++generation
         _state.update { it.copy(loading = true, error = null) }
         loadJob = viewModelScope.launch(Dispatchers.Default) {
             try {
                 val now = System.currentTimeMillis()
-                val data = repository.sessionHistory(null, range, now)
+                val data = loader(now)
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
                         _state.update { it.copy(loading = false, error = null, data = data) }

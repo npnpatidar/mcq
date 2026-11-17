@@ -29,13 +29,17 @@ class LibraryCategoryAuditTest {
         get() = ApplicationProvider.getApplicationContext<McqApplication>()
 
     @Before
-    fun startClean() = runBlocking {
-        runCatching { app.repository.deletePaper("p1") }
+    fun startClean() {
+        runBlocking {
+            runCatching { app.repository.deletePaper("p1") }
+        }
     }
 
     @After
-    fun cleanup() = runBlocking {
-        runCatching { app.repository.deletePaper("p1") }
+    fun cleanup() {
+        runBlocking {
+            runCatching { app.repository.deletePaper("p1") }
+        }
     }
 
     /** Pumps the main looper until [condition] holds, for Main.immediate work. */

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.ui.sessions.SessionsViewModel
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -20,10 +21,9 @@ import org.robolectric.annotation.Config
  * A failed session-history load must report the single user-facing string,
  * never the raw exception text. The detail is still logged in the ViewModel.
  *
- * Mirrors `SessionLoadFailureTest`: closing Room makes the load throw with a
- * technical message, and the process-wide database instance is cleared around
- * each test so a closed handle cannot poison the rest of the suite. DB-backed
- * Robolectric tests are authoritative on CI (x86_64), not this ARM64 host.
+ * The ViewModel's injectable loader throws a technical message directly, so
+ * the assertion never depends on closing Room at the right moment. Robolectric
+ * only supplies an Application context for string resolution.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = TestMcqApplication::class)
@@ -60,16 +60,16 @@ class SessionsViewModelTest {
     @Test
     fun failedLoadReportsGenericErrorRatherThanRawExceptionMessage() {
         val viewModel = SessionsViewModel(app)
-        app.repository.db().close()
-        viewModel.refresh()
+        val raw = "sqlite detail: disk I/O error"
+        // Inject the failure: no DB-close timing to rely on in CI.
+        viewModel.load(StatsAggregator.Range.D30) { throw IllegalStateException(raw) }
 
         assertTrue(awaitCondition { viewModel.state.value.error != null })
+        val error = viewModel.state.value.error!!
         // Old code stored e.message here (a Room/SQLite detail); the screen's
         // contract is the generic string only.
-        assertEquals(
-            app.getString(R.string.sessions_load_error),
-            viewModel.state.value.error
-        )
+        assertEquals(app.getString(R.string.sessions_load_error), error)
+        assertFalse("raw loader message must not leak into UI state", error.contains(raw))
         assertFalse(viewModel.state.value.loading)
     }
 }

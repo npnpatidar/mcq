@@ -624,7 +624,7 @@
     <string name="text_size">Text size</string>
     <string name="theme">Theme</string>
     <string name="tick_the_correct_answer_s">Tick the correct answer(s)</string>
-    <string name="time_taken_02d_02d">Time taken: %02d:%02d</string>
+    <string name="time_taken_02d_02d">Time taken: %1$02d:%2$02d</string>
     <string name="trends">Trends</string>
     <string name="weakest_categories">Weakest categories</string>
     <string name="when_off_pictures_from_the_web_stay_hidden_so_whoever_aut">When off, pictures from the web stay hidden so whoever authored the bank can\'t see when you open a question. Pictures saved inside the bank always show.</string>

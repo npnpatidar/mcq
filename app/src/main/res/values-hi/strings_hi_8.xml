@@ -132,7 +132,7 @@
     <string name="this_cannot_be_undone">इसे वापस नहीं लिया जा सकता।</string>
     <string name="tick_the_correct_answer_s">सही उत्तर(ों) पर निशान लगाएँ</string>
     <string name="time_remaining">शेष समय</string>
-    <string name="time_taken_02d_02d" formatted="false">लिया गया समय: %02d:%02d</string>
+    <string name="time_taken_02d_02d">लिया गया समय: %1$02d:%2$02d</string>
     <string name="title">शीर्षक</string>
     <string name="toggle_correct_named">विकल्प %1$s को सही उत्तर के रूप में चिह्नित करें</string>
     <string name="trends">रुझान</string>

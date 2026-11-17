@@ -507,9 +507,10 @@ private fun ReportHeaderCard(report: TestReport) {
                 }
             }
             Spacer(Modifier.height(8.dp))
+            val minutes = (attempt.durationSeconds / 60).toInt()
+            val seconds = (attempt.durationSeconds % 60).toInt()
             Text(
-                stringResource(R.string.time_taken_02d_02d)
-                    .format(attempt.durationSeconds / 60, attempt.durationSeconds % 60),
+                stringResource(R.string.time_taken_02d_02d, minutes, seconds),
                 style = MaterialTheme.typography.labelMedium
             )
             if (report.requestedCount > 0 && report.shownCount != report.requestedCount) {

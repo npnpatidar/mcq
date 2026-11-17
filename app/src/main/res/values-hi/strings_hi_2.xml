@@ -74,9 +74,15 @@
     <string name="import_explanation_label">स्पष्टीकरण: %1$s</string>
     <string name="import_importing_progress">%1$d (कुल %2$d) प्रश्न आयात किए जा रहे हैं…</string>
     <string name="import_large_bank_notice">बड़ा संग्रह: पहले %1$d (कुल %2$d) प्रश्नों का पूर्वावलोकन दिखाया जा रहा है। संपादन और हटाने का असर केवल पूर्वावलोकन वाले प्रश्नों पर होगा; शेष प्रश्न फ़ाइल में जैसे हैं वैसे ही आयात होंगे।</string>
-    <string name="import_more_notes">+%1$d और नोट</string>
+    <plurals name="import_more_notes">
+        <item quantity="one">+%1$d और नोट</item>
+        <item quantity="other">+%1$d और नोट</item>
+    </plurals>
     <string name="import_more_skipped">+%1$d और छोड़े गए</string>
-    <string name="import_more_warnings">+%1$d और चेतावनियाँ</string>
+    <plurals name="import_more_warnings">
+        <item quantity="one">+%1$d और चेतावनी</item>
+        <item quantity="other">+%1$d और चेतावनियाँ</item>
+    </plurals>
     <string name="import_preview_changed_count">बदले गए (%1$d) — मौजूदा प्रश्न अपडेट होंगे</string>
     <string name="import_preview_duplicate_count">डुप्लिकेट (%1$d) — पहले से लाइब्रेरी में हैं, छोड़ दिए जाएँगे</string>
     <plurals name="import_preview_new_count">

@@ -1,9 +1,11 @@
 package com.mcqapp
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.util.Locale
 import kotlin.io.path.extension
 import kotlin.io.path.readText
 
@@ -496,5 +498,39 @@ val answer = 42"""
             }
         }
         assertTrue("a numeric format specifier was given a String: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Regression: the Hindi time_taken string carried formatted="false" with
+     * implicit %02d specifiers, so Android left it unformatted while English
+     * rendered the minutes and seconds. Both locales must bind argument 1 to
+     * minutes and argument 2 to seconds and actually produce an mm:ss string.
+     */
+    @Test
+    fun timeTakenFormatsMinutesAndSecondsInBothLocales() {
+        val locales = listOf(
+            "src/main/res/values/strings.xml" to "Time taken: ",
+            "src/main/res/values-hi/strings_hi_8.xml" to "लिया गया समय: "
+        )
+        locales.forEach { (path, prefix) ->
+            val tag = Regex("""<string name="time_taken_02d_02d"([^>]*)>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+                .find(File(path).readText())
+            assertTrue("$path must declare time_taken_02d_02d", tag != null)
+            assertFalse(
+                "$path must let Android substitute the two arguments",
+                "formatted=\"false\"" in tag!!.groupValues[1]
+            )
+            val value = tag.groupValues[2]
+            assertEquals(
+                "$path must use explicit positional specifiers",
+                listOf(1 to 'd', 2 to 'd'),
+                specifiersOf(value)
+            )
+            // Format with distinct real values: swapping the arguments would
+            // give "07:05", so the output itself proves the binding order.
+            val formatted = String.format(Locale.US, value, 5, 7)
+            assertTrue("$path lost the translated prefix: $formatted", formatted.startsWith(prefix))
+            assertTrue("$path did not render mm:ss: $formatted", formatted.endsWith("05:07"))
+        }
     }
 }

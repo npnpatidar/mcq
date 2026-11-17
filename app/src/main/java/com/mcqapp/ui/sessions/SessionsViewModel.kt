@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * The sidebar's session history. It loads every sitting in the chosen range
@@ -50,8 +49,9 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * [loader] and [dispatcher] are injectable so a failure can be reproduced
-     * synchronously in tests; production uses the repository/default dispatcher.
+     * [loader] and [dispatcher] are injectable seams; production uses the
+     * repository and the default dispatcher. The state transition itself lives
+     * in [loadSessionsState], which is testable without Android.
      */
     internal fun load(
         range: StatsAggregator.Range,
@@ -61,32 +61,34 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     ) {
         loadJob?.cancel()
         val gen = ++generation
+        // Set synchronously so a range switch never renders a frame with the
+        // new chip highlighted but stale rows and no loading cue.
         _state.update { it.copy(loading = true, error = null) }
         loadJob = viewModelScope.launch(dispatcher) {
-            try {
-                val now = System.currentTimeMillis()
-                val data = loader(now)
-                withContext(Dispatchers.Main.immediate) {
+            val genericMessage =
+                getApplication<Application>().getString(R.string.sessions_load_error)
+            loadSessionsState(
+                onStart = {
+                    if (gen == generation) {
+                        _state.update { it.copy(loading = true, error = null) }
+                    }
+                },
+                onSuccess = { data ->
                     if (gen == generation) {
                         _state.update { it.copy(loading = false, error = null, data = data) }
                     }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Logger.e("SESSIONS", "Failed to load the session history", e)
-                withContext(Dispatchers.Main.immediate) {
+                },
+                onFailure = { message ->
                     if (gen == generation) {
-                        // The exception is logged above; the UI never shows its
-                        // raw message, only the one user-facing string.
-                        val message =
-                            getApplication<Application>().getString(R.string.sessions_load_error)
-                        _state.update {
-                            it.copy(loading = false, error = message)
-                        }
+                        _state.update { it.copy(loading = false, error = message) }
                     }
-                }
-            }
+                },
+                genericMessage = genericMessage,
+                onLog = { throwable ->
+                    Logger.e("SESSIONS", "Failed to load the session history", throwable)
+                },
+                loader = { loader(System.currentTimeMillis()) }
+            )
         }
     }
 }

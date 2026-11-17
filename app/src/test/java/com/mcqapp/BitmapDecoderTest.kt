@@ -7,7 +7,6 @@ import com.mcqapp.util.MAX_PREVIEW_DIMENSION
 import com.mcqapp.util.calculateInSampleSize
 import com.mcqapp.util.decodeBounded
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -103,14 +102,19 @@ class BitmapDecoderTest {
         // Corrupt the tail rather than truncating cleanly.
         val corrupt = full.copyOf(full.size / 2).also { it[it.size - 1] = 0x7F }
         // Soft failure means returning, not throwing, and never yielding an
-        // unbounded bitmap. Robolectric's shadow decodes arbitrary bytes to a
-        // bitmap (a real device may return null); assert the bounded result the
-        // host actually produces instead of a tautology.
-        val decoded = decodeBounded(corrupt, MAX_EXPORT_DIMENSION)
-        assertNotNull("truncated image should still decode to a bitmap under Robolectric", decoded)
+        // unbounded bitmap. Hosts differ: Robolectric may decode arbitrary bytes
+        // to a bitmap while x86_64 CI returns null for a truncated PNG. Accept
+        // either, but a thrown exception or an oversized bitmap still fails.
+        val decoded = runCatching { decodeBounded(corrupt, MAX_EXPORT_DIMENSION) }
         assertTrue(
-            "decoded ${decoded!!.width}x${decoded.height} must stay inside the source",
-            decoded.width <= 400 && decoded.height <= 400
+            "truncated image decode must not throw: ${decoded.exceptionOrNull()}",
+            decoded.isSuccess
         )
+        decoded.getOrNull()?.let {
+            assertTrue(
+                "decoded ${it.width}x${it.height} must stay inside the 400x400 source",
+                it.width <= source.width && it.height <= source.height
+            )
+        }
     }
 }

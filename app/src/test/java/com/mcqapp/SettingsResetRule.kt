@@ -51,13 +51,22 @@ class SettingsResetRule : ExternalResource() {
     }
 
     companion object {
+        /**
+         * DataStore serialises every read and write through one process-wide
+         * actor, and a full CI run leaves many ViewModel collectors attached to
+         * it. On a loaded runner a six-key edit can take well over 30 s, so the
+         * bound is generous — but still below every enclosing watchdog (the
+         * tightest is 90 s), so a real deadlock is reported instead of hanging.
+         */
+        internal const val CLEAR_DEADLINE_MS = 60_000L
+
         suspend fun clearGradingKeysSuspend(
             context: Context = ApplicationProvider.getApplicationContext()
         ) {
             // Bounded and off the paused Robolectric main thread so DataStore
             // I/O can complete without stalling unrelated background work.
             withContext(Dispatchers.IO) {
-                withTimeout(30_000) {
+                withTimeout(CLEAR_DEADLINE_MS) {
                     context.dataStore.edit { prefs ->
                         prefs.remove(booleanPreferencesKey("correctness_only"))
                         prefs.remove(intPreferencesKey("grading_rules_version"))
@@ -74,6 +83,7 @@ class SettingsResetRule : ExternalResource() {
             context: Context = ApplicationProvider.getApplicationContext()
         ) {
             runOffMainWhilePumping(
+                timeoutMs = CLEAR_DEADLINE_MS,
                 condition = "SettingsResetRule.clearGradingKeys"
             ) {
                 clearGradingKeysSuspend(context)

@@ -1,16 +1,21 @@
 package com.mcqapp
 
 import android.content.Context
+import android.os.Looper
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.ui.settings.SettingsViewModel
 import com.mcqapp.util.ImportTooLargeException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -27,9 +32,26 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], application = TestMcqApplication::class)
 class SettingsRestoreBusyTest {
 
+    private val viewModels = mutableListOf<SettingsViewModel>()
+
     private fun viewModel() = SettingsViewModel(
         ApplicationProvider.getApplicationContext<Context>() as McqApplication
-    )
+    ).also { viewModels += it }
+
+    /**
+     * A unit test has no lifecycle owner to clear a ViewModel's scope, so the
+     * init collectors and the `refreshStorage()` coroutine (which runs real
+     * Room queries on Main) stay queued on Robolectric's main looper. If they
+     * leak, the next class's `idle()`-based pumping runs that SQLite work with
+     * a stale AppDatabase instance and every dbBlocking call times out. Cancel
+     * every scope and drain the queue so this class cannot affect a neighbour.
+     */
+    @After
+    fun tearDown() {
+        viewModels.forEach { it.viewModelScope.cancel() }
+        viewModels.clear()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
 
     /** Mirrors the screen: busy goes true before restore, onComplete clears it. */
     private fun runRestore(restore: suspend () -> String): RestoreOutcome {

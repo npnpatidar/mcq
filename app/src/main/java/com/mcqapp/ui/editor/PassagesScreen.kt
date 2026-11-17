@@ -123,12 +123,17 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     /** Emitted after each completed write so the screen can close its dialogs. */
     val saveCompleted: Flow<Unit> = _saveCompleted.asSharedFlow()
 
-    // The in-flight stage/confirm is owned here, not by a composable scope,
-    // so a dismiss or back can cancel it before it writes anything. The
-    // generation makes cancellation effective even if a Room continuation is
-    // already posted: a stale job must neither write nor set a pending warning.
-    private var activeJob: Job? = null
-    private var saveGeneration = 0
+    // Stage and confirm own separate jobs and generations. They overlap for a
+    // moment: the stage publishes the pending warning, then an immediate
+    // confirm starts while the stage is still unwinding. Sharing one job would
+    // let that confirm be ignored (or leave isDeciding stuck true), so each
+    // phase clears only its own state. A dismiss/back cancels both jobs and
+    // bumps both generations, so a stale continuation can neither write nor
+    // leave a pending warning.
+    private var stageJob: Job? = null
+    private var confirmJob: Job? = null
+    private var stageGeneration = 0
+    private var confirmGeneration = 0
 
     /** The open passage's members, paged; empty while nothing is open. */
     val memberPaging: Flow<PagingData<QuestionRef>> = expandedId
@@ -194,28 +199,29 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
      * raises a warning when the user abandons the edit.
      */
     fun stageSave(passage: Passage, originalPaperId: String?, newPaperId: String?) {
-        if (activeJob?.isActive == true) return
-        val gen = ++saveGeneration
+        if (stageJob?.isActive == true || confirmJob?.isActive == true) return
+        val gen = ++stageGeneration
         _isDeciding.value = true
-        activeJob = viewModelScope.launch {
+        stageJob = viewModelScope.launch {
             try {
                 val decision = decideSave(passage, originalPaperId, newPaperId)
                 coroutineContext.ensureActive()
-                if (gen != saveGeneration) return@launch
+                if (gen != stageGeneration) return@launch
                 when (decision) {
                     PassageSaveDecision.ConfirmCrossPaper -> _pendingCrossPaperSave.value = passage
                     PassageSaveDecision.Save -> {
                         repository.savePassage(passage)
                         coroutineContext.ensureActive()
-                        if (gen == saveGeneration) _saveCompleted.emit(Unit)
+                        if (gen == stageGeneration) _saveCompleted.emit(Unit)
                     }
                 }
             } finally {
-                // A cancelled job has already been cleared by cancelPending();
-                // never clobber the state of a newer job that replaced it.
-                if (gen == saveGeneration) {
+                // A cancelled stage was already cleared by cancelPending();
+                // never clobber a newer stage that replaced it. A confirm
+                // bumps only confirmGeneration, so this still clears normally.
+                if (gen == stageGeneration) {
                     _isDeciding.value = false
-                    activeJob = null
+                    stageJob = null
                 }
             }
         }
@@ -227,9 +233,12 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
      * and leaves no pending warning behind.
      */
     fun cancelPending() {
-        saveGeneration++
-        activeJob?.cancel()
-        activeJob = null
+        stageGeneration++
+        confirmGeneration++
+        stageJob?.cancel()
+        confirmJob?.cancel()
+        stageJob = null
+        confirmJob = null
         _isDeciding.value = false
         _isConfirming.value = false
         _pendingCrossPaperSave.value = null
@@ -237,25 +246,28 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
 
     /** Writes the pending passage exactly once, then clears the warning. */
     fun confirmPending() {
-        if (activeJob?.isActive == true) return
+        // Gate on the dedicated flag, not on a stage job: the stage publishes
+        // the pending warning just before its finally clears that job, so an
+        // immediate confirm must not be swallowed by that window.
+        if (_isConfirming.value) return
         val passage = _pendingCrossPaperSave.value ?: return
-        val gen = ++saveGeneration
+        val gen = ++confirmGeneration
         _isConfirming.value = true
-        activeJob = viewModelScope.launch {
+        confirmJob = viewModelScope.launch {
             try {
                 coroutineContext.ensureActive()
                 // A back/dismiss may have cancelled and bumped the generation
                 // while this continuation was posted; never start the write.
-                if (gen != saveGeneration || activeJob?.isActive == false) return@launch
+                if (gen != confirmGeneration || confirmJob?.isActive == false) return@launch
                 repository.savePassage(passage)
                 coroutineContext.ensureActive()
-                if (gen != saveGeneration) return@launch
+                if (gen != confirmGeneration) return@launch
                 _pendingCrossPaperSave.value = null
                 _saveCompleted.emit(Unit)
             } finally {
-                if (gen == saveGeneration) {
+                if (gen == confirmGeneration) {
                     _isConfirming.value = false
-                    activeJob = null
+                    confirmJob = null
                 }
             }
         }

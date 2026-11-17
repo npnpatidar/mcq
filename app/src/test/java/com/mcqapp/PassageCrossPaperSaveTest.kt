@@ -10,7 +10,11 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.editor.PassageSaveDecision
 import com.mcqapp.ui.editor.PassagesViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -102,25 +106,34 @@ class PassageCrossPaperSaveTest {
         assertEquals(2, runBlocking { app.repository.passageMemberCount(pid) })
 
         val edited = Passage(pid, "c2", "Group")
+        // The fresh-count decision still reports a cross-paper move. Assert it
+        // before staging so it cannot race the confirm call below.
+        val decision = runOffMainWhilePumping(condition = "fresh cross-paper decision") {
+            viewModel.decideSave(edited, "p1", "p2")
+        }
+        assertEquals(PassageSaveDecision.ConfirmCrossPaper, decision)
+
+        val completions = CopyOnWriteArrayList<Unit>()
+        val collector = CoroutineScope(Dispatchers.Unconfined).launch {
+            viewModel.saveCompleted.collect { completions.add(it) }
+        }
         viewModel.stageSave(edited, "p1", "p2")
 
         // F1/F3: the ViewModel publishes the confirmation and writes nothing
         // while it is pending.
         assertTrue(awaitCondition { viewModel.pendingCrossPaperSave.value?.id == pid })
         assertEquals("c1", runBlocking { app.repository.getPassage(pid) }?.categoryId)
-        // The fresh-count decision still reports a cross-paper move.
-        val decision = runOffMainWhilePumping(condition = "fresh cross-paper decision") {
-            viewModel.decideSave(edited, "p1", "p2")
-        }
-        assertEquals(PassageSaveDecision.ConfirmCrossPaper, decision)
 
-        // Confirm writes exactly once and clears the warning.
+        // Confirm immediately: it must not be swallowed while the stage job
+        // is still unwinding, and must write exactly once.
         viewModel.confirmPending()
         assertTrue(awaitCondition {
             runBlocking { app.repository.getPassage(pid) }?.categoryId == "c2" &&
                 viewModel.pendingCrossPaperSave.value == null
         })
         assertEquals("c2", runBlocking { app.repository.getPassage(pid) }?.categoryId)
+        assertEquals(1, completions.size)
+        collector.cancel()
     }
 
     @Test

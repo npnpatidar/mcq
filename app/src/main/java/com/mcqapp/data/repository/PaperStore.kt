@@ -289,7 +289,7 @@ internal class PaperStore(
         return db.withTransaction {
             val plan = planSiblingMove(categoryId, delta)
                 ?: return@withTransaction false
-            renumberPaperPreorder(plan.paperId) { parent, children ->
+            renumberPaperPreorder(db, plan.paperId) { parent, children ->
                 if (parent == plan.movedParentId) plan.children else children
             }
             Logger.i("REPO", "moveCategory($categoryId by $delta)")
@@ -323,42 +323,6 @@ internal class PaperStore(
         return TreePlan(category.paperId, category.parentId, children)
     }
 
-    private fun childrenOf(
-        all: List<com.mcqapp.data.local.CategoryEntity>,
-        parent: String?
-    ): List<com.mcqapp.data.local.CategoryEntity> =
-        all.filter { it.parentId == parent }
-            .sortedBy { it.sortOrder }
-
-    /**
-     * Rewrites the paper's category sortOrder as one dense pre-order
-     * traversal of the tree, with [override] substituting one parent's
-     * children (the shape a move changed).
-     *
-     * Category sortOrder is ONE global sequence per paper — parents
-     * immediately followed by their children — so question order (which
-     * sorts by it) always matches the drawer's tree. Renumbering only the
-     * touched siblings (indices 0..n of their level) used to collide with
-     * the untouched children's slots: moving Mathematics up in the demo
-     * paper left Chemistry and Physics sharing sortOrders with the roots,
-     * and the (sortOrder, title) tiebreak surfaced as
-     * "maths, chemistry, science, physics".
-     */
-    private suspend fun renumberPaperPreorder(
-        paperId: String,
-        override: (parent: String?, children: List<com.mcqapp.data.local.CategoryEntity>) -> List<com.mcqapp.data.local.CategoryEntity> = { _, c -> c }
-    ) {
-        // One read of the paper's whole category set; childrenOf then filters
-        // in memory rather than re-querying per node (O(n) reads → O(1)).
-        val all = db.categoryDao().getByPaper(paperId)
-        suspend fun preorder(parent: String?): List<com.mcqapp.data.local.CategoryEntity> =
-            override(parent, childrenOf(all, parent))
-                .flatMap { listOf(it) + preorder(it.id) }
-        preorder(null).forEachIndexed { index, node ->
-            db.categoryDao().updateSortOrder(node.id, index)
-        }
-    }
-
     /**
      * Nests a category into the sibling above it, becoming that sibling's
      * LAST child — so the flat question order does not move at all; only
@@ -373,7 +337,7 @@ internal class PaperStore(
             if (index <= 0) return@withTransaction false
             val newParent = siblings[index - 1]
             db.categoryDao().updateParent(categoryId, newParent.id)
-            renumberPaperPreorder(category.paperId)
+            renumberPaperPreorder(db, category.paperId)
             Logger.i("REPO", "nestCategory($categoryId into ${newParent.id})")
             true
         }
@@ -394,7 +358,7 @@ internal class PaperStore(
             // Keep the promoted node directly after its former parent in the
             // new bucket: the old pre-order slot lies between the parent and
             // its next sibling, so sorting by it lands it exactly there.
-            renumberPaperPreorder(category.paperId)
+            renumberPaperPreorder(db, category.paperId)
             Logger.i("REPO", "promoteCategory($categoryId)")
             true
         }
@@ -407,51 +371,116 @@ internal class PaperStore(
      * its own descendant's child — and the old parent keeps its remaining
      * children.
      */
-    suspend fun reparentCategory(categoryId: String, newParentId: String?): Boolean {
-        return db.withTransaction {
-            val category = db.categoryDao().getById(categoryId) ?: return@withTransaction false
-            if (newParentId == category.parentId) return@withTransaction false
-            if (newParentId != null) {
-                val newParent = db.categoryDao().getById(newParentId)
-                    ?: return@withTransaction false
-                if (newParent.paperId != category.paperId) return@withTransaction false
-                // No cycles: the new parent must not live in this category's
-                // own subtree (which includes the category itself). One read
-                // of the paper's categories, then an in-memory walk — a
-                // per-node childrenOf re-queried the whole set each step.
-                val all = db.categoryDao().getByPaper(category.paperId)
-                fun subtree(id: String?): Boolean =
-                    id == newParentId || childrenOf(all, id).any { subtree(it.id) }
-                if (subtree(categoryId)) return@withTransaction false
-                db.categoryDao().updateParent(categoryId, newParentId)
-                // Append as the last child, deterministically.
-                val last = childrenOf(all, newParentId)
-                    .maxOfOrNull { it.sortOrder } ?: -1
-                db.categoryDao().updateSortOrder(categoryId, last + 1)
-            } else {
-                db.categoryDao().updateParent(categoryId, null)
-                val last = childrenOf(db.categoryDao().getByPaper(category.paperId), null)
-                    .maxOfOrNull { it.sortOrder } ?: -1
-                db.categoryDao().updateSortOrder(categoryId, last + 1)
-            }
-            renumberPaperPreorder(category.paperId)
-            Logger.i("REPO", "reparentCategory($categoryId -> $newParentId)")
-            true
-        }
-    }
+    suspend fun reparentCategory(categoryId: String, newParentId: String?): Boolean =
+        db.withTransaction { reparentIn(db, categoryId, newParentId) }
 
     /** Renames a category; blank titles are refused. */
-    suspend fun renameCategory(categoryId: String, title: String): Boolean {
-        val trimmed = title.trim()
-        if (trimmed.isBlank()) return false
-        val category = db.categoryDao().getById(categoryId) ?: return false
-        // A targeted UPDATE, never upsert: `@Upsert` compiles to INSERT OR
-        // REPLACE, and questions.categoryId cascades on delete, so replacing
-        // the category row would wipe every question in it.
-        db.categoryDao().updateFields(
-            category.id, category.paperId, trimmed, category.parentId, category.sortOrder
-        )
-        Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
-        return true
+    suspend fun renameCategory(categoryId: String, title: String): Boolean =
+        renameIn(db, categoryId, title)
+}
+
+// --- Shared category helpers -------------------------------------------------
+//
+// These take the database as a parameter so both the standalone store methods
+// above and the atomic edit below use the exact same logic. A rename and a
+// reparent issued as two separate commits used to let a refused reparent land
+// a lone rename; [editCategoryAtomic] puts both in one transaction and rolls
+// the whole edit back when either half is refused.
+
+private fun childrenOf(
+    all: List<CategoryEntity>,
+    parent: String?
+): List<CategoryEntity> =
+    all.filter { it.parentId == parent }
+        .sortedBy { it.sortOrder }
+
+/**
+ * Rewrites the paper's category sortOrder as one dense pre-order traversal of
+ * the tree, with [override] substituting one parent's children (the shape a
+ * move changed). Category sortOrder is ONE global sequence per paper — parents
+ * immediately followed by their children — so question order matches the
+ * drawer. One read of the whole category set; childrenOf then filters in memory
+ * rather than re-querying per node (O(n) reads -> O(1)).
+ */
+private suspend fun renumberPaperPreorder(
+    db: AppDatabase,
+    paperId: String,
+    override: (parent: String?, children: List<CategoryEntity>) -> List<CategoryEntity> = { _, c -> c }
+) {
+    val all = db.categoryDao().getByPaper(paperId)
+    suspend fun preorder(parent: String?): List<CategoryEntity> =
+        override(parent, childrenOf(all, parent))
+            .flatMap { listOf(it) + preorder(it.id) }
+    preorder(null).forEachIndexed { index, node ->
+        db.categoryDao().updateSortOrder(node.id, index)
     }
+}
+
+/** Reparent half, assuming the caller holds the transaction. */
+private suspend fun reparentIn(
+    db: AppDatabase,
+    categoryId: String,
+    newParentId: String?
+): Boolean {
+    val category = db.categoryDao().getById(categoryId) ?: return false
+    if (newParentId == category.parentId) return false
+    if (newParentId != null) {
+        val newParent = db.categoryDao().getById(newParentId) ?: return false
+        if (newParent.paperId != category.paperId) return false
+        // No cycles: the new parent must not live in this category's own
+        // subtree (which includes the category itself).
+        val all = db.categoryDao().getByPaper(category.paperId)
+        fun subtree(id: String?): Boolean =
+            id == newParentId || childrenOf(all, id).any { subtree(it.id) }
+        if (subtree(categoryId)) return false
+        db.categoryDao().updateParent(categoryId, newParentId)
+        val last = childrenOf(all, newParentId).maxOfOrNull { it.sortOrder } ?: -1
+        db.categoryDao().updateSortOrder(categoryId, last + 1)
+    } else {
+        db.categoryDao().updateParent(categoryId, null)
+        val last = childrenOf(db.categoryDao().getByPaper(category.paperId), null)
+            .maxOfOrNull { it.sortOrder } ?: -1
+        db.categoryDao().updateSortOrder(categoryId, last + 1)
+    }
+    renumberPaperPreorder(db, category.paperId)
+    Logger.i("REPO", "reparentCategory($categoryId -> $newParentId)")
+    return true
+}
+
+/** Rename half; a targeted UPDATE, never upsert (REPLACE would cascade away questions). */
+private suspend fun renameIn(db: AppDatabase, categoryId: String, title: String): Boolean {
+    val trimmed = title.trim()
+    if (trimmed.isBlank()) return false
+    val category = db.categoryDao().getById(categoryId) ?: return false
+    db.categoryDao().updateFields(
+        category.id, category.paperId, trimmed, category.parentId, category.sortOrder
+    )
+    Logger.i("REPO", "renameCategory($categoryId -> '$trimmed')")
+    return true
+}
+
+private class RefusedCategoryEdit : IllegalStateException("category edit refused")
+
+/**
+ * The edit dialog's save as ONE transaction: a refused rename or reparent
+ * rolls the whole edit back, so a rejected reparent never leaves a lone title
+ * change behind. An unchanged parent is a no-op (a title-only edit still
+ * commits). Returns false when the edit was refused.
+ */
+internal suspend fun editCategoryAtomic(
+    db: AppDatabase,
+    categoryId: String,
+    title: String,
+    parentId: String?
+): Boolean = try {
+    db.withTransaction {
+        val currentParent = db.categoryDao().getById(categoryId)?.parentId
+        if (!renameIn(db, categoryId, title)) throw RefusedCategoryEdit()
+        if (currentParent != parentId && !reparentIn(db, categoryId, parentId)) {
+            throw RefusedCategoryEdit()
+        }
+    }
+    true
+} catch (e: RefusedCategoryEdit) {
+    false
 }

@@ -78,6 +78,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 data class PassagesUiState(
     val loading: Boolean = true,
@@ -204,6 +205,11 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
         _isDeciding.value = true
         stageJob = viewModelScope.launch {
             try {
+                // A dismiss/back right after stageSave must be able to cancel
+                // this job before any count query or write. yield() gives that
+                // synchronous cancel a dispatch point even when Main.immediate
+                // would otherwise run the whole stage inline.
+                yield()
                 val decision = decideSave(passage, originalPaperId, newPaperId)
                 coroutineContext.ensureActive()
                 if (gen != stageGeneration) return@launch

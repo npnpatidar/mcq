@@ -2706,17 +2706,23 @@ interface AttemptDao {
      * element/option JSON: correctness, dwell, the stored as-of-attempt
      * category title and the question's current category for a Study link.
      * A deleted question still yields its row, with a null current id.
+     *
+     * A question moved to another PAPER since the attempt is "unresolved" too:
+     * its current category belongs to the new paper, so the category join is
+     * scoped to the attempt's paper and a cross-paper move yields a null id.
+     * That keeps the report from offering a Study link into a foreign paper.
      */
     @Query(
         "SELECT r.questionId AS questionId, r.categoryTitle AS categoryTitle, " +
-            "q.categoryId AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
+            "c.id AS currentCategoryId, r.dwellSeconds AS dwellSeconds, " +
             "r.isCorrect AS isCorrect, r.correctOptionIds AS correctOptionIds, " +
             "r.selectedOptionIds AS selectedOptionIds, r.optionsJson AS optionsJson, " +
             "q.passageId AS passageId " +
             "FROM question_results r LEFT JOIN questions q ON q.id = r.questionId " +
+            "LEFT JOIN categories c ON c.id = q.categoryId AND c.paperId = :paperId " +
             "WHERE r.attemptId = :attemptId ORDER BY r.rowid"
     )
-    suspend fun getReportRows(attemptId: Long): List<ReportRowEntity>
+    suspend fun getReportRows(attemptId: Long, paperId: String): List<ReportRowEntity>
 
     /**
      * Attempts under the same comparability key (section 11.5), newest first.
@@ -2939,17 +2945,20 @@ interface QuestionStatsDao {
             "COALESCE((SELECT repWrong FROM question_stats WHERE questionId = :questionId), 0) + :repWrong, " +
             "COALESCE((SELECT repSkip FROM question_stats WHERE questionId = :questionId), 0) + :repSkip, " +
             // The last-standing pair follows `finishedAt DESC, id DESC` (section
-            // 12.3). On this write path the new result always has the largest
-            // result id (autoincrement, serialized writes), so `>=` on
-            // finishedAt is exactly that rule: an equal timestamp must let the
-            // row being inserted win the tie. `-1` means "no stored row yet".
-            "CASE WHEN :finishedAt >= COALESCE(" +
+            // 12.3), taking the latest GRADED, ANSWERED result — never the just
+            // written row when that row is a skip or ungraded. The caller passes
+            // the standing of this attempt's latest graded+answered row, or null
+            // when this attempt has none; `>=` lets an equal-timestamp graded row
+            // win the tie (new rows carry larger ids). With no stored row yet,
+            // the standing falls back to "false / this attempt's finishedAt",
+            // matching recomputeFromSurvivingResults. `-1` means "no stored row".
+            "CASE WHEN :lastGradedFinishedAt IS NOT NULL AND :lastGradedFinishedAt >= COALESCE(" +
             "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), -1) " +
-            "THEN :isCorrect ELSE COALESCE(" +
+            "THEN :lastGradedIsCorrect ELSE COALESCE(" +
             "(SELECT lastResultIsCorrect FROM question_stats WHERE questionId = :questionId), 0) END, " +
-            "CASE WHEN :finishedAt >= COALESCE(" +
+            "CASE WHEN :lastGradedFinishedAt IS NOT NULL AND :lastGradedFinishedAt >= COALESCE(" +
             "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), -1) " +
-            "THEN :finishedAt ELSE COALESCE(" +
+            "THEN :lastGradedFinishedAt ELSE COALESCE(" +
             "(SELECT lastFinishedAt FROM question_stats WHERE questionId = :questionId), :finishedAt) END"
     )
     suspend fun bumpQuestionStats(
@@ -2967,8 +2976,10 @@ interface QuestionStatsDao {
         repCorrect: Int,
         repWrong: Int,
         repSkip: Int,
-        isCorrect: Boolean,
-        finishedAt: Long
+        finishedAt: Long,
+        /** Standing of this write's latest graded+answered row; null if none. */
+        lastGradedIsCorrect: Boolean,
+        lastGradedFinishedAt: Long?
     )
 
     /**
@@ -3241,6 +3252,14 @@ suspend fun QuestionStatsDao.applyQuestionStats(
             }
         }
         val last = list.last()
+        // The latest graded+answered row of this attempt decides the standing;
+        // a later skip/ungraded row does not. All rows in a group belong to the
+        // one attempt, so they share its finishedAt. Null means "no graded
+        // answer here", which leaves the previously stored standing in place —
+        // exactly what a delete-recompute would do.
+        val lastGraded = list.lastOrNull {
+            it.correctOptionIds.isNotBlank() && it.selectedOptionIds.isNotBlank()
+        }
         bumpQuestionStats(
             questionId = questionId,
             paperId = paperId,
@@ -3256,8 +3275,9 @@ suspend fun QuestionStatsDao.applyQuestionStats(
             repCorrect = repCorrect,
             repWrong = repWrong,
             repSkip = repSkip,
-            isCorrect = last.isCorrect,
-            finishedAt = finishedAt
+            finishedAt = finishedAt,
+            lastGradedIsCorrect = lastGraded?.isCorrect ?: false,
+            lastGradedFinishedAt = lastGraded?.let { finishedAt }
         )
     }
 }

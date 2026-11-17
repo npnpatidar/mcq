@@ -26,6 +26,7 @@ import com.mcqapp.domain.StorageInfo
 @Composable
 fun BackupDataSection(
     storage: StorageInfo.Report?,
+    storageError: String?,
     updateAnswersOnDuplicate: Boolean,
     pdfTwoColumn: Boolean,
     busy: Boolean,
@@ -157,7 +158,18 @@ fun BackupDataSection(
         }
         Spacer(Modifier.height(8.dp))
         val report = storage
-        if (report == null) {
+        if (storageError != null) {
+            // A failed measurement must not look like a measurement in progress.
+            Text(
+                storageError,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onRefreshStorage) {
+                Text(stringResource(R.string.retry))
+            }
+        } else if (report == null) {
             Text(stringResource(R.string.measuring), style = MaterialTheme.typography.bodyMedium)
         } else {
             Text(

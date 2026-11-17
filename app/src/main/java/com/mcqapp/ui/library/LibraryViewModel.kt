@@ -12,6 +12,7 @@ import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.editCategoryAtomic
 import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.CategorySelection
@@ -283,6 +284,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     fun selectedFor(paperId: String): Set<String> = _selection.value[paperId].orEmpty()
 
+    /** Flattens a paper's category tree into its live ids (one pass, no queries). */
+    private fun collectCategoryIds(nodes: List<CategoryNode>, into: MutableSet<String>) {
+        nodes.forEach { node ->
+            into.add(node.id)
+            collectCategoryIds(node.children, into)
+        }
+    }
+
     fun toggleCategory(paperId: String, categoryId: String) {
         val paper = papers.value.firstOrNull { it.id == paperId } ?: return
         val next = CategorySelection.toggle(paper.categories, selectedFor(paperId), categoryId)
@@ -324,6 +333,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } catch (e: Exception) {
                     Logger.e("LIBVM", "getStudyCounts failed", e)
                 }
+            }
+        }
+        viewModelScope.launch {
+            // A ticked category that disappeared (a delete here or an import
+            // elsewhere) makes Test/Study scope expand to nothing and blocks
+            // Start with "no questions". Reconcile against the live trees on
+            // every papers emission — one pass over the already-emitted list,
+            // never a per-category query — and keep live ticks untouched.
+            papers.collect { list ->
+                val liveIds = HashSet<String>()
+                val livePaperIds = HashSet<String>()
+                list.forEach { paper ->
+                    livePaperIds.add(paper.id)
+                    collectCategoryIds(paper.categories, liveIds)
+                }
+                val current = _selection.value
+                val pruned = buildMap {
+                    current.forEach { (paperId, ids) ->
+                        if (paperId in livePaperIds) {
+                            put(paperId, ids.filterTo(HashSet()) { it in liveIds })
+                        }
+                    }
+                }
+                if (pruned != current) _selection.value = pruned
             }
         }
     }
@@ -567,7 +600,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _categoryCounts.value = _categoryCounts.value - paperId
             } catch (e: Exception) {
                 // Unguarded, a database error here escaped viewModelScope and
-                // took the app down on an ordinary tap.
+                // took the app down on an ordinary tap. Do not clear the
+                // selection/counts here: the delete may have failed *before*
+                // commit, and live ticks must survive. The papers.collect
+                // reconciliation prunes only ids that are actually gone.
                 Logger.e("LIBVM", "Delete paper failed", e)
                 _exportError.value = "Delete failed: ${e.message}"
             }
@@ -664,12 +700,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** The edit dialog's save: rename, and re-parent when it changed. */
+    /**
+     * The edit dialog's save: rename and re-parent are one transaction, so a
+     * refused reparent can no longer land the rename on its own. A refusal
+     * leaves nothing changed and tells the user why.
+     */
     fun editCategory(categoryId: String, title: String, parentId: String?) {
         viewModelScope.launch {
             try {
-                repository.renameCategory(categoryId, title)
-                repository.reparentCategory(categoryId, parentId)
+                val saved = editCategoryAtomic(repository.db(), categoryId, title, parentId)
+                if (!saved) {
+                    _exportError.value = "Could not save the category. Check its name and parent."
+                }
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Edit category failed", e)
                 _exportError.value = "Edit failed: ${e.message}"
@@ -693,6 +735,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 repository.deleteCategory(categoryId)
+                // A ticked category that no longer exists must not survive in
+                // the selection: it would expand Test/Study scope to empty.
+                // Category ids are globally unique, so drop it from every
+                // paper's set without a per-paper query.
+                _selection.value = _selection.value.mapValues { (_, ids) -> ids - categoryId }
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Delete category failed", e)
                 _exportError.value = "Delete failed: ${e.message}"

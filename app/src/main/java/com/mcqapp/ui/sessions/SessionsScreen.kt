@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -20,6 +20,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -125,45 +126,62 @@ fun SessionsScreen(
                 ) {
                     CircularProgressIndicator()
                 }
-                else -> state.data?.let { SessionsList(it) }
+                else -> state.data?.let { SessionsList(it, loading = state.loading) }
             }
         }
     }
 }
 
+/** A sitting's stable identity: its start/end pair, never its list position. */
+internal fun sessionKey(day: Long, session: StudySession): String =
+    "session-$day-${session.startedAt}-${session.endedAt}"
+
 @Composable
-private fun SessionsList(data: SessionsData) {
+internal fun SessionsList(data: SessionsData, loading: Boolean = false) {
     val groups = remember(data) {
         data.sessions.groupBy { it.day }.entries.sortedByDescending { it.key }
     }
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("sessions-list"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item(contentType = "summary") { SummaryCard(data) }
-        if (data.totalSessions == 0) {
-            item(contentType = "empty") {
-                Text(
-                    stringResource(R.string.sessions_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("sessions-list"),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item(contentType = "summary") { SummaryCard(data) }
+            if (data.totalSessions == 0) {
+                item(contentType = "empty") {
+                    Text(
+                        stringResource(R.string.sessions_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            groups.forEach { (day, sessions) ->
+                item(key = "day-$day", contentType = "day") {
+                    DayHeader(day = day, sessions = sessions.size, todayDay = data.todayDay)
+                }
+                items(
+                    items = sessions,
+                    key = { session -> sessionKey(day, session) },
+                    contentType = { "session" }
+                ) { session ->
+                    SessionCard(day = day, session = session)
+                }
             }
         }
-        groups.forEach { (day, sessions) ->
-            item(key = "day-$day", contentType = "day") {
-                DayHeader(day = day, sessions = sessions.size, todayDay = data.todayDay)
-            }
-            itemsIndexed(
-                items = sessions,
-                key = { index, session -> "session-$day-$index-${session.startedAt}" },
-                contentType = { _, _ -> "session" }
-            ) { _, session ->
-                SessionCard(session)
-            }
+        // A range switch keeps the previous sittings on screen while the new
+        // one loads; a slim inline cue is the only signal that the chip's new
+        // highlight hasn't been applied to the body yet.
+        if (loading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .testTag("sessions-loading")
+            )
         }
     }
 }
@@ -222,8 +240,8 @@ private fun DayHeader(day: Long, sessions: Int, todayDay: Long) {
 }
 
 @Composable
-private fun SessionCard(session: StudySession) {
-    var expanded by rememberSaveable(session.startedAt, session.endedAt) {
+private fun SessionCard(day: Long, session: StudySession) {
+    var expanded by rememberSaveable(day, session.startedAt, session.endedAt) {
         mutableStateOf(false)
     }
     Card(modifier = Modifier.fillMaxWidth()) {

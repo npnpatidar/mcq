@@ -136,9 +136,7 @@ fun BrowseScreen(
     // Configuration changes (LocalContextGetResourceValueCall).
     val platformResources = LocalResources.current
 
-    val exportError by viewModel.exportError.collectAsStateWithLifecycle()
-    val bulkError by viewModel.bulkError.collectAsStateWithLifecycle()
-    val actionError by viewModel.actionError.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
     val moveAffectedCount by viewModel.moveAffectedCount.collectAsStateWithLifecycle()
 
     fun exportTitle(): String {
@@ -782,39 +780,15 @@ fun BrowseScreen(
             )
         }
 
-        bulkError?.let { message ->
+        // One error channel: a bulk edit, a question action (including Select
+        // all) and an export can each fail, but only one dialog is ever shown.
+        error?.let { shown ->
             AlertDialog(
-                onDismissRequest = { viewModel.dismissBulkError() },
-                title = { Text(stringResource(R.string.edit)) },
-                text = { Text(message) },
+                onDismissRequest = { viewModel.dismissError() },
+                title = { Text(stringResource(shown.titleRes)) },
+                text = { Text(shown.message) },
                 confirmButton = {
-                    TextButton(onClick = { viewModel.dismissBulkError() }) {
-                        Text(stringResource(R.string.ok))
-                    }
-                }
-            )
-        }
-
-        actionError?.let { message ->
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissActionError() },
-                title = { Text(stringResource(R.string.action_failed)) },
-                text = { Text(message) },
-                confirmButton = {
-                    TextButton(onClick = { viewModel.dismissActionError() }) {
-                        Text(stringResource(R.string.ok))
-                    }
-                }
-            )
-        }
-
-        exportError?.let { message ->
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissExportError() },
-                title = { Text(stringResource(R.string.export)) },
-                text = { Text(message) },
-                confirmButton = {
-                    TextButton(onClick = { viewModel.dismissExportError() }) {
+                    TextButton(onClick = { viewModel.dismissError() }) {
                         Text(stringResource(R.string.ok))
                     }
                 }

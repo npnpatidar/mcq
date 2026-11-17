@@ -8,6 +8,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
@@ -18,6 +19,8 @@ import com.mcqapp.domain.Question
 import com.mcqapp.ui.editor.EditorSession
 import com.mcqapp.util.Logger
 import com.mcqapp.util.parseNonNegativeDecimal
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +32,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * One category's reorder context: its questions in order (id + passageId are
@@ -108,6 +112,14 @@ private data class BrowseFilterRequest(
 )
 
 /**
+ * One error at a time. Browse used to have three independent error StateFlows
+ * (bulk / action / export); two failures landing together stacked two
+ * AlertDialogs. A single channel keeps the newest error visible and dismissing
+ * it clears the only one there is.
+ */
+data class BrowseError(val titleRes: Int, val message: String)
+
+/**
  * Browse's list pages through Room: opening a 250k-question paper streams a
  * window instead of materialising every ref. Filters are SQL predicates in the
  * paging query (the same observable order as before). The only whole-category
@@ -128,13 +140,12 @@ class BrowseViewModel(
     private val repository: McqRepository = (application as McqApplication).repository
 
     private val _state = MutableStateFlow(BrowseUiState())
-    private val _exportError = MutableStateFlow<String?>(null)
-    val exportError: StateFlow<String?> = _exportError.asStateFlow()
-    private val _bulkError = MutableStateFlow<String?>(null)
-    val bulkError: StateFlow<String?> = _bulkError.asStateFlow()
-    /** A failed question action (delete/duplicate/move/copy), shown once. */
-    private val _actionError = MutableStateFlow<String?>(null)
-    val actionError: StateFlow<String?> = _actionError.asStateFlow()
+    /**
+     * The single error dialog. Bulk edits, question actions (including Select
+     * all) and exports all report here so failures cannot stack dialogs.
+     */
+    private val _error = MutableStateFlow<BrowseError?>(null)
+    val error: StateFlow<BrowseError?> = _error.asStateFlow()
     /** How many questions a move of the current selection would touch. */
     private val _moveAffectedCount = MutableStateFlow<Int?>(null)
     val moveAffectedCount: StateFlow<Int?> = _moveAffectedCount.asStateFlow()
@@ -252,15 +263,33 @@ class BrowseViewModel(
         viewModelScope.launch {
             try {
                 val scope = currentScope()
-                val ids = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val ids = withContext(Dispatchers.IO) {
                     repository.browseFilteredIds(scope)
                 }
                 onResult(ids.toSet())
             } catch (e: Exception) {
                 Logger.e("BROWSE", "selectAll failed", e)
+                // The old code only logged this: selection mode stayed on with
+                // zero ticks and no explanation. Surface it on the one error
+                // channel (reuses the existing "Action failed" dialog title).
+                reportError(R.string.action_failed, "Could not select all questions: ${e.message}")
                 onResult(emptySet())
             }
         }
+    }
+
+    /** Publish the one visible error; a new one replaces the previous. */
+    private fun reportError(titleRes: Int, message: String) {
+        _error.value = BrowseError(titleRes, message)
+    }
+
+    /** Clear a success path's own error without hiding an unrelated one. */
+    private fun clearError(titleRes: Int) {
+        if (_error.value?.titleRes == titleRes) _error.value = null
+    }
+
+    fun dismissError() {
+        _error.value = null
     }
 
     fun updateQuery(query: String) {
@@ -587,11 +616,7 @@ class BrowseViewModel(
      */
     private fun reportActionFailure(action: String, e: Exception) {
         Logger.e("BROWSEVM", "$action failed", e)
-        _actionError.value = "$action failed: ${e.message}"
-    }
-
-    fun dismissActionError() {
-        _actionError.value = null
+        reportError(R.string.action_failed, "$action failed: ${e.message}")
     }
 
     fun deleteQuestion(questionId: String) {
@@ -742,20 +767,47 @@ class BrowseViewModel(
         format: com.mcqapp.data.export.ExportFormat
     ) {
         viewModelScope.launch {
+            exportSelectionOn(uri, questionIds, title, format)
+        }
+    }
+
+    /**
+     * The whole selection render — including [buildSelectionDto]'s per-id
+     * position lookups — runs in one IO context, exactly like
+     * [shareSelectionIntent]. This used to run [buildSelectionDto] on Main,
+     * where an O(n) query-per-id loop janked the list being exported.
+     *
+     * [dispatcher], [buildDto] and [open] are seams: the public
+     * [exportSelection] passes [Dispatchers.IO] and the real repository/file,
+     * while a test records which thread the body actually ran on (the
+     * `SettingsExportDispatcherTest` precedent).
+     */
+    internal suspend fun exportSelectionOn(
+        uri: android.net.Uri,
+        questionIds: Set<String>,
+        title: String,
+        format: com.mcqapp.data.export.ExportFormat,
+        dispatcher: CoroutineDispatcher = Dispatchers.IO,
+        buildDto: suspend (Set<String>, String) -> com.mcqapp.data.io.PaperDto =
+            { ids, t -> buildSelectionDto(ids, t) },
+        open: () -> java.io.OutputStream? = {
+            getApplication<Application>().contentResolver.openOutputStream(uri)
+        }
+    ) {
+        withContext(dispatcher) {
             try {
-                val dto = buildSelectionDto(questionIds, title)
+                val dto = buildDto(questionIds, title)
                 val exporter = com.mcqapp.data.export.PaperExporter(repository.db())
                 val file = (
-                    getApplication<Application>().contentResolver.openOutputStream(uri)
-                        ?: throw IllegalStateException("Could not open output stream")
+                    open() ?: throw IllegalStateException("Could not open output stream")
                     ).use { sink ->
                     exporter.exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
                 }
                 Logger.i("BROWSEVM", "Exported ${questionIds.size} questions as ${file.fileName}")
-                _exportError.value = null
+                clearError(R.string.export)
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Export of selection failed", e)
-                _exportError.value = "Export failed: ${e.message}"
+                reportError(R.string.export, "Export failed: ${e.message}")
             }
         }
     }
@@ -811,7 +863,7 @@ class BrowseViewModel(
     /**
      * Renders the ticked questions into `cacheDir/shared` and returns the raw
      * share intent (the screen wraps it in a chooser). Null on failure, with
-     * [exportError] set; [isSharing] drives the dialog's progress while the
+     * [error] set; [isSharing] drives the dialog's progress while the
      * render runs on IO.
      */
     suspend fun shareSelectionIntent(
@@ -837,7 +889,7 @@ class BrowseViewModel(
             }
         } catch (e: Exception) {
             Logger.e("BROWSEVM", "Share of selection failed", e)
-            _exportError.value = "Export failed: ${e.message}"
+            reportError(R.string.export, "Export failed: ${e.message}")
             return null
         } finally {
             _isSharing.value = false
@@ -855,14 +907,6 @@ class BrowseViewModel(
         walk(_state.value.paper?.categories.orEmpty())
     }
 
-    fun dismissExportError() {
-        _exportError.value = null
-    }
-
-    fun dismissBulkError() {
-        _bulkError.value = null
-    }
-
     fun bulkEdit(
         questionIds: Set<String>,
         marksText: String,
@@ -877,10 +921,10 @@ class BrowseViewModel(
             // saw as invalid was silently the only one ignored. Refuse the
             // whole edit so nothing is half-applied.
             if (trimmedMarks.isNotEmpty() && marks == null) {
-                _bulkError.value = "Marks must be a non-negative number."
+                reportError(R.string.edit, "Marks must be a non-negative number.")
                 return@launch
             }
-            _bulkError.value = null
+            clearError(R.string.edit)
             // The gate is on the FILTERED list: `" ,"` passed the raw-text
             // check, the filtered list came out empty, and the write deleted
             // every tag although the dialog says blank fields keep existing
@@ -893,7 +937,7 @@ class BrowseViewModel(
                 Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Bulk edit failed", e)
-                _bulkError.value = "Could not apply the edit: ${e.message}"
+                reportError(R.string.edit, "Could not apply the edit: ${e.message}")
             }
         }
     }

@@ -503,7 +503,12 @@ internal class HistoryStore(
         slowSeconds: () -> Long = { ReviewFilters.DEFAULT_SLOW_SECONDS },
         bookmarked: () -> Set<String>
     ): PagingSource<ResultPageKey, NumberedResult> {
-        val source = ResultsPagingSource(
+        // No invalidation observer here on purpose. The bookmark SET is the
+        // single source of truth (read at load time by `bookmarked`); the
+        // ResultsViewModel updates that set first and only then invalidates
+        // this source. A table-change observer here would be an independent,
+        // out-of-order signal that could reload against the previous set.
+        return ResultsPagingSource(
             attemptId = attemptId,
             filter = filter,
             bookmarked = bookmarked,
@@ -511,17 +516,6 @@ internal class HistoryStore(
             dao = db.attemptDao(),
             map = { it.toDomainResult() }
         )
-        // The Saved chip's set is read at load time and the source invalidates
-        // on bookmark writes, so a toggle refreshes the list in place instead
-        // of the ViewModel rebuilding the pager (consolidated_bugs.md F14).
-        val tracker = db.invalidationTracker
-        tracker.addObserver(object : InvalidationTracker.Observer("bookmarks") {
-            override fun onInvalidated(tables: Set<String>) {
-                source.invalidate()
-                tracker.removeObserver(this)
-            }
-        })
-        return source
     }
 
     suspend fun getResultAggregates(attemptId: Long): ResultAggregates =
@@ -531,8 +525,12 @@ internal class HistoryStore(
         db.attemptDao().getResultCategoryBreakdown(attemptId)
 
     /** The report's light per-question evidence (section 11.14). */
-    suspend fun getReportRows(attemptId: Long): List<ReportRow> =
-        db.attemptDao().getReportRows(attemptId).map {
+    suspend fun getReportRows(attemptId: Long): List<ReportRow> {
+        // The attempt's paper scopes the category join in the DAO: a question
+        // moved to another paper must read as unresolved, with no Study link
+        // into the foreign paper.
+        val paperId = db.attemptDao().getById(attemptId)?.paperId ?: return emptyList()
+        return db.attemptDao().getReportRows(attemptId, paperId).map {
             ReportRow(
                 questionId = it.questionId,
                 categoryTitle = it.categoryTitle,
@@ -546,6 +544,7 @@ internal class HistoryStore(
                 correctCount = it.correctOptionIds.split(",").count { id -> id.isNotBlank() }
             )
         }
+    }
 
     /** The option count from the as-of-attempt snapshot; 0 when unreadable. */
     private fun optionCount(optionsJson: String): Int {

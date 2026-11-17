@@ -70,6 +70,30 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
+ * The blueprint a save must target. Kept as a value so the edit/create choice
+ * is made from the *saveable* edit id, not from the asynchronously-loaded
+ * blueprint summary — that summary is briefly null right after a rotation,
+ * which used to turn an EDIT into a CREATE and duplicate the blueprint (H12).
+ */
+internal sealed interface BlueprintSaveTarget {
+    data class Update(val id: Long) : BlueprintSaveTarget
+    data object Create : BlueprintSaveTarget
+}
+
+/** Which repository call a blueprint save makes, decided by the saveable id. */
+internal fun blueprintSaveTarget(editId: Long?): BlueprintSaveTarget =
+    if (editId != null) BlueprintSaveTarget.Update(editId) else BlueprintSaveTarget.Create
+
+/**
+ * The blueprint id being edited, derived from state that rides a
+ * configuration change: [isEditing] and the setup sheet's saveable `variant`
+ * (the selected blueprint's id as a string). Never read this from a volatile
+ * `remember` — rotation would lose it and the save would create a duplicate.
+ */
+internal fun blueprintEditId(isEditing: Boolean, selectedVariant: String?): Long? =
+    if (isEditing) selectedVariant?.toLongOrNull() else null
+
+/**
  * The phase-1 setup sheet: what kind of test, how many questions, how long,
  * and what the learner is about to get (sections 7.2-7.5).
  *
@@ -209,8 +233,9 @@ internal fun TestSetupSheet(
     /** The "New panel…" dialog's name field. */
     var showPanelDialog by rememberSaveable { mutableStateOf(false) }
     var panelName by rememberSaveable { mutableStateOf("") }
-    /** The panel awaiting delete confirmation. */
-    var panelToDelete by remember { mutableStateOf<PanelSummary?>(null) }
+    /** The panel awaiting delete confirmation (id + name ride rotation). */
+    var panelToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var panelToDeleteName by rememberSaveable { mutableStateOf("") }
     /** The paper's blueprints, loaded once for the Blueprint picker. */
     var blueprints by remember(paper.id) { mutableStateOf<List<BlueprintSummary>?>(null) }
     LaunchedEffect(paper.id, type, blueprints == null) {
@@ -236,11 +261,15 @@ internal fun TestSetupSheet(
             blueprintViews = null
         }
     }
-    /** The editor is open; null id means a new blueprint. */
+    /** The editor is open; the edit flag rides rotation alongside `variant`. */
     var showBlueprintEditor by rememberSaveable { mutableStateOf(false) }
-    var editingBlueprintId by remember { mutableStateOf<Long?>(null) }
-    /** The blueprint awaiting delete confirmation. */
-    var blueprintToDelete by remember { mutableStateOf<BlueprintSummary?>(null) }
+    var blueprintEditorEditing by rememberSaveable { mutableStateOf(false) }
+    // Derived from saveable state, so a rotation cannot flip an EDIT into a
+    // CREATE even in the frames before the blueprint list has reloaded.
+    val editingBlueprintId: Long? = blueprintEditId(blueprintEditorEditing, variant)
+    /** The blueprint awaiting delete confirmation (id + name ride rotation). */
+    var blueprintToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var blueprintToDeleteName by rememberSaveable { mutableStateOf("") }
     val panelScope = rememberCoroutineScope()
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
@@ -608,7 +637,10 @@ internal fun TestSetupSheet(
                                     // A panel is just a saved id set, but it is
                                     // not reproducible once the metrics move;
                                     // the trash is a separate, explicit target.
-                                    IconButton(onClick = { panelToDelete = panel }) {
+                                    IconButton(onClick = {
+                                        panelToDeleteId = panel.id
+                                        panelToDeleteName = panel.name
+                                    }) {
                                         Icon(
                                             Icons.Filled.Delete,
                                             contentDescription = stringResource(R.string.test_setup_panel_delete)
@@ -649,7 +681,10 @@ internal fun TestSetupSheet(
                                             Text("${blueprint.name} · ${blueprint.sectionCount}")
                                         }
                                     )
-                                    IconButton(onClick = { blueprintToDelete = blueprint }) {
+                                    IconButton(onClick = {
+                                        blueprintToDeleteId = blueprint.id
+                                        blueprintToDeleteName = blueprint.name
+                                    }) {
                                         Icon(
                                             Icons.Filled.Delete,
                                             contentDescription = stringResource(R.string.test_setup_blueprint_delete)
@@ -661,7 +696,7 @@ internal fun TestSetupSheet(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = {
-                            editingBlueprintId = null
+                            blueprintEditorEditing = false
                             showBlueprintEditor = true
                         }) {
                             Text(stringResource(R.string.test_setup_blueprint_new))
@@ -672,7 +707,7 @@ internal fun TestSetupSheet(
                             TextButton(
                                 enabled = blueprintViews != null,
                                 onClick = {
-                                    editingBlueprintId = variant?.toLongOrNull()
+                                    blueprintEditorEditing = true
                                     showBlueprintEditor = true
                                 }
                             ) {
@@ -1043,25 +1078,30 @@ internal fun TestSetupSheet(
 
     // Deleting a panel throws away a set that cannot be rebuilt exactly once
     // the metrics have moved, so it asks first.
-    panelToDelete?.let { panel ->
+    panelToDeleteId?.let { panelId ->
+        val panelName = panelToDeleteName
+        fun clearPanelDelete() {
+            panelToDeleteId = null
+            panelToDeleteName = ""
+        }
         AlertDialog(
-            onDismissRequest = { panelToDelete = null },
+            onDismissRequest = { clearPanelDelete() },
             title = { Text(stringResource(R.string.test_setup_panel_delete)) },
-            text = { Text(stringResource(R.string.test_setup_panel_delete_confirm, panel.name)) },
+            text = { Text(stringResource(R.string.test_setup_panel_delete_confirm, panelName)) },
             confirmButton = {
                 TextButton(onClick = {
-                    panelToDelete = null
+                    clearPanelDelete()
                     panelScope.launch {
-                        runCatching { onDeletePanel(panel.id) }
-                        if (variant == panel.id.toString()) variant = null
-                        panels = panels.orEmpty().filterNot { it.id == panel.id }
+                        runCatching { onDeletePanel(panelId) }
+                        if (variant == panelId.toString()) variant = null
+                        panels = panels.orEmpty().filterNot { it.id == panelId }
                     }
                 }) {
                     Text(stringResource(R.string.delete))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { panelToDelete = null }) {
+                TextButton(onClick = { clearPanelDelete() }) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -1078,12 +1118,16 @@ internal fun TestSetupSheet(
             blueprint = editing,
             initialSections = if (editing != null) blueprintViews.orEmpty() else emptyList(),
             requestedCount = requestCount,
+            // The saveable edit id drives both the drafts and the edit/create
+            // rendering; it does not blink to null while the list reloads.
+            editingId = editingBlueprintId,
             onSave = { name, sections ->
-                if (editing != null) {
-                    onUpdateBlueprint(editing.id, name, sections)
-                    editing.id
-                } else {
-                    onCreateBlueprint(name, sections)
+                when (val target = blueprintSaveTarget(editingBlueprintId)) {
+                    is BlueprintSaveTarget.Update -> {
+                        onUpdateBlueprint(target.id, name, sections)
+                        target.id
+                    }
+                    BlueprintSaveTarget.Create -> onCreateBlueprint(name, sections)
                 }
             },
             onDelete = { id ->
@@ -1091,7 +1135,10 @@ internal fun TestSetupSheet(
                 if (variant == id.toString()) variant = null
                 blueprints = blueprints.orEmpty().filterNot { it.id == id }
             },
-            onDismiss = { showBlueprintEditor = false },
+            onDismiss = {
+                showBlueprintEditor = false
+                blueprintEditorEditing = false
+            },
             onSaved = { id ->
                 // Switch to the saved blueprint and reload both the picker and
                 // the section views. Editing the blueprint already selected
@@ -1107,32 +1154,37 @@ internal fun TestSetupSheet(
     }
 
     // Deleting a blueprint asks first, like panels.
-    blueprintToDelete?.let { blueprint ->
+    blueprintToDeleteId?.let { blueprintId ->
+        val blueprintName = blueprintToDeleteName
+        fun clearBlueprintDelete() {
+            blueprintToDeleteId = null
+            blueprintToDeleteName = ""
+        }
         AlertDialog(
-            onDismissRequest = { blueprintToDelete = null },
+            onDismissRequest = { clearBlueprintDelete() },
             title = { Text(stringResource(R.string.test_setup_blueprint_delete)) },
             text = {
                 Text(
                     stringResource(
                         R.string.test_setup_blueprint_delete_confirm,
-                        blueprint.name
+                        blueprintName
                     )
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    blueprintToDelete = null
+                    clearBlueprintDelete()
                     panelScope.launch {
-                        runCatching { onDeleteBlueprint(blueprint.id) }
-                        if (variant == blueprint.id.toString()) variant = null
-                        blueprints = blueprints.orEmpty().filterNot { it.id == blueprint.id }
+                        runCatching { onDeleteBlueprint(blueprintId) }
+                        if (variant == blueprintId.toString()) variant = null
+                        blueprints = blueprints.orEmpty().filterNot { it.id == blueprintId }
                     }
                 }) {
                     Text(stringResource(R.string.delete))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { blueprintToDelete = null }) {
+                TextButton(onClick = { clearBlueprintDelete() }) {
                     Text(stringResource(R.string.cancel))
                 }
             }

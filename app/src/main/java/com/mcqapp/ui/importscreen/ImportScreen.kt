@@ -635,7 +635,7 @@ private fun PreviewQuestionCard(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SuggestionTextField(
+internal fun SuggestionTextField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
@@ -655,7 +655,10 @@ private fun SuggestionTextField(
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                // Editable anchor: opening the menu must not steal focus from
+                // the field, otherwise a name not in the suggestions cannot be
+                // typed (PrimaryNotEditable moves focus to the menu).
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             matches.forEach { match ->

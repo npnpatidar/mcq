@@ -90,6 +90,26 @@ sealed interface ImageTarget {
 }
 
 /**
+ * Where a MathLive formula edit belongs, described by stable block identity
+ * rather than a list index.
+ *
+ * The WebView's JS bridge is installed once by `AndroidView.factory` and is
+ * never rebound. It can safely carry [blockId] (the WebView is keyed by that
+ * identity) but not a position: after a reorder the block moves, and a captured
+ * index would write the formula into whichever block now occupies the old slot
+ * (review-reports/08 H5). Resolution against the current lists happens in
+ * [applyMathTarget], exactly as it does for picked images.
+ */
+sealed interface MathTarget {
+    /** The block's stable id, from the corresponding blockIds list. */
+    val blockId: String
+
+    data class Body(override val blockId: String) : MathTarget
+    data class Explanation(override val blockId: String) : MathTarget
+    data class Option(val optionId: String, override val blockId: String) : MathTarget
+}
+
+/**
  * What the editor is doing right now. One operation at a time: a second
  * Save/Prev/Next/Delete while one is in flight is refused, and the screen
  * disables those controls, so two moves cannot interleave their session
@@ -281,6 +301,42 @@ internal fun applyImageTarget(s: EditorUiState, target: ImageTarget, src: String
             else s.copy(options = s.options.map { o ->
                 if (o.id != option.id) o
                 else o.copy(elements = o.elements.toMutableList().also { it[i] = image })
+            })
+        }
+    }
+}
+
+/**
+ * Writes [mml] into the block named by [target], resolving its id against the
+ * *current* lists. A target whose block or option is gone (deleted while the
+ * WebView was still mounted) writes nothing rather than a neighbouring block.
+ *
+ * This is the formula counterpart of [applyImageTarget]: the positional index
+ * a once-installed JS callback used to capture is recovered here at write time
+ * from the stable id, so a reorder cannot corrupt a different formula (H5).
+ */
+internal fun applyMathTarget(s: EditorUiState, target: MathTarget, mml: String): EditorUiState {
+    val math = ContentElement.MathElement(mml)
+    return when (target) {
+        is MathTarget.Body -> {
+            val i = s.blockIds.indexOf(target.blockId)
+            if (i !in s.elements.indices) s
+            else s.copy(elements = s.elements.toMutableList().also { it[i] = math })
+        }
+        is MathTarget.Explanation -> {
+            val i = s.explanationBlockIds.indexOf(target.blockId)
+            if (i !in s.explanationElements.indices) s
+            else s.copy(
+                explanationElements = s.explanationElements.toMutableList().also { it[i] = math }
+            )
+        }
+        is MathTarget.Option -> {
+            val option = s.options.firstOrNull { it.id == target.optionId } ?: return s
+            val i = option.blockIds.indexOf(target.blockId)
+            if (i !in option.elements.indices) s
+            else s.copy(options = s.options.map { o ->
+                if (o.id != option.id) o
+                else o.copy(elements = o.elements.toMutableList().also { it[i] = math })
             })
         }
     }
@@ -952,6 +1008,25 @@ class EditorViewModel(
             },
             explanationBlockIds = idsMoved(it.explanationBlockIds, index, index + 1)
         )
+    }
+
+    // ---- formula writes, addressed by stable block identity ----
+    //
+    // The MathLive JS bridge is installed once per keyed WebView and never
+    // rebound (H5). These three methods keep the resolution in the ViewModel,
+    // mirroring applyImageTarget: the callback carries a block id, and the
+    // index that id maps to is read from the current state when it fires.
+
+    fun updateMathBody(blockId: String, mml: String) = updateState {
+        applyMathTarget(it, MathTarget.Body(blockId), mml)
+    }
+
+    fun updateMathExplanation(blockId: String, mml: String) = updateState {
+        applyMathTarget(it, MathTarget.Explanation(blockId), mml)
+    }
+
+    fun updateMathOption(optionId: String, blockId: String, mml: String) = updateState {
+        applyMathTarget(it, MathTarget.Option(optionId, blockId), mml)
     }
 
     private fun updateState(block: (EditorUiState) -> EditorUiState) {

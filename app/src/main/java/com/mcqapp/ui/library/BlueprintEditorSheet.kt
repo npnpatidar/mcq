@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,34 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
+ * Serialises the editor's parts to a String so `rememberSaveable` can restore
+ * the learner's weights after a configuration change. Control characters
+ * delimit fields; category ids never contain them. Exposed for the rotation
+ * regression test.
+ */
+internal val BlueprintPartsSaver = Saver<Map<String, Int>, String>(
+    save = { parts ->
+        parts.entries
+            .sortedBy { it.key }
+            .joinToString("\u001E") { "${it.key}\u001F${it.value}" }
+    },
+    restore = { saved ->
+        if (saved.isEmpty()) {
+            emptyMap()
+        } else {
+            saved.split('\u001E').mapNotNull { record ->
+                val cut = record.indexOf('\u001F')
+                if (cut < 0) null
+                else {
+                    val count = record.substring(cut + 1).toIntOrNull()
+                    if (count == null) null else record.substring(0, cut) to count
+                }
+            }.toMap()
+        }
+    }
+)
+
+/**
  * The blueprint tree editor (plan §9.1): a name plus, for every paper
  * category, a parts stepper in the paper's own tree shape. Parts are relative
  * weights inside each sibling group; the editor shows the local share, the
@@ -60,6 +89,14 @@ internal fun BlueprintEditorSheet(
     paper: Paper,
     /** The blueprint being edited, or null for a new one. */
     blueprint: BlueprintSummary?,
+    /**
+     * Saveable edit identity. The setup sheet passes its saveable edit id,
+     * which does not blink to null while the list reloads after a rotation.
+     * Keying drafts on [blueprint] instead would reset them in that window,
+     * and it also drives the title / Delete visibility so an edit always
+     * renders as an edit (H12).
+     */
+    editingId: Long? = blueprint?.id,
     /** The stored sections, as views: empty for a new blueprint. */
     initialSections: List<BlueprintSectionView> = emptyList(),
     /** The length the setup sheet currently asks for; quotas are read at it. */
@@ -74,13 +111,19 @@ internal fun BlueprintEditorSheet(
     onDismiss: () -> Unit,
     onSaved: (Long) -> Unit = {}
 ) {
-    var name by rememberSaveable(blueprint?.id) { mutableStateOf(blueprint?.name ?: "") }
-    var parts by remember(blueprint?.id, initialSections) {
+    // Typed drafts are keyed on [editingId] and saved, not just remembered: a
+    // rotation recreates this composable, and the old plain `remember` lost
+    // the name/parts while the editor itself stayed open (H12).
+    var name by rememberSaveable(editingId) { mutableStateOf(blueprint?.name ?: "") }
+    var parts by rememberSaveable(editingId, stateSaver = BlueprintPartsSaver) {
         mutableStateOf(partsFromViews(initialSections))
     }
-    var saveError by remember(blueprint?.id) { mutableStateOf<String?>(null) }
-    var saving by remember(blueprint?.id) { mutableStateOf(false) }
-    var confirmDelete by remember(blueprint?.id) { mutableStateOf(false) }
+    var saveError by rememberSaveable(editingId) { mutableStateOf<String?>(null) }
+    // In-flight progress is deliberately transient: a rotation cancels
+    // rememberCoroutineScope, so restoring `saving = true` would leave Save
+    // disabled forever with no coroutine running to clear it.
+    var saving by remember(editingId) { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable(editingId) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val flat = remember(paper.categories) { CategorySelection.flatten(paper.categories) }
@@ -207,7 +250,7 @@ internal fun BlueprintEditorSheet(
         ) {
             Text(
                 stringResource(
-                    if (blueprint == null) {
+                    if (editingId == null) {
                         R.string.blueprint_editor_new_title
                     } else {
                         R.string.blueprint_editor_title
@@ -408,7 +451,7 @@ internal fun BlueprintEditorSheet(
             ) {
                 Text(stringResource(R.string.save))
             }
-            if (blueprint != null) {
+            if (editingId != null) {
                 TextButton(
                     onClick = { confirmDelete = true },
                     modifier = Modifier.testTag("blueprint-delete")
@@ -422,7 +465,8 @@ internal fun BlueprintEditorSheet(
         }
     }
 
-    if (confirmDelete && blueprint != null) {
+    val deleteId = editingId
+    if (confirmDelete && deleteId != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text(stringResource(R.string.test_setup_blueprint_delete)) },
@@ -430,7 +474,7 @@ internal fun BlueprintEditorSheet(
                 Text(
                     stringResource(
                         R.string.blueprint_editor_delete_confirm,
-                        blueprint.name
+                        blueprint?.name ?: name
                     )
                 )
             },
@@ -439,7 +483,7 @@ internal fun BlueprintEditorSheet(
                     onClick = {
                         confirmDelete = false
                         scope.launch {
-                            runCatching { onDelete(blueprint.id) }
+                            runCatching { onDelete(deleteId) }
                             onDismiss()
                         }
                     }

@@ -277,6 +277,9 @@ fun QuestionEditorScreen(
                 owner = state.questionId.ifBlank { "new" },
                 onAddBlock = viewModel::addBlock,
                 onUpdateBlock = viewModel::updateBlock,
+                // Identity-addressed: the once-installed MathLive bridge must
+                // never write through a positional index (review-reports/08 H5).
+                onUpdateMath = { blockId, mml -> viewModel.updateMathBody(blockId, mml) },
                 onRemoveBlock = viewModel::removeBlock,
                 onMoveUp = viewModel::moveBlockUp,
                 onMoveDown = viewModel::moveBlockDown,
@@ -324,6 +327,9 @@ fun QuestionEditorScreen(
                     onAddBlock = { viewModel.addOptionBlock(option.id, it) },
                     onUpdateBlock = { index, element ->
                         viewModel.updateOptionBlock(option.id, index, element)
+                    },
+                    onUpdateMath = { blockId, mml ->
+                        viewModel.updateMathOption(option.id, blockId, mml)
                     },
                     onRemoveBlock = { viewModel.removeOptionBlock(option.id, it) },
                     onMoveBlockUp = { viewModel.moveOptionBlockUp(option.id, it) },
@@ -388,6 +394,7 @@ fun QuestionEditorScreen(
                 owner = "${state.questionId}|explanation",
                 onAddBlock = viewModel::addExplanationBlock,
                 onUpdateBlock = viewModel::updateExplanationBlock,
+                onUpdateMath = { blockId, mml -> viewModel.updateMathExplanation(blockId, mml) },
                 onRemoveBlock = viewModel::removeExplanationBlock,
                 onMoveUp = viewModel::moveExplanationBlockUp,
                 onMoveDown = viewModel::moveExplanationBlockDown,
@@ -643,6 +650,7 @@ private fun OptionEditorRow(
     owner: String,
     onAddBlock: (EditorBlockType) -> Unit,
     onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
+    onUpdateMath: (blockId: String, mml: String) -> Unit,
     onRemoveBlock: (index: Int) -> Unit,
     onMoveBlockUp: (index: Int) -> Unit,
     onMoveBlockDown: (index: Int) -> Unit,
@@ -711,6 +719,7 @@ private fun OptionEditorRow(
             owner = owner,
             onAddBlock = onAddBlock,
             onUpdateBlock = onUpdateBlock,
+            onUpdateMath = onUpdateMath,
             onRemoveBlock = onRemoveBlock,
             onMoveUp = onMoveBlockUp,
             onMoveDown = onMoveBlockDown,

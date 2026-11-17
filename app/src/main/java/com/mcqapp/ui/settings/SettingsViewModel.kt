@@ -828,42 +828,79 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /**
      * Reads and restores a backup zip. The wipe-and-replace is atomic in
      * the database; settings flip after. [onDone] reports the summary the
-     * screen shows.
+     * screen shows. [onComplete] runs on every terminal path — success,
+     * either failure or cancellation — so the screen can always clear its
+     * busy flag, mirroring [backupAll]'s `finally`. The error dialog is still
+     * shown through [onError] on failure; clearing busy does not hide it.
+     * [onComplete] defaults to a no-op, so any caller gating controls on a
+     * busy flag must pass the callback that clears it.
      */
-    fun restoreBackup(uri: Uri, onError: (String) -> Unit, onDone: (String) -> Unit) {
+    fun restoreBackup(
+        uri: Uri,
+        onError: (String) -> Unit,
+        onDone: (String) -> Unit,
+        onComplete: () -> Unit = {}
+    ) {
         viewModelScope.launch {
-            try {
-                val app = getApplication<Application>()
-                val updateAnswers = repository.updateAnswersOnDuplicate().first()
-                // The backup is restored as it is read: the zip, the bank and
-                // the study table are never held, so a backup bigger than the
-                // heap restores instead of dying. The zip expansion cap still
-                // applies, as does a cap on the archive's own bytes.
-                val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val stream = app.contentResolver.openInputStream(uri)
-                        ?.let { boundedStream(it, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES) }
-                        ?: throw IllegalStateException("Could not read the file.")
-                    stream.use { input ->
-                        BackupRestorer(repository.db()).restoreStreaming(
-                            input,
-                            updateAnswersOnDuplicate = updateAnswers,
-                            applySettings = { repository.settingsRestore(it) },
-                            applyInProgress = { snapshot ->
-                                repository.restoreTestProgress(snapshot)
-                            }
-                        )
+            restoreBackupHandling(
+                onError = onError,
+                onDone = onDone,
+                onComplete = onComplete,
+                restore = { restoreFrom(uri) }
+            )
+        }
+    }
+
+    /**
+     * The restore's error/completion handling, with the fallible work
+     * injected so a test can drive either catch path without a real backup
+     * file. The report produced by [restore] is passed to [onDone] on success;
+     * this function itself returns Unit.
+     */
+    internal suspend fun restoreBackupHandling(
+        onError: (String) -> Unit,
+        onDone: (String) -> Unit,
+        onComplete: () -> Unit,
+        restore: suspend () -> String
+    ) {
+        try {
+            val report = restore()
+            refreshStorage()
+            Logger.i("SETTINGS", "Backup restored: $report")
+            onDone(report)
+        } catch (e: com.mcqapp.util.ImportTooLargeException) {
+            Logger.e("SETTINGS", "Restore failed", e)
+            val limitMb = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)
+            onError("That backup is over the $limitMb MB restore limit — it may be corrupt.")
+        } catch (e: Exception) {
+            Logger.e("SETTINGS", "Restore failed", e)
+            onError("Restore failed: ${e.message}")
+        } finally {
+            onComplete()
+        }
+    }
+
+    /** The fallible restore core: read the streamed zip and apply it. */
+    private suspend fun restoreFrom(uri: Uri): String {
+        val app = getApplication<Application>()
+        val updateAnswers = repository.updateAnswersOnDuplicate().first()
+        // The backup is restored as it is read: the zip, the bank and
+        // the study table are never held, so a backup bigger than the
+        // heap restores instead of dying. The zip expansion cap still
+        // applies, as does a cap on the archive's own bytes.
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val stream = app.contentResolver.openInputStream(uri)
+                ?.let { boundedStream(it, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES) }
+                ?: throw IllegalStateException("Could not read the file.")
+            stream.use { input ->
+                BackupRestorer(repository.db()).restoreStreaming(
+                    input,
+                    updateAnswersOnDuplicate = updateAnswers,
+                    applySettings = { repository.settingsRestore(it) },
+                    applyInProgress = { snapshot ->
+                        repository.restoreTestProgress(snapshot)
                     }
-                }
-                refreshStorage()
-                Logger.i("SETTINGS", "Backup restored: $report")
-                onDone(report)
-            } catch (e: com.mcqapp.util.ImportTooLargeException) {
-                Logger.e("SETTINGS", "Restore failed", e)
-                val limitMb = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)
-                onError("That backup is over the $limitMb MB restore limit — it may be corrupt.")
-            } catch (e: Exception) {
-                Logger.e("SETTINGS", "Restore failed", e)
-                onError("Restore failed: ${e.message}")
+                )
             }
         }
     }

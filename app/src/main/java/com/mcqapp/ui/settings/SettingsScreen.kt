@@ -302,10 +302,8 @@ fun SettingsScreen(
                         viewModel.restoreBackup(
                             uri,
                             onError = fail(R.string.restore_failed),
-                            onDone = { report ->
-                                busy = false
-                                restoreDone = report
-                            }
+                            onDone = { report -> restoreDone = report },
+                            onComplete = { busy = false }
                         )
                     }
                 }) { Text(stringResource(R.string.restore_replace_everything)) }

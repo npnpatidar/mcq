@@ -64,7 +64,6 @@ import com.mcqapp.R
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
-import com.mcqapp.domain.Paper
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.library.TestSetupSheet
 import com.mcqapp.util.Logger
@@ -115,15 +114,15 @@ fun LibraryScreen(
     // Dialog flags ride rotation (plain `remember` closed them and
     // discarded typed input) — consolidated_bugs.md F12.
     var showPaperDialog by rememberSaveable { mutableStateOf(false) }
-    // The paper being edited (Manage → Edit paper); null hides the dialog.
-    var editingPaper by remember { mutableStateOf<Paper?>(null) }
-    // A Test/Mistakes tap parks its paper + scope + preselected type here so
-    // the setup sheet can ask for the bounded plan before the route carries it.
-    var pendingTestSetup by remember { mutableStateOf<PendingTestSetup?>(null) }
+    // The edit/pending-setup state is owned by the ViewModel (H12): plain
+    // `remember` dropped an open dialog or a parked test setup on rotation,
+    // losing typed input and — for a blueprint — turning an edit into a create.
+    val editingPaper by viewModel.editingPaper.collectAsStateWithLifecycle()
+    val pendingTestSetup by viewModel.pendingTestSetup.collectAsStateWithLifecycle()
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var categoryDialogPaperId by rememberSaveable { mutableStateOf("") }
     var categoryDialogParentId by rememberSaveable { mutableStateOf<String?>(null) }
-    var editingCategory by remember { mutableStateOf<com.mcqapp.domain.CategoryNode?>(null) }
+    val editingCategory by viewModel.editingCategory.collectAsStateWithLifecycle()
     // The export target (paper or selection, and the chosen format) lives in
     // the ViewModel: the system save dialog recreates the activity, and plain
     // `remember` came back all-null, so the re-delivered URI fell through to
@@ -249,7 +248,9 @@ fun LibraryScreen(
                         val paper = papers.firstOrNull { it.id == paperId }
                         Logger.i("LIB", "Drawer test: paperId=$paperId, categories=${categoryIds.size}")
                         if (paper != null) {
-                            pendingTestSetup = PendingTestSetup(paper, categoryIds, com.mcqapp.domain.TestType.RANDOM)
+                            viewModel.setPendingTestSetup(
+                                LibraryViewModel.PendingTestSetup(paper, categoryIds, com.mcqapp.domain.TestType.RANDOM)
+                            )
                         } else {
                             // No paper record (should not happen): fall back to
                             // the paper's own duration rather than dropping the tap.
@@ -336,7 +337,13 @@ fun LibraryScreen(
                                 canMoveDown = index < papers.lastIndex,
                                 onMovePaper = { delta -> viewModel.movePaper(paper.id, delta) },
                                 paper = paper,
-                                onStart = { pendingTestSetup = PendingTestSetup(paper, emptyList(), com.mcqapp.domain.TestType.RANDOM) },
+                                onStart = {
+                                    viewModel.setPendingTestSetup(
+                                        LibraryViewModel.PendingTestSetup(
+                                            paper, emptyList(), com.mcqapp.domain.TestType.RANDOM
+                                        )
+                                    )
+                                },
                                 onStudy = {
                                     Logger.i("LIB", "Study: paperId=${paper.id}, due=$dueCountBadge")
                                     navController.navigate(com.mcqapp.ui.navigation.studyRoute(paper.id))
@@ -372,11 +379,19 @@ fun LibraryScreen(
                                 },
                                 onScopedTest = { ids ->
                                     Logger.i("LIB", "Card test: paperId=${paper.id}, categories=${ids.size}")
-                                    pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.RANDOM)
+                                    viewModel.setPendingTestSetup(
+                                        LibraryViewModel.PendingTestSetup(
+                                            paper, ids, com.mcqapp.domain.TestType.RANDOM
+                                        )
+                                    )
                                 },
                                 onPracticeMistakes = { ids ->
                                     Logger.i("LIB", "Card mistakes: paperId=${paper.id}, categories=${ids.size}")
-                                    pendingTestSetup = PendingTestSetup(paper, ids, com.mcqapp.domain.TestType.MISTAKES)
+                                    viewModel.setPendingTestSetup(
+                                        LibraryViewModel.PendingTestSetup(
+                                            paper, ids, com.mcqapp.domain.TestType.MISTAKES
+                                        )
+                                    )
                                 },
                                 onExport = { tickedIds ->
                                     // Nothing ticked → the whole paper; a
@@ -399,7 +414,7 @@ fun LibraryScreen(
                                     categoryDialogParentId = null
                                     showCategoryDialog = true
                                 },
-                                onEditPaper = { editingPaper = paper },
+                                onEditPaper = { viewModel.beginEditPaper(paper) },
                                 onEditQuestion = { questionId, categoryId ->
                                     com.mcqapp.ui.editor.EditorSession.clear()
                                     navController.navigate(
@@ -421,7 +436,7 @@ fun LibraryScreen(
                                 onPromoteCategory = { categoryId ->
                                     viewModel.promoteCategory(categoryId)
                                 },
-                                onEditCategory = { node -> editingCategory = node },
+                                onEditCategory = { node -> viewModel.beginEditCategory(node) },
                                 // Tapping a category name opens it in Browse,
                                 // scoped to that branch: editing moved into the
                                 // row's ⋮ menu, browsing is the common tap.
@@ -457,10 +472,10 @@ fun LibraryScreen(
     editingPaper?.let { paper ->
         PaperDialog(
             paper = paper,
-            onDismiss = { editingPaper = null },
+            onDismiss = { viewModel.clearEditPaper() },
             onSave = { title, description, duration, negative ->
                 viewModel.updatePaper(paper.id, title, description, duration, negative)
-                editingPaper = null
+                viewModel.clearEditPaper()
             }
         )
     }
@@ -513,9 +528,9 @@ fun LibraryScreen(
                 viewModel.updateBlueprint(blueprintId, name, sections)
             },
             onDeleteBlueprint = { blueprintId -> viewModel.deleteBlueprint(blueprintId) },
-            onDismiss = { pendingTestSetup = null },
+            onDismiss = { viewModel.setPendingTestSetup(null) },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
-                pendingTestSetup = null
+                viewModel.setPendingTestSetup(null)
                 // Plan §10: the next setup sheet starts from this length.
                 viewModel.rememberTestLength(requestedCount)
                 // A blueprint's route carries its section union, not the
@@ -566,10 +581,10 @@ fun LibraryScreen(
         EditCategoryDialog(
             category = category,
             papers = papers,
-            onDismiss = { editingCategory = null },
+            onDismiss = { viewModel.clearEditCategory() },
             onSave = { title, parent ->
                 viewModel.editCategory(category.id, title, parent)
-                editingCategory = null
+                viewModel.clearEditCategory()
             }
         )
     }
@@ -809,14 +824,3 @@ fun LibraryScreen(
         )
     }
 }
-
-/**
- * A Test/Mistakes tap waiting on the setup sheet: which paper, which ticked
- * branches scope it, and which type was preselected. Held in screen state
- * because the sheet resolves after the tap, and the route needs all values.
- */
-private data class PendingTestSetup(
-    val paper: Paper,
-    val categoryIds: List<String>,
-    val type: com.mcqapp.domain.TestType
-)

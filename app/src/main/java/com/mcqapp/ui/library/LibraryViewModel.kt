@@ -13,6 +13,7 @@ import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategoryCounts
+import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.ExclusionMode
 import com.mcqapp.domain.Paper
@@ -44,6 +45,34 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     val avoidRecentQuestions: StateFlow<Boolean> = repository.avoidRecentQuestions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    // Library editor state lives here, not in the screen's `remember`: the
+    // ViewModel survives configuration changes, so an edit dialog or a pending
+    // test setup is still open (with its typed input) after a rotation, and a
+    // cancel still clears it. Keeping these in composition lost them on
+    // rotation (H12).
+    /** The paper being edited (Manage → Edit paper); null hides the dialog. */
+    private val _editingPaper = MutableStateFlow<Paper?>(null)
+    val editingPaper: StateFlow<Paper?> = _editingPaper.asStateFlow()
+    fun beginEditPaper(paper: Paper) { _editingPaper.value = paper }
+    fun clearEditPaper() { _editingPaper.value = null }
+
+    /** A Test/Mistakes tap waiting on the setup sheet, with its scope and type. */
+    data class PendingTestSetup(
+        val paper: Paper,
+        val categoryIds: List<String>,
+        val type: TestType
+    )
+
+    private val _pendingTestSetup = MutableStateFlow<PendingTestSetup?>(null)
+    val pendingTestSetup: StateFlow<PendingTestSetup?> = _pendingTestSetup.asStateFlow()
+    fun setPendingTestSetup(request: PendingTestSetup?) { _pendingTestSetup.value = request }
+
+    /** The category node being edited; null hides the dialog. */
+    private val _editingCategory = MutableStateFlow<CategoryNode?>(null)
+    val editingCategory: StateFlow<CategoryNode?> = _editingCategory.asStateFlow()
+    fun beginEditCategory(node: CategoryNode) { _editingCategory.value = node }
+    fun clearEditCategory() { _editingCategory.value = null }
 
     /**
      * The export the format dialog and the system save dialog are working on.

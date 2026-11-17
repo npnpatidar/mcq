@@ -1,6 +1,7 @@
 package com.mcqapp.ui.navigation
 
-import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -13,6 +14,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -127,10 +130,11 @@ fun McqNavHost(repository: McqRepository) {
         com.mcqapp.util.LocalLoadRemoteImages provides loadRemoteImages,
         LocalUiMessageSender provides messageSender
     ) {
-    // The outer Scaffold exists only to host the app-wide SnackbarHost. Its
-    // innerPadding is not applied: screens own their own Scaffolds and insets,
-    // and the snackbar simply floats above the current destination.
-    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { _ ->
+    // A Box overlay hosts the app-wide SnackbarHost instead of a Scaffold:
+    // each screen owns its own Scaffold and insets, so applying an outer
+    // Scaffold's padding would double-apply them. The snackbar just floats
+    // above the current destination.
+    Box(Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = "library") {
         composable("library") {
             LibraryScreen(
@@ -318,6 +322,7 @@ fun McqNavHost(repository: McqRepository) {
             ImportScreen(importBytes = bytes, importUri = uri, navController = navController)
         }
     }
+    SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
     }
     }
 }

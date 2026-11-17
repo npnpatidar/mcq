@@ -483,8 +483,8 @@ internal fun readableOn(
     return if (contrastRatio(adjusted, background) >= minimum) adjusted else target
 }
 
-/** WCAG relative luminance. */
-private fun luminance(color: Color): Double {
+/** WCAG relative luminance. Shared with the verdict/clock palette. */
+internal fun luminance(color: Color): Double {
     fun channel(value: Float): Double {
         val v = value.toDouble()
         return if (v <= 0.04045) v / 12.92 else ((v + 0.055) / 1.055).pow(2.4)
@@ -500,6 +500,9 @@ internal fun contrastRatio(a: Color, b: Color): Double {
     val lb = luminance(b)
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 }
+
+/** The single "is this surface dark?" test, backed by WCAG luminance. */
+internal fun Color.isDark(): Boolean = luminance(this) < 0.5
 
 private fun mix(a: Color, b: Color, fraction: Float): Color {
     val f = fraction.coerceIn(0f, 1f)

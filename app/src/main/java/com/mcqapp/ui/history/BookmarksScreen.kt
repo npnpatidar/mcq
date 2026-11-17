@@ -3,7 +3,6 @@ package com.mcqapp.ui.history
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -62,6 +61,9 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingRefreshErrorItem
 
@@ -85,6 +87,8 @@ fun BookmarksScreen(
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val platformResources = LocalResources.current
+    val sendMessage = LocalUiMessageSender.current
+    val shareNoAppText = stringResource(R.string.share_no_app)
     // rememberSaveable: the system save dialog recreates the activity, and a
     // plain `remember` came back null so the re-delivered URI was dropped
     // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
@@ -278,7 +282,7 @@ fun BookmarksScreen(
                             )
                         )
                     } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                        sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
                     }
                 }
             }

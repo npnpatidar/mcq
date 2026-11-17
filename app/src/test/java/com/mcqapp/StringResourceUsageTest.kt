@@ -19,6 +19,56 @@ import kotlin.io.path.readText
 class StringResourceUsageTest {
 
     /**
+     * Sinks added for the app-wide announcement/feedback host: a string handed
+     * to one of these is spoken by TalkBack or shown in a Snackbar, so it is
+     * rendered even though it never sits inside a `Text(...)`. This does not
+     * weaken the existing checks — it only recognises these real destinations,
+     * and [isRenderedByFeedbackSink] additionally proves a hoisted local is
+     * actually consumed by one before accepting it.
+     */
+    private val feedbackSinks = setOf("announce", "sendMessage", "UiMessage")
+
+    /** The nearest enclosing call at [offset]: its name and its opening `(`. */
+    private fun enclosingCall(src: String, offset: Int): Pair<String?, Int>? {
+        var depth = 0
+        var i = offset
+        while (i >= 0) {
+            val c = src[i]
+            if (c == ')') depth++
+            if (c == '(') {
+                if (depth == 0) {
+                    val head = src.substring(0, i).trimEnd()
+                    val name = Regex("(?:^|[^A-Za-z0-9_])([A-Za-z0-9_]+)$")
+                        .find(head)?.groupValues?.get(1)
+                    return name to i
+                }
+                depth--
+            }
+            i--
+        }
+        return null
+    }
+
+    /**
+     * A resource is rendered when it is passed straight to a feedback sink, or
+     * when it is hoisted to a local `val` (needed because `stringResource` is
+     * composable-only while the callbacks that show the message are not) and
+     * that local is later read by a sink. A hoisted resource with no sink use
+     * is still reported — we trace the name, we do not assume.
+     */
+    private fun isRenderedByFeedbackSink(before: String, src: String, offset: Int): Boolean {
+        if (feedbackSinks.any { before.endsWith("$it(") }) return true
+        if (before.endsWith("contentDescription =")) return true
+
+        val hoisted = Regex("""\bval\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*$""")
+            .find(before)?.groupValues?.get(1) ?: return false
+        return Regex("""\b${Regex.escape(hoisted)}\b""").findAll(src, offset).any { use ->
+            enclosingCall(src, use.range.first)?.first in feedbackSinks ||
+                src.substring(0, use.range.first).trimEnd().endsWith("contentDescription =")
+        }
+    }
+
+    /**
      * True only for a CONFIRMED rendered position: a direct sink, or a call
      * chain proven to end in one. Unlike [isRendered] this never accepts a bare
      * `->` / `?:` branch as proof — a nested resource must be rendered by a
@@ -32,6 +82,7 @@ class StringResourceUsageTest {
             before.endsWith("help =") ||
             before.endsWith("value =")
         ) return true
+        if (isRenderedByFeedbackSink(before, src, offset)) return true
         return isInsideTextCall(src, offset)
     }
 
@@ -49,6 +100,7 @@ class StringResourceUsageTest {
             before.endsWith("help =") ||
             before.endsWith("value =")
         ) return true
+        if (isRenderedByFeedbackSink(before, src, offset)) return true
         // A fallback branch: the value flows on into a rendered position
         // (`x ?: stringResource(...)` or the branches of a `when` that feeds
         // a field's value). Confirm the enclosing expression actually lands
@@ -153,6 +205,30 @@ class StringResourceUsageTest {
             "a discarded branch's nested resource must be reported",
             checkRendered(src, inner)
         )
+    }
+
+    @Test
+    fun aHoistedStringHandedToTheFeedbackHostIsRendered() {
+        val src = """val shareNoAppText = stringResource(R.string.share_no_app)
+sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))"""
+        val offset = src.indexOf("stringResource(R.string.share_no_app")
+        assertTrue("a hoisted snackbar message is spoken/shown", checkRendered(src, offset))
+    }
+
+    @Test
+    fun aHoistedStringUsedAsAContentDescriptionIsRendered() {
+        val src = """val editorLabel = stringResource(R.string.a11y_formula_editor)
+AndroidView(modifier = Modifier.semantics { contentDescription = editorLabel })"""
+        val offset = src.indexOf("stringResource(R.string.a11y_formula_editor")
+        assertTrue("a hoisted content description is spoken", checkRendered(src, offset))
+    }
+
+    @Test
+    fun aHoistedStringWithNoSinkUseIsStillReported() {
+        val src = """val orphan = stringResource(R.string.saved)
+val answer = 42"""
+        val offset = src.indexOf("stringResource(R.string.saved")
+        assertFalse("a hoisted resource never consumed must still be reported", checkRendered(src, offset))
     }
 
     @Test

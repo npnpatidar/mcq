@@ -2,7 +2,6 @@ package com.mcqapp.ui.browse
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.widget.Toast
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -90,6 +89,9 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.BrowseViewModelFactory
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.parseNonNegativeDecimal
 import com.mcqapp.util.QuestionImage
@@ -135,6 +137,10 @@ fun BrowseScreen(
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val platformResources = LocalResources.current
+    val sendMessage = LocalUiMessageSender.current
+    // Resolved in composition so the action callbacks stay plain lambdas.
+    val shareNoAppText = stringResource(R.string.share_no_app)
+    val duplicatedText = stringResource(R.string.question_duplicated)
 
     val error by viewModel.error.collectAsStateWithLifecycle()
     val moveAffectedCount by viewModel.moveAffectedCount.collectAsStateWithLifecycle()
@@ -665,11 +671,7 @@ fun BrowseScreen(
                         onDuplicate = {
                             viewModel.duplicateQuestion(question.id) { duplicated ->
                                 if (duplicated) {
-                                    Toast.makeText(
-                                        platformContext,
-                                        R.string.question_duplicated,
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                    sendMessage(UiMessage(duplicatedText, UiMessageTone.Success))
                                 }
                             }
                         }
@@ -830,7 +832,7 @@ fun BrowseScreen(
                                 )
                             )
                         } catch (_: ActivityNotFoundException) {
-                            Toast.makeText(platformContext, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                            sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
                         }
                     }
                 }
@@ -988,15 +990,16 @@ fun BrowseScreen(
                                     if (moveIsCopy) {
                                         viewModel.copyQuestions(selectedIds, node.id) { copied ->
                                             if (copied) {
-                                                Toast.makeText(
-                                                    platformContext,
-                                                    platformResources.getQuantityString(
-                                                        R.plurals.questions_copied_count,
-                                                        movedCount,
-                                                        movedCount
-                                                    ),
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                                                sendMessage(
+                                                    UiMessage(
+                                                        platformResources.getQuantityString(
+                                                            R.plurals.questions_copied_count,
+                                                            movedCount,
+                                                            movedCount
+                                                        ),
+                                                        UiMessageTone.Success
+                                                    )
+                                                )
                                             }
                                         }
                                     } else {
@@ -1006,15 +1009,16 @@ fun BrowseScreen(
                                         // ticked rows.
                                         viewModel.moveQuestions(selectedIds, node.id) { total ->
                                             if (total != null) {
-                                                Toast.makeText(
-                                                    platformContext,
-                                                    platformResources.getQuantityString(
-                                                        R.plurals.questions_moved_count,
-                                                        total,
-                                                        total
-                                                    ),
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                                                sendMessage(
+                                                    UiMessage(
+                                                        platformResources.getQuantityString(
+                                                            R.plurals.questions_moved_count,
+                                                            total,
+                                                            total
+                                                        ),
+                                                        UiMessageTone.Success
+                                                    )
+                                                )
                                             }
                                         }
                                     }

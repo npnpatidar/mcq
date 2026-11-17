@@ -8,8 +8,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.mcqapp.ui.common.Announcer
+import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.LocalHapticsEnabled
 import com.mcqapp.ui.navigation.McqNavHost
 import com.mcqapp.ui.theme.AppTheme
@@ -40,12 +43,23 @@ class MainActivity : ComponentActivity() {
             // haptics off never pulses on the first frames of a launch.
             val hapticsEnabled by repository.hapticsEnabled()
                 .collectAsStateWithLifecycle(initialValue = false)
+            // The activity root view is the accessibility node that owns the
+            // window, so announcing through it reaches TalkBack regardless of
+            // which screen is composed. Provided once here; every screen reads
+            // LocalAnnouncer instead of reaching for a Context/Toast.
+            val rootView = LocalView.current
+            val announcer = remember(rootView) {
+                Announcer { text -> rootView.announceForAccessibility(text) }
+            }
             McqTheme(
                 themeMode = themeMode,
                 themePalette = themePalette,
                 customThemes = customThemes
             ) {
-                CompositionLocalProvider(LocalHapticsEnabled provides hapticsEnabled) {
+                CompositionLocalProvider(
+                    LocalHapticsEnabled provides hapticsEnabled,
+                    LocalAnnouncer provides announcer
+                ) {
                     McqNavHost(repository = repository)
                 }
             }

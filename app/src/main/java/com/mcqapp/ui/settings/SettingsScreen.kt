@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.common.LocalAnnouncer
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +89,20 @@ fun SettingsScreen(
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
+
+    // Restore/export/reset/storage failures surface in an error dialog already;
+    // announce each new message so it is not silent under TalkBack.
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(resetError) {
+        resetError?.let { announcer.announce(it) }
+    }
+    LaunchedEffect(storageError) {
+        storageError?.let { announcer.announce(it) }
+    }
+    LaunchedEffect(exportError) {
+        val error = exportError
+        if (error != null) announcer.announce(error)
+    }
 
     /**
      * The Backup & data share buttons: build the file in the cache, then hand

@@ -18,11 +18,15 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mcqapp.R
 import com.mcqapp.domain.stats.HeatmapDay
 import java.time.Instant
 import java.time.LocalDate
@@ -57,6 +61,24 @@ internal fun HeatmapChart(
     val dateFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
     val monthFmt = DateTimeFormatter.ofPattern("MMM", Locale.ENGLISH)
 
+    fun dayDate(day: HeatmapDay): LocalDate =
+        Instant.ofEpochMilli(day.dayStart).atZone(ZoneId.systemDefault()).toLocalDate()
+
+    // The calendar is one canvas; expose the day/count pairs plus a total so
+    // TalkBack can report the data instead of the old test-tag string.
+    val summary = chartSummary(
+        kindRes = R.string.a11y_chart_calendar,
+        series = listOf(
+            ChartSeriesSummary(
+                points = days.map { day -> dayDate(day).format(dateFmt) to tooltipCount(day.reviews) }
+            )
+        ),
+        note = stringResource(
+            R.string.a11y_chart_total,
+            days.sumOf { it.reviews }.toString()
+        )
+    )
+
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val gap = 2.dp
         val cell = ChartGeometry.heatmapCell(maxWidth, gap, weeks)
@@ -64,6 +86,7 @@ internal fun HeatmapChart(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(ChartGeometry.heatmapHeight(14.dp, cell, gap))
+                .semantics { contentDescription = summary }
                 .pointerInput(days, gap, cell) {
                     detectTapGestures { tap ->
                         val pitch = ChartGeometry.pitch(cell.toPx(), gap.toPx())
@@ -79,9 +102,6 @@ internal fun HeatmapChart(
             val pitch = cellPx + gapPx
             val topOffset = 14.dp.toPx()
             val corner = CornerRadius(2.dp.toPx())
-
-            fun dayDate(day: HeatmapDay): LocalDate =
-                Instant.ofEpochMilli(day.dayStart).atZone(ZoneId.systemDefault()).toLocalDate()
 
             // Month labels above the first column of each new month.
             var lastMonth = -1

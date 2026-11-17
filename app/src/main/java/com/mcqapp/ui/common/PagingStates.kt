@@ -7,8 +7,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
@@ -29,6 +33,13 @@ fun PagingErrorRow(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // The row is composed only *after* the load fails, so a liveRegion on its
+    // Text has no prior value to diff against and announces nothing. Announce
+    // the message explicitly on first composition through the app-wide host;
+    // keep the liveRegion too, for a later error replacing this one in place.
+    val message = stringResource(messageRes)
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(message) { announcer.announce(message) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -36,9 +47,13 @@ fun PagingErrorRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            stringResource(messageRes),
+            message,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f)
+            // First appearance is announced above; this covers a later error
+            // replacing the message in an already-composed row.
+            modifier = Modifier
+                .weight(1f)
+                .semantics { liveRegion = LiveRegionMode.Polite }
         )
         TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
     }

@@ -47,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -64,15 +66,20 @@ import com.mcqapp.domain.ReportFamily
 import com.mcqapp.domain.ReviewTag
 import com.mcqapp.domain.ReviewFilters
 import kotlinx.coroutines.launch
-import android.widget.Toast
 import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestStatistics
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.ResultsViewModelFactory
+import com.mcqapp.ui.Verdict
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingRefreshErrorItem
 import com.mcqapp.ui.common.attemptTypeLine
 import com.mcqapp.ui.common.testTypeLabel
+import com.mcqapp.ui.theme.containerColor
+import com.mcqapp.ui.theme.onContainerColor
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import java.text.SimpleDateFormat
@@ -104,6 +111,10 @@ fun ResultsScreen(
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
+    val sendMessage = LocalUiMessageSender.current
+    // Resolved in composition so the export coroutines can read plain values.
+    val shareNoAppText = stringResource(R.string.share_no_app)
+    val reportExportFailedText = stringResource(R.string.report_export_failed)
     var showExportMenu by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -145,10 +156,10 @@ fun ResultsScreen(
                                                     )
                                                 )
                                             } catch (_: android.content.ActivityNotFoundException) {
-                                                Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                                sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
                                             }
                                         } else {
-                                            Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
+                                            sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
                                         }
                                     }
                                 }
@@ -168,10 +179,10 @@ fun ResultsScreen(
                                                     )
                                                 )
                                             } catch (_: android.content.ActivityNotFoundException) {
-                                                Toast.makeText(context, R.string.share_no_app, Toast.LENGTH_SHORT).show()
+                                                sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
                                             }
                                         } else {
-                                            Toast.makeText(context, R.string.report_export_failed, Toast.LENGTH_SHORT).show()
+                                            sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
                                         }
                                     }
                                 }
@@ -1364,15 +1375,14 @@ private fun ResultCard(
     lifetime: com.mcqapp.domain.LifetimeAccuracy? = null,
     review: QuestionReview? = null
 ) {
-    val ungraded = result.correctOptionIds.isEmpty()
+    val verdict = Verdict.of(result.correctOptionIds, result.selectedOptionIds, result.isCorrect)
+    val scheme = MaterialTheme.colorScheme
+    val verdictLabel = stringResource(verdict.labelRes)
+    val verdictSpoken = stringResource(R.string.verdict_spoken, verdictLabel, verdict.glyph)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = when {
-                ungraded -> MaterialTheme.colorScheme.surfaceVariant
-                result.isCorrect -> MaterialTheme.colorScheme.primaryContainer
-                else -> MaterialTheme.colorScheme.errorContainer
-            }
+            containerColor = verdict.containerColor(scheme)
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -1387,24 +1397,26 @@ private fun ResultCard(
                     textStyle = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
-                val skipped = result.selectedOptionIds.isEmpty()
-                Text(
-                    stringResource(
-                        when {
-                            ungraded -> R.string.report_tag_ungraded
-                            skipped -> R.string.skipped
-                            result.isCorrect -> R.string.correct
-                            else -> R.string.wrong
-                        }
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = when {
-                        ungraded -> MaterialTheme.colorScheme.tertiary
-                        skipped -> MaterialTheme.colorScheme.outline
-                        result.isCorrect -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.error
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clearAndSetSemantics {
+                        // Announce the verdict word together with its glyph as a
+                        // single node — TalkBack must not read a bare check mark.
+                        contentDescription = verdictSpoken
                     }
-                )
+                ) {
+                    Text(
+                        verdict.glyph,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = verdict.onContainerColor(scheme)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        verdictLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = verdict.onContainerColor(scheme)
+                    )
+                }
                 IconButton(onClick = onToggleBookmark) {
                     Icon(
                         if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
@@ -1485,12 +1497,12 @@ private fun ResultCard(
                 val wasSelected = option.id in result.selectedOptionIds
                 Row(modifier = Modifier.padding(top = 4.dp)) {
                     Text(
-                        if (isCorrect) "✓" else if (wasSelected && !ungraded) "✗"
+                        if (isCorrect) "✓" else if (wasSelected && verdict != Verdict.UNGRADED) "✗"
                         // Filled circle, matching study: a bullet renders smaller.
                         else if (wasSelected) "●" else "○",
                         color = if (isCorrect)
                             MaterialTheme.colorScheme.primary
-                        else if (wasSelected && !ungraded)
+                        else if (wasSelected && verdict != Verdict.UNGRADED)
                             MaterialTheme.colorScheme.error
                         else
                             MaterialTheme.colorScheme.onSurface,

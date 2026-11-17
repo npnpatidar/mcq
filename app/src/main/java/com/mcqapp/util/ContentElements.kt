@@ -18,10 +18,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.mcqapp.R
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
 import kotlinx.coroutines.delay
@@ -458,6 +462,11 @@ private fun MixedContentView(
     }
     val measuredPx = heightPx
     val showContent = measuredPx != null || revealUnmeasured
+    // The rendered page is a single Android view with no accessible text:
+    // merge it into one labelled node so TalkBack says what it contains.
+    // Modifier-only — the keyed WebView's factory, bridge and teardown below
+    // are untouched, so it is never remounted on recomposition.
+    val contentLabel = stringResource(R.string.a11y_rich_content)
     // Recreate the WebView when the page changes (e.g. theme toggle),
     // so the colors baked into the HTML never go stale.
     androidx.compose.runtime.key(html) {
@@ -530,6 +539,7 @@ private fun MixedContentView(
             },
             modifier = modifier
                 .padding(vertical = 4.dp)
+                .semantics(mergeDescendants = true) { contentDescription = contentLabel }
                 .then(
                     when {
                         // CSS px in this page are density-independent like dp

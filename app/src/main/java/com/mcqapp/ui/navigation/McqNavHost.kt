@@ -1,6 +1,10 @@
 package com.mcqapp.ui.navigation
 
-import android.widget.Toast
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -8,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.Density
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -16,6 +21,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.common.LocalAnnouncer
+import com.mcqapp.ui.common.LocalUiMessageSender
+import com.mcqapp.ui.common.MessageResult
+import com.mcqapp.ui.common.UiMessage
+import com.mcqapp.ui.common.UiMessageBus
+import com.mcqapp.ui.common.UiMessagePresenter
+import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.browse.BrowseScreen
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.history.BookmarksScreen
@@ -41,6 +53,37 @@ fun McqNavHost(repository: McqRepository) {
     // the pipeline raises stay visible when the library is reached.
     val libraryViewModel: LibraryViewModel = viewModel()
     val platformContext = LocalContext.current
+
+    // The single app-wide feedback host. Screens push UiMessages into the bus;
+    // the presenter announces each one through the activity's announcer and
+    // then presents it in this SnackbarHost. It replaces the app's Toasts so a
+    // failure is both visible and spoken (WCAG 4.1.3).
+    // See https://developer.android.com/develop/ui/compose/components/snackbar
+    val messageBus = remember { UiMessageBus() }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val announcer = LocalAnnouncer.current
+    LaunchedEffect(messageBus, snackbarHostState, announcer) {
+        UiMessagePresenter(
+            announce = announcer::announce,
+            show = { message ->
+                val result = snackbarHostState.showSnackbar(
+                    message = message.text,
+                    actionLabel = message.actionLabel,
+                    duration = if (message.tone == UiMessageTone.Error) {
+                        SnackbarDuration.Long
+                    } else {
+                        SnackbarDuration.Short
+                    }
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    MessageResult.ActionPerformed
+                } else {
+                    MessageResult.Dismissed
+                }
+            }
+        ).run(messageBus)
+    }
+
     val pendingImport by SharedImport.pending.collectAsStateWithLifecycle()
     val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
     LaunchedEffect(pendingImport) {
@@ -65,7 +108,8 @@ fun McqNavHost(repository: McqRepository) {
     }
     LaunchedEffect(pendingImportError) {
         val message = SharedImport.consumeError() ?: return@LaunchedEffect
-        Toast.makeText(platformContext, message, Toast.LENGTH_LONG).show()
+        // SharedImport's copy-failure copy is already plain and generic.
+        messageBus.send(UiMessage(message, UiMessageTone.Error))
     }
     val fontScale by repository.fontScale().collectAsStateWithLifecycle(
         initialValue = com.mcqapp.util.FontScale.DEFAULT
@@ -74,11 +118,19 @@ fun McqNavHost(repository: McqRepository) {
         initialValue = false
     )
     val density = LocalDensity.current
+    // Stable sender: a fresh lambda on every recomposition would invalidate
+    // every screen reading LocalUiMessageSender and churn the whole tree.
+    val messageSender = remember(messageBus) { { message: UiMessage -> messageBus.send(message) } }
     CompositionLocalProvider(
         LocalDensity provides Density(density.density, fontScale = fontScale),
         com.mcqapp.util.FontScale.LocalScale provides fontScale,
-        com.mcqapp.util.LocalLoadRemoteImages provides loadRemoteImages
+        com.mcqapp.util.LocalLoadRemoteImages provides loadRemoteImages,
+        LocalUiMessageSender provides messageSender
     ) {
+    // The outer Scaffold exists only to host the app-wide SnackbarHost. Its
+    // innerPadding is not applied: screens own their own Scaffolds and insets,
+    // and the snackbar simply floats above the current destination.
+    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { _ ->
     NavHost(navController = navController, startDestination = "library") {
         composable("library") {
             LibraryScreen(
@@ -265,6 +317,7 @@ fun McqNavHost(repository: McqRepository) {
             Logger.i("NAV", "import screen: direct json import, ${bytes?.size ?: 0} bytes, uri=$uri")
             ImportScreen(importBytes = bytes, importUri = uri, navController = navController)
         }
+    }
     }
     }
 }

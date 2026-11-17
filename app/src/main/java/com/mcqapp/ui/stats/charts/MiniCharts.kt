@@ -14,11 +14,15 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mcqapp.R
 import kotlin.math.min
 
 /**
@@ -34,7 +38,26 @@ internal fun DonutChart(
     center: (@Composable () -> Unit)? = null
 ) {
     val total = slices.sumOf { it.first }.coerceAtLeast(1e-9)
-    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+    // The legend labels live at the call site, so name the slices by position
+    // here and speak their formatted values plus the total. Build the pairs
+    // in a loop: stringResource is composable and cannot run in a map lambda.
+    val slicePoints = ArrayList<Pair<String, String>>(slices.size)
+    for (index in slices.indices) {
+        slicePoints.add(
+            stringResource(R.string.a11y_chart_series, index + 1) to formatCount(slices[index].first)
+        )
+    }
+    val summary = chartSummary(
+        kindRes = R.string.a11y_chart_donut,
+        series = listOf(ChartSeriesSummary(points = slicePoints)),
+        note = stringResource(R.string.a11y_chart_total, formatCount(total))
+    )
+    Box(
+        modifier = modifier
+            .size(diameter)
+            .semantics { contentDescription = summary },
+        contentAlignment = Alignment.Center
+    ) {
         Canvas(modifier = Modifier.size(diameter)) {
             val stroke = 22.dp.toPx()
             val inset = stroke / 2f
@@ -76,7 +99,21 @@ internal fun CalibrationChart(
     val labelColor = axisLabelColor()
     val primary = MaterialTheme.colorScheme.primary
     val textMeasurer = rememberTextMeasurer()
-    Canvas(modifier = modifier.fillMaxWidth().height(220.dp)) {
+    val bandPoints = ArrayList<Pair<String, String>>(points.size)
+    for ((predicted, actual, count) in points) {
+        val band = stringResource(R.string.a11y_chart_band, formatPct(predicted), formatPct(actual))
+        bandPoints.add(band to stringResource(R.string.a11y_chart_n_reviews, count))
+    }
+    val summary = chartSummary(
+        kindRes = R.string.a11y_chart_calibration,
+        series = listOf(ChartSeriesSummary(points = bandPoints))
+    )
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            .semantics { contentDescription = summary }
+    ) {
         val side = minOf(size.width, 240.dp.toPx())
         val leftPad = (size.width - side).coerceAtLeast(0f) / 2f
         val bottomPad = 18.dp.toPx()

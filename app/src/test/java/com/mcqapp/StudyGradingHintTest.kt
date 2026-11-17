@@ -40,7 +40,7 @@ class StudyGradingHintTest {
     val settingsReset = SettingsResetRule()
 
     @Before
-    fun clearHintFlag() = runBlocking {
+    fun clearHintFlag(): Unit = runBlocking {
         app.dataStore.edit { it.remove(booleanPreferencesKey("study_grading_hint_shown")) }
     }
 

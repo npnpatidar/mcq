@@ -101,8 +101,20 @@ class BitmapDecoderTest {
         }.toByteArray()
         // Corrupt the tail rather than truncating cleanly.
         val corrupt = full.copyOf(full.size / 2).also { it[it.size - 1] = 0x7F }
-        // Either outcome is acceptable; what matters is that it returns.
-        decodeBounded(corrupt, MAX_EXPORT_DIMENSION)
-        assertTrue(true)
+        // Soft failure means returning, not throwing, and never yielding an
+        // unbounded bitmap. Hosts differ: Robolectric may decode arbitrary bytes
+        // to a bitmap while x86_64 CI returns null for a truncated PNG. Accept
+        // either, but a thrown exception or an oversized bitmap still fails.
+        val decoded = runCatching { decodeBounded(corrupt, MAX_EXPORT_DIMENSION) }
+        assertTrue(
+            "truncated image decode must not throw: ${decoded.exceptionOrNull()}",
+            decoded.isSuccess
+        )
+        decoded.getOrNull()?.let {
+            assertTrue(
+                "decoded ${it.width}x${it.height} must stay inside the 400x400 source",
+                it.width <= source.width && it.height <= source.height
+            )
+        }
     }
 }

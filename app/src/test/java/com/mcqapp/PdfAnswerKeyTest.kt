@@ -13,8 +13,9 @@ import org.junit.Test
  * Which questions the PDF answer key lists, and what their line says.
  *
  * The produced PDF bytes cannot be asserted here: Robolectric's PdfDocument is
- * closed at construction, which is why `PdfPaperWriterTest` is ignored. These
- * pin the rules behind an answer-key line instead, and `PdfOversizedBlockTest`
+ * closed at construction, so the PDF byte checks live in
+ * `PdfPaperWriterDeviceTest` on the emulator. These pin the rules behind an
+ * answer-key line instead, and `PdfOversizedBlockTest`
  * covers the page flow through an injected page sink.
  */
 class PdfAnswerKeyTest {

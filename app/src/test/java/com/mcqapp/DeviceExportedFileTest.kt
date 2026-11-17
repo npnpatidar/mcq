@@ -9,7 +9,6 @@ import com.mcqapp.domain.toContentJson
 import com.mcqapp.domain.textContent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import java.util.zip.ZipInputStream
@@ -118,17 +117,17 @@ class DeviceExportedFileTest {
     }
 
     /**
-     * The file actually exported on the failing device, when present.
-     * Guarded, so CI (without the file) skips it.
+     * A real device-exported .docx (the shape that exposed the 0.0.20
+     * regression), committed as a small fixture instead of an optional local
+     * file. It runs in CI: there is no assumeTrue skip any more. The hidden
+     * payload must still match the visible body, and the ids it carries must
+     * survive the parse so re-import deduplicates.
      */
     @Test
     fun theDeviceExportedFileItselfParsesFresh() {
-        val path = listOf(
-            "Sample-Bank-—-English-+-हिन्दी (8).docx",
-            "../Sample-Bank-—-English-+-हिन्दी (8).docx"
-        ).firstNotNullOfOrNull { File(it).takeIf { f -> f.isFile } }
-        assumeTrue("device-exported docx not present; skipping", path != null)
-        val parsed = parseDocx(path!!.readBytes())
+        val stream = javaClass.classLoader.getResourceAsStream("fixtures/device-exported-fixture.docx")
+            ?: throw IllegalStateException("missing device-exported docx fixture")
+        val parsed = parseDocx(stream.use { it.readBytes() })
         assertTrue(
             "payload must be accepted as fresh: ${parsed.warnings}",
             parsed.warnings.none { it.contains("hidden question data") }
@@ -136,7 +135,7 @@ class DeviceExportedFileTest {
         val after = LegacyParser.parse(parsed.json).papers.single()
         assertEquals(
             "ids must survive so re-import deduplicates",
-            allQuestions(samplePaper).map { it.id },
+            listOf("device-q1", "device-q2"),
             allQuestions(after).map { it.id }
         )
     }

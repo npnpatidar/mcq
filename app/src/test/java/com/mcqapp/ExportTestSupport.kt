@@ -4,7 +4,6 @@ import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.export.DocxPaperWriter
 import com.mcqapp.data.export.HtmlPaperWriter
 import com.mcqapp.data.export.PaperStream
-import com.mcqapp.data.export.PdfPaperWriter
 import com.mcqapp.data.export.ZipPaperWriter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.PaperDto
@@ -46,20 +45,6 @@ fun zipOf(paper: PaperDto): ByteArray =
 
 fun docxOf(paper: PaperDto, passages: List<PassageDto> = emptyList()): ByteArray =
     exportBytes { DocxPaperWriter.writeDocx(PaperStream.of(paper.withPassages(passages)), it) }
-
-fun pdfOf(
-    paper: PaperDto,
-    answersAtEnd: Boolean = false,
-    twoColumn: Boolean = false,
-    passages: List<PassageDto> = emptyList()
-): ByteArray = exportBytes {
-    PdfPaperWriter.writePdf(
-        PaperStream.of(paper.withPassages(passages)),
-        it,
-        answersAtEnd = answersAtEnd,
-        twoColumn = twoColumn
-    )
-}
 
 /**
  * An .apkg for [paper], written the way the exporter writes one: the progress

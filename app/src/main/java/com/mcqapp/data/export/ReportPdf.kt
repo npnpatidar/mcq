@@ -18,7 +18,8 @@ import kotlin.math.roundToInt
  *
  * The text is laid out by the pure [lines] function and the PDF writer only
  * draws it, so the report's content is testable on a JVM even where
- * `PdfDocument` is unavailable (see `PdfPaperWriterTest`).
+ * `PdfDocument` is unavailable (the PDF byte checks live in
+ * `PdfPaperWriterDeviceTest`, which runs on the emulator).
  */
 object ReportPdf {
 

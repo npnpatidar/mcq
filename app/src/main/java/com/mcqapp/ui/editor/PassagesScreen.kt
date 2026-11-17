@@ -261,6 +261,10 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
         _isConfirming.value = true
         confirmJob = viewModelScope.launch {
             try {
+                // Mirror the stage path: give a synchronous back/dismiss a
+                // dispatch point to cancel before any DB work starts, even
+                // when Main.immediate would otherwise run the write inline.
+                yield()
                 coroutineContext.ensureActive()
                 // A back/dismiss may have cancelled and bumped the generation
                 // while this continuation was posted; never start the write.

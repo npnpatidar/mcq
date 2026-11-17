@@ -72,7 +72,7 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/InstallFreshness.kt` | 131 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/McqRepository.kt` | 2422 | IN REVIEW | B1 | parallel reviewers | partial: Library/delete wrappers |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PaperStore.kt` | 457 | IN REVIEW | B1 | parallel reviewers | partial: cascade paths only |
-| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PassageStore.kt` | 246 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/PassageStore.kt` | 246 | FINDINGS | B9 | full-lens reviewer | review-reports/09-passages.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/QuestionContentMapper.kt` | 107 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/QuestionStore.kt` | 743 | IN REVIEW | B1 | parallel reviewers | partial: delete paths only |
 | Production Kotlin | `app/src/main/java/com/mcqapp/data/repository/RepositorySettings.kt` | 960 | PENDING | — | — | — |
@@ -137,27 +137,27 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/stats/StatsAggregator.kt` | 2601 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/domain/stats/StatsModels.kt` | 917 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/ViewModelFactories.kt` | 80 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseScreen.kt` | 1318 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseViewModel.kt` | 1021 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseWindow.kt` | 42 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseScreen.kt` | 1318 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseViewModel.kt` | 1021 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/browse/BrowseWindow.kt` | 42 | FINDINGS | B5 | full-lens reviewer | review-reports/05-browse.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/AttemptLabels.kt` | 75 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/PagingStates.kt` | 69 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/StatsRangeChips.kt` | 51 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/common/TestTypeLabels.kt` | 58 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt` | 329 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorSession.kt` | 199 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorViewModel.kt` | 1405 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/MathLiveEditor.kt` | 188 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt` | 329 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorSession.kt` | 199 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/EditorViewModel.kt` | 1405 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/MathLiveEditor.kt` | 188 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/MathMlLatex.kt` | 173 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/PassagesScreen.kt` | 603 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/QuestionEditorScreen.kt` | 912 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/PassagesScreen.kt` | 603 | FINDINGS | B9 | full-lens reviewer | review-reports/09-passages.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/editor/QuestionEditorScreen.kt` | 912 | FINDINGS | B8 | full-lens reviewer | review-reports/08-question-editor.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/haptics/Haptics.kt` | 66 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/BookmarksScreen.kt` | 350 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/BookmarksViewModel.kt` | 166 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/HistoryScreen.kt` | 297 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/HistoryViewModel.kt` | 55 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt` | 672 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt` | 974 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/BookmarksScreen.kt` | 350 | FINDINGS | B13 | full-lens reviewer | review-reports/13-bookmarks.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/BookmarksViewModel.kt` | 166 | FINDINGS | B13 | full-lens reviewer | review-reports/13-bookmarks.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/HistoryScreen.kt` | 297 | FINDINGS | B11 | full-lens reviewer | review-reports/11-history.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/history/HistoryViewModel.kt` | 55 | FINDINGS | B11 | full-lens reviewer | review-reports/11-history.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportScreen.kt` | 672 | FINDINGS | B10 | full-lens reviewer | review-reports/10-import.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/importscreen/ImportViewModel.kt` | 974 | FINDINGS | B10 | full-lens reviewer | review-reports/10-import.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/BlueprintEditorSheet.kt` | 476 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDialogs.kt` | 267 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/library/LibraryDrawer.kt` | 368 | FINDINGS | B1 | parallel reviewers | review-reports/01-library.md |
@@ -170,39 +170,39 @@ Only a reviewed row with a batch id and reviewer may be marked DONE.
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/navigation/Routes.kt` | 125 | PENDING | — | — | — |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsScreen.kt` | 1565 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/results/ResultsViewModel.kt` | 281 | FINDINGS | B4 | parallel reviewers | review-reports/04-results.md |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchScreen.kt` | 204 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchViewModel.kt` | 97 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/sessions/SessionsScreen.kt` | 321 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/sessions/SessionsViewModel.kt` | 77 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/AboutSection.kt` | 46 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/AppearanceSection.kt` | 354 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/BackupDataSection.kt` | 236 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsRows.kt` | 109 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsScreen.kt` | 366 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsSections.kt` | 52 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsViewModel.kt` | 882 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/StudySchedulerSection.kt` | 610 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/TestsSection.kt` | 89 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/CardInfoSheet.kt` | 186 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsScreen.kt` | 261 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsViewModel.kt` | 356 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsWidgets.kt` | 211 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/ChartGeometry.kt` | 55 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/ChartKit.kt` | 265 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/HeatmapChart.kt` | 133 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/LineChart.kt` | 168 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/MiniCharts.kt` | 115 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/StackedBarChart.kt` | 242 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/CardsSection.kt` | 330 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/ExamSection.kt` | 429 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/GuessingSection.kt` | 513 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/MemorySection.kt` | 251 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/OverviewSection.kt` | 288 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/ProgressSection.kt` | 235 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/RetentionSection.kt` | 579 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/SessionsSection.kt` | 149 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/TestsSection.kt` | 255 | PENDING | — | — | — |
-| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/WorkloadSection.kt` | 505 | PENDING | — | — | — |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchScreen.kt` | 204 | FINDINGS | B14 | full-lens reviewer | review-reports/14-search.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/search/SearchViewModel.kt` | 97 | FINDINGS | B14 | full-lens reviewer | review-reports/14-search.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/sessions/SessionsScreen.kt` | 321 | FINDINGS | B12 | full-lens reviewer | review-reports/12-sessions.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/sessions/SessionsViewModel.kt` | 77 | FINDINGS | B12 | full-lens reviewer | review-reports/12-sessions.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/AboutSection.kt` | 46 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/AppearanceSection.kt` | 354 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/BackupDataSection.kt` | 236 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsRows.kt` | 109 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsScreen.kt` | 366 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsSections.kt` | 52 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/SettingsViewModel.kt` | 882 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/StudySchedulerSection.kt` | 610 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/settings/TestsSection.kt` | 89 | FINDINGS | B7 | full-lens reviewer | review-reports/07-settings.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/CardInfoSheet.kt` | 186 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsScreen.kt` | 261 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsViewModel.kt` | 356 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/StatsWidgets.kt` | 211 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/ChartGeometry.kt` | 55 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/ChartKit.kt` | 265 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/HeatmapChart.kt` | 133 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/LineChart.kt` | 168 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/MiniCharts.kt` | 115 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/charts/StackedBarChart.kt` | 242 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/CardsSection.kt` | 330 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/ExamSection.kt` | 429 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/GuessingSection.kt` | 513 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/MemorySection.kt` | 251 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/OverviewSection.kt` | 288 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/ProgressSection.kt` | 235 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/RetentionSection.kt` | 579 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/SessionsSection.kt` | 149 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/TestsSection.kt` | 255 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
+| Production Kotlin | `app/src/main/java/com/mcqapp/ui/stats/sections/WorkloadSection.kt` | 505 | FINDINGS | B6 | full-lens reviewer | review-reports/06-stats.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyScreen.kt` | 1066 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/study/StudyViewModel.kt` | 1400 | FINDINGS | B2 | parallel reviewers | review-reports/02-study.md |
 | Production Kotlin | `app/src/main/java/com/mcqapp/ui/test/TestSessionScreen.kt` | 1280 | FINDINGS | B3 | parallel reviewers | review-reports/03-test-session.md |

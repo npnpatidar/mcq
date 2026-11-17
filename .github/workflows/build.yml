@@ -66,12 +66,15 @@ jobs:
       - name: Build debug APK and run unit tests
         # No aapt2 override: the bundled aapt2 runs natively on x86_64
         # (the override is only needed on ARM64 hosts with QEMU).
-        run: sh gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+        # Force remote re-resolution: a restored Gradle cache has repeatedly
+        # served stale plugin metadata (compose 2.2.10 not found) in this job.
+        run: sh gradlew :app:assembleDebug :app:testDebugUnitTest --refresh-dependencies --no-daemon
 
       - name: Lint
         # Catches the Android-specific problems the unit tests cannot: missing
         # content descriptions, wrong API usage, unused resources.
-        run: sh gradlew :app:lintDebug --no-daemon
+        # Same forced re-resolution: the restored cache cannot be trusted here.
+        run: sh gradlew :app:lintDebug --refresh-dependencies --no-daemon
 
       - name: Upload debug APK
         if: always()

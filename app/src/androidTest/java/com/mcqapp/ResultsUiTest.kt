@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasContentDescriptionExactly
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -111,6 +112,14 @@ class ResultsUiTest {
 
     private fun waitForSpoken(verdict: Verdict) {
         val text = spoken(verdict)
+        // Result rows sit below the report cards in a LazyColumn, so they are
+        // not composed until scrolled into view. ScrollToNode walks the list
+        // until the matching row exists, then the wait anchors on semantics.
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("results-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasContentDescriptionExactly(text))
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(text, substring = false)
                 .fetchSemanticsNodes().isNotEmpty()
@@ -132,8 +141,9 @@ class ResultsUiTest {
 
     @Test
     fun fourVerdictsRenderDistinctlyIncludingSkipped() {
-        // The shared predicate is what keeps a skipped row out of the red group.
-        assertEquals(Verdict.SKIPPED, Verdict.of(emptySet(), emptySet(), false))
+        // The shared predicate is what keeps a skipped row out of the red group:
+        // SKIPPED needs a graded question (answer key present) and no selection.
+        assertEquals(Verdict.SKIPPED, Verdict.of(setOf("a"), emptySet(), false))
         assertEquals(Verdict.WRONG, Verdict.of(setOf("a"), setOf("b"), false))
         assertEquals(
             Verdict.UNGRADED,

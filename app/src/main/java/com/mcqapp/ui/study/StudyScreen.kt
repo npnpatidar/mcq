@@ -369,6 +369,17 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             ) {
                 Text(stringResource(R.string.check))
             }
+        } else if (state.gradedAndStuck) {
+            // The grade is already stored, so re-tapping Next would double-persist
+            // it. Only the next card is missing — offer the same recovery the
+            // classic footer has (consolidated_bugs.md I3).
+            Button(
+                onClick = { viewModel.loadNext() },
+                enabled = !state.grading,
+                modifier = Modifier.fillMaxWidth().testTag("study-retry")
+            ) {
+                Text(stringResource(R.string.retry))
+            }
         } else {
             val question = state.question
             var showPicker by remember(question?.id) { mutableStateOf(false) }

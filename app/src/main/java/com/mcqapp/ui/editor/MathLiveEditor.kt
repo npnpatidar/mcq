@@ -109,7 +109,13 @@ internal fun shouldPushLatex(
 @Composable
 fun MathLiveEditor(
     initialLatex: String,
-    onMathMl: (String) -> Unit,
+    /**
+     * Stable identity of the block this WebView belongs to. The JS bridge is
+     * installed once by [AndroidView.factory] and never rebound, so it must
+     * carry the block's id — never its list position, which changes on reorder.
+     */
+    blockId: String,
+    onMathMl: (blockId: String, mml: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val fontScale = com.mcqapp.util.FontScale.LocalScale.current
@@ -145,13 +151,21 @@ fun MathLiveEditor(
                 ): Boolean = true
             }
             view.setBackgroundColor(0x00000000)
+            // The bridge is installed once, so it captures this lambda as it
+            // was on first composition. That is safe only because everything
+            // it closes over is stable: [blockId] travels with this keyed
+            // WebView, and the host callback resolves the id against the
+            // *current* block list (EditorViewModel.applyMathTarget). The old
+            // version captured the positional index, so typing in a reordered
+            // formula wrote into whichever block now occupied the old slot.
+            val emitMathMl = onMathMl
             view.addJavascriptInterface(object {
                 @JavascriptInterface
                 fun onMathMl(mml: String) {
                     // Bridge callbacks arrive off the main thread.
                     view.post {
                         userEdited.value = true
-                        onMathMl(mml)
+                        emitMathMl(blockId, mml)
                     }
                 }
             }, "Android")

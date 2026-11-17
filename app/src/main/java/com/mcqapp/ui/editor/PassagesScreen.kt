@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,10 +64,14 @@ import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -83,6 +88,13 @@ data class PassagesUiState(
     val papers: List<com.mcqapp.domain.Paper> = emptyList()
 )
 
+/**
+ * The pre-save check for a passage edit. [ConfirmCrossPaper] means the whole
+ * member group would follow the passage into another paper and the save must
+ * be held until the user confirms.
+ */
+enum class PassageSaveDecision { Save, ConfirmCrossPaper }
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class PassagesViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
@@ -91,6 +103,37 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     val state: StateFlow<PassagesUiState> = _state.asStateFlow()
 
     private val expandedId = MutableStateFlow<String?>(null)
+
+    // Save staging lives on the ViewModel, not a composable scope: a rotation
+    // or back navigation must not cancel the fresh count query mid-flight and
+    // lose the user's edit. These survive configuration changes.
+    private val _pendingCrossPaperSave = MutableStateFlow<Passage?>(null)
+    /** The passage waiting for the cross-paper confirmation; null when none. */
+    val pendingCrossPaperSave: StateFlow<Passage?> = _pendingCrossPaperSave.asStateFlow()
+
+    private val _isDeciding = MutableStateFlow(false)
+    /** True while the pre-save count query runs, so the UI can ignore taps. */
+    val isDeciding: StateFlow<Boolean> = _isDeciding.asStateFlow()
+
+    private val _isConfirming = MutableStateFlow(false)
+    /** True while a confirmed cross-paper write runs; Cancel is unsafe then. */
+    val isConfirming: StateFlow<Boolean> = _isConfirming.asStateFlow()
+
+    private val _saveCompleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** Emitted after each completed write so the screen can close its dialogs. */
+    val saveCompleted: Flow<Unit> = _saveCompleted.asSharedFlow()
+
+    // Stage and confirm own separate jobs and generations. They overlap for a
+    // moment: the stage publishes the pending warning, then an immediate
+    // confirm starts while the stage is still unwinding. Sharing one job would
+    // let that confirm be ignored (or leave isDeciding stuck true), so each
+    // phase clears only its own state. A dismiss/back cancels both jobs and
+    // bumps both generations, so a stale continuation can neither write nor
+    // leave a pending warning.
+    private var stageJob: Job? = null
+    private var confirmJob: Job? = null
+    private var stageGeneration = 0
+    private var confirmGeneration = 0
 
     /** The open passage's members, paged; empty while nothing is open. */
     val memberPaging: Flow<PagingData<QuestionRef>> = expandedId
@@ -128,8 +171,106 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun save(passage: Passage) {
-        viewModelScope.launch { repository.savePassage(passage) }
+    /**
+     * Decides at the moment of save whether [passage]'s members will follow it
+     * across a paper boundary. The count is read fresh from the repository:
+     * [PassagesUiState.memberCounts] only refresh when the passages table emits,
+     * so adding members from another screen (a question edit) writes only the
+     * question table and leaves those cached counts stale — often at zero,
+     * which would otherwise suppress this mandatory confirmation.
+     */
+    suspend fun decideSave(
+        passage: Passage,
+        originalPaperId: String?,
+        newPaperId: String?
+    ): PassageSaveDecision {
+        val members = repository.passageMemberCount(passage.id)
+        val crossesPaper = members > 0 &&
+            originalPaperId != null && newPaperId != null &&
+            originalPaperId != newPaperId
+        return if (crossesPaper) PassageSaveDecision.ConfirmCrossPaper else PassageSaveDecision.Save
+    }
+
+    /**
+     * Stages an edit's save on [viewModelScope]. Runs the fresh count, then
+     * either publishes [pendingCrossPaperSave] (and writes nothing) or saves
+     * straight away. Only one job is active at a time: a fast double tap is
+     * ignored, and [cancelPending] can cancel this job before it writes or
+     * raises a warning when the user abandons the edit.
+     */
+    fun stageSave(passage: Passage, originalPaperId: String?, newPaperId: String?) {
+        if (stageJob?.isActive == true || confirmJob?.isActive == true) return
+        val gen = ++stageGeneration
+        _isDeciding.value = true
+        stageJob = viewModelScope.launch {
+            try {
+                val decision = decideSave(passage, originalPaperId, newPaperId)
+                coroutineContext.ensureActive()
+                if (gen != stageGeneration) return@launch
+                when (decision) {
+                    PassageSaveDecision.ConfirmCrossPaper -> _pendingCrossPaperSave.value = passage
+                    PassageSaveDecision.Save -> {
+                        repository.savePassage(passage)
+                        coroutineContext.ensureActive()
+                        if (gen == stageGeneration) _saveCompleted.emit(Unit)
+                    }
+                }
+            } finally {
+                // A cancelled stage was already cleared by cancelPending();
+                // never clobber a newer stage that replaced it. A confirm
+                // bumps only confirmGeneration, so this still clears normally.
+                if (gen == stageGeneration) {
+                    _isDeciding.value = false
+                    stageJob = null
+                }
+            }
+        }
+    }
+
+    /**
+     * Abandons the edit: cancels any in-flight stage or confirm and clears the
+     * warning. Safe from any dismiss/back path — a cancelled job writes nothing
+     * and leaves no pending warning behind.
+     */
+    fun cancelPending() {
+        stageGeneration++
+        confirmGeneration++
+        stageJob?.cancel()
+        confirmJob?.cancel()
+        stageJob = null
+        confirmJob = null
+        _isDeciding.value = false
+        _isConfirming.value = false
+        _pendingCrossPaperSave.value = null
+    }
+
+    /** Writes the pending passage exactly once, then clears the warning. */
+    fun confirmPending() {
+        // Gate on the dedicated flag, not on a stage job: the stage publishes
+        // the pending warning just before its finally clears that job, so an
+        // immediate confirm must not be swallowed by that window.
+        if (_isConfirming.value) return
+        val passage = _pendingCrossPaperSave.value ?: return
+        val gen = ++confirmGeneration
+        _isConfirming.value = true
+        confirmJob = viewModelScope.launch {
+            try {
+                coroutineContext.ensureActive()
+                // A back/dismiss may have cancelled and bumped the generation
+                // while this continuation was posted; never start the write.
+                if (gen != confirmGeneration || confirmJob?.isActive == false) return@launch
+                repository.savePassage(passage)
+                coroutineContext.ensureActive()
+                if (gen != confirmGeneration) return@launch
+                _pendingCrossPaperSave.value = null
+                _saveCompleted.emit(Unit)
+            } finally {
+                if (gen == confirmGeneration) {
+                    _isConfirming.value = false
+                    confirmJob = null
+                }
+            }
+        }
     }
 
     /**
@@ -179,13 +320,19 @@ fun PassagesScreen(
     var editing by remember { mutableStateOf<Passage?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleteRefusal by remember { mutableStateOf<Pair<String, Int>?>(null) }
-    // A passage whose category changes to another paper's takes its whole
-    // member group across the paper boundary. Hold the request until the user
-    // confirms; Cancel just dismisses this dialog and leaves the edit form as
-    // it was (nothing written).
-    var pendingCrossPaperSave by remember { mutableStateOf<Passage?>(null) }
+    // The pending confirmation lives in the ViewModel so it survives rotation.
+    val pendingCrossPaperSave by viewModel.pendingCrossPaperSave.collectAsStateWithLifecycle()
+    val isDeciding by viewModel.isDeciding.collectAsStateWithLifecycle()
+    val isConfirming by viewModel.isConfirming.collectAsStateWithLifecycle()
     // The one open passage's member rows, paged in as they scroll into view.
     val memberItems: LazyPagingItems<QuestionRef> = viewModel.memberPaging.collectAsLazyPagingItems()
+
+    LaunchedEffect(Unit) {
+        viewModel.saveCompleted.collect {
+            creating = false
+            editing = null
+        }
+    }
 
     // categoryId -> owning paper, hoisted: the per-row firstOrNull below ran
     // once per scroll frame for every visible row.
@@ -208,7 +355,12 @@ fun PassagesScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.passages)) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = {
+                        // Back abandons the edit: cancel any in-flight write
+                        // first so it cannot land after we navigate away.
+                        viewModel.cancelPending()
+                        navController.popBackStack()
+                    }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.back)
@@ -391,25 +543,20 @@ fun PassagesScreen(
             PassageEditDialog(
                 initial = editing,
                 papers = state.papers,
+                saveEnabled = !isDeciding,
+                dismissEnabled = !isDeciding,
                 onSave = { passage ->
                     val original = editing
                     val originalPaper = original?.let { paperByCategoryId[it.categoryId] }
                     val newPaper = paperByCategoryId[passage.categoryId]
-                    val memberCount = state.memberCounts[passage.id] ?: 0
-                    val crossesPaper = original != null && memberCount > 0 &&
-                        originalPaper != null && newPaper != null &&
-                        originalPaper.id != newPaper.id
-                    if (crossesPaper) {
-                        // Members would follow into the other paper: ask first,
-                        // the same warning the Browse move shows.
-                        pendingCrossPaperSave = passage
-                    } else {
-                        viewModel.save(passage)
-                        creating = false
-                        editing = null
-                    }
+                    // The ViewModel re-reads the member count fresh, on its own
+                    // scope, so rotation cannot lose the edit mid-decision.
+                    viewModel.stageSave(passage, originalPaper?.id, newPaper?.id)
                 },
                 onDismiss = {
+                    // Abandoning the edit must cancel an in-flight decision,
+                    // otherwise its late result writes or pops a stray warning.
+                    viewModel.cancelPending()
                     creating = false
                     editing = null
                 }
@@ -433,20 +580,16 @@ fun PassagesScreen(
             }
         }
 
-        pendingCrossPaperSave?.let { passage ->
+        pendingCrossPaperSave?.let { _ ->
             AlertDialog(
-                onDismissRequest = { pendingCrossPaperSave = null },
+                onDismissRequest = { if (!isConfirming) viewModel.cancelPending() },
                 title = { Text(stringResource(R.string.move)) },
                 text = { Text(stringResource(R.string.move_cross_paper_warning)) },
                 confirmButton = {
                     TextButton(
                         modifier = Modifier.testTag("cross-paper-move-confirm"),
-                        onClick = {
-                            viewModel.save(passage)
-                            pendingCrossPaperSave = null
-                            creating = false
-                            editing = null
-                        }
+                        enabled = !isConfirming,
+                        onClick = { viewModel.confirmPending() }
                     ) {
                         Text(stringResource(R.string.move))
                     }
@@ -454,7 +597,8 @@ fun PassagesScreen(
                 dismissButton = {
                     TextButton(
                         modifier = Modifier.testTag("cross-paper-move-cancel"),
-                        onClick = { pendingCrossPaperSave = null }
+                        enabled = !isConfirming,
+                        onClick = { viewModel.cancelPending() }
                     ) {
                         Text(stringResource(R.string.cancel))
                     }
@@ -469,6 +613,8 @@ fun PassagesScreen(
 private fun PassageEditDialog(
     initial: Passage?,
     papers: List<com.mcqapp.domain.Paper>,
+    saveEnabled: Boolean,
+    dismissEnabled: Boolean,
     onSave: (Passage) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -492,7 +638,7 @@ private fun PassageEditDialog(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (dismissEnabled) onDismiss() },
         title = {
             Text(
                 if (initial == null) stringResource(R.string.new_passage)
@@ -552,13 +698,15 @@ private fun PassageEditDialog(
                         )
                     )
                 },
-                enabled = title.isNotBlank() && categoryId.isNotBlank()
+                enabled = saveEnabled && title.isNotBlank() && categoryId.isNotBlank()
             ) {
                 Text(stringResource(R.string.save))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+            TextButton(onClick = onDismiss, enabled = dismissEnabled) {
+                Text(stringResource(R.string.cancel))
+            }
         }
     )
 }

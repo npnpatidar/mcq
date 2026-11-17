@@ -2,6 +2,7 @@ package com.mcqapp.ui.test
 
 import android.app.Application
 import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
@@ -235,9 +236,19 @@ class TestViewModel(
         val passage: com.mcqapp.domain.Passage?
     )
 
-    private companion object {
+    companion object {
         /** Questions resolved per review-sheet page. */
-        const val REVIEW_PAGE = 100
+        private const val REVIEW_PAGE = 100
+
+        /**
+         * Test-only gate, awaited once just after [submit] marks the attempt as
+         * saving and before the write starts. A UI test holds it open so it can
+         * press Back while the attempt is not yet durable and prove the
+         * destination cannot be popped. Production never sets it; a null gate
+         * is a no-op.
+         */
+        @VisibleForTesting
+        var beforeSaveForTest: (suspend () -> Unit)? = null
     }
     // Monotonic anchors (consolidated_bugs.md D10): the countdown already
     // ran on elapsedRealtime; dwell and the untimed duration join it, so an
@@ -1084,6 +1095,9 @@ class TestViewModel(
             )
         }
         viewModelScope.launch {
+            // Test-only seam: hold the in-flight window open so a UI test can
+            // press Back before the attempt is durable. No-op in production.
+            beforeSaveForTest?.invoke()
             // Save first, clear second: the resume snapshot is the only copy
             // of this session, so dropping it before the attempt is durable
             // would lose the whole exam on a storage error or process death.

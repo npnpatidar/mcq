@@ -18,6 +18,7 @@ import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -237,6 +238,13 @@ data class StudyUiState(
      */
     val showBreakStrip: Boolean
         get() = reviewed > 0 && reviewed % 10 == 0 && breakDismissedAt < reviewed
+}
+
+/** Test-only synchronisation for an in-flight pull (see [StudyViewModel.pullGateForTests]). */
+internal class StudyPullGateForTests {
+    val reached = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val completed = CompletableDeferred<Unit>()
 }
 
 class StudyViewModel(
@@ -495,8 +503,16 @@ class StudyViewModel(
      * mid-session are skipped; when nothing eligible remains the session ends.
      */
     private suspend fun pullCard() {
+        if (failPullForTests) {
+            failPullForTests = false
+            throw IllegalStateException("simulated next-card pull failure")
+        }
         var skipStreak = 0
         while (true) {
+            // A stop can land while this pull was in flight (Retry -> Back).
+            // Serving a card after the summary opened would un-finish the
+            // sitting, and a second Back could not close it (stopped is latched).
+            if (stopped.get()) return
             val card = nextCard()
             if (card == null) {
                 finishEmpty()
@@ -538,6 +554,18 @@ class StudyViewModel(
                 Logger.e("STUDY", "exposureInStudyDay(${card.questionId}) failed", e)
                 1
             }
+            val gate = pullGateForTests
+            if (gate != null) {
+                pullGateForTests = null
+                gate.reached.complete(Unit)
+                gate.release.await()
+            }
+            // Check again after every suspension point above: the session may
+            // have been stopped while the card was being fetched.
+            if (stopped.get()) {
+                gate?.completed?.complete(Unit)
+                return
+            }
             _state.update {
                 it.copy(
                     current = card,
@@ -575,6 +603,7 @@ class StudyViewModel(
             // once at construction ticks on the ViewModel's phase, so the
             // clock could lag the card by up to a second.
             startDwellTicker()
+            gate?.completed?.complete(Unit)
             return
         }
     }
@@ -609,6 +638,7 @@ class StudyViewModel(
                 selection = emptySet(),
                 revealed = false,
                 grading = false,
+                gradedAndStuck = false,
                 pendingGrade = null,
                 proposedGrade = null,
                 gradeEdited = false,
@@ -774,6 +804,22 @@ class StudyViewModel(
         }
         publishDwell()
     }
+
+    /**
+     * Test-only fault injection: makes the next [pullCard] throw *after* its
+     * grade has been persisted, reproducing a locked/full disk between the
+     * write and the next card — the state [StudyUiState.gradedAndStuck]
+     * describes. Fires once, then clears itself. Nothing in the app sets it.
+     */
+    internal var failPullForTests: Boolean = false
+
+    /**
+     * Test-only gate: when set, [pullCard] signals [StudyPullGateForTests.reached]
+     * and then suspends on [StudyPullGateForTests.release] just before applying
+     * the next card, so a test can interleave a stop() with an in-flight pull.
+     * Cleared once used; nothing in the app sets it.
+     */
+    internal var pullGateForTests: StudyPullGateForTests? = null
 
     /** Banks the foreground segment and stops the sitting clock. */
     private fun bankSessionClock(now: Long = SystemClock.elapsedRealtime()) {
@@ -1123,10 +1169,12 @@ class StudyViewModel(
         val question = current.question
         val proposed = current.pendingGrade
         if (!current.simplified || !current.revealed || current.grading ||
-            question == null || proposed == null
+            question == null || proposed == null || current.gradedAndStuck
         ) {
-            // Nothing was pending: classic mode persists on each grade button,
-            // and an unchecked card has no decision to keep.
+            // Nothing to write: classic mode persists on each grade button, an
+            // unchecked card has no decision to keep, and a grade that was
+            // already persisted before a failed pull must not be written again —
+            // a second review would double the tally, FSRS state and review_log.
             finishSession()
             return
         }
@@ -1322,6 +1370,7 @@ class StudyViewModel(
                         selection = emptySet(),
                         revealed = false,
                         grading = false,
+                        gradedAndStuck = false,
                         pendingGrade = null,
                         proposedGrade = null,
                         gradeEdited = false,

@@ -166,6 +166,15 @@ fun TestSessionScreen(
         }
     }
 
+    // Every way off this screen has to agree: once submit() has set `saving`,
+    // the screen-scoped ViewModel is the only owner of the in-flight attempt
+    // write. Popping now clears it and cancels the write (the Room transaction
+    // rolls back), so navigation is a no-op until the attempt is durable. After
+    // the save lands the very same call pops normally.
+    val popBack: () -> Unit = {
+        if (!state.saving) navController.popBackStack()
+    }
+
     // Saveable, not remember: a rotation mid-exam must not resurrect dealt-with
     // state. The ungraded dialog reappeared on every rotation even after
     // Continue was chosen (and its being open re-paused dwell each time).
@@ -276,7 +285,7 @@ fun TestSessionScreen(
                 TextButton(
                     onClick = {
                         ungradedDismissed = true
-                        navController.popBackStack()
+                        popBack()
                     }
                 ) { Text(stringResource(R.string.go_back)) }
             }
@@ -301,10 +310,15 @@ fun TestSessionScreen(
     // opens the same submit confirmation the Submit button does, instead of
     // dropping the learner out with the paper ungraded. An overlay keeps its
     // own back handling; while a submit is in flight there is nothing to
-    // confirm.
+    // confirm — but Back must still be *consumed*, or it falls through to the
+    // NavController, which would pop the destination and cancel the write.
     val backConfirmsSubmit =
         questionVisible && !state.submitted && !state.saving
-    BackHandler(enabled = backConfirmsSubmit) { showSubmitDialog = true }
+    BackHandler(enabled = state.saving || backConfirmsSubmit) {
+        if (!state.saving && backConfirmsSubmit) {
+            showSubmitDialog = true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -319,11 +333,13 @@ fun TestSessionScreen(
                     IconButton(
                         onClick = {
                             // The arrow is the same gesture: confirm, do not
-                            // leave the paper half done.
+                            // leave the paper half done. While saving, it is a
+                            // no-op via popBack() — leaving would discard the
+                            // attempt being written.
                             if (backConfirmsSubmit) {
                                 showSubmitDialog = true
                             } else {
-                                navController.popBackStack()
+                                popBack()
                             }
                         }
                     ) {
@@ -421,7 +437,7 @@ fun TestSessionScreen(
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { viewModel.retry() }) { Text(stringResource(R.string.retry)) }
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { navController.popBackStack() }) { Text(stringResource(R.string.go_back)) }
+                TextButton(onClick = { popBack() }) { Text(stringResource(R.string.go_back)) }
             }
             return@Scaffold
         }

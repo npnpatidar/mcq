@@ -58,6 +58,12 @@ fun BlockListEditor(
     owner: String = "",
     onAddBlock: (EditorBlockType) -> Unit,
     onUpdateBlock: (index: Int, element: ContentElement) -> Unit,
+    /**
+     * Writes a formula by the block's stable id, never by its position. The
+     * MathLive bridge is installed once per keyed WebView and does not rebind,
+     * so the host resolves [blockId] against the current list when it fires.
+     */
+    onUpdateMath: (blockId: String, mml: String) -> Unit,
     onRemoveBlock: (index: Int) -> Unit,
     onMoveUp: (index: Int) -> Unit,
     onMoveDown: (index: Int) -> Unit,
@@ -142,9 +148,14 @@ fun BlockListEditor(
                         }
                     }
                     is ContentElement.MathElement -> {
+                        // Capture the stable id, not the loop position. After a
+                        // reorder the WebView follows its key (blockKey), but a
+                        // callback built from `index` would keep writing into
+                        // the block that used to be at that slot (H5).
                         MathLiveEditor(
                             initialLatex = mathMlToLatex(element.mathml),
-                            onMathMl = { onUpdateBlock(index, ContentElement.MathElement(it)) }
+                            blockId = blockIds.getOrNull(index) ?: "index$index",
+                            onMathMl = onUpdateMath
                         )
                         // The MathLive keyboard only appears once the field has
                         // focus, which is not obvious from a formula on screen.

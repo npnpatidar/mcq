@@ -184,7 +184,7 @@ class ImportRollbackTest {
         }
         val before = dump()
 
-        val propagated = try {
+        val failure = try {
             runBlocking {
                 AnkiApkgImporter(db, batchSize = 1).import(
                     source = { ByteArrayInputStream(apkg) },
@@ -194,11 +194,23 @@ class ImportRollbackTest {
                     onProgress = { throw IllegalStateException("boom after batch 1") }
                 )
             }
-            false
-        } catch (e: IllegalStateException) {
-            true
+            null
+        } catch (e: Exception) {
+            e
         }
-        assertTrue("the consumer's failure must propagate", propagated)
+        // The Anki reader wraps a throwing onProgress in AnkiPackageException
+        // ("Could not read the Anki collection: ..."), so the marker may sit
+        // anywhere in the cause chain rather than on the thrown type itself.
+        var chain: Throwable? = failure
+        var propagated = false
+        while (chain != null) {
+            if (chain.message?.contains("boom after batch 1") == true) {
+                propagated = true
+                break
+            }
+            chain = chain.cause
+        }
+        assertTrue("the consumer's failure must propagate: $failure", propagated)
         assertEquals(
             "a failed .apkg import must leave the library byte-for-byte unchanged",
             before,

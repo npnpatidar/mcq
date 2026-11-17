@@ -1,5 +1,6 @@
 package com.mcqapp.data.repository
 
+import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.TestProgressEntity
 import com.mcqapp.domain.TestAnswer
@@ -95,11 +96,22 @@ internal class TestProgressStore(
         takeOver: Boolean = false
     ) = writeLock.withLock {
         val outgoingPaperId = currentPaperId()
-        if (takeOver) db.testProgressDao().deleteForPaper(snapshot.paperId)
-        if (outgoingPaperId != null && outgoingPaperId != snapshot.paperId) {
-            db.testProgressDao().deleteForPaper(outgoingPaperId)
+        // The takeover's delete and the answers it rewrites are one database
+        // write. Separate statements left a window where a reader (the resume
+        // offer, the backup, a test) saw the outgoing paper's rows gone and the
+        // new session's own answer not yet down — an empty session, even though
+        // the answer was about to land. Atomicity keeps the new session's own
+        // answers from ever being momentarily deleted by its own cleanup.
+        db.withTransaction {
+            if (takeOver) db.testProgressDao().deleteForPaper(snapshot.paperId)
+            if (outgoingPaperId != null && outgoingPaperId != snapshot.paperId) {
+                db.testProgressDao().deleteForPaper(outgoingPaperId)
+            }
+            if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
         }
-        if (changed.isNotEmpty()) writeRows(snapshot.paperId, changed)
+        // DataStore cannot roll back, so the header lands only after the DB
+        // write commits; the lock still serialises the pair against every
+        // other write that replaces it.
         settings.saveTestProgress(snapshot.header().toJson())
     }
 

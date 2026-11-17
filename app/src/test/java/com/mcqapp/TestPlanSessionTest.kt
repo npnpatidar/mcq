@@ -579,9 +579,13 @@ class TestPlanSessionTest {
         )
         val current = viewModel.state.value.current!!
         viewModel.toggleOption("${current.id}-a")
+        // Wait for THE new answer, not merely for any row: the abandoned
+        // legacy row is still present when the toggle happens, so "not empty"
+        // passed before the takeover wrote anything and the assertion raced
+        // the gap between deleting that row and writing this session's answer.
         assertTrue(
             "the new session's answer never reached the store",
-            awaitCondition { answerRows().isNotEmpty() }
+            awaitCondition { answerRows() == listOf(current.id) }
         )
         assertEquals(
             "the abandoned legacy answers leaked into the new session",
@@ -627,9 +631,11 @@ class TestPlanSessionTest {
         )
         val current = viewModel.state.value.current!!
         viewModel.toggleOption("${current.id}-a")
+        // As in the mirror test: the awaited condition must be the new answer
+        // itself, not the still-present stale row the takeover is about to drop.
         assertTrue(
             "the new session's answer never reached the store",
-            awaitCondition { answerRows().isNotEmpty() }
+            awaitCondition { answerRows() == listOf(current.id) }
         )
         assertEquals(
             "the abandoned bounded answers leaked into the legacy session",

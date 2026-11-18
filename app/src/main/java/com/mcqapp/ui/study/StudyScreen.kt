@@ -896,6 +896,7 @@ private fun QuestionCard(
                         .fillMaxWidth()
                         .padding(top = 6.dp)
                         .background(container, RoundedCornerShape(8.dp))
+                        .testTag("study-option-" + option.id)
                         .selectable(
                             selected = isSelected,
                             enabled = !revealed,

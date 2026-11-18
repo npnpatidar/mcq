@@ -199,6 +199,8 @@ class McqRepository internal constructor(
     suspend fun setThemeMode(mode: String) = settings.setThemeMode(mode)
     fun themePalette(): Flow<String> = settings.themePalette()
     suspend fun setThemePalette(key: String) = settings.setThemePalette(key)
+    fun appLanguage(): Flow<AppLanguage> = settings.appLanguage()
+    suspend fun setAppLanguage(language: AppLanguage) = settings.setAppLanguage(language)
     fun customThemesJson(): Flow<String?> = settings.customThemesJson()
     suspend fun updateCustomThemesJson(update: (String?) -> String) =
         settings.updateCustomThemesJson(update)

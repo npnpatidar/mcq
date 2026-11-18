@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hindi translations of strings_language_picker.xml. Names and placeholders
+  match the default resources exactly.
+-->
+<resources>
+    <string name="language">भाषा</string>
+    <string name="language_system">सिस्टम डिफ़ॉल्ट</string>
+    <string name="language_english">अंग्रेज़ी</string>
+    <string name="language_hindi">हिन्दी</string>
+    <string name="language_help">सिस्टम डिफ़ॉल्ट आपके डिवाइस की भाषा का पालन करता है। अन्य विकल्प केवल इस ऐप को बदलते हैं।</string>
+</resources>

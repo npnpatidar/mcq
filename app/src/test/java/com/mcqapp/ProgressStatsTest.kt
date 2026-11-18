@@ -53,7 +53,7 @@ class ProgressStatsTest {
             range = range,
             now = now,
             cfg = SchedulerConfig(),
-            zone = 0L
+            zone = DayBoundary.utc()
         )
         reviews.forEach(accumulator::add)
         return accumulator.toData()

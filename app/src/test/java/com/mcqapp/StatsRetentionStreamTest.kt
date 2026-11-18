@@ -191,7 +191,7 @@ class StatsRetentionStreamTest {
                 ),
                 config = library.config,
                 now = now,
-                zoneOffsetMillis = DayBoundary.zoneOffset(now),
+                zone = DayBoundary.defaultZone(),
                 tagsOfQuestion = db.questionTagDao().tagsForQuestionsChunked(reviewedIds)
             ),
             scopePaperId,
@@ -900,6 +900,12 @@ class StatsRetentionStreamTest {
      * report include them. The newest row belongs to the other paper's card, so
      * `max(reviewedAt)` — the key's only row-derived input — does not move; only
      * invalidation can turn the cached 0 pairs into the moved card's 1 pair.
+     *
+     * Both reads deliberately go through the same [repository] and its one
+     * calibration cache. This is the only test that proves a cross-paper move
+     * invalidates that cache: the pre-move read pins a 0-pair p2 report under a
+     * key the re-key does not change, so the post-move read can only see the
+     * moved card's pair if the move actually dropped the cached report.
      */
     private suspend fun assertCrossPaperMoveRefreshesDestinationReport(
         what: String,

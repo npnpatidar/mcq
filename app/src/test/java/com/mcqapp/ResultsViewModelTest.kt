@@ -5,6 +5,7 @@ import android.os.Looper
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.R
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.QuestionResultEntity
@@ -15,6 +16,7 @@ import com.mcqapp.ui.results.ResultsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -74,7 +76,11 @@ class ResultsViewModelTest {
 
         val error = viewModel.state.value.loadError
         assertNotNull("a failed load must say so", error)
-        assertTrue(error!!.startsWith("Could not load this result"))
+        assertEquals(
+            app.getString(R.string.final_result_load_failed),
+            error
+        )
+        assertFalse("raw exception detail leaked: $error", "Exception" in error!! || "closed" in error)
         assertNull("no attempt could have been read", viewModel.state.value.attempt)
     }
 

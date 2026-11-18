@@ -204,7 +204,7 @@ class TestPlanSessionTest {
         )
         val error = viewModel.state.value.loadError
         assertNotNull("a present but unknown type must be refused", error)
-        assertTrue("got: $error", error!!.contains("unknown", ignoreCase = true))
+        assertEquals("got: $error", app.getString(R.string.test_start_failed), error)
     }
 
     @Test
@@ -221,7 +221,7 @@ class TestPlanSessionTest {
         )
         val error = viewModel.state.value.loadError
         assertNotNull("a bounded type needs a length", error)
-        assertTrue("got: $error", error!!.contains("length", ignoreCase = true))
+        assertEquals("got: $error", app.getString(R.string.test_start_failed), error)
     }
 
     /**
@@ -342,7 +342,7 @@ class TestPlanSessionTest {
         )
         val error = viewModel.state.value.loadError
         assertNotNull("a TAG route without a tag cannot start", error)
-        assertTrue("got: $error", error!!.contains("needs a choice", ignoreCase = true))
+        assertEquals("got: $error", app.getString(R.string.test_start_failed), error)
     }
 
     /**

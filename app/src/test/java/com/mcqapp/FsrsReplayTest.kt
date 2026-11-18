@@ -236,7 +236,7 @@ class FsrsReplayTest {
     fun replayCountsExposuresWithinTheStudyDay() {
         val replayScheduler = FsrsScheduler(
             config = com.mcqapp.domain.SchedulerConfig(dayStartHour = 0),
-            zoneOffset = { 0L }
+            zone = com.mcqapp.domain.DayBoundary.utc()
         )
         // A study-day boundary under dayStartHour = 0 and a zero offset.
         val t0 = 2 * day

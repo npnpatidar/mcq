@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.domain.CardState
 import com.mcqapp.domain.CardStateKind
+import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.SchedulerConfig
 import com.mcqapp.domain.stats.CardHistorySummary
@@ -143,7 +144,7 @@ class SmallerAdditionsTest {
                 scheduler = FsrsScheduler(config = SchedulerConfig()),
                 config = SchedulerConfig(),
                 now = now,
-                zoneOffsetMillis = 0L
+                zone = DayBoundary.utc()
             ),
             scopePaperId = scopePaperId,
             range = StatsAggregator.Range.ALL

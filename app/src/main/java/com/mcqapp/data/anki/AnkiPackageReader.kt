@@ -3,6 +3,7 @@ package com.mcqapp.data.anki
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.mcqapp.data.SafeZip
+import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.LegacyParser
@@ -357,7 +358,7 @@ object AnkiPackageReader {
                 // The paper's own deck is uncategorised, so the whole-file
                 // importer synthesises "Uncategorized" for it.
                 val categoryId = "$paperId-uncat"
-                sink.onCategory(CategoryDto(id = categoryId, title = "Uncategorized"))
+                sink.onCategory(CategoryDto(id = categoryId, title = FALLBACK_CATEGORY_TITLE))
                 val counts = streamDeck(
                     db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId,
                     sink, batchSize, nowMillis, parameters, IntArray(1)
@@ -387,7 +388,7 @@ object AnkiPackageReader {
                 // would keep, the same condition the whole-file side uses.
                 if (rootDeck != null && (scan.counts[rootDeck.id] ?: 0) > 0) {
                     val rootCategoryId = "$paperId-root"
-                    sink.onCategory(CategoryDto(id = rootCategoryId, title = "Uncategorized"))
+                    sink.onCategory(CategoryDto(id = rootCategoryId, title = FALLBACK_CATEGORY_TITLE))
                     val counts = streamDeck(
                         db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId,
                         sink, batchSize, nowMillis, parameters, IntArray(1)

@@ -10,6 +10,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.domain.AnswerReview
@@ -176,6 +177,10 @@ class TestViewModel(
 
     private val _state = MutableStateFlow(TestUiState())
     val state: StateFlow<TestUiState> = _state.asStateFlow()
+
+    /** A plain, localized message; the exception itself stays in the log. */
+    private fun friendly(messageRes: Int): String =
+        getApplication<Application>().getString(messageRes)
 
     /**
      * The pre-submit review rows, paged over the session order. Rows resolve
@@ -579,7 +584,9 @@ class TestViewModel(
                 // Without clearing `loading` the screen sat on "Loading…"
                 // forever with no retry and no explanation.
                 Logger.e("TESTVM", "Failed to load test session", e)
-                _state.update { it.copy(loading = false, loadError = "Could not start the test: ${e.message}") }
+                _state.update {
+                    it.copy(loading = false, loadError = friendly(R.string.test_start_failed))
+                }
             }
         }
     }
@@ -1187,7 +1194,7 @@ class TestViewModel(
                         it.copy(
                             saving = false,
                             submitted = false,
-                            saveError = "Could not save your result: ${outcome.message}"
+                            saveError = friendly(R.string.test_result_save_failed)
                         )
                     }
                     // submit() stopped both clocks at `submittedAtElapsed`, but

@@ -159,6 +159,12 @@ android {
     // well below the daemon's 4g.
     testOptions {
         unitTests.all { it.maxHeapSize = "2g" }
+        // Robolectric resolves R.string / R.plurals in ViewModel tests (friendly
+        // error copy) from the app's compiled resources. Without this AGP never
+        // packages apk-for-local-test.ap_, so Robolectric loads only the
+        // framework package and every getString(id) fails with
+        // "No package ID 7f found for ID 0x7f...".
+        unitTests.isIncludeAndroidResources = true
     }
 
     buildFeatures {
@@ -166,6 +172,15 @@ android {
         // For BuildConfig.VERSION_NAME, so the About row cannot drift from
         // the version Gradle actually builds.
         buildConfig = true
+    }
+
+    bundle {
+        language {
+            // The in-app language picker (English/Hindi) switches locale at
+            // runtime without Play Core, so no Play language packs are ever
+            // downloaded: ship all translations in every APK instead.
+            enableSplit = false
+        }
     }
 
     packaging {

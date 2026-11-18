@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.clockMayRun
@@ -284,6 +285,10 @@ class StudyViewModel(
     private val _state = MutableStateFlow(StudyUiState())
     val state: StateFlow<StudyUiState> = _state.asStateFlow()
 
+    /** A plain, localized message; the exception itself stays in the log. */
+    private fun friendly(messageRes: Int): String =
+        getApplication<Application>().getString(messageRes)
+
     /** Seconds spent on the question on screen, published once per second. */
     private val _liveDwell = MutableStateFlow(0L)
     val liveDwell: StateFlow<Long> = _liveDwell.asStateFlow()
@@ -491,7 +496,7 @@ class StudyViewModel(
                 _state.update {
                     it.copy(
                         loading = false,
-                        loadError = "Could not start the session: ${e.message}"
+                        loadError = friendly(R.string.study_session_start_failed)
                     )
                 }
             }
@@ -521,13 +526,13 @@ class StudyViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 _state.update {
-                    it.copy(grading = false, gradeError = "Could not load the next card: ${e.message}")
+                    it.copy(grading = false, gradeError = friendly(R.string.study_next_card_failed))
                 }
                 return@launch
             } catch (e: Exception) {
                 Logger.e("STUDY", "loadNext failed", e)
                 _state.update {
-                    it.copy(grading = false, gradeError = "Could not load the next card: ${e.message}")
+                    it.copy(grading = false, gradeError = friendly(R.string.study_next_card_failed))
                 }
                 return@launch
             }
@@ -1094,8 +1099,8 @@ class StudyViewModel(
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
-                        else "Could not save your grade: ${e.message}",
+                        gradeError = if (persisted) friendly(R.string.study_next_card_failed)
+                        else friendly(R.string.study_grade_save_failed),
                         gradedAndStuck = persisted
                     )
                 }
@@ -1104,8 +1109,8 @@ class StudyViewModel(
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
-                        else "Could not save your grade: ${e.message}",
+                        gradeError = if (persisted) friendly(R.string.study_next_card_failed)
+                        else friendly(R.string.study_grade_save_failed),
                         gradedAndStuck = persisted
                     )
                 }
@@ -1180,8 +1185,8 @@ class StudyViewModel(
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
-                        else "Could not save your grade: ${e.message}",
+                        gradeError = if (persisted) friendly(R.string.study_next_card_failed)
+                        else friendly(R.string.study_grade_save_failed),
                         gradedAndStuck = persisted
                     )
                 }
@@ -1190,8 +1195,8 @@ class StudyViewModel(
                 _state.update {
                     it.copy(
                         grading = false,
-                        gradeError = if (persisted) "Could not load the next card: ${e.message}"
-                        else "Could not save your grade: ${e.message}",
+                        gradeError = if (persisted) friendly(R.string.study_next_card_failed)
+                        else friendly(R.string.study_grade_save_failed),
                         gradedAndStuck = persisted
                     )
                 }
@@ -1288,14 +1293,14 @@ class StudyViewModel(
                 // rethrown; a closed database must still reach the summary.
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 _state.update {
-                    it.copy(gradeError = "Could not save your grade: ${e.message}")
+                    it.copy(gradeError = friendly(R.string.study_grade_save_failed))
                 }
             } catch (e: Exception) {
                 Logger.e("STUDY", "recordStudyReview(${question.id}) on stop failed", e)
                 // The stop itself never blocks: a failed write is reported on
                 // the summary instead of trapping the learner in the session.
                 _state.update {
-                    it.copy(gradeError = "Could not save your grade: ${e.message}")
+                    it.copy(gradeError = friendly(R.string.study_grade_save_failed))
                 }
             }
             finishSession()
@@ -1389,7 +1394,7 @@ class StudyViewModel(
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
                 Logger.e("STUDY", "enableNewCards failed", e)
-                _state.update { it.copy(loading = false, loadError = "Could not start the session: ${e.message}") }
+                _state.update { it.copy(loading = false, loadError = friendly(R.string.study_session_start_failed)) }
             }
         }
     }
@@ -1510,7 +1515,7 @@ class StudyViewModel(
                 // behind a spinner forever (the stale card was already nulled).
                 Logger.e("STUDY", "restart failed", e)
                 _state.update {
-                    it.copy(loading = false, loadError = "Could not start the session: ${e.message}")
+                    it.copy(loading = false, loadError = friendly(R.string.study_session_start_failed))
                 }
             }
         }

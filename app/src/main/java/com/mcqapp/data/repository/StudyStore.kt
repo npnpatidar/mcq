@@ -56,11 +56,18 @@ internal class StudyStore(
      */
     private val staleChecked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * One zone for the store's whole life: the scheduler's due dates and the
+     * exposure-day count below must bucket by the same DST-aware calendar days.
+     */
+    private val zone = com.mcqapp.domain.DayBoundary.defaultZone()
+
     /** The FSRS scheduler the whole store grades and counts with. */
     private fun fsrs(config: com.mcqapp.domain.SchedulerConfig) =
         com.mcqapp.domain.FsrsScheduler(
             desiredRetention = config.desiredRetention,
-            config = config
+            config = config,
+            zone = zone
         )
 
     private fun CardStateEntity.toDomain() = com.mcqapp.domain.CardState(
@@ -535,7 +542,7 @@ internal class StudyStore(
         val dayStart = com.mcqapp.domain.DayBoundary.startOfDay(
             now,
             config.dayStartHour,
-            com.mcqapp.domain.DayBoundary.zoneOffset(now)
+            zone
         )
         return db.reviewLogDao().countForCardSince(paperId, questionId, dayStart) + 1
     }

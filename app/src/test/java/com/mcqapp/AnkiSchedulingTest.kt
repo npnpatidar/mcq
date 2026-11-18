@@ -417,6 +417,36 @@ class AnkiSchedulingTest {
         }
     }
 
+    /**
+     * An Anki day count is a study-day index, not a 24-hour tick. Europe/Berlin
+     * jumps forward between the two 04:00 boundaries in each pair below, so the
+     * gaps from the creation day's boundary are 23 and 71 hours: the old
+     * `gap / DAY_MS` truncation exported 0 and 2 where the study days are 1 and
+     * 3 apart.
+     */
+    @Test
+    fun ankiDayCountStaysIntegralAcrossDst() {
+        val original = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Berlin"))
+            listOf(
+                // 2024-03-30 20:00Z -> 2024-03-31 04:00 CEST (next study day)
+                Triple(1_711_828_800_000L, 1_711_850_400_000L, 1),
+                // 2024-03-29 04:00 CET -> 2024-04-01 04:00 CEST (three study days)
+                Triple(1_711_681_200_000L, 1_711_936_800_000L, 3)
+            ).forEach { (crtMillis, dueMillis, expectedDays) ->
+                val card = AnkiScheduling.toAnki(
+                    CardScheduleDto(intervalDays = expectedDays, dueAt = dueMillis, reps = 7),
+                    crtSeconds = crtMillis / 1000L,
+                    nowMillis = crtMillis
+                )
+                assertEquals("crt=$crtMillis", expectedDays, card.due)
+            }
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
     private fun startOfStudyDay(millis: Long): Long = com.mcqapp.domain.DayBoundary.startOfDay(
         millis,
         com.mcqapp.domain.DayBoundary.DEFAULT_DAY_START_HOUR,

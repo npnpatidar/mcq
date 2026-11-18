@@ -1,11 +1,14 @@
 package com.mcqapp
 
+import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.R
 import com.mcqapp.ui.settings.SettingsViewModel
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -98,7 +101,13 @@ class SettingsExportDispatcherTest {
                     open = { null }
                 )
             }
-            assertEquals(listOf("Could not open file for writing"), reported)
+            val friendly = ApplicationProvider.getApplicationContext<Context>()
+                .getString(R.string.final_open_for_write_failed)
+            assertEquals(listOf(friendly), reported)
+            assertFalse(
+                "raw failure detail must not reach the learner: $reported",
+                reported.any { "Exception" in it || "null" in it }
+            )
         } finally {
             executor.shutdown()
         }

@@ -9,12 +9,13 @@ import com.mcqapp.domain.SchedulerConfig
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
  * Builds the whole statistics payload from the replayed review log and the
- * current card states. Pure and clock-free: `now` and the zone offset are
+ * current card states. Pure and clock-free: `now` and the time zone are
  * parameters, so every section is testable at any instant.
  *
  * Two scopes apply:
@@ -59,8 +60,12 @@ object StatsAggregator {
         val scheduler: FsrsScheduler,
         val config: SchedulerConfig,
         val now: Long,
-        /** The device's UTC offset at [now], in ms. */
-        val zoneOffsetMillis: Long,
+        /**
+         * The device's time zone, with its DST rules. The whole day arithmetic
+         * resolves each review's boundary at that review's own calendar date,
+         * so a fixed offset is not enough here.
+         */
+        val zone: TimeZone,
         /**
          * Row-based coverage (plan §4). The pure aggregator cannot derive it
          * from the card list: an unseen question has no card at all. The
@@ -93,7 +98,7 @@ object StatsAggregator {
         val range: Range
     ) {
         val cfg: SchedulerConfig get() = input.config
-        val zone: Long get() = input.zoneOffsetMillis
+        val zone: TimeZone get() = input.zone
 
         companion object {
             fun of(input: Input, scopePaperId: String?, range: Range): Context = Context(
@@ -372,7 +377,7 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long,
+        private val zone: TimeZone,
         private val scheduler: FsrsScheduler,
         /** The memory tab shares this class for its KPIs; it ranks nothing. */
         private val collectWeakest: Boolean = true
@@ -392,9 +397,9 @@ object StatsAggregator {
         }
 
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
-        private val tomorrowStart = todayStart + DayBoundary.DAY_MS
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val tomorrowStart = DayBoundary.boundaryOf(todayDay + 1, cfg.dayStartHour, zone)
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         /** The heatmap's year, keyed by study day; older days are never read. */
         private val heatDays = HashMap<Long, DayTotals>()
@@ -594,11 +599,13 @@ object StatsAggregator {
         }
 
         private fun heatmap(): HeatmapData {
-            val firstDay = todayStart - (HEATMAP_DAYS - 1) * DayBoundary.DAY_MS
             val days = (0 until HEATMAP_DAYS).map { i ->
-                val totals = heatDays[todayDay - (HEATMAP_DAYS - 1 - i)]
+                // Calendar days back from today, each boundary resolved on its
+                // own date: a DST day is 23 or 25 hours, not a 24-hour tick.
+                val dayIndex = todayDay - (HEATMAP_DAYS - 1 - i)
+                val totals = heatDays[dayIndex]
                 HeatmapDay(
-                    dayStart = firstDay + i * DayBoundary.DAY_MS,
+                    dayStart = DayBoundary.boundaryOf(dayIndex, cfg.dayStartHour, zone),
                     reviews = totals?.reviews ?: 0,
                     seconds = totals?.seconds ?: 0L
                 )
@@ -676,7 +683,7 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long,
+        private val zone: TimeZone,
         private val paperTitleOf: Map<String, String>,
         private val categoryOfQuestion: Map<String, String>
     ) {
@@ -697,7 +704,7 @@ object StatsAggregator {
 
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         /** Study day → that day's first qualifying reviews. */
         private val trendDays = HashMap<Long, Counts>()
@@ -1041,7 +1048,7 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long
+        private val zone: TimeZone
     ) {
         private class DayBucket {
             /** LEARNING, REVIEW, RELEARNING, unknown — the chart's legend order. */
@@ -1072,7 +1079,8 @@ object StatsAggregator {
 
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val tomorrowStart = DayBoundary.boundaryOf(todayDay + 1, cfg.dayStartHour, zone)
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         /** Study day → its in-range totals. O(days), never O(reviews). */
         private val days = HashMap<Long, DayBucket>()
@@ -1135,7 +1143,7 @@ object StatsAggregator {
             countSession(review)
             days.getOrPut(studyEpochDay(review.reviewedAt, cfg, zone)) { DayBucket() }.add(review)
             countAnswerButtons(review)
-            val hour = (Math.floorMod(review.reviewedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
+            val hour = hourOf(review.reviewedAt, zone)
             hourReviews[hour]++
             if (review.passed) hourPasses[hour]++
             review.elapsedSeconds?.let { seconds ->
@@ -1157,17 +1165,21 @@ object StatsAggregator {
             val state = snapshot.state
             if (state.leech) leechQuestions += state.questionId
             if (state.state == CardStateKind.NEW || state.dueAt == 0L) return
-            // Plan §7: backlog excluded from both near-term counts.
+            // Plan §7: backlog excluded from both near-term counts. The window
+            // edges are boundaries of calendar days, so a DST jump cannot move
+            // a card into tomorrow's bucket an hour early (or late).
             if (state.dueAt >= todayStart) {
-                if (state.dueAt >= todayStart + DayBoundary.DAY_MS &&
-                    state.dueAt < todayStart + 2 * DayBoundary.DAY_MS
+                if (state.dueAt >= tomorrowStart &&
+                    state.dueAt < DayBoundary.boundaryOf(todayDay + 2, cfg.dayStartHour, zone)
                 ) {
                     dueTomorrow++
                 }
-                if (state.dueAt < todayStart + 7 * DayBoundary.DAY_MS) dueThisWeek++
+                if (state.dueAt < DayBoundary.boundaryOf(todayDay + 7, cfg.dayStartHour, zone)) {
+                    dueThisWeek++
+                }
             }
             forecastLoad += if (state.intervalDays <= 0) 1.0 else 1.0 / state.intervalDays
-            val dayIndex = Math.floorDiv(state.dueAt - todayStart, DayBoundary.DAY_MS)
+            val dayIndex = DayBoundary.studyDayIndex(state.dueAt, cfg.dayStartHour, zone) - todayDay
             when {
                 dayIndex < 0 -> forecastOverdue++
                 dayIndex < FORECAST_DAYS ->
@@ -1499,13 +1511,13 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long,
+        private val zone: TimeZone,
         private val collectEntries: Boolean,
         private val paperTitleOf: Map<String, String> = emptyMap()
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         private var earliest: Long? = null
         private var lastReviewAt = Long.MIN_VALUE
@@ -1630,7 +1642,7 @@ object StatsAggregator {
             var bin = DURATION_EDGES.indexOfFirst { minutes < it }
             if (bin < 0) bin = DURATION_LABELS.size - 1
             durationBins[bin]++
-            val hour = (Math.floorMod(session.startedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
+            val hour = hourOf(session.startedAt, zone)
             startHours[hour]++
             weekdays[weekdayOf(day)]++
             val accuracy = (session.reviews - session.again).toDouble() / session.reviews
@@ -1740,7 +1752,7 @@ object StatsAggregator {
         private val scopePaperId: String?,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long,
+        private val zone: TimeZone,
         private val scheduler: FsrsScheduler,
         private val paperTitleOf: Map<String, String> = emptyMap()
     ) {
@@ -2113,13 +2125,13 @@ object StatsAggregator {
         private val range: Range,
         now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long,
+        private val zone: TimeZone,
         private val paperTitleOf: Map<String, String>,
         private val categoryOfQuestion: Map<String, String>
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         private var allReviews = 0
         private var reviews = 0
@@ -2184,7 +2196,7 @@ object StatsAggregator {
             val band = bandOf(review)
             val topic = topicOf(review)
             val position = sittingPosition.coerceAtMost(5) - 1
-            val hour = (Math.floorMod(review.reviewedAt + zone, DayBoundary.DAY_MS) / HOUR_MS).toInt()
+            val hour = hourOf(review.reviewedAt, zone)
             val day = studyEpochDay(review.reviewedAt, cfg, zone)
 
             fun IntArray.bump() {
@@ -2391,16 +2403,18 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: Long
+        private val zone: TimeZone
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
 
         /** First day of the selected window; null for the All range. */
-        private val rangeStart = range.days?.let { todayStart - (it - 1) * DayBoundary.DAY_MS }
+        private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         /** First day of the equal-length window before it; null for All. */
-        private val previousStart = range.days?.let { rangeStart!! - it * DayBoundary.DAY_MS }
+        private val previousStart = range.days?.let {
+            DayBoundary.boundaryOf(todayDay - (it - 1) - it, cfg.dayStartHour, zone)
+        }
 
         private class Counts {
             var reviews = 0
@@ -2534,11 +2548,20 @@ object StatsAggregator {
 
     private data class Bucket(val key: Long, val label: String)
 
-    /** Epoch-day index of the study day containing [ms]. */
-    private fun studyEpochDay(ms: Long, cfg: SchedulerConfig, zone: Long): Long {
-        val shift = cfg.dayStartHour.coerceIn(0, 23) * HOUR_MS
-        return Math.floorDiv(ms + zone - shift, DayBoundary.DAY_MS)
-    }
+    /**
+     * Epoch-day index of the study day containing [ms]. The single day-bucket
+     * helper for every accumulator: [DayBoundary] resolves the local calendar
+     * date with this zone's rules, so a DST jump never shifts a bucket.
+     */
+    private fun studyEpochDay(ms: Long, cfg: SchedulerConfig, zone: TimeZone): Long =
+        DayBoundary.studyDayIndex(ms, cfg.dayStartHour, zone)
+
+    /** Local hour of an instant, using that instant's own offset (DST-correct). */
+    private fun hourOf(millis: Long, zone: TimeZone): Int =
+        (Math.floorMod(
+            millis + DayBoundary.zoneOffsetAt(millis, zone),
+            DayBoundary.DAY_MS
+        ) / HOUR_MS).toInt()
 
     /** 0 = Monday .. 6 = Sunday (epoch day 0 was a Thursday). */
     private fun weekdayOf(epochDay: Long): Int =
@@ -2565,7 +2588,7 @@ object StatsAggregator {
         todayDay: Long,
         granularity: Granularity,
         cfg: SchedulerConfig,
-        zone: Long
+        zone: TimeZone
     ): List<Bucket> {
         val dayFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
         val monthFmt = DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH)
@@ -2587,7 +2610,7 @@ object StatsAggregator {
         windowStartMs: Long,
         todayDay: Long,
         cfg: SchedulerConfig,
-        zone: Long
+        zone: TimeZone
     ): Granularity {
         val startDay = studyEpochDay(windowStartMs, cfg, zone)
         val spanDays = (todayDay - startDay).coerceAtLeast(0)

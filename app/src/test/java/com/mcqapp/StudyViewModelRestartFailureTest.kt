@@ -100,7 +100,13 @@ class StudyViewModelRestartFailureTest {
             awaitCondition { viewModel.state.value.gradeError != null }
         )
         assertFalse(viewModel.state.value.grading)
-        assertTrue(viewModel.state.value.gradeError!!.startsWith("Could not save your grade"))
+        val gradeMessage = viewModel.state.value.gradeError!!
+        assertEquals(app.getString(R.string.study_grade_save_failed), gradeMessage)
+        assertFalse(
+            "raw exception detail must not reach the card: $gradeMessage",
+            gradeMessage.contains("Exception", ignoreCase = true) ||
+                gradeMessage.contains("closed", ignoreCase = true)
+        )
         // The card is still on screen, so the learner can retry the same grade.
         assertEquals("q1", viewModel.state.value.current?.questionId)
         assertTrue(viewModel.state.value.revealed)
@@ -147,7 +153,13 @@ class StudyViewModelRestartFailureTest {
         )
         assertFalse(viewModel.state.value.loading)
         assertNotNull(viewModel.state.value.loadError)
-        assertTrue(viewModel.state.value.loadError!!.startsWith("Could not start the session"))
+        val loadMessage = viewModel.state.value.loadError!!
+        assertEquals(app.getString(R.string.study_session_start_failed), loadMessage)
+        assertFalse(
+            "raw exception detail must not reach the screen: $loadMessage",
+            loadMessage.contains("Exception", ignoreCase = true) ||
+                loadMessage.contains("closed", ignoreCase = true)
+        )
         assertEquals(null, viewModel.state.value.current)
     }
 }

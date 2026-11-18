@@ -365,7 +365,7 @@ class EditorMoveToQuestionTest {
 
         assertEquals(before.questionId, vm.state.value.questionId)
         assertEquals(before.elements, vm.state.value.elements)
-        assertNotNull("the reason is visible", vm.state.value.moveError)
+        assertEquals(app.getString(R.string.editor_question_unavailable), vm.state.value.moveError)
         assertEquals(EditorOperation.IDLE, vm.state.value.operation)
     }
 

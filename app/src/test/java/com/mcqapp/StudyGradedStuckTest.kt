@@ -96,7 +96,14 @@ class StudyGradedStuckTest {
             awaitCondition { viewModel.state.value.gradedAndStuck }
         )
         assertFalse(viewModel.state.value.grading)
-        assertTrue(viewModel.state.value.gradeError!!.startsWith("Could not load the next card"))
+        // The injected failure's own text must never be shown; only the plain
+        // localized message belongs on the card.
+        val message = viewModel.state.value.gradeError!!
+        assertEquals(app.getString(R.string.study_next_card_failed), message)
+        assertFalse(
+            "raw exception detail must not reach the card: $message",
+            message.contains("simulated next-card pull failure")
+        )
     }
 
     /**

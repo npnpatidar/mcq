@@ -104,6 +104,11 @@ code or copy changes.
 
 ## Scheduling (FSRS-7)
 
+- The study day starts at **04:00 local time** and is computed from calendar dates
+  (`DayBoundary.studyDayIndex` / `boundaryOf`), not by adding fixed 24-hour ticks.
+  This keeps due dates, exposure counts, Session day buckets and Anki day numbers
+  correct across daylight-saving changes. Elapsed time in the FSRS formula stays
+  fractional; only the resulting interval is whole days.
 - The engine is FSRS-7: **34 weights**, two stability traces (`stability` slow,
   `stabilityFast` fast) and a difficulty-modulated *mixture* forgetting curve.
   It is a published upstream model, not ours: the constants and the parity vector
@@ -253,7 +258,8 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
-  matches nothing. Full local pass ≈124 classes.
+  matches nothing. Full local pass ≈194 classes. The `:app:testPureJvm` Gradle task now
+  codifies this selection rule so it no longer depends on a shell recipe.
 - Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.
 - APK artifacts download to `/home/naresh/Download`, not `/sdcard/Download`:
 
@@ -261,6 +267,21 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 gh run download <run-id> --name app-debug   -D /home/naresh/Download   # -> app-debug.apk
 gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-release.apk
 ```
+
+## Localisation and user-facing copy
+
+- English is the base locale (`res/values/strings*.xml`); a complete **Hindi**
+  translation lives in `res/values-hi/strings*.xml`. Keep names and format
+  specifiers identical across locales; plurals need both `one` and `other`.
+- Users pick a language in **Settings → Appearance → Language**
+  (`AppLanguage`: SYSTEM / ENGLISH / HINDI). SYSTEM follows the device. API 33+
+  uses platform per-app locales (`LocaleManager`); older APIs wrap the Activity
+  context. User-facing copy is resolved with the selected locale, not just the
+  system one.
+- All user-facing errors are string resources with plain, friendly wording; raw
+  exception detail goes to `Logger` only. Data-layer fallback titles are stable
+  **tokens** (stored values must not change because SQL/search compare titles by
+  equality) and are resolved to localized display in the UI.
 
 ## CI, artifacts and releases
 
@@ -274,10 +295,12 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.52` is the
-  current release and carries Room schema 28.
-- CI uploads the APKs as artifacts (`if: always()`). After every push, download
-  both and keep them under these exact names:
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.60` is the
+  published release and `0.0.61` is the release being cut by the final housekeeping
+  branch. Room schema remains 28.
+- CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
+  `test-results`, `lint-report`, `ui-test-results`. After every push, download both
+  APKs and keep them under these exact names:
 
 ```bash
 gh run download <run-id> --name app-debug   -D /sdcard/Download   # -> app-debug.apk

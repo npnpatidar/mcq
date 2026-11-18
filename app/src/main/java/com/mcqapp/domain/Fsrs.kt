@@ -1,5 +1,6 @@
 package com.mcqapp.domain
 
+import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
@@ -73,10 +74,11 @@ class FsrsScheduler private constructor(
     val desiredRetention: Double,
     private val config: SchedulerConfig,
     /**
-     * The device's UTC offset, injected rather than read so the scheduler
-     * stays deterministic.
+     * The device's time zone, injected rather than read so the scheduler stays
+     * deterministic and so day boundaries are resolved with the target date's
+     * DST rules (not a fixed offset captured at the review instant).
      */
-    private val zoneOffset: (Long) -> Long,
+    private val zone: TimeZone,
     clipInputs: Boolean
 ) : Scheduler {
 
@@ -84,8 +86,8 @@ class FsrsScheduler private constructor(
         parameters: List<Double>? = null,
         desiredRetention: Double = DEFAULT_DESIRED_RETENTION,
         config: SchedulerConfig = SchedulerConfig(),
-        zoneOffset: (Long) -> Long = DayBoundary::zoneOffset
-    ) : this(parameters, desiredRetention, config, zoneOffset, clipInputs = true)
+        zone: TimeZone = DayBoundary.defaultZone()
+    ) : this(parameters, desiredRetention, config, zone, clipInputs = true)
 
     private val w: DoubleArray = (parameters ?: config.fsrsParameters).toDoubleArray()
 
@@ -181,7 +183,7 @@ class FsrsScheduler private constructor(
             dueAt = now + config.relearnMs
         } else {
             interval = intervalDaysFor(memory)
-            dueAt = DayBoundary.dueAfter(now, interval, config.dayStartHour, zoneOffset(now))
+            dueAt = DayBoundary.dueAfter(now, interval, config.dayStartHour, zone)
         }
 
         return state.copy(
@@ -209,7 +211,7 @@ class FsrsScheduler private constructor(
      * interval.
      */
     fun studyDayStart(millis: Long): Long =
-        DayBoundary.startOfDay(millis, config.dayStartHour, zoneOffset(millis))
+        DayBoundary.startOfDay(millis, config.dayStartHour, zone)
 
     /**
      * The FSRS-7 retrievability: predicted recall probability from the elapsed
@@ -673,7 +675,7 @@ class FsrsScheduler private constructor(
                 parameters.toList(),
                 DEFAULT_DESIRED_RETENTION,
                 SchedulerConfig(),
-                { 0L },
+                DayBoundary.utc(),
                 clipInputs = false
             )
 

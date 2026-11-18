@@ -287,14 +287,14 @@ object LegacyParser {
             JsonPull.Token.BEGIN_ARRAY -> {
                 val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
                 val categoryId = "$paperId-uncat"
-                sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
+                sink.onPaper(PaperHeader(paperId, FALLBACK_PAPER_TITLE, "", 0, 0.0))
                 var announced = false
                 val seen = HashSet<String>()
                 readQuestionsStreaming(
                     reader, "question", warnings, seen, batchSize, scan,
                     onFirst = {
                         if (!announced) {
-                            sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
+                            sink.onCategory(CategoryDto(categoryId, FALLBACK_CATEGORY_TITLE))
                             announced = true
                         }
                     },
@@ -387,8 +387,8 @@ object LegacyParser {
         reader.endObject()
         if (papersEmitted == 0) {
             deferredRoot?.let { (paperId, categoryId, batches) ->
-                sink.onPaper(PaperHeader(paperId, "Imported Questions", "", 0, 0.0))
-                sink.onCategory(CategoryDto(categoryId, "Uncategorized"))
+                sink.onPaper(PaperHeader(paperId, FALLBACK_PAPER_TITLE, "", 0, 0.0))
+                sink.onCategory(CategoryDto(categoryId, FALLBACK_CATEGORY_TITLE))
                 for (batch in batches) sink.onQuestions(categoryId, batch)
             }
         }
@@ -454,7 +454,7 @@ object LegacyParser {
             sink.onPaper(
                 PaperHeader(
                     id = id?.takeIf { it.isNotBlank() } ?: ephemeralId,
-                    title = title ?: "Untitled Paper",
+                    title = title ?: FALLBACK_UNTITLED_PAPER_TITLE,
                     description = description ?: "",
                     durationMinutes = com.mcqapp.domain.ExamTiming.minutesFrom(duration),
                     negativeMarking = negative ?: 0.0
@@ -477,7 +477,11 @@ object LegacyParser {
                 "questions" -> {
                     emitHeader()
                     val rootCategoryId = paperId() + "-root"
-                    val rootTitle = if (categoriesSeen == 0) (title ?: "Untitled Paper") else "Uncategorized"
+                    val rootTitle = if (categoriesSeen == 0) {
+                        title ?: FALLBACK_UNTITLED_PAPER_TITLE
+                    } else {
+                        FALLBACK_CATEGORY_TITLE
+                    }
                     var announced = false
                     val seen = HashSet<String>()
                     readQuestionsStreaming(
@@ -498,7 +502,7 @@ object LegacyParser {
         emitHeader()
         for ((index, detail) in categorySkips) {
             warnings.add(
-                "Skipped malformed category $index in paper '${title ?: "Untitled Paper"}': $detail"
+                "Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail"
             )
         }
     }
@@ -790,21 +794,21 @@ object LegacyParser {
         reader.endObject()
         for ((index, detail) in categorySkips) {
             warnings.add(
-                "Skipped malformed category $index in paper '${title ?: "Untitled Paper"}': $detail"
+                "Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail"
             )
         }
         val effectiveCategories = when {
             categories.isEmpty() && topLevelQuestions != null -> listOf(
                 CategoryDto(
                     id = (id ?: EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)) + "-root",
-                    title = title ?: "Untitled Paper",
+                    title = title ?: FALLBACK_UNTITLED_PAPER_TITLE,
                     questions = topLevelQuestions
                 )
             )
             topLevelQuestions != null && topLevelQuestions.isNotEmpty() ->
                 categories + CategoryDto(
                     id = (id ?: EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)) + "-root",
-                    title = "Uncategorized",
+                    title = FALLBACK_CATEGORY_TITLE,
                     questions = topLevelQuestions
                 )
             else -> categories
@@ -812,7 +816,7 @@ object LegacyParser {
         return PaperDto(
             id = id?.takeIf { it.isNotBlank() }
                 ?: EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36),
-            title = title ?: "Untitled Paper",
+            title = title ?: FALLBACK_UNTITLED_PAPER_TITLE,
             description = description ?: "",
             // Clamped: an imported file could otherwise overflow the Int that
             // holds the exam duration and produce a negative timer.
@@ -1277,11 +1281,11 @@ object LegacyParser {
         val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
         return PaperDto(
             id = paperId,
-            title = "Imported Questions",
+            title = FALLBACK_PAPER_TITLE,
             categories = listOf(
                 CategoryDto(
                     id = "$paperId-uncat",
-                    title = "Uncategorized",
+                    title = FALLBACK_CATEGORY_TITLE,
                     questions = questions
                 )
             ),

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.anki.AnkiPackageException
 import com.mcqapp.data.io.AnkiApkgImporter
 import com.mcqapp.data.io.Exporter
@@ -46,6 +47,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     /** Exposed for the setup sheet's scoped mistake count query. */
     val repository: McqRepository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int, vararg args: Any): String =
+        getApplication<Application>().getString(resId, *args)
 
     /**
      * Whether a representative test should avoid recently asked questions.
@@ -143,10 +148,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 }
             } catch (e: Exception) {
                 Logger.e("LIB", "Failed to read import file", e)
-                showError("Could not read the file: ${e.message}")
+                showError(msg(R.string.final_read_picked_failed))
                 return@launch
             } ?: run {
-                showError("Could not read the file.")
+                showError(msg(R.string.final_read_picked_failed))
                 return@launch
             }
 
@@ -173,10 +178,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     }
                 } catch (e: Exception) {
                     Logger.e("LIB", "Failed to read import file", e)
-                    showError("Could not read the file: ${e.message}")
+                    showError(msg(R.string.final_read_picked_failed))
                     return@launch
                 } ?: run {
-                    showError("Could not read the file.")
+                    showError(msg(R.string.final_read_picked_failed))
                     return@launch
                 }
                 when {
@@ -198,12 +203,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                                         com.mcqapp.util.MAX_IMPORT_BYTES
                                     )
                                 } else {
-                                    "Could not read the file: ${e.message}"
+                                    msg(R.string.final_read_picked_failed)
                                 }
                             )
                             return@launch
                         } ?: run {
-                            showError("Could not read the file.")
+                            showError(msg(R.string.final_read_picked_failed))
                             return@launch
                         }
                         Logger.i("LIB", "picked Word file: bytes=${bytes.size}")
@@ -410,7 +415,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
             } catch (e: Exception) {
                 Logger.e("LIBVM", "deleteImpact failed", e)
-                _exportError.value = "Delete failed: ${e.message}"
+                _exportError.value = msg(R.string.final_delete_failed)
             }
         }
     }
@@ -438,7 +443,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } ?: throw IllegalStateException("Could not open output stream")
                 _exportError.value = null
             } catch (e: Exception) {
-                _exportError.value = "Export failed: ${e.message}"
+                _exportError.value = msg(R.string.final_export_failed)
             }
         }
     }
@@ -458,7 +463,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
-                _exportError.value = "Export failed: ${e.message}"
+                _exportError.value = msg(R.string.final_export_failed)
             }
         }
     }
@@ -479,7 +484,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Export failed", e)
-                _exportError.value = "Export failed: ${e.message}"
+                _exportError.value = msg(R.string.final_export_failed)
             }
         }
     }
@@ -515,7 +520,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
         } catch (e: Exception) {
             Logger.e("LIBVM", "Share failed", e)
-            _exportError.value = "Export failed: ${e.message}"
+            _exportError.value = msg(R.string.final_export_failed)
             return null
         } finally {
             _isSharing.value = false
@@ -552,7 +557,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             }
         } catch (e: Exception) {
             Logger.e("LIBVM", "Share failed", e)
-            _exportError.value = "Export failed: ${e.message}"
+            _exportError.value = msg(R.string.final_export_failed)
             return null
         } finally {
             _isSharing.value = false
@@ -598,7 +603,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 repository.movePaper(paperId, delta)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Move paper failed", e)
-                _exportError.value = "Could not reorder the paper: ${e.message}"
+                _exportError.value = msg(R.string.final_reorder_failed)
             }
         }
     }
@@ -618,7 +623,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 // commit, and live ticks must survive. The papers.collect
                 // reconciliation prunes only ids that are actually gone.
                 Logger.e("LIBVM", "Delete paper failed", e)
-                _exportError.value = "Delete failed: ${e.message}"
+                _exportError.value = msg(R.string.final_delete_failed)
             }
         }
     }
@@ -639,7 +644,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Add paper failed", e)
-                _exportError.value = "Could not add the paper: ${e.message}"
+                _exportError.value = msg(R.string.final_add_paper_failed)
             }
         }
     }
@@ -660,7 +665,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val current = repository.getPaper(paperId)
                 if (current == null) {
-                    _exportError.value = "Could not update the paper: it no longer exists"
+                    _exportError.value = msg(R.string.final_paper_gone)
                     return@launch
                 }
                 repository.savePaper(
@@ -673,7 +678,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Update paper failed", e)
-                _exportError.value = "Could not update the paper: ${e.message}"
+                _exportError.value = msg(R.string.final_update_paper_failed)
             }
         }
     }
@@ -684,7 +689,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 repository.addCategory(paperId, title, parentId)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Add category failed", e)
-                _exportError.value = "Could not add the category: ${e.message}"
+                _exportError.value = msg(R.string.final_add_category_failed)
             }
         }
     }
@@ -696,7 +701,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 repository.nestCategoryIntoSibling(categoryId)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Nest category failed", e)
-                _exportError.value = "Nest failed: ${e.message}"
+                _exportError.value = msg(R.string.final_nest_failed)
             }
         }
     }
@@ -708,7 +713,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 repository.promoteCategoryOutOfParent(categoryId)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Promote category failed", e)
-                _exportError.value = "Promote failed: ${e.message}"
+                _exportError.value = msg(R.string.final_promote_failed)
             }
         }
     }
@@ -723,11 +728,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val saved = editCategoryAtomic(repository.db(), categoryId, title, parentId)
                 if (!saved) {
-                    _exportError.value = "Could not save the category. Check its name and parent."
+                    _exportError.value = msg(R.string.final_edit_category_failed)
                 }
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Edit category failed", e)
-                _exportError.value = "Edit failed: ${e.message}"
+                _exportError.value = msg(R.string.final_edit_category_failed)
             }
         }
     }
@@ -738,7 +743,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 repository.moveCategory(categoryId, delta)
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Move category failed", e)
-                _exportError.value = "Move failed: ${e.message}"
+                _exportError.value = msg(R.string.final_move_failed)
             }
         }
     }
@@ -755,7 +760,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 _selection.value = _selection.value.mapValues { (_, ids) -> ids - categoryId }
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Delete category failed", e)
-                _exportError.value = "Delete failed: ${e.message}"
+                _exportError.value = msg(R.string.final_delete_failed)
             }
         }
     }
@@ -804,10 +809,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     source() ?: throw AnkiPackageException("Could not open $title.")
                 })
             } catch (e: AnkiPackageException) {
-                // Already phrased for the user; these are format problems a user can act on
-                // (export the deck as .apkg), not a bug.
+                // The reader's specific reason is logged, not shown: the
+                // learner gets one friendly, localized, actionable sentence.
                 Logger.e("LIBVM", "Anki package rejected", e)
-                _exportError.value = e.message
+                _exportError.value = msg(R.string.final_anki_package_rejected)
                 return@launch
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException ||
@@ -820,8 +825,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 // The whole deck was one transaction; a failure rolled every
                 // batch back, so the library is exactly as it was before.
                 Logger.e("LIBVM", "Anki import failed", e)
-                _exportError.value = "Import failed: ${e.message}. " +
-                    "No changes were made to your library."
+                _exportError.value = msg(R.string.final_import_anki_failed)
                 return@launch
             }
             try {
@@ -854,7 +858,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 Logger.i("LIBVM", "Sample data loaded: ${report.newPapers} papers, ${report.newQuestions} questions")
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Sample load failed", e)
-                _exportError.value = "Sample load failed: ${e.message}"
+                _exportError.value = msg(R.string.final_sample_load_failed)
             }
         }
     }

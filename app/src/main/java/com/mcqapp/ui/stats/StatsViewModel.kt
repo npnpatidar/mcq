@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
@@ -24,6 +25,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** The data a successful card-detail load publishes; injectable in tests. */
+internal data class CardLoadResult(
+    val text: String?,
+    val state: com.mcqapp.domain.CardState?,
+    val retrievability: Double?,
+    val history: List<com.mcqapp.domain.stats.ReviewHistoryEntry>
+)
+
 /**
  * Holds the statistics payload one tab at a time. Every tab aggregates while
  * its own rows stream past an accumulator, so no tab ever builds the whole log
@@ -35,6 +44,9 @@ import kotlinx.coroutines.withContext
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
 
     /** One tab of the statistics screen; each owns a slice of the payload. */
     enum class Tab { OVERVIEW, RETENTION, WORKLOAD, SESSIONS, MEMORY, CARDS, GUESSING, TESTS, PROGRESS }
@@ -131,19 +143,41 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Opens the drill-down sheet for one card and loads its history. */
     fun openCard(paperId: String, questionId: String) {
+        openCardWithLoader(paperId, questionId) {
+            val question = repository.getQuestion(questionId)
+            val cardState = repository.cardState(paperId, questionId)
+            val history = repository.reviewHistory(questionId)
+            val retrievability = cardState?.takeIf { it.stability > 0.0 }?.let { state ->
+                val config = repository.schedulerConfigNow()
+                FsrsScheduler(
+                    desiredRetention = config.desiredRetention,
+                    config = config
+                ).retention(state, System.currentTimeMillis())
+            }
+            CardLoadResult(
+                text = question?.text,
+                state = cardState,
+                retrievability = retrievability,
+                history = history
+            )
+        }
+    }
+
+    /**
+     * [loader] is the injectable load seam: production reaches it only through
+     * [openCard], whose loader runs the same repository reads in the same
+     * coroutine. A test can fail it synchronously and hit the catch below
+     * without depending on when Room surfaces a closed-DB error.
+     */
+    internal fun openCardWithLoader(
+        paperId: String,
+        questionId: String,
+        loader: suspend () -> CardLoadResult
+    ) {
         _cardDetail.value = CardDetail(paperId, questionId, null, null, null, emptyList())
         viewModelScope.launch {
             try {
-                val question = repository.getQuestion(questionId)
-                val cardState = repository.cardState(paperId, questionId)
-                val history = repository.reviewHistory(questionId)
-                val retrievability = cardState?.takeIf { it.stability > 0.0 }?.let { state ->
-                    val config = repository.schedulerConfigNow()
-                    FsrsScheduler(
-                        desiredRetention = config.desiredRetention,
-                        config = config
-                    ).retention(state, System.currentTimeMillis())
-                }
+                val result = loader()
                 // The sheet has moved on while this continuation read: a
                 // second open re-labelled it (its placeholder carries the
                 // new question's id), and a dismissal closed it. Assigning
@@ -154,10 +188,10 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 _cardDetail.value = CardDetail(
                     paperId = paperId,
                     questionId = questionId,
-                    text = question?.text,
-                    state = cardState,
-                    retrievability = retrievability,
-                    history = history
+                    text = result.text,
+                    state = result.state,
+                    retrievability = result.retrievability,
+                    history = result.history
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -170,7 +204,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                     _cardDetail.value = CardDetail.failedLoad(
                         paperId = paperId,
                         questionId = questionId,
-                        message = e.message ?: "error"
+                        message = msg(R.string.final_card_detail_load_failed)
                     )
                 }
             }
@@ -211,7 +245,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 throw e
             } catch (e: Exception) {
                 Logger.e("STATS", "Failed to load statistics", e)
-                _state.update { it.copy(loading = false, loadError = e.message ?: "error") }
+                _state.update { it.copy(loading = false, loadError = msg(R.string.final_stats_load_failed)) }
             }
         }
     }
@@ -320,7 +354,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.e("STATS", "Failed to load statistics", e)
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
-                        _state.update { it.copy(loading = false, loadError = e.message ?: "error") }
+                        _state.update { it.copy(loading = false, loadError = msg(R.string.final_stats_load_failed)) }
                     }
                 }
             }

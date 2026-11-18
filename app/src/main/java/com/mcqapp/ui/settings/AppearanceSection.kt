@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.ui.theme.AppTheme
 import com.mcqapp.ui.theme.CustomTheme
 import com.mcqapp.ui.theme.isDarkMode
@@ -53,6 +54,7 @@ import com.mcqapp.ui.theme.isDarkMode
 @Composable
 internal fun AppearanceSection(
     themeMode: String,
+    appLanguage: AppLanguage,
     themePalette: String,
     customThemes: List<CustomTheme>,
     fontScale: Float,
@@ -61,6 +63,7 @@ internal fun AppearanceSection(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onThemeModeChange: (String) -> Unit,
+    onAppLanguageChange: (AppLanguage) -> Unit,
     onThemePaletteChange: (String) -> Unit,
     onFontScaleChange: (Float) -> Unit,
     onLoadRemoteImagesChange: (Boolean) -> Unit,
@@ -124,6 +127,42 @@ internal fun AppearanceSection(
                 Text(label, modifier = Modifier.padding(start = 8.dp))
             }
         }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.language),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.testTag("settings-language")
+        )
+        Spacer(Modifier.height(8.dp))
+        listOf(
+            AppLanguage.SYSTEM to R.string.language_system,
+            AppLanguage.ENGLISH to R.string.language_english,
+            AppLanguage.HINDI to R.string.language_hindi
+        ).forEach { (value, labelRes) ->
+            val label = stringResource(labelRes)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = appLanguage == value,
+                        onClick = { onAppLanguageChange(value) }
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = appLanguage == value,
+                    onClick = { onAppLanguageChange(value) }
+                )
+                Text(label, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+        Text(
+            stringResource(R.string.language_help),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         Spacer(Modifier.height(12.dp))
         Text(

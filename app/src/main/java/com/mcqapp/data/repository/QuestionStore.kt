@@ -25,6 +25,8 @@ import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.data.io.CardContent
+import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+import com.mcqapp.data.io.FALLBACK_PAPER_TITLE
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.SessionOrder
@@ -224,22 +226,22 @@ internal class QuestionStore(
         db.paperDao().insertIgnore(
             PaperEntity(
                 id = paperId,
-                title = paperTitle.ifBlank { "Imported Questions" },
+                title = paperTitle.ifBlank { FALLBACK_PAPER_TITLE },
                 sortOrder = (db.paperDao().minSortOrder() ?: 0L) - 1L
             )
         )
-        db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { "Imported Questions" }, description = "", durationMinutes = 0, negativeMarking = 0.0)
+        db.paperDao().updateFields(id = paperId, title = paperTitle.ifBlank { FALLBACK_PAPER_TITLE }, description = "", durationMinutes = 0, negativeMarking = 0.0)
         db.categoryDao().insertIgnore(
             CategoryEntity(
                 id = categoryId,
                 paperId = paperId,
-                title = categoryTitle.ifBlank { "Uncategorized" }
+                title = categoryTitle.ifBlank { FALLBACK_CATEGORY_TITLE }
             )
         )
         db.categoryDao().updateIdentity(
             id = categoryId,
             paperId = paperId,
-            title = categoryTitle.ifBlank { "Uncategorized" }
+            title = categoryTitle.ifBlank { FALLBACK_CATEGORY_TITLE }
         )
     }
 

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.io.CardContent
 import com.mcqapp.data.io.QuestionDto
@@ -495,6 +496,10 @@ class EditorViewModel(
     )
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
+    /** A plain, localized message; the exception itself stays in the log. */
+    private fun friendly(messageRes: Int): String =
+        getApplication<Application>().getString(messageRes)
+
     /** The route's explicit source; an unstated one is inferred from the id. */
     private val editorSource: EditorSource = when (source) {
         EditorSource.UNSPECIFIED ->
@@ -618,8 +623,7 @@ class EditorViewModel(
                 _state.value = _state.value.copy(
                     loading = false,
                     importContextMissing = true,
-                    loadError = "This edit came from an import preview, and its draft is no longer " +
-                        "available. Return to the import and open the question again."
+                    loadError = friendly(R.string.editor_import_draft_missing)
                 )
                 snapshotClean()
                 Logger.i("EDITORVM", "Editor ready: import context missing (inert)")
@@ -700,7 +704,7 @@ class EditorViewModel(
             Logger.e("EDITORVM", "Failed to initialize editor", e)
             _state.value = _state.value.copy(
                 loading = false,
-                loadError = "Could not load this question: ${e.message}"
+                loadError = friendly(R.string.editor_load_failed)
             )
         }
         }
@@ -1270,7 +1274,7 @@ class EditorViewModel(
                 // Any Room failure used to crash here with onDone() never run
                 // (consolidated_bugs.md J7).
                 Logger.e("EDITORVM", "save() failed", e)
-                _state.update { it.copy(saveError = "Could not save: ${e.message}") }
+                _state.update { it.copy(saveError = friendly(R.string.editor_save_failed)) }
             } finally {
                 _state.update { it.copy(operation = EditorOperation.IDLE) }
             }
@@ -1317,7 +1321,7 @@ class EditorViewModel(
         // disabled. Only dirty-and-invalid edits block the move.
         if (dirty && !current.canSave) {
             _state.update {
-                it.copy(moveError = "Save or fix the highlighted problem before moving to another question.")
+                it.copy(moveError = friendly(R.string.editor_move_invalid))
             }
             Logger.w("EDITORVM", "moveToQuestion($targetId) blocked: unsaved edits are invalid")
             return
@@ -1339,7 +1343,7 @@ class EditorViewModel(
             }
             val next = EditorSession.importReader?.invoke(target.id)
             if (next == null) {
-                _state.update { it.copy(moveError = "Could not open the next question in the import.") }
+                _state.update { it.copy(moveError = friendly(R.string.editor_import_next_missing)) }
                 Logger.w("EDITORVM", "moveToQuestion($target.id): not found via import reader")
                 return
             }
@@ -1401,7 +1405,7 @@ class EditorViewModel(
                     val next = repository.getQuestion(target.id)
                     if (next == null) {
                         _state.update {
-                            it.copy(moveError = "Could not open that question: it no longer exists.")
+                            it.copy(moveError = friendly(R.string.editor_question_unavailable))
                         }
                         Logger.w("EDITORVM", "moveToQuestion(${target.id}): not found in DB")
                         return@launch
@@ -1416,7 +1420,7 @@ class EditorViewModel(
                     val index = EditorSession.indexOfId(target.id)
                     if (index == null) {
                         _state.update {
-                            it.copy(moveError = "That question is no longer in the current list.")
+                            it.copy(moveError = friendly(R.string.editor_question_not_in_list))
                         }
                         Logger.w("EDITORVM", "moveToQuestion(${target.id}): target left the live scope")
                         return@launch
@@ -1475,7 +1479,7 @@ class EditorViewModel(
                     // The form is untouched: a failed save or load leaves the
                     // current draft on screen, with a visible reason (M-07).
                     _state.update {
-                        it.copy(moveError = "Could not move to the next question: ${e.message}")
+                        it.copy(moveError = friendly(R.string.editor_move_failed))
                     }
                     Logger.e("EDITORVM", "moveToQuestion(${target.id}) failed", e)
                 } finally {
@@ -1516,7 +1520,7 @@ class EditorViewModel(
             if (encoded == null) {
                 Logger.e("EDITORVM", "Picked image could not be encoded; nothing written")
                 _state.update {
-                    it.copy(imageError = "That image could not be read. Try another image.")
+                    it.copy(imageError = friendly(R.string.editor_image_unreadable))
                 }
                 return@launch
             }
@@ -1558,7 +1562,7 @@ class EditorViewModel(
                 throw e
             } catch (e: Exception) {
                 Logger.e("EDITORVM", "delete($targetId) failed", e)
-                _state.update { it.copy(saveError = "Could not delete: ${e.message}") }
+                _state.update { it.copy(saveError = friendly(R.string.editor_delete_failed)) }
             } finally {
                 _state.update { it.copy(operation = EditorOperation.IDLE) }
             }

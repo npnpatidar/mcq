@@ -30,7 +30,7 @@ class DayBoundaryTest {
 
     private fun scheduler(boundaryHour: Int, zoneOffsetMillis: Long = 0L) = FsrsScheduler(
         config = SchedulerConfig(dayStartHour = boundaryHour, relearnMs = 10 * 60 * 1000L),
-        zoneOffset = { zoneOffsetMillis }
+        zone = DayBoundary.fixedOffsetZone(zoneOffsetMillis)
     )
 
     // --- startOfDay ---

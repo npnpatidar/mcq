@@ -4,12 +4,15 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mcqapp.AppLocale
 import com.mcqapp.McqApplication
+import com.mcqapp.needsExplicitLanguageRecreate
 import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.io.Exporter
+import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.ui.theme.AppTheme
@@ -23,8 +26,11 @@ import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -49,6 +55,27 @@ sealed interface FsrsOptimizeState {
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /**
+     * Friendly, user-facing copy. Raw exception detail is only ever written to
+     * the log (through [Logger]); the learner sees these resources.
+     *
+     * On API < 33 the Application context still reads the device language,
+     * because only the activity's context is configuration-overridden. Resolve
+     * through the in-memory choice instead — no blocking DataStore read here.
+     * On 33+ the platform's app locales already cover every context.
+     */
+    private fun msg(resId: Int, vararg args: Any): String {
+        val app = getApplication<Application>()
+        return AppLocale.localized(app, _appLanguage.value).getString(resId, *args)
+    }
+
+    /** Quantity-aware variant for copy that agrees with a count ("1 theme" / "N themes"). */
+    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String {
+        val app = getApplication<Application>()
+        return AppLocale.localized(app, _appLanguage.value)
+            .resources.getQuantityString(resId, quantity, *args)
+    }
 
     private val _themeMode = MutableStateFlow("system")
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
@@ -84,6 +111,44 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setThemePalette(key) }
     }
 
+    private val _appLanguage = MutableStateFlow(AppLanguage.SYSTEM)
+    val appLanguage: StateFlow<AppLanguage> = _appLanguage.asStateFlow()
+
+    /**
+     * One-shot signal for the screen to recreate the activity after a language
+     * change. It is emitted from the collector below (never from the setter), so
+     * a user pick and a settings restore take exactly the same path. The first
+     * emission — the stored value when Settings opens — is deliberately not a
+     * change: treating it as one would recreate on every entry, and the fresh
+     * ViewModel would then loop forever.
+     */
+    private val _languageChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    internal val languageChanged: SharedFlow<Unit> = _languageChanged.asSharedFlow()
+
+    init {
+        viewModelScope.launch {
+            var first = true
+            repository.appLanguage().collect { language ->
+                _appLanguage.value = language
+                if (first) {
+                    first = false
+                    return@collect
+                }
+                AppLocale.applyPlatform(getApplication(), language)
+                // 33+ already recreates the activity for the new app locales;
+                // emitting here too would restart it twice.
+                if (needsExplicitLanguageRecreate()) _languageChanged.tryEmit(Unit)
+            }
+        }
+    }
+
+    fun setAppLanguage(language: AppLanguage) {
+        // DataStore emits on every write, even an identical one; ignoring a
+        // no-op tap avoids an unnecessary locale rewrite and recreation.
+        if (_appLanguage.value == language) return
+        viewModelScope.launch { repository.setAppLanguage(language) }
+    }
+
     /**
      * Imports a theme file picked by the user and selects it. The read is
      * capped at [MAX_THEME_FILE_BYTES]: the picker also
@@ -96,9 +161,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 val source = withContext(Dispatchers.IO) {
                     val app = getApplication<Application>()
                     val stream = app.contentResolver.openInputStream(uri)
-                        ?: throw InvalidThemeException(
-                            "Could not open the theme file."
-                        )
+                        ?: throw InvalidThemeException(R.string.final_theme_open_failed)
                     stream.use { input ->
                         val out = java.io.ByteArrayOutputStream()
                         val buffer = ByteArray(8 * 1024)
@@ -109,8 +172,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             total += read
                             if (total > MAX_THEME_FILE_BYTES) {
                                 throw InvalidThemeException(
-                                    "That file is too large for a theme " +
-                                        "(over ${MAX_THEME_FILE_BYTES / 1024} KB)."
+                                    R.string.final_theme_too_large,
+                                    listOf(MAX_THEME_FILE_BYTES / 1024)
                                 )
                             }
                             out.write(buffer, 0, read)
@@ -122,10 +185,21 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: CancellationException) {
                 throw e
             } catch (e: InvalidThemeException) {
-                onError(e.message ?: "Invalid theme file.")
+                // The exception carries a plain res id and args, from the codec
+                // or the size/limit checks above. Resolve here so the learner
+                // gets friendly copy in the selected language. The theme cap
+                // is a plural, so it needs a quantity as well as a format arg.
+                onError(
+                    if (e.resId == R.plurals.final_theme_limit) {
+                        val count = e.args.firstOrNull() as? Int ?: MAX_CUSTOM_THEMES
+                        pluralMsg(e.resId, count, count)
+                    } else {
+                        msg(e.resId, *e.args.toTypedArray())
+                    }
+                )
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Theme import failed", e)
-                onError(e.message ?: "Could not import the theme.")
+                onError(msg(R.string.final_theme_import_failed))
             }
         }
     }
@@ -146,7 +220,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 existing.size >= MAX_CUSTOM_THEMES
             ) {
                 throw InvalidThemeException(
-                    "You can keep up to ${MAX_CUSTOM_THEMES} imported themes."
+                    R.plurals.final_theme_limit,
+                    listOf(MAX_CUSTOM_THEMES)
                 )
             }
             val theme = CustomTheme(key, parsed.name, parsed.spec)
@@ -156,7 +231,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             )
         }
         val theme = imported
-            ?: throw InvalidThemeException("The theme was not stored.")
+            ?: throw InvalidThemeException(R.string.final_theme_not_stored)
         repository.setThemePalette(theme.key)
         return theme.name
     }
@@ -458,8 +533,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 throw e
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Could not reset study settings", e)
-                _resetError.value = getApplication<Application>()
-                    .getString(R.string.settings_reset_failed)
+                _resetError.value = msg(R.string.settings_reset_failed)
             }
         }
     }
@@ -522,7 +596,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "FSRS optimize failed", e)
                 _fsrsOptimize.value = FsrsOptimizeState.Failed(
-                    e.message ?: "Optimization failed"
+                    msg(R.string.final_optimize_failed)
                 )
             }
         }
@@ -571,8 +645,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 load = load,
                 onReport = { _storage.value = it },
                 onError = { _storageError.value = it },
-                errorMessage = getApplication<Application>()
-                    .getString(R.string.storage_load_failed),
+                errorMessage = msg(R.string.storage_load_failed),
                 onException = { Logger.e("SETTINGS", "storageReport failed", it) }
             )
         }
@@ -609,7 +682,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 // Streamed: the whole bank never lives in memory as a String.
                 val outputStream = open()
                 if (outputStream == null) {
-                    onError("Could not open file for writing")
+                    onError(msg(R.string.final_open_for_write_failed))
                 } else {
                     outputStream.use { out ->
                         Exporter(repository.db()).exportAllTo(
@@ -620,7 +693,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Export failed", e)
-                onError("Export failed: ${e.message}")
+                onError(msg(R.string.final_export_failed))
             }
         }
     }
@@ -673,7 +746,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     // still describe one instant.
                     val output = app.contentResolver.openOutputStream(uri)
                     if (output == null) {
-                        onError("Could not open file for writing")
+                        onError(msg(R.string.final_open_for_write_failed))
                         return@withContext
                     }
                     output.use { out ->
@@ -736,7 +809,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
-                onError("Backup failed: ${e.message}")
+                onError(
+                    msg(
+                        if (e.message == BACKUP_RULE_MOVED) {
+                            R.string.final_backup_rule_moved
+                        } else {
+                            R.string.final_backup_failed
+                        }
+                    )
+                )
             } finally {
                 onDone()
             }
@@ -889,7 +970,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             onDone = onDone,
             onComplete = onComplete,
             onSuccess = { refreshStorage() },
-            restore = restore
+            restore = restore,
+            tooLargeResId = R.string.final_restore_too_large,
+            tooLargeArgs = listOf(com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)),
+            genericResId = R.string.final_restore_failed,
+            renderError = { resId, args -> msg(resId, *args.toTypedArray()) }
         )
     }
 
@@ -904,7 +989,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val stream = app.contentResolver.openInputStream(uri)
                 ?.let { boundedStream(it, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES) }
-                ?: throw IllegalStateException("Could not read the file.")
+                ?: throw IllegalStateException(msg(R.string.final_read_file_failed))
             stream.use { input ->
                 BackupRestorer(repository.db()).restoreStreaming(
                     input,
@@ -920,13 +1005,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private companion object {
         /**
-         * The message both backup exports fail with when the grading settings
-         * moved while they ran. The failure paths prefix their own sentence
-         * ("Backup failed: ", or the share dialog's copy), so this states what
-         * happened and what the learner should do.
+         * A stable token (never user-facing copy) thrown when the grading
+         * settings move while a backup is written. The catch maps it to the
+         * friendly `final_backup_rule_moved` resource; the raw exception is
+         * logged only.
          */
-        const val BACKUP_RULE_MOVED =
-            "the grading settings changed while the backup was being written, so its " +
-                "settings and study log would disagree. The file was discarded — try again."
+        const val BACKUP_RULE_MOVED = "backup_rule_moved"
     }
 }

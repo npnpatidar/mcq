@@ -26,7 +26,7 @@ class SpacedRepetitionTest {
     private val sched = com.mcqapp.domain.FsrsScheduler(
         desiredRetention = config.desiredRetention,
         config = config,
-        zoneOffset = { 0L }
+        zone = com.mcqapp.domain.DayBoundary.utc()
     )
 
     private fun graduate(
@@ -820,7 +820,7 @@ class SpacedRepetitionTest {
         val custom = SchedulerConfig().fsrsParameters.toMutableList().also { it[0] = 0.5 }
         val fitted = FsrsScheduler(
             config = SchedulerConfig(fsrsParameters = custom),
-            zoneOffset = { 0L }
+            zone = com.mcqapp.domain.DayBoundary.utc()
         )
         val card = fitted.next(fitted.initial("q1"), ReviewGrade.AGAIN, now)
         assertEquals(0.5, card.stability, 1e-9)

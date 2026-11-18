@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import com.mcqapp.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,23 +29,26 @@ data class SharedImportRequest(
 
 /**
  * `SEND` imports waiting for the nav host. `MainActivity` requests one after
- * copying the stream; `McqNavHost` consumes it into the existing import
- * flow. The error channel carries a copy failure the router cannot retry
- * from the copy (too large, unreadable) as a message for the user.
+ * copying the stream; `McqNavHost` consumes it into the existing import flow.
+ * The error channel carries a copy failure the router cannot retry from the
+ * copy (too large, unreadable) as a plain resource id and arguments — the nav
+ * host resolves them with `stringResource`, so no copy is built in this layer.
  */
+data class SharedImportError(val resId: Int, val args: List<Any> = emptyList())
+
 object SharedImport {
     private val _pending = MutableStateFlow<SharedImportRequest?>(null)
     val pending: StateFlow<SharedImportRequest?> = _pending.asStateFlow()
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    private val _error = MutableStateFlow<SharedImportError?>(null)
+    val error: StateFlow<SharedImportError?> = _error.asStateFlow()
 
     fun request(uri: Uri, displayName: String?) {
         _pending.value = SharedImportRequest(uri, displayName)
     }
 
-    fun requestError(message: String) {
-        _error.value = message
+    fun requestError(resId: Int, args: List<Any> = emptyList()) {
+        _error.value = SharedImportError(resId, args)
     }
 
     fun consume(): SharedImportRequest? {
@@ -53,16 +57,16 @@ object SharedImport {
         return request
     }
 
-    fun consumeError(): String? {
-        val message = _error.value
+    fun consumeError(): SharedImportError? {
+        val failure = _error.value
         _error.value = null
-        return message
+        return failure
     }
 }
 
 sealed interface SendCopyResult {
     data class Ready(val request: SharedImportRequest) : SendCopyResult
-    data class Failed(val message: String) : SendCopyResult
+    data class Failed(val resId: Int, val args: List<Any> = emptyList()) : SendCopyResult
 }
 
 /**
@@ -91,7 +95,7 @@ fun copySendToCache(context: Context, intent: Intent): SendCopyResult {
 
     if (streamUri == null) {
         if (text.isNullOrBlank()) {
-            return SendCopyResult.Failed("Could not read the file.")
+            return SendCopyResult.Failed(R.string.final_pick_again)
         }
         val file = File(dir, sanitizeFileName(SEND_TEXT_FILE_NAME))
         return try {
@@ -103,7 +107,7 @@ fun copySendToCache(context: Context, intent: Intent): SendCopyResult {
         } catch (e: Exception) {
             file.delete()
             Logger.e("SEND", "Copying shared text failed", e)
-            SendCopyResult.Failed("Could not read the file.")
+            SendCopyResult.Failed(R.string.final_pick_again)
         }
     }
 
@@ -115,7 +119,7 @@ fun copySendToCache(context: Context, intent: Intent): SendCopyResult {
         resolver.openInputStream(streamUri)
     } catch (e: Exception) {
         null
-    } ?: return SendCopyResult.Failed("Could not read the file.")
+    } ?: return SendCopyResult.Failed(R.string.final_pick_again)
 
     return try {
         FileOutputStream(file).use { out -> copyBounded(input, out) }
@@ -124,10 +128,14 @@ fun copySendToCache(context: Context, intent: Intent): SendCopyResult {
     } catch (e: ImportTooLargeException) {
         file.delete()
         Logger.e("SEND", "Shared file too large", e)
-        SendCopyResult.Failed(tooLargeMessage(e.atLeastBytes))
+        // Same bounds as tooLargeMessage(), but emitted as a resource so the
+        // nav host can localize it instead of showing hard-coded English.
+        val limitMb = e.limit / (1024 * 1024)
+        val sizeMb = ((e.atLeastBytes + 512 * 1024) / (1024 * 1024)).coerceAtLeast(1)
+        SendCopyResult.Failed(R.string.final_import_too_large, listOf(limitMb, sizeMb))
     } catch (e: Exception) {
         file.delete()
         Logger.e("SEND", "Copying shared file failed", e)
-        SendCopyResult.Failed("Could not read the file.")
+        SendCopyResult.Failed(R.string.final_pick_again)
     }
 }

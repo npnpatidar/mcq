@@ -5,9 +5,15 @@ import com.mcqapp.util.Logger
 
 /**
  * The restore's error/completion handling, deliberately independent of the
- * ViewModel so it can be exercised on a plain JVM: the fallible work and the
- * success-time side effect are injected, while the failure copy and logging
- * live here so every restore reports a failure identically.
+ * ViewModel so it can be exercised on a plain JVM: the fallible work, the
+ * success-time side effect and the way an error is rendered are injected, while
+ * the failure reporting and logging live here so every restore is handled
+ * identically.
+ *
+ * No user-facing text is built here. [tooLargeResId]/[tooLargeArgs] and
+ * [genericResId] are plain resource ids and arguments passed in by the caller;
+ * [renderError] resolves them through the caller's localized resource lookup.
+ * The exception itself goes to [Logger] only, never to the learner.
  *
  * [onComplete] runs on every terminal path — success, either failure or
  * cancellation — so the caller can always clear its busy flag. [onError]
@@ -18,7 +24,11 @@ internal suspend fun handleRestoreCompletion(
     onDone: (String) -> Unit,
     onComplete: () -> Unit,
     onSuccess: suspend () -> Unit,
-    restore: suspend () -> String
+    restore: suspend () -> String,
+    tooLargeResId: Int,
+    tooLargeArgs: List<Any>,
+    genericResId: Int,
+    renderError: (Int, List<Any>) -> String
 ) {
     try {
         val report = restore()
@@ -27,11 +37,10 @@ internal suspend fun handleRestoreCompletion(
         onDone(report)
     } catch (e: ImportTooLargeException) {
         Logger.e("SETTINGS", "Restore failed", e)
-        val limitMb = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)
-        onError("That backup is over the $limitMb MB restore limit — it may be corrupt.")
+        onError(renderError(tooLargeResId, tooLargeArgs))
     } catch (e: Exception) {
         Logger.e("SETTINGS", "Restore failed", e)
-        onError("Restore failed: ${e.message}")
+        onError(renderError(genericResId, emptyList()))
     } finally {
         onComplete()
     }

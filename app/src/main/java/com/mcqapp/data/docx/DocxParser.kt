@@ -1,5 +1,6 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
@@ -462,7 +463,8 @@ private data class Section(val level: Int?, val titleHtml: String, val lines: Mu
  * category's depth (Heading 2 = top level, Heading 3 = its subcategory, …),
  * so a recursive tree maps onto nothing but ordinary Word styles. The first
  * Title/Heading 1 names the paper. Questions and passages join the section
- * they sit under; anything before the first heading goes to Uncategorized.
+ * they sit under; anything before the first heading goes to the
+ * [FALLBACK_CATEGORY_TITLE] fallback.
  */
 private fun parseSectionedDocx(lines: List<DocxLine>, warnings: List<String>): DocxParseResult {
     val sections = mutableListOf<Section>()
@@ -556,7 +558,7 @@ private fun parseSectionedDocx(lines: List<DocxLine>, warnings: List<String>): D
     // section, matching what the flat path builds.
     val ungrouped = results.filter { it.categoryId == null }.flatMap { it.questions }
     if (ungrouped.isNotEmpty()) {
-        categories.add(CatOut("doc-cat-ungrouped", "Uncategorized", null))
+        categories.add(CatOut("doc-cat-ungrouped", FALLBACK_CATEGORY_TITLE, null))
     }
     val paperJson = buildJsonObject {
         if (paperTitle != null) put("title", JsonPrimitive(paperTitle))

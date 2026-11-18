@@ -272,11 +272,18 @@ class BrowseViewModel(
                 // The old code only logged this: selection mode stayed on with
                 // zero ticks and no explanation. Surface it on the one error
                 // channel (reuses the existing "Action failed" dialog title).
-                reportError(R.string.action_failed, "Could not select all questions: ${e.message}")
+                reportError(
+                    R.string.action_failed,
+                    friendly(R.string.browse_select_all_failed)
+                )
                 onResult(emptySet())
             }
         }
     }
+
+    /** A plain, localized message; the exception itself stays in the log. */
+    private fun friendly(messageRes: Int): String =
+        getApplication<Application>().getString(messageRes)
 
     /** Publish the one visible error; a new one replaces the previous. */
     private fun reportError(titleRes: Int, message: String) {
@@ -614,9 +621,9 @@ class BrowseViewModel(
      * failure crashed the process instead of using the screen's error dialog
      * (question_actions_audit.md QA-07).
      */
-    private fun reportActionFailure(action: String, e: Exception) {
-        Logger.e("BROWSEVM", "$action failed", e)
-        reportError(R.string.action_failed, "$action failed: ${e.message}")
+    private fun reportActionFailure(messageRes: Int, e: Exception) {
+        Logger.e("BROWSEVM", "question action failed (messageRes=$messageRes)", e)
+        reportError(R.string.action_failed, friendly(messageRes))
     }
 
     fun deleteQuestion(questionId: String) {
@@ -626,7 +633,7 @@ class BrowseViewModel(
                 invalidateContexts()
                 Logger.i("BROWSEVM", "Deleted question $questionId")
             } catch (e: Exception) {
-                reportActionFailure("Could not delete the question", e)
+                reportActionFailure(R.string.browse_delete_question_failed, e)
             }
         }
     }
@@ -638,7 +645,7 @@ class BrowseViewModel(
                 invalidateContexts()
                 onDone(cloneId != null)
             } catch (e: Exception) {
-                reportActionFailure("Could not duplicate the question", e)
+                reportActionFailure(R.string.browse_duplicate_question_failed, e)
                 onDone(false)
             }
         }
@@ -651,7 +658,7 @@ class BrowseViewModel(
                 invalidateContexts()
                 Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
             } catch (e: Exception) {
-                reportActionFailure("Could not delete the questions", e)
+                reportActionFailure(R.string.browse_delete_questions_failed, e)
             }
         }
     }
@@ -701,7 +708,7 @@ class BrowseViewModel(
                 Logger.i("BROWSEVM", "Moved $affected questions to $targetCategoryId")
                 onDone(affected)
             } catch (e: Exception) {
-                reportActionFailure("Could not move the questions", e)
+                reportActionFailure(R.string.browse_move_questions_failed, e)
                 onDone(null)
             }
         }
@@ -750,7 +757,7 @@ class BrowseViewModel(
                 Logger.i("BROWSEVM", "Copied ${questionIds.size} questions to $targetCategoryId")
                 onDone(true)
             } catch (e: Exception) {
-                reportActionFailure("Could not copy the questions", e)
+                reportActionFailure(R.string.browse_copy_questions_failed, e)
                 onDone(false)
             }
         }
@@ -820,7 +827,7 @@ class BrowseViewModel(
                 clearError(R.string.export)
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Export of selection failed", e)
-                reportError(R.string.export, "Export failed: ${e.message}")
+                reportError(R.string.export, friendly(R.string.browse_export_failed))
             }
         }
     }
@@ -902,7 +909,7 @@ class BrowseViewModel(
             }
         } catch (e: Exception) {
             Logger.e("BROWSEVM", "Share of selection failed", e)
-            reportError(R.string.export, "Export failed: ${e.message}")
+            reportError(R.string.export, friendly(R.string.browse_export_failed))
             return null
         } finally {
             _isSharing.value = false
@@ -934,7 +941,7 @@ class BrowseViewModel(
             // saw as invalid was silently the only one ignored. Refuse the
             // whole edit so nothing is half-applied.
             if (trimmedMarks.isNotEmpty() && marks == null) {
-                reportError(R.string.edit, "Marks must be a non-negative number.")
+                reportError(R.string.edit, friendly(R.string.marks_must_be_non_negative))
                 return@launch
             }
             clearError(R.string.edit)
@@ -950,7 +957,7 @@ class BrowseViewModel(
                 Logger.i("BROWSEVM", "Bulk-edited ${questionIds.size} questions")
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Bulk edit failed", e)
-                reportError(R.string.edit, "Could not apply the edit: ${e.message}")
+                reportError(R.string.edit, friendly(R.string.browse_edit_failed))
             }
         }
     }

@@ -30,7 +30,7 @@ fun settingsSectionsInOrder(): List<SettingsSection> = SettingsSection.entries.t
  */
 fun sectionForSettingKey(key: String): SettingsSection? = when (key) {
     "theme_mode", "theme_palette", "custom_themes", "font_scale",
-    "load_remote_images", "haptics_enabled" -> SettingsSection.APPEARANCE
+    "app_language", "load_remote_images", "haptics_enabled" -> SettingsSection.APPEARANCE
     "shuffle_questions", "shuffle_options", "practice_mode",
     "strict_mode", "auto_advance", "avoid_recent_questions" -> SettingsSection.TESTS
     "simplified_study", "scheduler_config" -> SettingsSection.STUDY

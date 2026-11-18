@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The in-app language picker in Settings > Appearance. Plain English strings,
+  paired one-for-one in values-hi; no inline literals in the composable.
+-->
+<resources>
+    <string name="language">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_hindi">Hindi</string>
+    <string name="language_help">System default follows your device language. The other choices change only this app.</string>
+</resources>

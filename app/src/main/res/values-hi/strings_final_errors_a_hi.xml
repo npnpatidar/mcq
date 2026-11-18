@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hindi translations of strings_final_errors_a.xml. Names and placeholders
+  match the default resources exactly.
+-->
+<resources>
+    <!-- Browse -->
+    <string name="browse_select_all_failed">सभी प्रश्न नहीं चुन पाए।</string>
+    <string name="browse_delete_question_failed">यह प्रश्न हटाया नहीं जा सका।</string>
+    <string name="browse_duplicate_question_failed">इस प्रश्न की प्रतिलिपि नहीं बन सकी।</string>
+    <string name="browse_delete_questions_failed">ये प्रश्न हटाए नहीं जा सके।</string>
+    <string name="browse_move_questions_failed">ये प्रश्न स्थानांतरित नहीं किए जा सके।</string>
+    <string name="browse_copy_questions_failed">ये प्रश्न कॉपी नहीं किए जा सके।</string>
+    <string name="browse_export_failed">आपके प्रश्न एक्सपोर्ट नहीं किए जा सके।</string>
+    <string name="browse_edit_failed">आपके बदलाव लागू नहीं किए जा सके।</string>
+
+    <!-- Editor -->
+    <string name="editor_import_draft_missing">यह संपादन आयात पूर्वावलोकन से आया था, लेकिन इसका ड्राफ्ट अब उपलब्ध नहीं है। आयात पर वापस जाकर प्रश्न दोबारा खोलें।</string>
+    <string name="editor_load_failed">यह प्रश्न लोड नहीं हो सका।</string>
+    <string name="editor_save_failed">आपके बदलाव सहेजे नहीं गए।</string>
+    <string name="editor_move_invalid">दूसरे प्रश्न पर जाने से पहले चिह्नित समस्या ठीक करें या अपने बदलाव सहेजें।</string>
+    <string name="editor_import_next_missing">आयात में अगला प्रश्न नहीं खोला जा सका।</string>
+    <string name="editor_question_unavailable">यह प्रश्न अब उपलब्ध नहीं है।</string>
+    <string name="editor_question_not_in_list">यह प्रश्न अब वर्तमान सूची में नहीं है।</string>
+    <string name="editor_move_failed">दूसरे प्रश्न पर नहीं जा सके।</string>
+    <string name="editor_image_unreadable">यह छवि पढ़ी नहीं जा सकी। दूसरी छवि आज़माएँ।</string>
+    <string name="editor_delete_failed">यह प्रश्न हटाया नहीं जा सका।</string>
+
+    <!-- Study -->
+    <string name="study_session_start_failed">सत्र शुरू नहीं किया जा सका।</string>
+    <string name="study_next_card_failed">अगला कार्ड लोड नहीं हो सका।</string>
+    <string name="study_grade_save_failed">आपका ग्रेड सहेजा नहीं गया।</string>
+
+    <!-- Test -->
+    <string name="test_start_failed">टेस्ट शुरू नहीं किया जा सका।</string>
+    <string name="test_result_save_failed">आपका परिणाम सहेजा नहीं गया। आप दोबारा प्रयास कर सकते हैं।</string>
+</resources>

@@ -3,9 +3,12 @@ package com.mcqapp
 import android.content.Context
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.R
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.ui.library.LibraryViewModel
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -71,12 +74,15 @@ class LibraryViewModelErrorTest {
         return viewModel.exportError.value
     }
 
+    private fun string(resId: Int): String =
+        ApplicationProvider.getApplicationContext<Context>().getString(resId)
+
     @Test
     fun deletePaperFailureIsReportedInsteadOfCrashing() {
         viewModel.deletePaper("p1")
         val error = awaitError()
         assertNotNull("a failed delete must surface an error", error)
-        assertTrue(error!!.startsWith("Delete failed"))
+        assertEquals(string(R.string.final_delete_failed), error)
     }
 
     @Test
@@ -84,7 +90,7 @@ class LibraryViewModelErrorTest {
         viewModel.deleteCategory("c1")
         val error = awaitError()
         assertNotNull("a failed category delete must surface an error", error)
-        assertTrue(error!!.startsWith("Delete failed"))
+        assertEquals(string(R.string.final_delete_failed), error)
     }
 
     @Test
@@ -92,7 +98,7 @@ class LibraryViewModelErrorTest {
         viewModel.addCategory("p1", "Algebra", null)
         val error = awaitError()
         assertNotNull("a failed add must surface an error", error)
-        assertTrue(error!!.startsWith("Could not add the category"))
+        assertEquals(string(R.string.final_add_category_failed), error)
     }
 
     @Test
@@ -100,15 +106,16 @@ class LibraryViewModelErrorTest {
         viewModel.addPaper("Paper", "desc", 30, 0.0)
         val error = awaitError()
         assertNotNull("a failed add must surface an error", error)
-        assertTrue(error!!.startsWith("Could not add the paper"))
+        assertEquals(string(R.string.final_add_paper_failed), error)
     }
 
     @Test
-    fun theErrorMessageKeepsTheUnderlyingCause() {
+    fun theErrorMessageIsFriendlyAndHidesRawExceptionDetail() {
         viewModel.deletePaper("p1")
         val error = awaitError()!!
-        // An opaque "something went wrong" would leave the user unable to tell
-        // a full disk from a locked database.
-        assertTrue("message was: $error", error.length > "Delete failed: ".length)
+        // The raw database cause is logged, never rendered. An exact match
+        // proves no exception message/class name was appended to the copy.
+        assertEquals(string(R.string.final_delete_failed), error)
+        assertFalse("raw exception detail leaked: $error", "Exception" in error || "closed" in error)
     }
 }

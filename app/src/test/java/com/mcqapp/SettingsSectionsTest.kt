@@ -47,7 +47,7 @@ class SettingsSectionsTest {
     fun appearanceHoldsThemeTextSizePrivacyAndFeedback() {
         for (key in listOf(
             "theme_mode", "theme_palette", "font_scale",
-            "load_remote_images", "haptics_enabled"
+            "app_language", "load_remote_images", "haptics_enabled"
         )) {
             assertEquals(SettingsSection.APPEARANCE, sectionForSettingKey(key))
         }

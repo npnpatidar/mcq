@@ -571,8 +571,12 @@ private fun MixedContentView(
     // into one labelled node, but make the label carry the real content (text,
     // cells, formulas) instead of a fixed description that said nothing.
     // Modifier only — the WebView's factory, bridge and teardown are untouched.
-    val fallback = checkNotNull(accessibleContentLabelFor(elements)) {
-        "MixedContentView requires formula-bearing content"
+    // Parsing MathML/HTML to build the spoken text is expensive; do it once
+    // per content change, not on every recomposition (scrolling, theme toggles).
+    val fallback = remember(elements) {
+        checkNotNull(accessibleContentLabelFor(elements)) {
+            "MixedContentView requires formula-bearing content"
+        }
     }
     val contentLabel = mixedContentDescription(stringResource(R.string.a11y_rich_content), fallback)
     // Recreate the WebView when the page changes (e.g. theme toggle),

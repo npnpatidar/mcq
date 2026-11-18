@@ -236,6 +236,10 @@ private fun MaturityCard(bundle: GuessingData) {
                 )
             },
             segmentCount = 2,
+            segmentLabels = listOf(
+                stringResource(R.string.stats_guess_guessed),
+                stringResource(R.string.stats_guess_earned_reviews)
+            ),
             overlay = bands.map { it.hitRate }
         )
         Spacer(Modifier.height(8.dp))
@@ -271,6 +275,10 @@ private fun PositionCard(bundle: GuessingData) {
                 )
             },
             segmentCount = 2,
+            segmentLabels = listOf(
+                stringResource(R.string.stats_guess_guessed),
+                stringResource(R.string.stats_guess_earned_reviews)
+            ),
             overlay = positions.map { it.hitRate }
         )
         Spacer(Modifier.height(8.dp))
@@ -305,6 +313,10 @@ private fun HourlyCard(bundle: GuessingData) {
                 )
             },
             segmentCount = 2,
+            segmentLabels = listOf(
+                stringResource(R.string.stats_guess_guessed),
+                stringResource(R.string.stats_guess_earned_reviews)
+            ),
             overlay = bundle.hourly.map { it.guessRate }
         )
         Spacer(Modifier.height(8.dp))

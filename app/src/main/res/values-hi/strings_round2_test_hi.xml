@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 test-session accessibility and timing copy — Hindi. Names and format
+  specifiers match values/strings_round2_test.xml exactly.
+-->
+<resources>
+    <!-- Flag / bookmark toggle states (spoken by TalkBack). -->
+    <string name="r2_test_flagged">फ़्लैग किया गया</string>
+    <string name="r2_test_unflagged">फ़्लैग नहीं किया गया</string>
+    <string name="r2_test_bookmarked">बुकमार्क किया गया</string>
+    <string name="r2_test_not_bookmarked">बुकमार्क नहीं किया गया</string>
+
+    <!-- Answer-review rows: one "go to question N" control. -->
+    <string name="r2_test_go_to_question">प्रश्न %1$d पर जाएँ</string>
+
+    <!-- One merged countdown node; mm:ss matches the visible readout. -->
+    <string name="r2_test_time_remaining">शेष समय %1$02d:%2$02d</string>
+
+    <!-- One-shot time warnings, localised in both locales. -->
+    <plurals name="r2_test_warning_minutes">
+        <item quantity="one">%1$d मिनट शेष</item>
+        <item quantity="other">%1$d मिनट शेष</item>
+    </plurals>
+    <plurals name="r2_test_warning_one_minute">
+        <item quantity="one">%1$d मिनट शेष — परीक्षा शून्य पर स्वतः जमा होगी</item>
+        <item quantity="other">%1$d मिनट शेष — परीक्षा शून्य पर स्वतः जमा होगी</item>
+    </plurals>
+    <plurals name="r2_test_warning_seconds">
+        <item quantity="one">%1$d सेकंड शेष</item>
+        <item quantity="other">%1$d सेकंड शेष</item>
+    </plurals>
+
+    <!-- An order id that no longer resolves: let the learner carry on. -->
+    <string name="r2_test_question_unavailable">यह प्रश्न उपलब्ध नहीं है।</string>
+    <string name="r2_test_skip_question">छोड़ें</string>
+</resources>

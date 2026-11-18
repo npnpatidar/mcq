@@ -85,7 +85,8 @@ class AnkiApkgImporter(
             val tail = source().use {
                 AnkiPackageReader.stream(
                     it, sink, batchSize, nowMillis,
-                    parameters = schedulerConfig.fsrsParameters
+                    parameters = schedulerConfig.fsrsParameters,
+                    leechThreshold = schedulerConfig.leechThreshold
                 )
             }
             session.finish(

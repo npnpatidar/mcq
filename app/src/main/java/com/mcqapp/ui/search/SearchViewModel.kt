@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 data class SearchUiState(
     val query: String = "",
@@ -78,9 +79,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         isSearchPending(current, request)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /**
+     * B4 — the custom search paging source is not invalidated by Room, so a
+     * delete/edit elsewhere left stale hits on the retained back stack. Hold
+     * the one live source and invalidate it in place on any question/passage
+     * write. In-place (not rebuilding the Pager) keeps the reader's position —
+     * the same approach as BookmarksViewModel.observeBookmarkChanges.
+     */
+    private val invalidationRelay = SearchInvalidationRelay()
+
     val pagingData: Flow<PagingData<QuestionSearch.Hit>> = committed
         .flatMapLatest { request ->
             if (request.query.isBlank()) {
+                invalidationRelay.liveSource = null
                 flowOf(PagingData.empty<QuestionSearch.Hit>())
             } else {
                 Pager(
@@ -91,10 +102,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 ) {
                     repository.searchPagingSource(request.query, request.scope)
+                        .also { invalidationRelay.liveSource = it }
                 }.flow
             }
         }
         .cachedIn(viewModelScope)
+
+    init {
+        viewModelScope.launch {
+            repository.observeBrowseInvalidation().collect { invalidationRelay.invalidate() }
+        }
+    }
 
     fun updateQuery(query: String) {
         _state.update { it.copy(query = query) }
@@ -107,5 +125,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 300L
         private const val SEARCH_PAGE = 30
+    }
+}
+
+/**
+ * B4 — holds the one live paging source so writes can invalidate it in place.
+ * Extracted from [SearchViewModel] purely so the invalidate-on-write behaviour
+ * is a JVM-testable seam: a fake source counts `invalidate()` calls.
+ */
+internal class SearchInvalidationRelay {
+    @Volatile
+    var liveSource: androidx.paging.PagingSource<Int, QuestionSearch.Hit>? = null
+
+    fun invalidate() {
+        liveSource?.invalidate()
     }
 }

@@ -38,18 +38,40 @@ object Trends {
          * run actually covered; a migrated row with no ids falls back to a
          * slice of the canonical key. Whole-paper lines keep their plain label.
          */
-        fun scopeSuffix(): String? {
+        fun scopeSuffix(): String? = scopeSuffix(emptyMap())
+
+        /**
+         * Same suffix, but with category ids resolved to their titles. The
+         * screen passes the id -> title map loaded from the category table so
+         * user-facing copy never prints opaque database ids (R10). An id whose
+         * category was deleted falls back to the id itself; the truncation and
+         * whole-paper rules are identical to [scopeSuffix].
+         */
+        fun scopeSuffix(categoryTitles: Map<String, String>): String? {
             if (isWholePaper) return null
             val ids = scopeCategoryIds.split(',')
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
             if (ids.isEmpty()) return scopeKey.take(8)
-            return if (ids.size > 3) {
-                ids.take(3).joinToString(", ") + " +${ids.size - 3}"
+            val labels = ids.map { id ->
+                categoryTitles[id]?.takeIf { it.isNotBlank() } ?: id
+            }
+            return if (labels.size > 3) {
+                labels.take(3).joinToString(", ") + " +${labels.size - 3}"
             } else {
-                ids.joinToString(", ")
+                labels.joinToString(", ")
             }
         }
+    }
+
+    /** Direction of a trend delta, kept pure so the spoken copy can be tested. */
+    enum class Delta { IMPROVED, DECLINED, UNCHANGED }
+
+    /** The same +/- 0.005 dead band the UI uses for colour and arrow. */
+    fun deltaDirection(deltaPoints: Double): Delta = when {
+        deltaPoints > 0.005 -> Delta.IMPROVED
+        deltaPoints < -0.005 -> Delta.DECLINED
+        else -> Delta.UNCHANGED
     }
 
     /** One normalization for both the grouping key and the displayed variant. */

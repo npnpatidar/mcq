@@ -272,6 +272,16 @@ internal class StudyGradeGateForTests {
     val completed = CompletableDeferred<Unit>()
 }
 
+/**
+ * Pure gate for changing the proposed grade, shared by the ViewModel and the
+ * screen's toggle. The write is asynchronous: a tap in the frame before
+ * recomposition must not rewrite `pendingGrade` after `next()` captured it.
+ * Keeping the predicate here makes that negative case JVM-testable.
+ */
+internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
+    !state.grading && state.simplified && state.revealed &&
+        state.pendingGrade != null && state.question != null
+
 class StudyViewModel(
     application: Application,
     private val paperId: String,
@@ -1023,7 +1033,9 @@ class StudyViewModel(
     fun changeGrade(grade: ReviewGrade) {
         val current = _state.value
         val question = current.question ?: return
-        if (!current.simplified || !current.revealed || current.pendingGrade == null) return
+        // S4: a grade write already in flight owns the proposal. Ignore the tap
+        // rather than let it rewrite pendingGrade/lastResult after Next read it.
+        if (!studyCanChangeGrade(current)) return
         val now = System.currentTimeMillis()
         // The dwell was frozen at Check; changing the grade must not reread a
         // clock that could have moved while the answer was being read.

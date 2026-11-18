@@ -54,6 +54,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -94,6 +98,27 @@ internal fun categoryCountsLine(counts: CategoryCounts): String =
             pluralStringResource(R.plurals.counts_tricky, counts.leeches, counts.leeches)
         } else null
     ).joinToString(" · ")
+
+/**
+ * Which terms a paper's summary line contains. Zero duration means untimed and
+ * zero negative marking means none; those terms must not be shown at all.
+ * Pure so the shown/hidden cases run as JVM tests on the ARM64 host.
+ */
+internal data class PaperSummaryInputs(
+    val questions: Int,
+    val minutes: Int?,
+    val negative: Double?
+)
+
+internal fun paperSummaryInputs(
+    totalQuestions: Int,
+    durationMinutes: Int,
+    negativeMarking: Double
+): PaperSummaryInputs = PaperSummaryInputs(
+    questions = totalQuestions.coerceAtLeast(0),
+    minutes = durationMinutes.takeIf { it > 0 },
+    negative = negativeMarking.takeIf { it > 0.0 }
+)
 
 /** One library card: a paper's actions, category management. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -175,11 +200,26 @@ internal fun PaperCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    val summary = paperSummaryInputs(
+                        paper.totalQuestions, paper.durationMinutes, paper.negativeMarking
+                    )
                     Text(
                         buildString {
-                            append("${paper.totalQuestions} questions")
-                            if (paper.durationMinutes > 0) append(" • ${paper.durationMinutes} min")
-                            if (paper.negativeMarking > 0) append(" • -${paper.negativeMarking} neg")
+                            append(
+                                pluralStringResource(
+                                    R.plurals.r2_lib_questions_count,
+                                    summary.questions,
+                                    summary.questions
+                                )
+                            )
+                            summary.minutes?.let { minutes ->
+                                append(" • ")
+                                append(stringResource(R.string.r2_lib_minutes, minutes))
+                            }
+                            summary.negative?.let { negative ->
+                                append(" • ")
+                                append(stringResource(R.string.r2_lib_negative, negative))
+                            }
                         },
                         style = MaterialTheme.typography.labelMedium
                     )
@@ -450,6 +490,8 @@ private fun ShowCategoryRow(
     rolled: Map<String, CategoryCounts>,
     onToggle: (String) -> Unit
 ) {
+    // Resolve in the composable scope; `semantics {}` is not composable.
+    val selectLabel = stringResource(R.string.r2_lib_select_category, node.title)
     Column(modifier = Modifier.padding(start = (depth * 24).dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TriStateCheckbox(
@@ -460,7 +502,9 @@ private fun ShowCategoryRow(
                     null -> ToggleableState.Off
                 },
                 onClick = { onToggle(node.id) },
-                modifier = Modifier.testTag("card-cat-${node.id}")
+                modifier = Modifier
+                    .testTag("card-cat-${node.id}")
+                    .semantics { contentDescription = selectLabel }
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -566,8 +610,11 @@ private fun ManageCategoryRow(
     onAddQuestion: (String) -> Unit
 ) {
     val collapsed = isCollapsed(node.id)
-    var menuOpen by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
+    // saveable: rotation used to close the open menu / delete confirmation and
+    // discard the tap that had opened it (L9).
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    val openCategoryLabel = stringResource(R.string.r2_lib_open_category, node.title)
     Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (node.children.isNotEmpty()) {
@@ -601,7 +648,11 @@ private fun ManageCategoryRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { onOpenCategory(node) }
+                    .clickable(onClickLabel = openCategoryLabel) { onOpenCategory(node) }
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        contentDescription = openCategoryLabel
+                    }
                     .padding(vertical = 12.dp)
                     .testTag("cat-title-${node.id}")
             )

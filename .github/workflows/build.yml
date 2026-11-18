@@ -169,7 +169,9 @@ jobs:
           echo "::add-mask::$KEY_PASSWORD"
 
       - name: Build release APK
-        run: sh gradlew :app:assembleRelease --no-daemon
+        # Same forced re-resolution as the build/lint jobs: this job restores
+        # the same Gradle cache, so stale plugin metadata can hit it too.
+        run: sh gradlew :app:assembleRelease --refresh-dependencies --no-daemon
 
       - name: Report the release APK size
         run: du -h app/build/outputs/apk/release/*.apk || true
@@ -231,7 +233,7 @@ jobs:
           # Every instrumented test runs: the suite used to skip a handful via
           # a system-property switch, but that property was never passed to the
           # on-device test process, so the switch silently did nothing.
-          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: sh gradlew :app:connectedDebugAndroidTest --refresh-dependencies --no-daemon
 
       - name: Upload UI test results
         if: always()

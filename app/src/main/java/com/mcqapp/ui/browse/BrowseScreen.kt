@@ -60,7 +60,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,7 +67,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,6 +76,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -117,22 +118,36 @@ fun BrowseScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val allPapers by viewModel.papers.collectAsStateWithLifecycle()
+    // Collected here (not inside the Scaffold content) so the process-death
+    // restore effect below can read and overwrite it before the list composes.
+    val filterState by viewModel.filterState.collectAsStateWithLifecycle()
     // rememberSaveable: a config change used to discard a multi-select, and
     // process death with the picker up made export silently no-op
     // (consolidated_bugs.md F10). Sets and enums are Serializable.
     var selectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedIds by rememberSaveable { mutableStateOf(setOf<String>()) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
+    // One confirmation for DELETE, shared by the row action (one id) and the
+    // bulk action (many). Null = no dialog. Saveable so a rotation while the
+    // dialog is up does not silently drop the choice (B1).
+    var pendingDeleteIds by rememberSaveable { mutableStateOf<Set<String>?>(null) }
     var showMoveDialog by remember { mutableStateOf(false) }
-    var showExportDialog by remember { mutableStateOf(false) }
+    // Saveable: a rotation mid-render must not close the dialog while the VM
+    // keeps rendering in its own scope (B3).
+    var showExportDialog by rememberSaveable { mutableStateOf(false) }
     // The id set is captured at pick time: CreateDocument hands back a Uri
     // later, by which point selection mode may already be over.
     var exportIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var exportFormat by rememberSaveable {
         mutableStateOf(com.mcqapp.data.export.ExportFormat.JSON_INLINE)
     }
+    // Saved filter chips, restored into the VM on process death (B7). Null
+    // means "nothing saved yet", so the route-seeded category filter wins.
+    var savedFilters by rememberSaveable { mutableStateOf<BrowseFilterSnapshot?>(null) }
+    // Plain remember, NOT saveable: this is a per-composition one-shot guard.
+    // Saving it made a process-death recreation skip the restore and then let
+    // the sync effect overwrite the saved chips with the fresh VM's defaults.
+    var filtersRestored by remember { mutableStateOf(false) }
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
     // LocalResources (not LocalContext.current) keeps the chooser title
     // configuration-aware: LocalContext.getString() is not re-read when the
@@ -142,14 +157,73 @@ fun BrowseScreen(
     // Resolved in composition so the action callbacks stay plain lambdas.
     val shareNoAppText = stringResource(R.string.share_no_app)
     val duplicatedText = stringResource(R.string.question_duplicated)
+    val selectedLabel = stringResource(R.string.r2_browse_selected)
+    // Count label resolved here (not inside exportTitle) so the plain callback
+    // stays non-composable; it recomposes when the captured id set changes.
+    val exportCountText = pluralStringResource(
+        R.plurals.r2_browse_question_count, exportIds.size, exportIds.size
+    )
+    val moveCollisionToast = stringResource(R.string.r2_browse_move_collision_toast)
 
     val error by viewModel.error.collectAsStateWithLifecycle()
     val moveAffectedCount by viewModel.moveAffectedCount.collectAsStateWithLifecycle()
 
+    // Shared by the export dialog's own finish and the one-shot share-result
+    // collector, so closing on success is always done in one place (B3).
+    fun finishSelectionExport() {
+        showExportDialog = false
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    // A rotation keeps the VM, so its filter state is current; only a process
+    // death recreates it empty. Restore the saved chips once per composition,
+    // then keep the snapshot in sync with the VM from then on (B7). Only fields
+    // that actually differ are written: a rotation replays this effect against
+    // a VM that already holds the filters, and writing equal values would
+    // rebuild the pager for no reason.
+    LaunchedEffect(Unit) {
+        if (filtersRestored) return@LaunchedEffect
+        val plan = planBrowseFilterRestore(savedFilters, filterState)
+        if (plan.query != null) viewModel.updateQuery(plan.query)
+        if (plan.filter != null) viewModel.updateFilter(plan.filter)
+        if (plan.categoryFilterIds != null) {
+            viewModel.updateCategoryFilters(plan.categoryFilterIds)
+        }
+        filtersRestored = true
+    }
+    LaunchedEffect(filterState.query, filterState.filter, filterState.categoryFilterIds) {
+        if (filtersRestored) savedFilters = BrowseFilterSnapshot.of(filterState)
+    }
+
+    // One-shot handoff from the VM's share render. The render runs in the VM's
+    // scope, so leaving composition can no longer cancel it; we only start the
+    // chooser once it is ready (B3). A replayed StateFlow (not a plain
+    // SharedFlow) covers the recreation gap: an event emitted before this
+    // screen exists is still seen, and consume(id) stops a second showing.
+    val shareEvent by viewModel.shareEvents.latest.collectAsStateWithLifecycle()
+    LaunchedEffect(shareEvent) {
+        val event = shareEvent ?: return@LaunchedEffect
+        finishSelectionExport()
+        val intent = event.value
+        if (intent != null) {
+            try {
+                platformContext.startActivity(
+                    Intent.createChooser(
+                        intent,
+                        platformResources.getString(R.string.share_chooser_title)
+                    )
+                )
+            } catch (_: ActivityNotFoundException) {
+                sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
+            }
+        }
+        viewModel.shareEvents.consume(event.id)
+    }
+
     fun exportTitle(): String {
-        val paper = state.paper?.title ?: "Selected"
-        return if (exportIds.size == 1) "$paper (1 question)"
-        else "$paper (${exportIds.size} questions)"
+        val paper = state.paper?.title ?: selectedLabel
+        return "$paper $exportCountText"
     }
 
     fun onExportDocument(uri: android.net.Uri?) {
@@ -265,7 +339,11 @@ fun BrowseScreen(
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.export)) }
                         TextButton(
-                            onClick = { showDeleteConfirm = true },
+                            onClick = {
+                                pendingDeleteIds = BrowseDeleteConfirmation.request(
+                                    pendingDeleteIds, selectedIds
+                                )
+                            },
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.delete)) }
                     } else {
@@ -276,7 +354,6 @@ fun BrowseScreen(
         }
     ) { padding ->
         val items = viewModel.pagingData.collectAsLazyPagingItems()
-        val filterState by viewModel.filterState.collectAsStateWithLifecycle()
 
         // The field shows what was typed; the list's query follows 300 ms later.
         var searchInput by remember { mutableStateOf("") }
@@ -469,9 +546,9 @@ fun BrowseScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
-                        "All" to BrowseListFilter.ALL,
-                        "No answer" to BrowseListFilter.NO_ANSWER,
-                        "No explanation" to BrowseListFilter.NO_EXPLANATION,
+                        stringResource(R.string.r2_browse_filter_all) to BrowseListFilter.ALL,
+                        stringResource(R.string.r2_browse_filter_no_answer) to BrowseListFilter.NO_ANSWER,
+                        stringResource(R.string.r2_browse_filter_no_explanation) to BrowseListFilter.NO_EXPLANATION,
                         null to BrowseListFilter.UNCATEGORIZED
                     ).forEach { (label, kind) ->
                         FilterChip(
@@ -668,7 +745,14 @@ fun BrowseScreen(
                                 )
                             }
                         },
-                        onDelete = { viewModel.deleteQuestion(question.id) },
+                        // B1: a single row delete asks for the same confirmation
+                        // as the bulk action, with a count of one. No one-tap
+                        // destructive action.
+                        onDelete = {
+                            pendingDeleteIds = BrowseDeleteConfirmation.request(
+                                pendingDeleteIds, setOf(question.id)
+                            )
+                        },
                         onDuplicate = {
                             viewModel.duplicateQuestion(question.id) { duplicated ->
                                 if (duplicated) {
@@ -764,21 +848,26 @@ fun BrowseScreen(
             )
         }
 
-        if (showDeleteConfirm) {
+        // One confirmation for both entry points. The count comes from the
+        // captured pending set, NOT from the live selection: the row action
+        // deletes one question while a selection may still be ticked (B1).
+        val pendingDelete = pendingDeleteIds
+        if (BrowseDeleteConfirmation.showing(pendingDelete)) {
+            val deleteCount = BrowseDeleteConfirmation.count(pendingDelete)
             AlertDialog(
-                onDismissRequest = { showDeleteConfirm = false },
-                title = { Text(pluralStringResource(R.plurals.delete_n_questions, selectedIds.size, selectedIds.size)) },
+                onDismissRequest = { pendingDeleteIds = null },
+                title = { Text(pluralStringResource(R.plurals.delete_n_questions, deleteCount, deleteCount)) },
                 text = { Text(stringResource(R.string.this_cannot_be_undone)) },
                 confirmButton = {
                     TextButton(onClick = {
-                        viewModel.deleteQuestions(selectedIds)
+                        viewModel.deleteQuestions(pendingDelete.orEmpty())
                         selectedIds = emptySet()
                         selectionMode = false
-                        showDeleteConfirm = false
+                        pendingDeleteIds = null
                     }) { Text(stringResource(R.string.delete)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel)) }
+                    TextButton(onClick = { pendingDeleteIds = null }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -799,12 +888,6 @@ fun BrowseScreen(
         }
 
         if (showExportDialog) {
-            fun finishSelectionExport() {
-                showExportDialog = false
-                selectionMode = false
-                selectedIds = emptySet()
-            }
-
             fun saveSelectionToFile() {
                 showExportDialog = false
                 exportSaver(exportFormat).launch(
@@ -816,27 +899,6 @@ fun BrowseScreen(
                 // exportIds, and the user asked for a file.
                 selectionMode = false
                 selectedIds = emptySet()
-            }
-
-            fun shareSelection() {
-                scope.launch {
-                    val intent = viewModel.shareSelectionIntent(
-                        exportIds, exportTitle(), exportFormat
-                    )
-                    finishSelectionExport()
-                    if (intent != null) {
-                        try {
-                            platformContext.startActivity(
-                                Intent.createChooser(
-                                    intent,
-                                    platformResources.getString(R.string.share_chooser_title)
-                                )
-                            )
-                        } catch (_: ActivityNotFoundException) {
-                            sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
-                        }
-                    }
-                }
             }
 
             AlertDialog(
@@ -866,9 +928,18 @@ fun BrowseScreen(
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(format.title, style = MaterialTheme.typography.bodyMedium)
+                                    Text(stringResource(format.titleRes), style = MaterialTheme.typography.bodyMedium)
+                                    // stringResource is @Composable, so resolve both pieces in
+                                    // composition and hand the helper already-localized values.
+                                    val baseDescription = stringResource(format.descriptionRes)
+                                    val caveat = if (format.contentOnlyNoteRes != 0) {
+                                        stringResource(format.contentOnlyNoteRes)
+                                    } else ""
+                                    val descriptionWithNote = format.descriptionWithCaveat { id ->
+                                        if (id == format.contentOnlyNoteRes) caveat else baseDescription
+                                    }
                                     Text(
-                                        format.description,
+                                        descriptionWithNote,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -882,7 +953,10 @@ fun BrowseScreen(
                         TextButton(enabled = !isSharing, onClick = { saveSelectionToFile() }) {
                             Text(stringResource(R.string.share_save))
                         }
-                        TextButton(enabled = !isSharing, onClick = { shareSelection() }) {
+                        TextButton(
+                            enabled = !isSharing,
+                            onClick = { viewModel.shareSelection(exportIds, exportTitle(), exportFormat) }
+                        ) {
                             Text(stringResource(R.string.share_share))
                         }
                     }
@@ -968,11 +1042,18 @@ fun BrowseScreen(
                         // and review history and carries them to the new
                         // paper's statistics, and a shared passage takes its
                         // siblings along (QA-02). Both are said before the
-                        // tap, not discovered after it.
+                        // tap, not discovered after it. B2: the collision
+                        // exception is disclosed too — a destination card that
+                        // already exists wins and the source history is dropped.
                         if (!moveIsCopy && movePaperId != paperId) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 stringResource(R.string.move_cross_paper_warning),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                stringResource(R.string.r2_browse_move_collision_warning),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -1013,16 +1094,19 @@ fun BrowseScreen(
                                         // ticked rows.
                                         viewModel.moveQuestions(selectedIds, node.id) { total ->
                                             if (total != null) {
-                                                sendMessage(
-                                                    UiMessage(
-                                                        platformResources.getQuantityString(
-                                                            R.plurals.questions_moved_count,
-                                                            total,
-                                                            total
-                                                        ),
-                                                        UiMessageTone.Success
-                                                    )
+                                                // B2: a cross-paper move can drop
+                                                // source history on a collision;
+                                                // say so instead of implying a
+                                                // clean carry-over.
+                                                val moved = platformResources.getQuantityString(
+                                                    R.plurals.questions_moved_count, total, total
                                                 )
+                                                val message = if (movePaperId != paperId) {
+                                                    "$moved $moveCollisionToast"
+                                                } else {
+                                                    moved
+                                                }
+                                                sendMessage(UiMessage(message, UiMessageTone.Success))
                                             }
                                         }
                                     }
@@ -1133,7 +1217,16 @@ private fun BrowseQuestionCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
-                    Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
+                    // B6: an unlabeled checkbox is announced as just
+                    // "checkbox, checked". Name the question it selects.
+                    // Resolved here, in composition: the semantics lambda is
+                    // not a @Composable context.
+                    val selectLabel = stringResource(R.string.r2_browse_select_question, index)
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = { onToggleSelect() },
+                        modifier = Modifier.semantics { contentDescription = selectLabel }
+                    )
                 } else {
                     Text(
                         stringResource(R.string.editor_index, index),
@@ -1156,11 +1249,21 @@ private fun BrowseQuestionCard(
             Spacer(Modifier.height(8.dp))
             question.options.forEach { option ->
                 val isCorrect = option.id in question.correctOptionIds
+                // B6: the glyph alone is meaningless to a screen reader.
+                // Replace it with a spoken correct/incorrect label so the
+                // answer is available without seeing the tick. Resolved in
+                // composition; the semantics lambda is not @Composable.
+                val correctnessLabel = stringResource(
+                    if (isCorrect) R.string.r2_browse_correct_option
+                    else R.string.r2_browse_other_option
+                )
                 Row(modifier = Modifier.padding(vertical = 2.dp)) {
                     Text(
                         if (isCorrect) "✓" else "○",
                         color = if (isCorrect) verdictColors().correctBorder else MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.width(20.dp),
+                        modifier = Modifier
+                            .width(20.dp)
+                            .clearAndSetSemantics { contentDescription = correctnessLabel },
                         fontWeight = if (isCorrect) FontWeight.Bold else FontWeight.Normal
                     )
                     ContentElements(option.elements, textStyle = MaterialTheme.typography.bodyMedium)
@@ -1298,3 +1401,74 @@ internal fun subtreeIdsOf(
     flatCategories: List<Pair<com.mcqapp.domain.CategoryNode, Int>>,
     rootId: String?
 ): Set<String>? = CategorySelection.subtreeIds(flatCategories, rootId)
+
+/**
+ * B1 — the one Delete confirmation, shared by the row action (one id) and the
+ * bulk action (many). Kept as a pure seam so the "never confirm an empty set,
+ * count the captured scope, not the live selection" contract is testable
+ * without a Compose test. [request] ignores an empty [ids], so a stale
+ * selection can never put up a "Delete 0 questions?" dialog.
+ */
+internal object BrowseDeleteConfirmation {
+    fun request(current: Set<String>?, ids: Set<String>): Set<String>? =
+        if (ids.isEmpty()) current else ids
+
+    fun count(pending: Set<String>?): Int = pending?.size ?: 0
+
+    fun showing(pending: Set<String>?): Boolean = !pending.isNullOrEmpty()
+}
+
+/**
+ * B7 — a serializable snapshot of the filter chips, saved from the screen and
+ * restored into the freshly created VM after process death. Serializable so the
+ * default `rememberSaveable` registry can store it in the saved-state Bundle.
+ */
+internal data class BrowseFilterSnapshot(
+    val query: String,
+    val filter: BrowseListFilter,
+    val categoryFilterIds: Set<String>
+) : java.io.Serializable {
+    companion object {
+        fun of(state: BrowseFilterState): BrowseFilterSnapshot = BrowseFilterSnapshot(
+            state.query, state.filter, state.categoryFilterIds
+        )
+    }
+}
+
+/**
+ * Saved chips win over the route-seeded defaults; with nothing saved the
+ * route's initial (category) filter is kept. Pure so both branches are tested.
+ */
+internal fun restoreBrowseFilters(
+    saved: BrowseFilterSnapshot?,
+    initial: BrowseFilterState
+): BrowseFilterState = saved?.let {
+    BrowseFilterState(query = it.query, filter = it.filter, categoryFilterIds = it.categoryFilterIds)
+} ?: initial
+
+/**
+ * Only the fields that differ from the live VM state. Process death starts
+ * from the route seed and applies all saved chips; a rotation replays against
+ * a VM that already holds them and applies nothing. A null field means "leave
+ * this one alone" — writing equal values would rebuild the pager needlessly.
+ */
+internal data class BrowseFilterRestore(
+    val query: String? = null,
+    val filter: BrowseListFilter? = null,
+    val categoryFilterIds: Set<String>? = null
+) {
+    val hasChanges: Boolean get() = query != null || filter != null || categoryFilterIds != null
+}
+
+internal fun planBrowseFilterRestore(
+    saved: BrowseFilterSnapshot?,
+    current: BrowseFilterState
+): BrowseFilterRestore {
+    if (saved == null) return BrowseFilterRestore()
+    val restored = restoreBrowseFilters(saved, current)
+    return BrowseFilterRestore(
+        query = restored.query.takeIf { it != current.query },
+        filter = restored.filter.takeIf { it != current.filter },
+        categoryFilterIds = restored.categoryFilterIds.takeIf { it != current.categoryFilterIds }
+    )
+}

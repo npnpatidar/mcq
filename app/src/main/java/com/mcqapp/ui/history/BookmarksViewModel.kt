@@ -9,7 +9,11 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.R
+import com.mcqapp.data.export.ExportFormat
+import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.results.OneShotEvents
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -17,16 +21,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class BookmarksUiState(val count: Int = 0)
+data class BookmarksUiState(
+    /** Count of bookmarks whose question and category still resolve, R7. */
+    val count: Int = 0,
+    /** False until the first bookmark observation lands, so no empty-state flash. */
+    val loaded: Boolean = false,
+    /** R8: dialog state in the ViewModel survives rotation. */
+    val showFormatDialog: Boolean = false,
+    val exportFormat: ExportFormat = ExportFormat.JSON_INLINE
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BookmarksViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
     /** Friendly, localized copy for the learner; exception text goes to the log only. */
-    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
+    private fun msg(resId: Int): String = AppStrings.getString(getApplication<Application>(), resId)
 
     private val _state = MutableStateFlow(BookmarksUiState())
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
@@ -54,10 +67,14 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
             .cachedIn(viewModelScope)
 
     init {
-        // The count, not the ids: a "bookmark everything" bank is one COUNT.
+        // R7: the header must count the same rows the list can resolve. The
+        // raw table count includes dangling bookmarks (a question or its
+        // category was deleted), which the pager drops. Recompute from the
+        // bookmark ids through the same two-table resolution the pager uses.
         viewModelScope.launch {
-            repository.observeBookmarkCount().collect { count ->
-                _state.value = BookmarksUiState(count = count)
+            repository.observeBookmarks().collect { ids ->
+                val count = resolvableCount(ids)
+                _state.update { it.copy(count = count, loaded = true) }
             }
         }
         // One generation, invalidated in place: a source cannot observe the
@@ -68,6 +85,19 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /** Resolvable = a bookmark whose question exists and whose category exists. */
+    private suspend fun resolvableCount(ids: List<String>): Int {
+        if (ids.isEmpty()) return 0
+        val db = repository.db()
+        val questions = db.questionDao().getByIdsChunked(ids)
+        if (questions.isEmpty()) return 0
+        val categoryIds = db.categoryDao()
+            .getByIdsChunked(questions.map { it.categoryId }.distinct())
+            .map { it.id }
+            .toHashSet()
+        return questions.count { it.categoryId in categoryIds }
+    }
+
     fun removeBookmark(questionId: String) {
         // Idempotent delete, not a toggle: the row is still composed while the
         // list refreshes, so a second tap used to re-add the bookmark it had
@@ -75,12 +105,26 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch { repository.deleteBookmark(questionId) }
     }
 
+    // ----- R8: dialog state owned by the ViewModel, rotation-safe. -----
+
+    fun openFormatDialog() {
+        _state.update { it.copy(showFormatDialog = true) }
+    }
+
+    fun closeFormatDialog() {
+        _state.update { it.copy(showFormatDialog = false) }
+    }
+
+    fun selectFormat(format: ExportFormat) {
+        _state.update { it.copy(exportFormat = format) }
+    }
+
     private val _exportError = MutableStateFlow<String?>(null)
     val exportError: StateFlow<String?> = _exportError.asStateFlow()
 
     fun exportBookmarks(
         uri: android.net.Uri,
-        format: com.mcqapp.data.export.ExportFormat
+        format: ExportFormat
     ) {
         viewModelScope.launch {
             try {
@@ -120,14 +164,21 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isSharing = MutableStateFlow(false)
     val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
 
-    /**
-     * Renders the bookmarks into `cacheDir/shared` and returns the raw
-     * `ACTION_SEND` intent (the screen wraps it in a chooser). Null on
-     * failure, with [exportError] set; [isSharing] drives the dialog's
-     * progress while the render runs on IO.
-     */
-    suspend fun shareBookmarksIntent(
-        format: com.mcqapp.data.export.ExportFormat
+    /** R1: the share chooser is a one-shot event; the render owns a VM coroutine. */
+    val shareEvents = OneShotEvents<android.content.Intent>()
+
+    fun shareBookmarks(format: ExportFormat) {
+        viewModelScope.launch {
+            if (_isSharing.value) return@launch
+            val intent = renderShareIntent(format)
+            // Close the dialog only after the render finishes, never mid-share.
+            closeFormatDialog()
+            if (intent != null) shareEvents.send(intent)
+        }
+    }
+
+    private suspend fun renderShareIntent(
+        format: ExportFormat
     ): android.content.Intent? {
         _isSharing.value = true
         try {

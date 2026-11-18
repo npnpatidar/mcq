@@ -6,8 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.R
+import com.mcqapp.data.io.FALLBACK_CATEGORY_LABEL
 import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+import com.mcqapp.data.io.FALLBACK_CLOZE_EXPLANATION
 import com.mcqapp.data.io.FALLBACK_PAPER_TITLE
+import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
 import com.mcqapp.data.io.ImportOverrides
 import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.ImportRunJournal
@@ -31,7 +34,8 @@ import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.ImportWarningSeverity
 import com.mcqapp.domain.ParserWarning
-import com.mcqapp.domain.severityOfParserWarning
+import com.mcqapp.domain.parserWarningSeverity
+import com.mcqapp.domain.parserWarningText
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,13 +122,25 @@ internal fun importReportLines(report: ImportReport): List<ImportReportLine> = b
     line(ImportReportLineKind.RECALL_CONVERTED, report.recallConverted)
 }
 
+/**
+ * The completion dialog's extra notice for a restore whose progress exceeded
+ * the streamed budget. Pure so the flag-to-copy mapping is JVM-testable; the
+ * Compose path resolves the returned resource with the chosen locale.
+ */
+internal fun importReportNotice(report: ImportReport): Int? =
+    if (report.progressRestoreSkipped) R.string.r2_import_progress_skipped_notice else null
+
 /** Severity is known for notices the VM itself writes — declare it, don't guess. */
 private fun advisoryNotice(message: String): ParserWarning =
     ParserWarning(message, ImportWarningSeverity.ADVISORY)
 
-/** Bare strings from the parsers are classified once, at the UI boundary. */
-private fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
-    messages.map { ParserWarning(it, severityOfParserWarning(it)) }
+/**
+ * Bare strings from the parsers carry the severity their producer assigned
+ * (a hidden tag), never a severity guessed from the wording. The tag is stripped
+ * before display; an untagged string is a benign notice.
+ */
+internal fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
+    messages.map { ParserWarning(parserWarningText(it), parserWarningSeverity(it)) }
 
 object ImportDataHolder {
     /**
@@ -205,6 +221,15 @@ data class ImportUiState(
     val changedIds: Set<String> = emptySet(),
     val importReport: com.mcqapp.data.io.ImportReport? = null,
     val originalFile: McqFileDto? = null,
+    /**
+     * Whether the picked file is a multi-paper/progress backup. A streamed large
+     * JSON has no [originalFile] (its DTO tree is never built), so this flag —
+     * carried from `ImportPreview.isBackup` — is the only way the Import button
+     * and the import gate can tell a restore from a single-paper import.
+     */
+    val isBackup: Boolean = false,
+    /** Papers the file holds, including those the preview never sampled. */
+    val paperCount: Int = 0,
     val importing: Boolean = false,
     val importDone: Boolean = false,
     /** Questions read so far during a streaming import, for the progress line. */
@@ -331,7 +356,9 @@ internal fun importButton(
     newQuestions: Int,
     changedQuestions: Int
 ): ImportButtonState {
-    val backup = state.originalFile?.let { isBackupFile(it) } == true
+    // The previewed flag is authoritative for a streamed file (no DTO tree);
+    // the originalFile fallback keeps hand-built/whole-file states working.
+    val backup = state.isBackup || state.originalFile?.let { isBackupFile(it) } == true
     val nothingToDo = newQuestions == 0 && changedQuestions == 0
     val enabled = state.paperTitle.isNotBlank() &&
         (state.previewTruncated || backup || !nothingToDo) &&
@@ -490,6 +517,9 @@ internal fun numericTextFor(value: Int): String = if (value == 0) "" else value.
 internal fun fallbackTitleRes(token: String): Int? = when (token) {
     FALLBACK_CATEGORY_TITLE -> R.string.final_fallback_category_title
     FALLBACK_PAPER_TITLE -> R.string.final_fallback_paper_title
+    FALLBACK_CATEGORY_LABEL -> R.string.r2_import_fallback_category
+    FALLBACK_PASSAGE_TITLE -> R.string.r2_import_fallback_passage
+    FALLBACK_CLOZE_EXPLANATION -> R.string.r2_import_fallback_cloze_explanation
     else -> null
 }
 
@@ -790,6 +820,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 backupNotice.forEach { add(advisoryNotice(it)) }
             },
             originalFile = null,
+            isBackup = preview.isBackup,
+            paperCount = preview.paperCount,
             totalQuestionCount = preview.totalQuestions,
             previewTruncated = sampleQuestions.size < preview.totalQuestions,
             singleCategoryPaper = preview.firstPaperCategoryCount == 1,
@@ -929,6 +961,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 addAll(typedParserWarnings(file.warnings))
             },
             originalFile = file,
+            isBackup = isBackupFile(file),
+            paperCount = file.papers.size,
             importSource = currentSource,
             paperTitleSuggestions = _state.value.paperTitleSuggestions,
             categorySuggestions = _state.value.categorySuggestions
@@ -1093,7 +1127,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         val original = s.originalFile
-        val backup = original != null && isBackupFile(original)
+        val backup = s.isBackup || original != null && isBackupFile(original)
         // Single-paper imports need something to import; a backup still carries
         // papers 2+ (and schedules) even if paper 1 was emptied in preview.
         if (!backup && (s.paperTitle.isBlank() || s.questions.isEmpty())) {

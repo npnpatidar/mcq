@@ -43,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -320,6 +322,8 @@ private fun CategoryTree(
     onToggle: (String) -> Unit
 ) {
     for (node in nodes) {
+        // Resolve in the composable scope; `semantics {}` is not composable.
+        val selectLabel = stringResource(R.string.r2_lib_select_category, node.title)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -334,7 +338,9 @@ private fun CategoryTree(
                     null -> ToggleableState.Off
                 },
                 onClick = { onToggle(node.id) },
-                modifier = Modifier.testTag("drawer-cat-${node.id}")
+                modifier = Modifier
+                    .testTag("drawer-cat-${node.id}")
+                    .semantics { contentDescription = selectLabel }
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(

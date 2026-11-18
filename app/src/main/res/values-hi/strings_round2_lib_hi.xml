@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Round-2 library fixes: Hindi, names and specifiers match the base locale. -->
+
+    <!-- निर्यात-प्रारूप संवाद (प्रारूप पंक्तियाँ ExportFormat की सम्पत्ति हैं)। -->
+    <string name="r2_lib_export_format_title">निर्यात प्रारूप</string>
+    <plurals name="r2_lib_export_selection_title">
+        <item quantity="one">चयन निर्यात करें (%1$d श्रेणी)</item>
+        <item quantity="other">चयन निर्यात करें (%1$d श्रेणियाँ)</item>
+    </plurals>
+
+    <!-- आयात से चुने गए बैकअप को प्रश्न बैंक के रूप में नहीं जोड़ा जा सकता। -->
+    <string name="r2_lib_backup_not_bank">यह लाइब्रेरी बैकअप है, प्रश्न बैंक नहीं। इसे सेटिंग्स → बैकअप बहाल करें से बहाल करें।</string>
+
+    <!-- हटाने की विफलता में पंक्ति बनी रहती है और सूचना दिखती है। -->
+    <string name="r2_lib_delete_failed">%1$s को हटाया नहीं जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="r2_lib_delete_generic_failed">हटाने की प्रक्रिया पूरी नहीं हो सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="r2_lib_blueprint_save_failed">परीक्षा-योजना सहेजी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="r2_lib_blueprint_delete_failed">परीक्षा-योजना हटाई नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+
+    <!-- संरचना-पूर्वावलोकन के अलग-अलग भरण लेबेल। -->
+    <string name="r2_lib_fill_authored_hard">रचित कठिन</string>
+    <string name="r2_lib_fill_authored_medium">रचित मध्यम</string>
+    <string name="r2_lib_fill_blueprint">परीक्षा-योजना</string>
+    <string name="r2_lib_fill_blueprint_fill">योजना-पूरक</string>
+
+    <!-- पेपर-कार्ड का सारांश। -->
+    <plurals name="r2_lib_questions_count">
+        <item quantity="one">%1$d प्रश्न</item>
+        <item quantity="other">%1$d प्रश्न</item>
+    </plurals>
+    <string name="r2_lib_minutes">%1$d मिनट</string>
+    <string name="r2_lib_negative">-%1$s अंक</string>
+
+    <!-- उन पंक्तियों के लिए सुलभता लेबेल जो पहले बिना लेबेल की थीं। -->
+    <string name="r2_lib_select_category">%1$s श्रेणी चुनें</string>
+    <string name="r2_lib_select_no_parent">कोई मुख्य श्रेणी नहीं (शीर्ष स्तर)</string>
+    <string name="r2_lib_select_parent">%1$s को मुख्य श्रेणी बनाएँ</string>
+    <string name="r2_lib_open_category">%1$s श्रेणी खोलें</string>
+    <string name="r2_lib_decrease_parts">%1$s के हिस्से घटाएँ</string>
+    <string name="r2_lib_increase_parts">%1$s के हिस्से बढ़ाएँ</string>
+</resources>

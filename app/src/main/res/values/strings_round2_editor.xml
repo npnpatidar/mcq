@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Difficulty dropdown copy. The stored Difficulty.label token stays in
+         English so imports and stored data keep resolving; only display uses
+         these resources. -->
+    <string name="r2_editor_difficulty_easy">Easy</string>
+    <string name="r2_editor_difficulty_medium">Medium</string>
+    <string name="r2_editor_difficulty_hard">Hard</string>
+
+    <!-- Shown instead of "no questions" when a passage's member list failed
+         to load, together with a retry action. -->
+    <string name="r2_editor_members_load_error">Couldn\'t load the questions in this passage.</string>
+    <string name="r2_editor_retry">Retry</string>
+</resources>

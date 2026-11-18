@@ -83,6 +83,10 @@ private fun ForecastCard(bundle: WorkloadData) {
                 )
             },
             segmentCount = 2,
+            segmentLabels = listOf(
+                stringResource(R.string.stats_learning),
+                stringResource(R.string.stats_review_kind)
+            ),
             overlay = forecast.cumulativeIfSkipped.map { it.toDouble() },
             overlayLabel = { it.roundToInt().toString() }
         )
@@ -155,6 +159,12 @@ private fun ReviewsPerDayCard(bundle: WorkloadData) {
         val colors = seriesColors()
         StackedBarChart(
             points = bundle.reviewsPerDay,
+            segmentLabels = listOf(
+                stringResource(R.string.stats_learning),
+                stringResource(R.string.stats_review_kind),
+                stringResource(R.string.stats_relearning),
+                stringResource(R.string.stats_unknown_kind)
+            ),
             emptyText = { ChartEmpty(R.string.stats_no_data) }
         )
         Row(
@@ -193,6 +203,12 @@ private fun GradeMixCard(bundle: WorkloadData) {
                 )
             },
             segmentCount = 4,
+            segmentLabels = listOf(
+                stringResource(R.string.grade_again),
+                stringResource(R.string.grade_hard),
+                stringResource(R.string.grade_good),
+                stringResource(R.string.grade_easy)
+            ),
             emptyText = { ChartEmpty(R.string.stats_no_data) }
         )
         Row(

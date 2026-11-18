@@ -115,15 +115,27 @@ class FsrsOptimizerTest {
     }
 
     /**
-     * `NaN` survives a bare `coerceIn` (neither comparison holds), so the
-     * clipper has to replace it with a deterministic in-bounds value; the
-     * infinities are already handled by the clamp itself.
+     * Upstream `clamp_safe` (`fsrs-rs` v7.0.0 `parameter_clipper_v7.rs`)
+     * replaces every non-finite value with that parameter's lower bound:
+     * `value = if value.is_finite() { value } else { low }`. A bare Kotlin
+     * `coerceIn` passes `NaN` through and sends the infinities to the *upper*
+     * bound, so pin the lower-bound result at w4, which the cross-parameter
+     * rules (w1..w3, w26) leave untouched. Finite clamping stays pinned in
+     * [clipEnforcesTheOfficialBounds].
+     *
+     * https://raw.githubusercontent.com/open-spaced-repetition/fsrs-rs/v7.0.0/src/parameter_clipper_v7.rs
      */
     @Test
     fun clipRepairsNonFiniteParameters() {
-        val nan = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also { it[3] = Double.NaN }
-        val nanClipped = FsrsOptimizer.clip(nan)
-        assertEquals(FsrsScheduler.DEFAULT_FSRS_PARAMETERS[3], nanClipped[3], 0.0)
+        for (value in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            val weights = FsrsScheduler.DEFAULT_FSRS_PARAMETERS.toMutableList().also { it[4] = value }
+            assertEquals(
+                "w4=$value -> lower bound",
+                FsrsOptimizer.LOWER_BOUNDS[4],
+                FsrsOptimizer.clip(weights)[4],
+                0.0
+            )
+        }
 
         val infinite = List(34) { if (it % 2 == 0) Double.POSITIVE_INFINITY else Double.NEGATIVE_INFINITY }
         val clipped = FsrsOptimizer.clip(infinite)
@@ -132,6 +144,8 @@ class FsrsOptimizerTest {
             assertTrue(value >= FsrsOptimizer.LOWER_BOUNDS[index])
             assertTrue(value <= FsrsOptimizer.UPPER_BOUNDS[index])
         }
+        // w4 is outside the cross-rule group, so it must equal its bound exactly.
+        assertEquals(FsrsOptimizer.LOWER_BOUNDS[4], clipped[4], 0.0)
         assertTrue(clipped[1] >= clipped[0])
         assertTrue(clipped[2] >= clipped[1])
         assertTrue(clipped[3] >= clipped[2])

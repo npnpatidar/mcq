@@ -29,8 +29,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
@@ -41,6 +44,7 @@ import com.mcqapp.domain.BlueprintSummary
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
+import com.mcqapp.util.Logger
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -71,6 +75,14 @@ internal val BlueprintPartsSaver = Saver<Map<String, Int>, String>(
         }
     }
 )
+
+/**
+ * Whether the editor may be dismissed. A save in flight must not be cancelled
+ * by Cancel or swipe: the old composition scope died with the sheet and could
+ * commit the Room transaction while skipping `onSaved`, leaving the picker with
+ * no selected blueprint and Start disabled (L3). Pure so both sides are tested.
+ */
+internal fun blueprintDismissAllowed(saving: Boolean): Boolean = !saving
 
 /**
  * The blueprint tree editor (plan §9.1): a name plus, for every paper
@@ -107,7 +119,8 @@ internal fun BlueprintEditorSheet(
      * refuses the save.
      */
     onSave: suspend (String, List<BlueprintSection>) -> Long,
-    onDelete: suspend (Long) -> Unit = {},
+    /** Returns failure instead of throwing so a refused delete keeps the row. */
+    onDelete: suspend (Long) -> Result<Unit> = { Result.success(Unit) },
     onDismiss: () -> Unit,
     onSaved: (Long) -> Unit = {}
 ) {
@@ -119,12 +132,26 @@ internal fun BlueprintEditorSheet(
         mutableStateOf(partsFromViews(initialSections))
     }
     var saveError by rememberSaveable(editingId) { mutableStateOf<String?>(null) }
+    // Errors for an untouched form are noise: a new blueprint opens with an
+    // empty name and no sections, and showing both on open makes the sheet look
+    // broken before the learner has typed anything (L9).
+    var formTouched by rememberSaveable(editingId) { mutableStateOf(false) }
     // In-flight progress is deliberately transient: a rotation cancels
     // rememberCoroutineScope, so restoring `saving = true` would leave Save
-    // disabled forever with no coroutine running to clear it.
+    // disabled forever with no coroutine running to clear it. Dismissal is
+    // blocked while it is true for exactly that window (L3).
     var saving by remember(editingId) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(editingId) { mutableStateOf(false) }
+    /** True when the repository refused the delete; the row stays in place. */
+    var deleteFailed by rememberSaveable(editingId) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // LocalResources (not LocalContext) resolves the error copy in the
+    // selected language and follows a configuration change; the strings are
+    // read outside the coroutine so they can be set from its failure branch.
+    val resources = LocalResources.current
+    val saveFailedText = resources.getString(R.string.r2_lib_blueprint_save_failed)
+    val deleteFailedText = resources.getString(R.string.r2_lib_blueprint_delete_failed)
+    val dismissAllowed = blueprintDismissAllowed(saving)
 
     val flat = remember(paper.categories) { CategorySelection.flatten(paper.categories) }
     val byId = remember(flat) { flat.associate { it.first.id to it.first } }
@@ -200,6 +227,7 @@ internal fun BlueprintEditorSheet(
 
     fun setParts(id: String, value: Int) {
         saveError = null
+        formTouched = true
         parts = if (value <= 0) {
             // Setting a node to 0 removes it and its whole subtree.
             val removed = subtreeIdsOf(id).toSet()
@@ -240,7 +268,7 @@ internal fun BlueprintEditorSheet(
     val totalParts = topLevel.sumOf { parts[it] ?: 0 }
     val orphans = remember(initialSections) { orphanedSections(initialSections) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = { if (dismissAllowed) onDismiss() }) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -276,6 +304,7 @@ internal fun BlueprintEditorSheet(
                 value = name,
                 onValueChange = {
                     saveError = null
+                    formTouched = true
                     name = it.take(60)
                 },
                 label = { Text(stringResource(R.string.blueprint_editor_name)) },
@@ -310,6 +339,10 @@ internal fun BlueprintEditorSheet(
             Spacer(Modifier.height(8.dp))
             for ((node, depth) in flat) {
                 val value = parts[node.id] ?: 0
+                // Resolve copy in the composable scope: `semantics {}` is not
+                // composable, so stringResource cannot be called inside it.
+                val decreaseLabel = stringResource(R.string.r2_lib_decrease_parts, node.title)
+                val increaseLabel = stringResource(R.string.r2_lib_increase_parts, node.title)
                 Column(modifier = Modifier.padding(start = (depth * 16).dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -320,7 +353,9 @@ internal fun BlueprintEditorSheet(
                         TextButton(
                             enabled = value > 0,
                             onClick = { setParts(node.id, value - 1) },
-                            modifier = Modifier.testTag("blueprint-dec-${node.id}")
+                            modifier = Modifier
+                                .testTag("blueprint-dec-${node.id}")
+                                .semantics { contentDescription = decreaseLabel }
                         ) {
                             Text("−")
                         }
@@ -332,7 +367,9 @@ internal fun BlueprintEditorSheet(
                         TextButton(
                             enabled = value < 999,
                             onClick = { setParts(node.id, value + 1) },
-                            modifier = Modifier.testTag("blueprint-inc-${node.id}")
+                            modifier = Modifier
+                                .testTag("blueprint-inc-${node.id}")
+                                .semantics { contentDescription = increaseLabel }
                         ) {
                             Text("+")
                         }
@@ -392,13 +429,13 @@ internal fun BlueprintEditorSheet(
             }
             val nameBlank = name.isBlank()
             val noSections = included.isEmpty()
-            if (nameBlank) {
+            if (formTouched && nameBlank) {
                 Text(
                     stringResource(R.string.blueprint_editor_error_name),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
-            } else if (noSections) {
+            } else if (formTouched && noSections) {
                 Text(
                     stringResource(R.string.blueprint_editor_error_no_sections),
                     style = MaterialTheme.typography.bodySmall,
@@ -413,10 +450,20 @@ internal fun BlueprintEditorSheet(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+            if (deleteFailed) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    deleteFailedText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = {
                     saveError = null
+                    deleteFailed = false
+                    formTouched = true
                     saving = true
                     scope.launch {
                         try {
@@ -434,12 +481,14 @@ internal fun BlueprintEditorSheet(
                                     )
                                 }
                             val id = onSave(name.trim(), build(paper.categories))
+                            saving = false
                             onSaved(id)
                             onDismiss()
                         } catch (e: Exception) {
-                            // Hierarchy, uniqueness and shape refusals land here
-                            // with the repository's own message.
-                            saveError = e.message ?: "Could not save the blueprint."
+                            // The repository's detail goes to the log only; the
+                            // learner gets one localized, friendly sentence.
+                            Logger.e("LIBVM", "Blueprint save failed", e)
+                            saveError = saveFailedText
                             saving = false
                         }
                     }
@@ -453,13 +502,14 @@ internal fun BlueprintEditorSheet(
             }
             if (editingId != null) {
                 TextButton(
+                    enabled = dismissAllowed,
                     onClick = { confirmDelete = true },
                     modifier = Modifier.testTag("blueprint-delete")
                 ) {
                     Text(stringResource(R.string.delete))
                 }
             }
-            TextButton(onClick = onDismiss) {
+            TextButton(enabled = dismissAllowed, onClick = { if (dismissAllowed) onDismiss() }) {
                 Text(stringResource(R.string.cancel))
             }
         }
@@ -482,9 +532,19 @@ internal fun BlueprintEditorSheet(
                 TextButton(
                     onClick = {
                         confirmDelete = false
+                        deleteFailed = false
                         scope.launch {
-                            runCatching { onDelete(deleteId) }
-                            onDismiss()
+                            val result = onDelete(deleteId)
+                            if (result.isSuccess) {
+                                onDismiss()
+                            } else {
+                                // Keep the row and the sheet; only the failed
+                                // delete is reported, with localized copy.
+                                result.exceptionOrNull()?.let { e ->
+                                    Logger.e("LIBVM", "Blueprint delete failed", e)
+                                }
+                                deleteFailed = true
+                            }
                         }
                     }
                 ) {

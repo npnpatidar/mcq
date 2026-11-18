@@ -35,13 +35,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,7 +51,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.savedstate.SavedStateRegistryOwner
 import androidx.navigation.NavController
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -68,11 +72,10 @@ import com.mcqapp.domain.RecommendedAction
 import com.mcqapp.domain.RelaunchPlanner
 import com.mcqapp.domain.ReviewTag
 import com.mcqapp.domain.ReviewFilters
-import kotlinx.coroutines.launch
+import com.mcqapp.domain.labelRes
 import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestStatistics
 import com.mcqapp.domain.TestType
-import com.mcqapp.ui.ResultsViewModelFactory
 import com.mcqapp.ui.Verdict
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -99,58 +102,69 @@ fun ResultsScreen(
     navController: NavController,
     reviewMode: Boolean
 ) {
+    val appContext = LocalContext.current.applicationContext as Application
+    // R9: AbstractSavedStateViewModelFactory is the lifecycle artifact's own
+    // saved-state factory: it hands the VM a handle wired to the owner's
+    // SavedStateRegistry, so the chosen filter survives process death as well
+    // as rotation. The host Activity is a SavedStateRegistryOwner.
+    val owner = LocalContext.current as SavedStateRegistryOwner
+    val resultsFactory = object : AbstractSavedStateViewModelFactory(owner, null) {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(
+            key: String,
+            modelClass: Class<T>,
+            handle: SavedStateHandle
+        ): T = ResultsViewModel(appContext, attemptId, handle) as T
+    }
     val viewModel: ResultsViewModel = viewModel(
         key = "results-$attemptId",
-        factory = ResultsViewModelFactory(
-            LocalContext.current.applicationContext as Application,
-            attemptId
-        )
+        factory = resultsFactory
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val exportEvent by viewModel.exportEvents.latest.collectAsStateWithLifecycle()
 
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // LocalResources (not LocalContext.current) keeps the chooser title
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
     val sendMessage = LocalUiMessageSender.current
-    // Resolved in composition so the export coroutines can read plain values.
     val shareNoAppText = stringResource(R.string.share_no_app)
     val reportExportFailedText = stringResource(R.string.report_export_failed)
     var showExportMenu by remember { mutableStateOf(false) }
-    // Synchronous double-tap guard: set before the coroutine starts, so a
-    // second tap in the same frame cannot launch a second export. The ViewModel
-    // has its own gate as defence in depth; the UI flag also drives the visible
-    // disabled/progress state.
+    // Synchronous double-tap guard: set on tap, cleared when the ViewModel
+    // emits its one-shot completion event. The ViewModel owns the render
+    // coroutine, so rotation/Back can no longer cancel it mid-write (R1).
     var exportRunning by remember { mutableStateOf(false) }
     val exportBusy = exportRunning || state.exporting
+
+    LaunchedEffect(exportEvent) {
+        val event = exportEvent ?: return@LaunchedEffect
+        exportRunning = false
+        when (val value = event.value) {
+            is ResultsViewModel.ExportEvent.Share -> {
+                try {
+                    context.startActivity(
+                        android.content.Intent.createChooser(
+                            value.intent,
+                            resources.getString(R.string.report_export_share)
+                        )
+                    )
+                } catch (_: android.content.ActivityNotFoundException) {
+                    sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
+                }
+            }
+            ResultsViewModel.ExportEvent.Failed ->
+                sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
+        }
+        viewModel.exportEvents.consume(event.id)
+    }
 
     fun launchExport(csv: Boolean) {
         if (exportRunning || state.exporting) return
         exportRunning = true
         showExportMenu = false
-        scope.launch {
-            try {
-                val intent = if (csv) viewModel.exportCsvIntent() else viewModel.exportPdfIntent()
-                if (intent != null) {
-                    try {
-                        context.startActivity(
-                            android.content.Intent.createChooser(
-                                intent,
-                                resources.getString(R.string.report_export_share)
-                            )
-                        )
-                    } catch (_: android.content.ActivityNotFoundException) {
-                        sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
-                    }
-                } else {
-                    sendMessage(UiMessage(reportExportFailedText, UiMessageTone.Error))
-                }
-            } finally {
-                exportRunning = false
-            }
-        }
+        if (csv) viewModel.exportCsv() else viewModel.exportPdf()
     }
 
     Scaffold(
@@ -335,9 +349,11 @@ fun ResultsScreen(
                             },
                             onTest = { action ->
                                 val plan = action.relaunch ?: RelaunchPlanner.from(report.attempt)
-                                // Type and count are the recommendation's own
-                                // values; the rest is the original plan, so the
-                                // relaunch matches what the report describes.
+                                // R4: the attempt stores neither minutes nor
+                                // breadth, so this is a fresh run using the
+                                // recommendation's type/count and the report's
+                                // scope — not a replay of the exact original
+                                // time/breadth. The copy below says so.
                                 navController.navigate(
                                     com.mcqapp.ui.navigation.testRoute(
                                         paperId = plan.paperId,
@@ -374,19 +390,11 @@ fun ResultsScreen(
                         if (showDwell) add(ReviewFilters.SLOW)
                         if (bookmarked.isNotEmpty()) add(ReviewFilters.SAVED)
                     }
-                    chips.forEach { label ->
+                    chips.forEach { key ->
                         FilterChip(
-                            selected = filterValue == label,
-                            onClick = { viewModel.updateFilter(label) },
-                            label = {
-                                Text(
-                                    if (label == ReviewFilters.SLOW) {
-                                        stringResource(R.string.report_filter_slow)
-                                    } else {
-                                        label
-                                    }
-                                )
-                            }
+                            selected = filterValue == key,
+                            onClick = { viewModel.updateFilter(key) },
+                            label = { Text(stringResource(key.labelRes)) }
                         )
                     }
                 }
@@ -399,8 +407,13 @@ fun ResultsScreen(
             }
             if (refresh is LoadState.NotLoading && items.itemCount == 0) {
                 item(contentType = "empty") {
+                    // R2: interpolate the localized chip label, never the raw
+                    // storage key lowercased into a Hindi sentence.
                     Text(
-                        stringResource(R.string.report_no_filter_questions, filterValue.lowercase()),
+                        stringResource(
+                            R.string.r2_res_no_filter_questions,
+                            stringResource(filterValue.labelRes).lowercase()
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
@@ -955,6 +968,16 @@ private fun ActionsCard(
                                     R.string.report_action_review
                             }
                         )
+                    )
+                }
+                // R4: a relaunch cannot reproduce the original minutes/breadth
+                // (the attempt never stored them). Say plainly that it is a
+                // fresh run with this scope rather than overclaiming a replay.
+                if (action.kind == RecommendedAction.Kind.TEST) {
+                    Text(
+                        stringResource(R.string.r2_res_relaunch_fresh_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
             }

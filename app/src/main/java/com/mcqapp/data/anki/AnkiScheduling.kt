@@ -92,6 +92,14 @@ object AnkiScheduling {
      * memory state is solved at Anki's own [HISTORICAL_RETENTION]
      * unconditionally (see that constant for why), so the user's target cannot
      * reach it and cannot silently start to.
+     *
+     * [leechThreshold] is the learner's *configured* lapse count at which a card
+     * becomes a leech. Anki stores only `lapses`, so the flag has to be derived
+     * here; using the historical [LEECH_THRESHOLD] default when a caller has no
+     * settings keeps old behaviour, while a caller holding the live config can
+     * pass it so an import does not disagree with the scheduler on the very
+     * first study. The stored Anki data is never changed — only this derived
+     * DTO field.
      */
     fun fromAnki(
         type: Int,
@@ -104,7 +112,8 @@ object AnkiScheduling {
         crtSeconds: Long,
         lastReviewedAtMillis: Long = 0L,
         nowMillis: Long = System.currentTimeMillis(),
-        parameters: List<Double>? = null
+        parameters: List<Double>? = null,
+        leechThreshold: Int = LEECH_THRESHOLD
     ): CardScheduleDto? {
         // Suspended and buried cards are not due, and this app has no such
         // state; a new card is already new here, so there is nothing to carry.
@@ -112,13 +121,25 @@ object AnkiScheduling {
 
         val dueInDaysSinceCreation = queue == QUEUE_REVIEW || queue == QUEUE_DAY_LEARN ||
             type == TYPE_REVIEW
-        // A learning card's due is a timestamp; a review card's is a day count
-        // measured from the collection's creation. Anchoring the day count to
-        // the start of that day means a card Anki shows as due today lands
-        // today here too, instead of hours into the future on a collection
-        // created this afternoon.
+        // A learning card's due is a timestamp; a review card's is a study-day
+        // *count* measured from the collection's creation. Both this direction
+        // and [toAnki] now resolve that count through the calendar study-day
+        // index in a DST-aware zone, so an export→import round trip lands on the
+        // same boundary even when a 04:00-to-04:00 day is 23 or 25 real hours
+        // long. The old fixed-offset `startOfDay(crt + due * DAY_MS)` was
+        // asymmetric with [toAnki] and could land one study day early across a
+        // fall-back transition. Anchoring to the day boundary also means a card
+        // Anki shows as due today lands today here, not hours into the future
+        // on a collection created this afternoon.
+        val zone = com.mcqapp.domain.DayBoundary.defaultZone()
         val dueAt = if (dueInDaysSinceCreation) {
-            startOfDay(crtSeconds * 1000L + due * DAY_MS)
+            com.mcqapp.domain.DayBoundary.boundaryOf(
+                com.mcqapp.domain.DayBoundary.studyDayIndex(
+                    crtSeconds * 1000L, DAY_START_HOUR, zone
+                ) + due,
+                DAY_START_HOUR,
+                zone
+            )
         } else {
             due * 1000L
         }
@@ -171,7 +192,7 @@ object AnkiScheduling {
             dueAt = dueAt,
             reps = max(0, reps),
             lapses = max(0, lapses),
-            leech = lapses >= LEECH_THRESHOLD,
+            leech = lapses >= leechThreshold,
             lastReviewedAt = inferred,
             difficulty = memory?.difficulty ?: 0.0,
             stability = memory?.stability ?: 0.0,
@@ -280,20 +301,6 @@ object AnkiScheduling {
         lapses = 0
     )
 
-    /** Anki's default leech threshold, and this app's. */
+    /** Anki's default leech threshold, used when a caller has no live config. */
     const val LEECH_THRESHOLD = 8
-
-    /**
-     * Truncates to the start of the study day so a due *day* means the start of
-     * that day. Anki rolls its day over at 04:00, and this app now schedules to
-     * the same boundary ([com.mcqapp.domain.DayBoundary]), so the anchor has to
-     * match or every card would shift by four hours across an export.
-     *
-     * The boundary hour is a parameter rather than read from settings: this is
-     * the interchange format, and it defaults to Anki's own hour.
-     */
-    private fun startOfDay(millis: Long, dayStartHour: Int = DAY_START_HOUR): Long =
-        com.mcqapp.domain.DayBoundary.startOfDay(
-            millis, dayStartHour, com.mcqapp.domain.DayBoundary.zoneOffset(millis)
-        )
 }

@@ -1,6 +1,7 @@
 package com.mcqapp.data.io
 
 import com.mcqapp.data.local.CardStateEntity
+import com.mcqapp.domain.CardStateKind
 
 /**
  * One stored card as the schedule the wire format carries.
@@ -15,6 +16,21 @@ import com.mcqapp.data.local.CardStateEntity
  * a generated id and keeps the key unambiguous, unlike `/` or `:`.
  */
 internal const val CARD_SCHEDULE_KEY_SEPARATOR = '\u0000'
+
+/**
+ * The card kind an imported schedule carries, with the memory-preserving
+ * fallback for a file that omits or misspells `cardState`.
+ *
+ * A positive `stability` already means the card has memory. Defaulting such an
+ * entry to NEW made the scheduler read it as never studied (`hadMemory` needs a
+ * non-NEW kind) and throw the imported memory away on the first review. A card
+ * that has graduated is a REVIEW card; a genuinely new card has zero stability
+ * and still reads as NEW. Every import producer resolves the token here so the
+ * whole-file and streaming readers cannot disagree.
+ */
+internal fun importedCardState(raw: String?, stability: Double): CardStateKind =
+    raw?.let { runCatching { CardStateKind.valueOf(it) }.getOrNull() }
+        ?: if (stability > 0.0) CardStateKind.REVIEW else CardStateKind.NEW
 
 /**
  * The plain JSON export's key for one card's schedule: `paperId` NUL

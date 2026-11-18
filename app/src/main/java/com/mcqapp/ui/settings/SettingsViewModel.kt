@@ -12,6 +12,7 @@ import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.data.backup.RestorePartialCopy
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
@@ -22,6 +23,7 @@ import com.mcqapp.ui.theme.CustomThemeCodec
 import com.mcqapp.ui.theme.InvalidThemeException
 import com.mcqapp.ui.theme.MAX_CUSTOM_THEMES
 import com.mcqapp.ui.theme.MAX_THEME_FILE_BYTES
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
@@ -85,6 +87,18 @@ internal class SettingsOperationState {
         _busy.value = true
     }
 
+    /**
+     * SE5: claim the slot for a one-shot action (share). Unlike [begin], this
+     * refuses a second claim while one is already running, so two taps that
+     * land in the same frame cannot both start a build. Called synchronously on
+     * the tap, before a coroutine is launched.
+     */
+    fun tryBegin(): Boolean {
+        if (_busy.value) return false
+        _busy.value = true
+        return true
+    }
+
     /** H4: busy is cleared on every terminal path — success, failure, cancellation. */
     fun finish() {
         _busy.value = false
@@ -135,6 +149,18 @@ internal class SettingsOperationState {
     }
 }
 
+/**
+ * SE4: the palette key to store after a custom theme is removed. [storedPalette]
+ * is the authoritative value read from DataStore at removal time — never the
+ * async-cached `themePalette` StateFlow, which can still lag a just-imported
+ * key and silently leave the palette pointing at a deleted theme. Pure JVM so
+ * the stale-cache case is directly testable.
+ */
+internal object ThemePaletteOnRemoval {
+    fun resolve(storedPalette: String, removedKey: String, materialKey: String): String =
+        if (storedPalette == removedKey) materialKey else storedPalette
+}
+
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
@@ -142,22 +168,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
      * Friendly, user-facing copy. Raw exception detail is only ever written to
      * the log (through [Logger]); the learner sees these resources.
      *
-     * On API < 33 the Application context still reads the device language,
-     * because only the activity's context is configuration-overridden. Resolve
-     * through the in-memory choice instead — no blocking DataStore read here.
-     * On 33+ the platform's app locales already cover every context.
+     * Delegates to the shared resolver, passing the live in-memory choice so
+     * behaviour is unchanged: on API < 33 the Application context still reads
+     * the device language, so the selected language must be applied explicitly;
+     * on 33+ the platform's app locales already cover every context.
      */
-    private fun msg(resId: Int, vararg args: Any): String {
-        val app = getApplication<Application>()
-        return AppLocale.localized(app, _appLanguage.value).getString(resId, *args)
-    }
+    private fun msg(resId: Int, vararg args: Any): String =
+        AppStrings.getString(getApplication<Application>(), _appLanguage.value, resId, *args)
 
     /** Quantity-aware variant for copy that agrees with a count ("1 theme" / "N themes"). */
-    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String {
-        val app = getApplication<Application>()
-        return AppLocale.localized(app, _appLanguage.value)
-            .resources.getQuantityString(resId, quantity, *args)
-    }
+    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String =
+        AppStrings.getQuantityString(
+            getApplication<Application>(), _appLanguage.value, resId, quantity, *args
+        )
 
     // --- Backup & data operation state (SE1) ---
     // All of it lives here, not in the composition, so a language-change
@@ -356,9 +379,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             .filterNot { it.key == key }
                     )
                 }
-                if (_themePalette.value == key) {
-                    repository.setThemePalette(AppTheme.MATERIAL.key)
-                }
+                // SE4: compare against the authoritative stored value, not the
+                // async-cached StateFlow snapshot. A removal that lands before
+                // the collector publishes a just-imported key used to leave the
+                // palette pointing at a deleted theme. Reading after the edit
+                // sees what is actually stored, so the key is always cleared
+                // when it names the removed theme.
+                val storedPalette = repository.themePalette().first()
+                val next = ThemePaletteOnRemoval.resolve(
+                    storedPalette, key, AppTheme.MATERIAL.key
+                )
+                if (next != storedPalette) repository.setThemePalette(next)
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Removing an imported theme failed", e)
             }
@@ -959,8 +990,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun shareBackup() = share(failureTitleRes = R.string.backup_failed, build = { shareBackupIntent() })
 
     private fun share(failureTitleRes: Int, build: suspend () -> Intent?) {
+        // SE5: claim the slot synchronously on the tap, before launching the
+        // build. The old code called begin() inside the coroutine, so a second
+        // tap before recomposition could start a second build and hand two
+        // chooser intents to the system.
+        if (!operations.tryBegin()) return
         viewModelScope.launch {
-            operations.begin()
             val intent = try {
                 build()
             } finally {
@@ -1147,6 +1182,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     applySettings = { repository.settingsRestore(it) },
                     applyInProgress = { snapshot ->
                         repository.restoreTestProgress(snapshot)
+                    },
+                    // SE3: the partial-restore note must follow the app's selected
+                    // language, not the English fallback built into BackupRestorer.
+                    // The throwable detail is already on Logger; only the stable
+                    // RestorePartial flags reach the resolver.
+                    renderPartialNote = { items ->
+                        RestorePartialCopy.localized(items) { resId -> msg(resId) }
                     }
                 )
             }

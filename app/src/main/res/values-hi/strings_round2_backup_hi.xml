@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- SE2: the two Export Logs failure messages, previously hardcoded English. -->
+    <string name="r2_backup_no_log_file">अभी कोई लॉग फ़ाइल नहीं है।</string>
+    <string name="r2_backup_no_share_app">इस फ़ाइल को साझा करने के लिए कोई ऐप नहीं है।</string>
+
+    <!-- H4: shown before the log file is shared; a log can contain paper titles
+         and stack traces, so the learner gets a chance to check it first. -->
+    <string name="r2_backup_export_logs_warning">इस फ़ाइल में पेपर के शीर्षक और त्रुटि विवरण (स्टैक ट्रेस सहित) हो सकते हैं। साझा करने से पहले इसे देख लें।</string>
+
+    <!-- SE3: a settings/in-progress write failed after the library itself was
+         restored. These are deliberately generic: the exception detail goes to
+         the log only, never into this sentence. -->
+    <string name="r2_backup_partial_prefix">पुस्तकालय वापस आ गया;</string>
+    <string name="r2_backup_partial_settings">सेटिंग्स बहाल नहीं हो सकीं</string>
+    <string name="r2_backup_partial_in_progress">चल रहा परीक्षण बहाल नहीं हो सका</string>
+
+    <!-- H2: a single-paper JSON/ZIP export carries content only. The picker
+         description belongs to ExportFormat (owned elsewhere); this honest note
+         travels with the backup/export settings so the difference is visible. -->
+    <string name="r2_backup_paper_export_content_only">एकल पेपर के JSON और ZIP एक्सपोर्ट में केवल प्रश्न होते हैं - पढ़ाई की प्रगति शामिल नहीं होती। शेड्यूल और समीक्षा इतिहास रखने के लिए फ़ुल बैकअप या Export All Data JSON इस्तेमाल करें।</string>
+</resources>

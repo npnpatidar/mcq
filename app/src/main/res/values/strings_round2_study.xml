@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 study-session accessibility and copy. Every name is prefixed
+  r2_study_ and paired one-for-one in values-hi; none carry format arguments,
+  so the two locales bind nothing differently.
+-->
+<resources>
+    <!-- TalkBack state for an option row once the answer is revealed. -->
+    <string name="r2_study_option_correct">Correct answer</string>
+    <string name="r2_study_option_selected_wrong">Selected, wrong answer</string>
+    <string name="r2_study_option_selected">Selected</string>
+    <string name="r2_study_option_not_selected">Not selected</string>
+
+    <!-- Short verdict spoken when Check/reveal puts a result card on screen. -->
+    <string name="r2_study_verdict_correct">Correct</string>
+    <string name="r2_study_verdict_incorrect">Incorrect</string>
+
+    <!-- The empty-session new-cards control flips a setting for every paper. -->
+    <string name="r2_study_enable_new_cards_all_papers">Introduce new cards in all papers</string>
+    <string name="r2_study_enable_new_cards_all_papers_note">This setting applies to every paper, not just this one.</string>
+
+    <!-- Clock affordance: an explicit verb and a non-colour dwell cue. -->
+    <string name="r2_study_pause">Pause</string>
+    <string name="r2_study_resume">Resume</string>
+    <!-- One localized readout for the clock button; the paused form appends
+         the existing "Paused" state so screen readers and the UI test agree. -->
+    <string name="r2_study_clock_readout">%1$s · %2$s · %3$s</string>
+    <string name="r2_study_clock_readout_paused">%1$s · %2$s · %3$s · %4$s</string>
+    <string name="r2_study_band_neutral">Neutral</string>
+    <string name="r2_study_band_easy">Easy</string>
+    <string name="r2_study_band_good">Good</string>
+    <string name="r2_study_band_hard">Hard</string>
+</resources>

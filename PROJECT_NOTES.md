@@ -258,8 +258,9 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
-  matches nothing. Full local pass ≈194 classes. The `:app:testPureJvm` Gradle task now
-  codifies this selection rule so it no longer depends on a shell recipe.
+  matches nothing. Full local pass ≈236 classes after the round-2 fix batch. The
+  `:app:testPureJvm` Gradle task now codifies this selection rule so it no longer
+  depends on a shell recipe.
 - Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.
 - APK artifacts download to `/home/naresh/Download`, not `/sdcard/Download`:
 
@@ -295,9 +296,11 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.60` is the
-  published release and `0.0.61` is the release being cut by the final housekeeping
-  branch. Room schema remains 28.
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.61` is the
+  published release and `0.0.62` is the release being cut by the round-2 review
+  fix branch. Room schema remains 28. Round-2 review reports are in
+  `review-reports-2/` (PR #94); the fix work is PR #95, with the High findings in
+  the first commit and the remaining Medium/Low findings in the follow-up.
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
   `test-results`, `lint-report`, `ui-test-results`. After every push, download both
   APKs and keep them under these exact names:

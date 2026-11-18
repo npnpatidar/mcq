@@ -11,7 +11,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import com.mcqapp.ui.common.Announcer
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.LocalHapticsEnabled
@@ -22,41 +21,91 @@ import com.mcqapp.ui.theme.McqTheme
 import com.mcqapp.util.SendCopyResult
 import com.mcqapp.util.SharedImport
 import com.mcqapp.util.copySendToCache
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Decides whether a `SEND` intent should be turned into a shared-import
- * request. Extracted from [MainActivity] so the "handle exactly once per task"
- * rule is testable without launching an Activity, Compose, or Room.
- *
- * Android redelivers the *same* SEND intent to a recreated Activity on a
- * config change (e.g. rotation). Handling it in `onCreate` unconditionally
- * re-copies the file, re-requests the import and pushes `import/direct` again —
- * losing typed Import input and yanking the learner out of Study/Test. A fresh
- * create handles the intent; a recreation (`savedInstanceState != null`) and
- * the one-shot guard do not. A later, distinct share arrives via
- * `onNewIntent` and is always handled.
+ * What a shared file needs to be copied: a stable application context (the
+ * Activity itself is destroyed on rotation) and the SEND intent to copy.
  */
-internal class SendIntentRouter(private val onSendIntent: () -> Unit) {
-    private var freshStartHandled = false
+private data class SendPayload(val context: Context, val intent: Intent)
 
-    /** Called from `Activity.onCreate`; [isRecreation] is `savedInstanceState != null`. */
-    fun onActivityCreate(isSend: Boolean, isRecreation: Boolean) {
-        if (isRecreation || freshStartHandled || !isSend) return
-        freshStartHandled = true
-        onSendIntent()
+/**
+ * Process-scoped coordinator for `ACTION_SEND` shares, extracted so the
+ * "handle exactly once, never drop in flight" rule is testable without an
+ * Activity, Compose or Room.
+ *
+ * Two bugs shaped this class. Handling SEND in `onCreate` unconditionally
+ * re-imported on a config change (Android redelivers the same intent), losing
+ * typed Import input and yanking the learner out of Study/Test. Gating on
+ * `savedInstanceState == null` fixed that but mirrored the bug: the copy ran
+ * on the Activity's `lifecycleScope`, which rotation cancels, so a share caught
+ * mid-copy was silently dropped.
+ *
+ * The copy therefore runs on a scope that outlives the Activity, and de-dup is
+ * by copy state rather than Activity instance: a fresh create with a SEND
+ * intent starts one copy; a recreation (same intent, state COPYING/DONE) does
+ * nothing — the copy either continues to completion or has already requested
+ * the import. A distinct share via `onNewIntent` always starts a fresh copy.
+ */
+internal class SendIntentCoordinator<T>(
+    private val scope: CoroutineScope,
+    private val onSendIntent: suspend (T) -> Unit
+) {
+    private var state = State.IDLE
+
+    /** A fresh or recreated Activity: handle only if no copy is running or done. */
+    fun onActivityCreate(payload: T?, isSend: Boolean) {
+        if (!isSend || payload == null || state != State.IDLE) return
+        start(payload)
     }
 
-    /** Called from `Activity.onNewIntent` for a subsequent, distinct share. */
-    fun onNewIntent(isSend: Boolean) {
-        if (isSend) onSendIntent()
+    /** A subsequent, distinct share: always handled, even just after a copy finished. */
+    fun onNewIntent(payload: T, isSend: Boolean) {
+        if (!isSend) return
+        start(payload)
     }
+
+    private fun start(payload: T) {
+        state = State.COPYING
+        scope.launch {
+            try {
+                onSendIntent(payload)
+            } finally {
+                // Success or a reported copy failure: either way the request
+                // path has run (or will not be retried), so suppress re-import.
+                state = State.DONE
+            }
+        }
+    }
+
+    private enum class State { IDLE, COPYING, DONE }
 }
 
 class MainActivity : ComponentActivity() {
-    private lateinit var sendIntentRouter: SendIntentRouter
+    companion object {
+        /**
+         * Outlives the Activity so rotation cannot cancel an in-flight copy:
+         * the share always reaches SharedImport. Payloads carry the application
+         * context, so no destroyed Activity is retained here.
+         */
+        private val sendCopyScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+        private val sendIntentCoordinator = SendIntentCoordinator<SendPayload>(sendCopyScope) { payload ->
+            val result = withContext(Dispatchers.IO) {
+                copySendToCache(payload.context, payload.intent)
+            }
+            when (result) {
+                is SendCopyResult.Ready ->
+                    SharedImport.request(result.request.uri, result.request.displayName)
+                is SendCopyResult.Failed ->
+                    SharedImport.requestError(result.resId, result.args)
+            }
+        }
+    }
 
     override fun attachBaseContext(newBase: Context?) {
         // Below API 33 this is the only hook that changes the resources Compose
@@ -103,34 +152,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        sendIntentRouter = SendIntentRouter { handleSendIntent(intent) }
-        sendIntentRouter.onActivityCreate(
-            isSend = intent?.action == Intent.ACTION_SEND,
-            isRecreation = savedInstanceState != null
-        )
+        intent?.let { currentIntent ->
+            sendIntentCoordinator.onActivityCreate(
+                payload = SendPayload(applicationContext, currentIntent),
+                isSend = currentIntent.action == Intent.ACTION_SEND
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        sendIntentRouter.onNewIntent(isSend = intent.action == Intent.ACTION_SEND)
-    }
-
-    /**
-     * A file shared to the app: the stream is copied into `cacheDir/imports`
-     * immediately (the sender's one-shot grant does not survive process
-     * death), then the copy is handed to the nav host's router.
-     */
-    private fun handleSendIntent(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SEND) return
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { copySendToCache(this@MainActivity, intent) }
-            when (result) {
-                is SendCopyResult.Ready ->
-                    SharedImport.request(result.request.uri, result.request.displayName)
-                is SendCopyResult.Failed ->
-                    SharedImport.requestError(result.resId, result.args)
-            }
-        }
+        sendIntentCoordinator.onNewIntent(
+            payload = SendPayload(applicationContext, intent),
+            isSend = intent.action == Intent.ACTION_SEND
+        )
     }
 }

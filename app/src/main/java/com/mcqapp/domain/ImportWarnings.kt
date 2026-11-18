@@ -87,14 +87,49 @@ fun splitTypedImportWarnings(warnings: List<ParserWarning>): ImportWarningGroups
     )
 
 /**
- * Legacy adapter for callers that still hand us bare strings. The parsers'
- * current drop messages announce themselves with the word "skipped"; new
- * producers should call [splitTypedImportWarnings] with an explicit severity.
+ * Legacy adapter for hand-written bare strings (tests, old callers). It is the
+ * only remaining consumer of the deprecated wording classifier; the live import
+ * path uses [splitTypedImportWarnings] with producer-assigned severities.
  */
+@Suppress("DEPRECATION")
 fun splitImportWarnings(warnings: List<String>): ImportWarningGroups =
     splitTypedImportWarnings(warnings.map { ParserWarning(it, severityOfParserWarning(it)) })
 
-/** Severity for the legacy bare-string warnings emitted by the parsers. */
+/**
+ * Producer-assigned severity for a parser message that must travel through a
+ * legacy `List<String>` channel.
+ *
+ * The parsers tag a message when they emit it (where it is known whether bytes
+ * were actually dropped); the UI strips the tag and reads the severity from it.
+ * Nothing downstream infers severity from the wording, so rewording a notice —
+ * or mentioning "skipped" in an advisory — can never move it between panels.
+ * The tag is a control-character prefix that is never shown to the learner.
+ */
+internal const val PARSER_DROPPED_TAG = "\u0002r2-dropped\u0002"
+
+/** Marks a message as reported content loss at the point the producer writes it. */
+fun droppedParserMessage(message: String): String = PARSER_DROPPED_TAG + message
+
+/** The severity the producer assigned; an untagged message is a benign notice. */
+fun parserWarningSeverity(message: String): ImportWarningSeverity =
+    if (message.startsWith(PARSER_DROPPED_TAG)) {
+        ImportWarningSeverity.DROPPED
+    } else {
+        ImportWarningSeverity.ADVISORY
+    }
+
+/** The learner-facing text, with any producer tag removed. */
+fun parserWarningText(message: String): String = message.removePrefix(PARSER_DROPPED_TAG)
+
+/**
+ * Legacy substring classifier, kept only for the bare-string adapter and the
+ * tests that still feed it hand-written examples. The import screen no longer
+ * uses it: live parser messages carry [PARSER_DROPPED_TAG] from their producer.
+ */
+@Deprecated(
+    "Severity comes from the producer via droppedParserMessage/parserWarningSeverity. " +
+        "Only the legacy splitImportWarnings adapter uses this."
+)
 fun severityOfParserWarning(message: String): ImportWarningSeverity =
     if (message.contains("skipped", ignoreCase = true)) {
         ImportWarningSeverity.DROPPED

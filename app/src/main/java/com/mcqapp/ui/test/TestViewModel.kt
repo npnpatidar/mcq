@@ -37,6 +37,7 @@ import com.mcqapp.domain.TimerWarnings
 import com.mcqapp.domain.signals.Breadth
 import com.mcqapp.domain.signals.Selection
 import com.mcqapp.domain.signals.TestSelector
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -67,6 +68,13 @@ data class TestUiState(
     val order: SessionOrder = SessionOrder.empty(),
     /** The question on screen, resolved by id from its ref. */
     val current: Question? = null,
+    /**
+     * True once a resolve for the current order slot came back empty — the id
+     * no longer exists. Distinguishes a genuinely missing question from the
+     * brief in-flight resolve at session start, so the screen can offer Skip
+     * instead of an eternal spinner (and a frozen, unsubmittable clock).
+     */
+    val currentUnavailable: Boolean = false,
     /** The passage the resolved question belongs to, when it has one. */
     val currentPassage: com.mcqapp.domain.Passage? = null,
     /** Questions with no answer key — excluded from scoring entirely. */
@@ -119,6 +127,18 @@ data class TestUiState(
     val isCurrentRevealed: Boolean get() = current?.id in revealed
     val questionCount: Int get() = order.size
 }
+
+/**
+ * The plan gate applied to *every* planned session before any presentation.
+ *
+ * The sampled branch reaches [TestPlan.resolve], which validates internally;
+ * the focus-selector branch freezes already-chosen ids and never calls it, so
+ * without this one call a crafted route (`testType=TAG&exclusionMode=RECENT_3`,
+ * an out-of-range count) would start and record metadata claiming a rule the
+ * session never followed. Pure so the gate is JVM-testable.
+ */
+internal fun plannedSessionValidationError(plan: TestPlan?, available: Int): String? =
+    plan?.validationError(available)
 
 @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TestViewModel(
@@ -180,7 +200,26 @@ class TestViewModel(
 
     /** A plain, localized message; the exception itself stays in the log. */
     private fun friendly(messageRes: Int): String =
-        getApplication<Application>().getString(messageRes)
+        AppStrings.getString(getApplication<Application>(), messageRes)
+
+    /**
+     * The time-warning copy, resolved from `<plurals>` resources in the active
+     * locale. [TimerWarnings] stays pure; this is the one place that turns a
+     * threshold into learner-facing words. [TimerWarnings.warningCount] is
+     * passed as both the plural quantity and the `%1$d` argument, so Android
+     * selects "1 minute"/"5 minutes" and Hindi picks its own form; the count is
+     * minutes for the minute thresholds and raw seconds otherwise.
+     */
+    private fun timeWarningText(thresholdSeconds: Int): String {
+        val app = getApplication<Application>()
+        val count = TimerWarnings.warningCount(thresholdSeconds)
+        val resId = when (TimerWarnings.warningKind(thresholdSeconds)) {
+            TimerWarnings.TimerWarningKind.FIVE_MINUTES -> R.plurals.r2_test_warning_minutes
+            TimerWarnings.TimerWarningKind.ONE_MINUTE -> R.plurals.r2_test_warning_one_minute
+            TimerWarnings.TimerWarningKind.SECONDS -> R.plurals.r2_test_warning_seconds
+        }
+        return AppStrings.getQuantityString(app, resId, count, count)
+    }
 
     /**
      * The pre-submit review rows, paged over the session order. Rows resolve
@@ -432,6 +471,13 @@ class TestViewModel(
                     effectivePlan
                 }
                 sessionPlan = finalPlan
+                // T7: one validation gate for every planned session. The sampled
+                // branch also validates inside finalPlan.resolve() below; the
+                // focus-selector branch does not, so this is the only place a
+                // malformed/crafted plan is refused before metadata is recorded.
+                plannedSessionValidationError(finalPlan, order.size)?.let {
+                    throw IllegalStateException(it)
+                }
                 Logger.i("TESTVM", "Loaded ${order.size} questions, duration=${paper?.durationMinutes}min" +
                     if (mistakesSession) " (mistakes only)" else "")
                 val shuffleQ = repository.shuffleQuestions().first()
@@ -768,8 +814,8 @@ class TestViewModel(
                 val due = TimerWarnings.newlyDue(previous, target)
                     .filter { warnedThresholds.add(it) }
                 if (due.isNotEmpty()) {
-                    val text = due.joinToString("; ") { TimerWarnings.message(it) }
-                    Logger.i("TESTVM", "Time warning: $text")
+                    val text = due.joinToString("; ") { timeWarningText(it) }
+                    Logger.i("TESTVM", "Time warning thresholds: $due")
                     _state.update { it.copy(timeWarning = text) }
                 }
                 if (target <= 0) {
@@ -1015,7 +1061,9 @@ class TestViewModel(
             // is banked by the flush below and written with the new header.
             val leaving = currentAttempt.order.idAtOrNull(currentAttempt.currentIndex)
             flushDwell()
-            _state.update { it.copy(currentIndex = index) }
+            // A fresh resolve is on the way: clear any "unavailable" from the
+            // slot just left so the screen shows its spinner, not a stale Skip.
+            _state.update { it.copy(currentIndex = index, currentUnavailable = false) }
             // The header reads the live value, so it has to follow the
             // question rather than keep showing the one just left.
             publishDwell(SystemClock.elapsedRealtime())
@@ -1035,7 +1083,9 @@ class TestViewModel(
         val currentId = state.order.idAtOrNull(state.currentIndex)
         if (currentId == null) {
             prefetched = null
-            _state.update { it.copy(current = null, currentPassage = null) }
+            _state.update {
+                it.copy(current = null, currentPassage = null, currentUnavailable = true)
+            }
             return
         }
         // The read-ahead of the previous card already holds this one: publish
@@ -1067,7 +1117,13 @@ class TestViewModel(
     }
 
     private fun publishCurrent(loaded: LoadedCard?) {
-        _state.update { it.copy(current = loaded?.question, currentPassage = loaded?.passage) }
+        _state.update {
+            it.copy(
+                current = loaded?.question,
+                currentPassage = loaded?.passage,
+                currentUnavailable = loaded == null
+            )
+        }
         publishDwell(SystemClock.elapsedRealtime())
     }
 

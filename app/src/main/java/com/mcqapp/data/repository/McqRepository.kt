@@ -66,9 +66,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.Locale
 
 /**
  * How many times a config read retries when it observes `gradingVersion == 0`.
@@ -77,6 +79,39 @@ import kotlinx.coroutines.sync.withLock
  * already generous; more would only hide a real write failure.
  */
 private const val SCHEDULER_CONFIG_READ_ATTEMPTS = 3
+
+/**
+ * Resolve the learner's in-app language to the Locale used for exam trend date
+ * labels. Mirrors `StatsStore.selectedLocale()`: an explicit ENGLISH/HINDI
+ * override resolves directly, SYSTEM follows the device default. Pure so the
+ * repository's exam wiring stays JVM-testable without a database.
+ */
+internal fun examStatsLocale(language: AppLanguage): Locale =
+    language.locale() ?: Locale.getDefault()
+
+/**
+ * Pure seam over the single builder call the repository makes for an exam
+ * profile, with the resolved locale threaded into the builder. Production and
+ * Round2ExamStatsLocaleTest call the same function, so the test proves the
+ * selected language reaches the trend labels.
+ */
+internal fun buildExamStatsProfile(
+    attempts: List<com.mcqapp.domain.Attempt>,
+    group: ExamGroup,
+    locale: Locale,
+    categoryTotals: List<ExamCategoryTotal> = emptyList(),
+    dwell: ExamDwellTotals = ExamDwellTotals(),
+    lifetime: ExamCounterTotals = ExamCounterTotals(),
+    population: Int = 0
+): ExamStats = ExamStatsBuilder.build(
+    attempts = attempts,
+    group = group,
+    categoryTotals = categoryTotals,
+    dwell = dwell,
+    lifetime = lifetime,
+    population = population,
+    locale = locale
+)
 
 /**
  * Facade over the repository's collaborators, keeping the public API every
@@ -2126,6 +2161,10 @@ class McqRepository internal constructor(
         paperId: String?
     ): Map<ExamGroup, List<ExamStats>> {
         val counters = db.questionStatsDao().getExamCounterTotals(paperId)
+        // Selected language, resolved exactly as StatsStore does: an explicit
+        // override wins, SYSTEM follows the device. Threaded into every exam
+        // profile so the trend's date labels are localized like the other tabs.
+        val locale = examStatsLocale(settings.appLanguage().first())
         // Global recent, exactly as ExamStatsBuilder builds it (all attempts).
         val globalRecent = attempts
             .sortedWith(compareByDescending<com.mcqapp.domain.Attempt> { it.finishedAt }.thenByDescending { it.id })
@@ -2162,13 +2201,11 @@ class McqRepository internal constructor(
             if (family.isEmpty()) {
                 // Keep the old empty shape: one empty profile so the tab can
                 // show its empty state and the global recent list.
-                val empty = ExamStatsBuilder.build(
+                val empty = buildExamStatsProfile(
                     attempts = attempts,
                     group = group,
-                    categoryTotals = emptyList(),
-                    dwell = ExamDwellTotals(),
-                    lifetime = lifetime,
-                    population = 0
+                    locale = locale,
+                    lifetime = lifetime
                 )
                 return@associateWith listOf(empty.copy(recent = globalRecent))
             }
@@ -2191,9 +2228,10 @@ class McqRepository internal constructor(
                 val population = comparable.lastOrNull()
                     ?.let { db.questionDao().countQuestionsInScope(it.paperId) }
                     ?: 0
-                val base = ExamStatsBuilder.build(
+                val base = buildExamStatsProfile(
                     attempts = comparable,
                     group = group,
+                    locale = locale,
                     categoryTotals = examCategoryTotals(ids),
                     dwell = examDwellTotals(ids),
                     lifetime = lifetime,

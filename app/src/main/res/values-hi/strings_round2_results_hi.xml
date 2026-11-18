@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hindi mirror of values/strings_round2_results.xml. Names and format
+  specifiers are identical; only the wording changes.
+-->
+<resources>
+    <!-- R2: review-chip labels. -->
+    <string name="r2_res_filter_all">सभी</string>
+    <string name="r2_res_filter_correct">सही</string>
+    <string name="r2_res_filter_wrong">गलत</string>
+    <string name="r2_res_filter_skipped">छोड़ा गया</string>
+    <string name="r2_res_filter_ungraded">बिना अंक</string>
+    <string name="r2_res_filter_slow">धीमा</string>
+    <string name="r2_res_filter_saved">सहेजा गया</string>
+
+    <!-- R2: %1$s is the localized chip label, never a raw storage key. -->
+    <string name="r2_res_no_filter_questions">कोई %1$s प्रश्न नहीं</string>
+
+    <!-- R4: honest copy for a relaunch from a report action. -->
+    <string name="r2_res_relaunch_fresh_note">यह इसी क्षेत्र के साथ एक नया प्रयास शुरू करता है।</string>
+
+    <!-- R8: radio-row spoken state for the format dialog. -->
+    <string name="r2_res_format_selected">चुना गया</string>
+    <string name="r2_res_format_not_selected">नहीं चुना गया</string>
+
+    <!-- R5: spoken alternatives for history row and trend semantics. -->
+    <string name="r2_res_open_attempt">प्रयास खोलें</string>
+    <string name="r2_res_delta_improved">%1$s अंक सुधार</string>
+    <string name="r2_res_delta_declined">%1$s अंक गिरावट</string>
+    <string name="r2_res_delta_unchanged">कोई बदलाव नहीं</string>
+    <string name="r2_res_mastery_progress">निपुणता %1$s</string>
+
+    <!-- R6: history top-list load failure. -->
+    <string name="r2_res_history_stats_failed">प्रश्न आंकड़े लोड नहीं हो सके।</string>
+
+    <!-- R3 shared API: localized ExportFormat titles and descriptions. -->
+    <string name="r2_res_export_json_inline_title">JSON (चित्र सहित)</string>
+    <string name="r2_res_export_json_inline_description">एक JSON फ़ाइल, चित्र डेटा URI के रूप में। दोबारा आयात की जा सकती है।</string>
+    <string name="r2_res_export_zip_title">ZIP (JSON + चित्र)</string>
+    <string name="r2_res_export_zip_description">.zip में paper.json और images/ फ़ोल्डर, JSON जिसे संदर्भित करता है।</string>
+    <string name="r2_res_export_html_title">वेब पेज (उत्तर दिखाएँ)</string>
+    <string name="r2_res_export_html_description">एक HTML फ़ाइल, सही उत्तर दिखते हैं। किसी भी ब्राउज़र में खुलती है।</string>
+    <string name="r2_res_export_html_quiz_title">वेब पेज (क्विज़ मोड)</string>
+    <string name="r2_res_export_html_quiz_description">उत्तर छिपे रहते हैं; दिखाने के लिए Show answer टैप करें।</string>
+    <string name="r2_res_export_pdf_title">PDF (उत्तर साथ में)</string>
+    <string name="r2_res_export_pdf_description">.pdf, हर प्रश्न के नीचे सही उत्तर।</string>
+    <string name="r2_res_export_pdf_answer_key_title">PDF (अंत में उत्तर)</string>
+    <string name="r2_res_export_pdf_answer_key_description">स्व-परीक्षण के लिए .pdf: पहले प्रश्न, सभी उत्तर अंत में।</string>
+    <string name="r2_res_export_apkg_title">Anki डेक (.apkg)</string>
+    <string name="r2_res_export_apkg_description">Anki में आयात करें। हर प्रश्न एक डेक में फ़्लैशकार्ड बनता है।</string>
+    <string name="r2_res_export_docx_title">Word दस्तावेज़ (.docx)</string>
+    <string name="r2_res_export_docx_description">Word में खुलता है। शीर्षक श्रेणी-वृक्ष दिखाते हैं; उत्तर और स्पष्टीकरण साथ में। दोबारा आयात किया जा सकता है।</string>
+</resources>

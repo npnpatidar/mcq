@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- I3: a studied backup too large to buffer is imported as questions only. -->
+    <string name="r2_import_progress_skipped_notice">यह बैकअप पढ़ाई की प्रगति बहाल करने के लिए बहुत बड़ा है। आपके प्रश्न आयात हो गए, पर उनकी प्रगति छोड़ दी गई।</string>
+
+    <!-- I6: localized display forms of the persisted fallback tokens. -->
+    <string name="r2_import_fallback_category">श्रेणी</string>
+    <string name="r2_import_fallback_passage">गद्यांश</string>
+    <string name="r2_import_fallback_cloze_explanation">एंकी से लिया गया रिक्त-स्थान प्रश्न।</string>
+</resources>

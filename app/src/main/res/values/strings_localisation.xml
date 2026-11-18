@@ -59,8 +59,7 @@
     <string name="import_importing_progress" tools:ignore="PluralsCandidate">Importing %1$d of %2$d questions…</string>
     <string name="import_explanation_label">Explanation: %1$s</string>
 
-    <!-- Results: empty filter row, numbered actions, dwell -->
-    <string name="report_no_filter_questions">No %1$s questions</string>
+    <!-- Results: numbered actions, dwell -->
     <string name="report_numbered_action">%1$d. %2$s</string>
     <string name="report_time_spent">Time spent: %1$s</string>
 

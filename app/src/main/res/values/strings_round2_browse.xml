@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 Browse/Search fixes: user-facing copy that used to be an English
+  literal in a Composable or in QuestionSearch.Scope. All names are prefixed
+  r2_browse_ so they cannot collide with the existing, translated string files.
+  Counts use plurals; placeholders match across locales.
+-->
+<resources>
+    <string name="r2_browse_selected">Selected</string>
+    <plurals name="r2_browse_question_count">
+        <item quantity="one">(%1$d question)</item>
+        <item quantity="other">(%1$d questions)</item>
+    </plurals>
+
+    <!-- Browse filter chips -->
+    <string name="r2_browse_filter_all">All</string>
+    <string name="r2_browse_filter_no_answer">No answer</string>
+    <string name="r2_browse_filter_no_explanation">No explanation</string>
+
+    <!-- Search -->
+    <string name="r2_browse_blank_text">(blank text)</string>
+    <string name="r2_browse_scope_all">All</string>
+    <string name="r2_browse_scope_questions">Questions</string>
+    <string name="r2_browse_scope_options">Options</string>
+    <string name="r2_browse_open_question">Open question</string>
+
+    <!-- Cross-paper move: collision disclosure (warning + honest toast) -->
+    <string name="r2_browse_move_collision_warning">If the destination paper already has a card for a question, that card and its own review history are kept, and the source paper\'s history for that question is discarded.</string>
+    <string name="r2_browse_move_collision_toast">Any source history that collided with an existing destination card was discarded.</string>
+
+    <!-- Accessibility labels -->
+    <string name="r2_browse_select_question">Select question %1$d</string>
+    <string name="r2_browse_correct_option">Correct answer</string>
+    <string name="r2_browse_other_option">Not the correct answer</string>
+</resources>

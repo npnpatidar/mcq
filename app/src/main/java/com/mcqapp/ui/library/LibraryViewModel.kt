@@ -25,6 +25,7 @@ import com.mcqapp.domain.TestType
 import com.mcqapp.domain.signals.Breadth
 import com.mcqapp.domain.signals.SelectionPreview
 import com.mcqapp.domain.signals.TestSelector
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import java.io.InputStream
@@ -33,8 +34,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The import router's smallest Anki signal: the classifier's OTHER bucket is
@@ -43,6 +46,45 @@ import kotlinx.coroutines.launch
  */
 internal fun pickedArchiveIsAnki(kind: PickedArchive): Boolean = kind == PickedArchive.OTHER
 
+/**
+ * The scope a Test-Start route must carry. A blueprint owns its scope: the
+ * route carries its section union, not the ticked categories, because the
+ * session derives its own scope from that union. The lookup is asynchronous,
+ * so the decision is a pure seam the route builder and its test share.
+ *
+ * A blueprint whose plan cannot be built falls back to the sheet's scope
+ * rather than dropping the tap (the same fallback the old screen used).
+ */
+internal fun testRouteCategories(
+    type: com.mcqapp.domain.TestType,
+    blueprintCategoryIds: List<String>?,
+    scopeCategoryIds: List<String>
+): List<String> = if (type == com.mcqapp.domain.TestType.BLUEPRINT) {
+    blueprintCategoryIds ?: scopeCategoryIds
+} else {
+    scopeCategoryIds
+}
+
+/**
+ * One-shot guard for loading the sample bank. The empty-state button used to
+ * have no in-flight guard, so a double tap started two concurrent asset reads
+ * and imports. Pure so the positive (first tap) and negative (second tap)
+ * paths run on the ARM64 host.
+ */
+internal class SampleLoadGate {
+    private var inFlight = false
+
+    fun tryStart(): Boolean {
+        if (inFlight) return false
+        inFlight = true
+        return true
+    }
+
+    fun finish() { inFlight = false }
+
+    val isInFlight: Boolean get() = inFlight
+}
+
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Exposed for the setup sheet's scoped mistake count query. */
@@ -50,7 +92,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
 
     /** Friendly, localized copy for the learner; exception text goes to the log only. */
     private fun msg(resId: Int, vararg args: Any): String =
-        getApplication<Application>().getString(resId, *args)
+        AppStrings.getString(getApplication<Application>(), resId, *args)
 
     /**
      * Whether a representative test should avoid recently asked questions.
@@ -80,6 +122,68 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _pendingTestSetup = MutableStateFlow<PendingTestSetup?>(null)
     val pendingTestSetup: StateFlow<PendingTestSetup?> = _pendingTestSetup.asStateFlow()
     fun setPendingTestSetup(request: PendingTestSetup?) { _pendingTestSetup.value = request }
+
+    /**
+     * The route a confirmed Test-Start tap produces. Built and emitted in
+     * [viewModelScope], not in the composition scope: a rotation landing
+     * between the sheet being cleared and the async blueprint lookup used to
+     * cancel that scope, so the tap was lost and no test started (L2). The
+     * screen only observes and consumes this value; the ViewModel outlives the
+     * rotation that used to swallow the navigation.
+     */
+    private val _testStartRoute = MutableStateFlow<String?>(null)
+    val testStartRoute: StateFlow<String?> = _testStartRoute.asStateFlow()
+
+    /** Consumes the pending route exactly once; a rotation cannot replay it. */
+    fun consumeTestStartRoute(): String? {
+        val route = _testStartRoute.value
+        _testStartRoute.value = null
+        return route
+    }
+
+    /**
+     * Confirms the setup sheet and queues its test route. Everything that used
+     * to live in the screen's `rememberCoroutineScope` — clearing the sheet,
+     * remembering the length, the blueprint's section union and the route — is
+     * owned here so a configuration change cannot cancel it halfway.
+     */
+    fun startTest(
+        request: PendingTestSetup,
+        type: com.mcqapp.domain.TestType,
+        requestedCount: Int,
+        minutes: Int,
+        exclusion: com.mcqapp.domain.ExclusionMode,
+        breadth: com.mcqapp.domain.signals.Breadth,
+        variant: String?
+    ) {
+        _pendingTestSetup.value = null
+        rememberTestLength(requestedCount)
+        viewModelScope.launch {
+            val blueprintCategoryIds = if (type == com.mcqapp.domain.TestType.BLUEPRINT) {
+                val blueprint = variant?.toLongOrNull()?.let { repository.blueprint(it) }
+                blueprint?.let { repository.buildPlanBlueprint(it)?.categoryIds }
+            } else {
+                null
+            }
+            val routeCategories = testRouteCategories(type, blueprintCategoryIds, request.categoryIds)
+            Logger.i(
+                "LIB",
+                "Test: paperId=${request.paper.id}, type=${type.name}, " +
+                    "categories=${routeCategories.size}, count=$requestedCount, minutes=$minutes, " +
+                    "exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"
+            )
+            _testStartRoute.value = com.mcqapp.ui.navigation.testRoute(
+                request.paper.id,
+                routeCategories,
+                minutes = minutes,
+                type = type.name,
+                count = requestedCount,
+                exclusion = exclusion.name,
+                breadth = breadth.name,
+                variant = variant ?: ""
+            )
+        }
+    }
 
     /** The category node being edited; null hides the dialog. */
     private val _editingCategory = MutableStateFlow<CategoryNode?>(null)
@@ -258,9 +362,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** The "picked a backup" message, shared with the import path. */
+    /**
+     * The "picked a backup" message. It used to be an English literal built in
+     * [PickedArchive.backupNotABankMessage]; the ViewModel already resolves
+     * strings through [msg], so the same channel now carries a localized one.
+     * (The literal helper stays for its existing regression test.)
+     */
     private fun backupNotABankMessage(): String =
-        com.mcqapp.ui.library.backupNotABankMessage()
+        msg(R.string.r2_lib_backup_not_bank)
 
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -846,19 +955,38 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private val sampleLoadGate = SampleLoadGate()
+
+    private val _isLoadingSample = MutableStateFlow(false)
+    /** Drives the empty-state button's enabled state while the asset is read. */
+    val isLoadingSample: StateFlow<Boolean> = _isLoadingSample.asStateFlow()
+
+    /**
+     * Reads and parses the sample bank off the main thread (the 118 KB asset
+     * used to be opened and parsed on Main) and ignores a second tap while one
+     * load is in flight. The gate is released in `finally`, so a failed load
+     * can be retried and a rotation of the screen does not duplicate it.
+     */
     fun loadSampleData() {
+        if (!sampleLoadGate.tryStart()) return
+        _isLoadingSample.value = true
         Logger.i("LIBVM", "Loading sample data from assets")
         viewModelScope.launch {
             try {
-                val context = getApplication<Application>()
-                val text = context.assets.open("sample_paper.json").bufferedReader().use { it.readText() }
-                Logger.d("LIBVM", "Read sample JSON (${text.length} chars), importing")
-                val file = LegacyParser.parse(text)
-                val report = Importer(repository.db(), repository.updateAnswersOnDuplicate().first()).import(file)
+                val report = withContext(Dispatchers.IO) {
+                    val context = getApplication<Application>()
+                    val text = context.assets.open("sample_paper.json").bufferedReader().use { it.readText() }
+                    Logger.d("LIBVM", "Read sample JSON (${text.length} chars), importing")
+                    val file = LegacyParser.parse(text)
+                    Importer(repository.db(), repository.updateAnswersOnDuplicate().first()).import(file)
+                }
                 Logger.i("LIBVM", "Sample data loaded: ${report.newPapers} papers, ${report.newQuestions} questions")
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Sample load failed", e)
                 _exportError.value = msg(R.string.final_sample_load_failed)
+            } finally {
+                sampleLoadGate.finish()
+                _isLoadingSample.value = false
             }
         }
     }

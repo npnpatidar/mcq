@@ -12,21 +12,19 @@ import android.os.LocaleList
 import android.os.Process
 import android.util.Log
 import androidx.annotation.VisibleForTesting
-import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.core.content.edit
 import com.mcqapp.data.anki.AnkiTempFiles
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
-import com.mcqapp.data.repository.dataStore
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * API 33+ recreates activities itself when the app's locales change, so the
@@ -37,6 +35,52 @@ import kotlinx.coroutines.runBlocking
 internal fun needsExplicitLanguageRecreate(
     platformRecreates: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 ): Boolean = !platformRecreates
+
+/**
+ * The pre-33 language choice, mirrored out of DataStore so `attachBaseContext`
+ * never has to run a blocking DataStore collect on the main thread (SE6).
+ * DataStore stays the source of truth; this is only a cheap, synchronous mirror
+ * for the one place that cannot suspend. It is written whenever the stored
+ * choice changes (the picker and a settings restore) and read at attach.
+ *
+ * A `volatile` field is the hot path — attach after attach costs no I/O. The
+ * SharedPreferences file is the cold-start fallback (a process kill discards
+ * the field), and is deliberately tiny: one string. The `edit { }` extension
+ * applies on a background thread; the in-memory value is already correct for
+ * this process.
+ */
+internal object AppLanguageCache {
+    private const val PREFS_NAME = "app_language_cache"
+    private const val KEY = "language"
+
+    @Volatile
+    private var cached: AppLanguage? = null
+
+    /** Pure JVM: how a choice is mirrored — SYSTEM clears the key (no override). */
+    internal fun storedValue(language: AppLanguage): String? =
+        if (language == AppLanguage.SYSTEM) null else language.storedValue
+
+    internal fun read(context: Context): AppLanguage {
+        cached?.let { return it }
+        val stored = runCatching {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY, null)
+        }.getOrNull()
+        val language = AppLanguage.fromStored(stored)
+        cached = language
+        return language
+    }
+
+    internal fun write(context: Context, language: AppLanguage) {
+        cached = language
+        runCatching {
+            val value = storedValue(language)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+                if (value == null) remove(KEY) else putString(KEY, value)
+            }
+        }
+    }
+}
 
 open class McqApplication : Application() {
 
@@ -144,7 +188,14 @@ open class McqApplication : Application() {
         if (syncsAppLocaleAtStartup) {
             startupScope.launch {
                 runCatching {
-                    AppLocale.applyPlatform(this@McqApplication, repository.appLanguage().first())
+                    val language = repository.appLanguage().first()
+                    // setApplicationLocales reconfigures the app and must be
+                    // called on the main thread (SE6). The equality guard in
+                    // applyPlatform makes this a no-op on an ordinary cold
+                    // start; only a mismatch (e.g. a restored language) writes.
+                    withContext(Dispatchers.Main) {
+                        AppLocale.applyPlatform(this@McqApplication, language)
+                    }
                 }.onFailure { Logger.e("APP", "Could not sync app language", it) }
             }
         }
@@ -162,24 +213,15 @@ open class McqApplication : Application() {
  */
 internal object AppLocale {
 
-    /** Synchronous read for `attachBaseContext`, where a coroutine is unavailable. */
-    internal fun storedLanguage(context: Context): AppLanguage = runBlocking {
-        val stored = runCatching {
-            context.dataStore.data
-                .map { it[stringPreferencesKey(AppLanguage.PREFERENCE_KEY)] }
-                .first()
-        }.getOrNull()
-        AppLanguage.fromStored(stored)
-    }
-
     internal fun wrap(context: Context?): Context? {
         // On 33+ the platform has already applied the persisted locales to the
-        // activity's base context; reading DataStore here would only add a
-        // blocking disk read to every cold start and configuration change.
+        // activity's base context, so the cache is never touched there. Below
+        // 33 the mirrored choice is read synchronously — no DataStore collect,
+        // no blocking disk read on the main thread (SE6).
         if (context == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return context
         }
-        return localized(context, storedLanguage(context))
+        return localized(context, AppLanguageCache.read(context))
     }
 
     /**

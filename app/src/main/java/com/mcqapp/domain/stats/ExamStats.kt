@@ -238,7 +238,9 @@ object ExamStatsBuilder {
         lifetime: ExamCounterTotals = ExamCounterTotals(),
         population: Int = 0,
         categoryLimit: Int = 15,
-        recentLimit: Int = 5
+        recentLimit: Int = 5,
+        /** Locale for the trend's date labels; numeric formatting is unchanged. */
+        locale: Locale = Locale.ENGLISH
     ): ExamStats {
         val familyAttempts = attempts
             .filter { TestReportBuilder.familyOf(it) == group.family }
@@ -312,7 +314,7 @@ object ExamStatsBuilder {
                 null
             },
             population = population,
-            trend = trendOf(comparable),
+            trend = trendOf(comparable, locale),
             papers = papersOf(familyAttempts),
             categories = categoryTotals
                 .map {
@@ -426,7 +428,7 @@ object ExamStatsBuilder {
             .sortedByDescending { it.title.lowercase(Locale.ROOT) }
     }
 
-    private fun trendOf(attempts: List<Attempt>): List<ExamTrendPoint> {
+    private fun trendOf(attempts: List<Attempt>, locale: Locale): List<ExamTrendPoint> {
         if (attempts.isEmpty()) return emptyList()
         val days = attempts.map { Math.floorDiv(it.finishedAt, DAY_MS) }
         val start = days.minOrNull() ?: return emptyList()
@@ -448,7 +450,7 @@ object ExamStatsBuilder {
         return (firstKey..lastKey).map { key ->
             val count = counts[key] ?: 0
             ExamTrendPoint(
-                label = labelOf(key, granularity, start),
+                label = labelOf(key, granularity, start, locale),
                 percent = if (count > 0) sums.getValue(key) / count else null,
                 attempts = count
             )
@@ -467,13 +469,13 @@ object ExamStatsBuilder {
         Granularity.MONTHLY -> LocalDate.of((key / 12).toInt(), (key % 12 + 1).toInt(), 1).toEpochDay()
     }
 
-    private fun labelOf(key: Long, granularity: Granularity, startDay: Long): String {
+    private fun labelOf(key: Long, granularity: Granularity, startDay: Long, locale: Locale): String {
         val day = bucketStartDay(key, granularity).coerceAtLeast(startDay)
         return when (granularity) {
             Granularity.DAILY, Granularity.WEEKLY ->
-                LocalDate.ofEpochDay(day).format(DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH))
+                LocalDate.ofEpochDay(day).format(DateTimeFormatter.ofPattern("d MMM", locale))
             Granularity.MONTHLY ->
-                LocalDate.ofEpochDay(day).format(DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH))
+                LocalDate.ofEpochDay(day).format(DateTimeFormatter.ofPattern("MMM yy", locale))
         }
     }
 }

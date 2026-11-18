@@ -16,7 +16,6 @@
     <string name="a11y_chart_series_points">%1$s: %2$s</string>
     <string name="a11y_chart_summary">%1$s. %2$s</string>
     <string name="a11y_chart_total">कुल %1$s</string>
-    <string name="a11y_formula_editor">फ़ॉर्मूला एडिटर। कोई गणितीय अभिव्यक्ति लिखें।</string>
     <string name="a11y_formula_editor_value">फ़ॉर्मूला एडिटर। वर्तमान फ़ॉर्मूला: %1$s</string>
     <string name="a11y_rich_content">फ़ॉर्मूलों सहित प्रदर्शित प्रश्न सामग्री</string>
     <string name="action_failed">कार्रवाई विफल रही</string>

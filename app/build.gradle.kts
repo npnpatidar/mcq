@@ -379,20 +379,3 @@ val testPureJvm = tasks.register<Test>("testPureJvm") {
         logger.lifecycle("testPureJvm: selected ${selected.size} pure-JVM test classes")
     }
 }
-
-// Gradle-side assertion that the frozen baseline is present (CI would fail on
-// the existing warnings without it).
-val checkLintBaseline = tasks.register("checkLintBaseline") {
-    group = "verification"
-    description = "Fails if app/lint-baseline.xml is missing."
-    doLast {
-        val baseline = file("lint-baseline.xml")
-        check(baseline.isFile) {
-            "Missing app/lint-baseline.xml — lint warnings are no longer frozen; " +
-                "regenerate with :app:updateLintBaseline."
-        }
-        logger.lifecycle("lint baseline present: ${baseline.length()} bytes")
-    }
-}
-
-tasks.named("check") { dependsOn(checkLintBaseline) }

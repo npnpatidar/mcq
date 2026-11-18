@@ -39,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +91,61 @@ data class PassagesUiState(
 )
 
 /**
+ * The edit/create form, owned by the ViewModel rather than the dialog. When a
+ * cross-paper warning unmounts the dialog, plain `remember` fields were
+ * destroyed, so Cancel reopened a form seeded from the *unchanged* passage and
+ * every typed edit was gone (round-2 E1). Keeping the one open form here also
+ * makes it survive rotation (E2).
+ *
+ * [original] is the passage as loaded: it decides new-vs-edit and lets a no-op
+ * save preserve rich elements. There is only ever one open dialog, so a single
+ * value is enough — no keyed map is needed to find the right draft.
+ */
+data class PassageForm(
+    val original: com.mcqapp.domain.Passage? = null,
+    val title: String = "",
+    val text: String = "",
+    val categoryId: String = ""
+) {
+    val isNew: Boolean get() = original == null
+
+    /** Save-time fallback for a dialog opened before papers had loaded (E7). */
+    fun categoryOr(fallback: String?): String = categoryId.ifBlank { fallback.orEmpty() }
+}
+
+/**
+ * Pure holder behind the ViewModel's form StateFlow. Hoisting the draft here
+ * (rather than leaving it in the dialog's composition) is what makes Cancel
+ * restore the exact edits; this small class is the seam the JVM tests drive.
+ */
+class PassageFormStore {
+    var form: PassageForm? = null
+        private set
+
+    fun open(original: com.mcqapp.domain.Passage?) {
+        form = PassageForm(
+            original = original,
+            title = original?.title.orEmpty(),
+            text = original?.text.orEmpty(),
+            categoryId = original?.categoryId.orEmpty()
+        )
+    }
+
+    fun setTitle(value: String) { form = form?.copy(title = value) }
+    fun setText(value: String) { form = form?.copy(text = value) }
+    fun setCategory(value: String) { form = form?.copy(categoryId = value) }
+
+    fun seedCategory(fallback: String) {
+        val current = form ?: return
+        if (fallback.isNotBlank() && current.categoryId.isBlank()) {
+            form = current.copy(categoryId = fallback)
+        }
+    }
+
+    fun close() { form = null }
+}
+
+/**
  * The pre-save check for a passage edit. [ConfirmCrossPaper] means the whole
  * member group would follow the passage into another paper and the save must
  * be held until the user confirms.
@@ -119,6 +175,34 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     private val _isConfirming = MutableStateFlow(false)
     /** True while a confirmed cross-paper write runs; Cancel is unsafe then. */
     val isConfirming: StateFlow<Boolean> = _isConfirming.asStateFlow()
+
+    // The open edit/create form lives here, not in the dialog's composition.
+    // The dialog unmounts while the cross-paper warning is up; VM ownership is
+    // what lets Cancel restore the exact title/body/category the user typed.
+    private val formStore = PassageFormStore()
+    private val _form = MutableStateFlow<PassageForm?>(null)
+    val form: StateFlow<PassageForm?> = _form.asStateFlow()
+
+    private fun publishForm() { _form.value = formStore.form }
+
+    /** Opens a fresh form for [original] (null for a new passage). */
+    fun openForm(original: com.mcqapp.domain.Passage?) {
+        formStore.open(original)
+        publishForm()
+    }
+
+    fun setFormTitle(value: String) { formStore.setTitle(value); publishForm() }
+    fun setFormText(value: String) { formStore.setText(value); publishForm() }
+    fun setFormCategory(value: String) { formStore.setCategory(value); publishForm() }
+
+    /** Seeds the first available category only while none is chosen (E7). */
+    fun seedFormCategory(fallback: String) {
+        formStore.seedCategory(fallback)
+        publishForm()
+    }
+
+    /** Closes the form after a completed save or an explicit dismiss. */
+    fun closeForm() { formStore.close(); publishForm() }
 
     private val _saveCompleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     /** Emitted after each completed write so the screen can close its dialogs. */
@@ -327,9 +411,10 @@ fun PassagesScreen(
     val passages by viewModel.passages.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    var editing by remember { mutableStateOf<Passage?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    var deleteRefusal by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    // The edit form lives in the ViewModel (E1/E2); these two are just local
+    // dialog flags. saveable so rotation does not drop the delete refusal (E2).
+    var deleteRefusal by rememberSaveable { mutableStateOf<Pair<String, Int>?>(null) }
+    val form by viewModel.form.collectAsStateWithLifecycle()
     // The pending confirmation lives in the ViewModel so it survives rotation.
     val pendingCrossPaperSave by viewModel.pendingCrossPaperSave.collectAsStateWithLifecycle()
     val isDeciding by viewModel.isDeciding.collectAsStateWithLifecycle()
@@ -339,8 +424,7 @@ fun PassagesScreen(
 
     LaunchedEffect(Unit) {
         viewModel.saveCompleted.collect {
-            creating = false
-            editing = null
+            viewModel.closeForm()
         }
     }
 
@@ -380,7 +464,7 @@ fun PassagesScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { creating = true }) {
+            FloatingActionButton(onClick = { viewModel.openForm(null) }) {
                 Icon(Icons.Default.Add, contentDescription = stringResource(R.string.new_passage))
             }
         }
@@ -438,7 +522,7 @@ fun PassagesScreen(
                                         contentDescription = stringResource(R.string.move_down)
                                     )
                                 }
-                                IconButton(onClick = { editing = passage }) {
+                                IconButton(onClick = { viewModel.openForm(passage) }) {
                                     Icon(
                                         Icons.Default.Edit,
                                         contentDescription = stringResource(R.string.edit_passage)
@@ -524,12 +608,28 @@ fun PassagesScreen(
                         }
                         if (memberItems.itemCount == 0) {
                             item(key = "p-empty:" + passage.id) {
-                                if (memberItems.loadState.refresh is LoadState.Loading) {
-                                    CircularProgressIndicator(
+                                // An error used to fall through to "no passages
+                                // yet", hiding a failed load with no way out
+                                // (round-2 E6).
+                                when (val refresh = memberItems.loadState.refresh) {
+                                    is LoadState.Loading -> CircularProgressIndicator(
                                         modifier = Modifier.padding(12.dp).width(20.dp)
                                     )
-                                } else {
-                                    Text(
+                                    is LoadState.Error -> Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.r2_editor_members_load_error),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { memberItems.retry() }) {
+                                            Text(stringResource(R.string.r2_editor_retry))
+                                        }
+                                    }
+                                    else -> Text(
                                         stringResource(R.string.passages_empty),
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(horizontal = 12.dp)
@@ -549,14 +649,18 @@ fun PassagesScreen(
             }
         }
 
-        if ((creating || editing != null) && pendingCrossPaperSave == null) {
+        if (form != null && pendingCrossPaperSave == null) {
             PassageEditDialog(
-                initial = editing,
+                form = form!!,
                 papers = state.papers,
                 saveEnabled = !isDeciding,
                 dismissEnabled = !isDeciding,
+                onTitle = viewModel::setFormTitle,
+                onText = viewModel::setFormText,
+                onCategory = viewModel::setFormCategory,
+                onSeedCategory = viewModel::seedFormCategory,
                 onSave = { passage ->
-                    val original = editing
+                    val original = form?.original
                     val originalPaper = original?.let { paperByCategoryId[it.categoryId] }
                     val newPaper = paperByCategoryId[passage.categoryId]
                     // The ViewModel re-reads the member count fresh, on its own
@@ -566,9 +670,10 @@ fun PassagesScreen(
                 onDismiss = {
                     // Abandoning the edit must cancel an in-flight decision,
                     // otherwise its late result writes or pops a stray warning.
+                    // The form is left intact only for the cross-paper Cancel
+                    // path, which clears the warning without calling this.
                     viewModel.cancelPending()
-                    creating = false
-                    editing = null
+                    viewModel.closeForm()
                 }
             )
         }
@@ -576,7 +681,8 @@ fun PassagesScreen(
         // Never stack the delete refusal over the cross-paper confirmation:
         // a second dialog would hide the choice and steal the back/dismiss.
         if (pendingCrossPaperSave == null) {
-            deleteRefusal?.let { (_, members) ->
+            deleteRefusal?.let { refusal ->
+                val members = refusal.second
                 AlertDialog(
                     onDismissRequest = { deleteRefusal = null },
                     title = { Text(stringResource(R.string.delete_passage)) },
@@ -621,37 +727,43 @@ fun PassagesScreen(
 /** Create/edit dialog: title, body and the paper category it lives in. */
 @Composable
 private fun PassageEditDialog(
-    initial: Passage?,
+    form: PassageForm,
     papers: List<com.mcqapp.domain.Paper>,
     saveEnabled: Boolean,
     dismissEnabled: Boolean,
+    onTitle: (String) -> Unit,
+    onText: (String) -> Unit,
+    onCategory: (String) -> Unit,
+    onSeedCategory: (String) -> Unit,
     onSave: (Passage) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var title by remember { mutableStateOf(initial?.title.orEmpty()) }
-    var text by remember { mutableStateOf(initial?.text.orEmpty()) }
-    var categoryId by remember { mutableStateOf(initial?.categoryId.orEmpty()) }
+    // Every field comes from the ViewModel-owned form: unmounting this dialog
+    // for the cross-paper warning no longer discards what the user typed (E1),
+    // and rotation keeps it (E2).
+    val title = form.title
+    val text = form.text
+    val original = form.original
 
     val categories = papers.flatMap { paper ->
         fun flatten(nodes: List<com.mcqapp.domain.CategoryNode>): List<com.mcqapp.domain.CategoryNode> =
             nodes.flatMap { listOf(it) + flatten(it.children) }
         flatten(paper.categories)
     }
-    // Keyed on Unit: `categories` is a fresh allocation each recomposition, so
-    // keying on it would cancel and relaunch this on every keystroke in the
-    // dialog. The effect only needs the first pick, and the blank-guard makes
-    // a later re-run harmless.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (categoryId.isBlank()) {
-            categoryId = categories.firstOrNull()?.id.orEmpty()
-        }
+    // Seed when the papers first arrive. The old `LaunchedEffect(Unit)` ran
+    // before papers loaded, left categoryId blank forever and disabled Save
+    // (E7); keying on availability re-runs once they do. A save-time fallback
+    // below covers the gap even before this effect runs.
+    LaunchedEffect(categories.isNotEmpty()) {
+        if (categories.isNotEmpty()) onSeedCategory(categories.first().id)
     }
+    val effectiveCategory = form.categoryOr(categories.firstOrNull()?.id)
 
     AlertDialog(
         onDismissRequest = { if (dismissEnabled) onDismiss() },
         title = {
             Text(
-                if (initial == null) stringResource(R.string.new_passage)
+                if (form.isNew) stringResource(R.string.new_passage)
                 else stringResource(R.string.edit_passage)
             )
         },
@@ -659,7 +771,7 @@ private fun PassageEditDialog(
             Column {
                 OutlinedTextField(
                     value = title,
-                    onValueChange = { title = it },
+                    onValueChange = onTitle,
                     label = { Text(stringResource(R.string.passage_title)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -667,22 +779,22 @@ private fun PassageEditDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = onText,
                     label = { Text(stringResource(R.string.passage_text)) },
                     modifier = Modifier.fillMaxWidth().height(160.dp)
                 )
                 Spacer(Modifier.height(8.dp))
                 CategoryPicker(
                     categories = categories,
-                    selectedId = categoryId,
-                    onSelect = { categoryId = it }
+                    selectedId = effectiveCategory,
+                    onSelect = onCategory
                 )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    // The text field is seeded from `initial?.text`, which is
+                    // The text field is seeded from `original.text`, which is
                     // the flattened `textContent` — it drops tables, formulas
                     // and images. Rewriting elements from that flattened string
                     // would destroy a rich passage on a no-op save, so keep the
@@ -690,31 +802,31 @@ private fun PassageEditDialog(
                     // text (and then accept that rich markup is lost, as it is
                     // for questions).
                     val edited = text.trim()
-                    // Compare like with like. `initial.text` is the flattened
+                    // Compare like with like. `original.text` is the flattened
                     // textContent and may carry edge whitespace; comparing the
                     // trimmed field to the untrimmed text made an untouched
                     // rich passage look edited, flattening its tables, formulas
                     // and images on a no-op save. A whitespace-only difference
                     // is not a content edit, so keep the original elements.
-                    val elements = if (initial != null && edited == initial.text.trim()) {
-                        initial.elements
+                    val elements = if (original != null && edited == original.text.trim()) {
+                        original.elements
                     } else {
                         listOf(com.mcqapp.domain.ContentElement.TextElement(edited))
                     }
                     onSave(
                         Passage(
-                            id = initial?.id.orEmpty(),
-                            categoryId = categoryId,
+                            id = original?.id.orEmpty(),
+                            categoryId = effectiveCategory,
                             title = title.trim(),
                             elements = elements,
                             // The dialog edits text only: dropping the image
                             // here deleted it on every save, untouched or not
                             // (consolidated_bugs.md C4).
-                            image = initial?.image
+                            image = original?.image
                         )
                     )
                 },
-                enabled = saveEnabled && title.isNotBlank() && categoryId.isNotBlank()
+                enabled = saveEnabled && title.isNotBlank() && effectiveCategory.isNotBlank()
             ) {
                 Text(stringResource(R.string.save))
             }

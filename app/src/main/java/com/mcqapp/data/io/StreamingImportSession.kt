@@ -18,10 +18,64 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
-import com.mcqapp.domain.CardStateKind
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
 import kotlinx.serialization.json.Json
+
+/**
+ * Generous caps on the two O(cards) structures a streamed restore buffers:
+ * pages of the file's `scheduling` tail, and one target per accepted question.
+ * The preview deliberately streams the tail without holding it; without these
+ * caps the writer quietly grew to the whole-file importer's heap profile and a
+ * studied million-card backup could OOM. Hitting a cap is never silent: the
+ * questions still import and the completion dialog says progress was skipped.
+ */
+internal const val DEFAULT_MAX_SCHEDULE_PAGES = 256
+internal const val DEFAULT_MAX_SCHEDULE_TARGETS = 500_000
+
+internal fun schedulePageWithinCap(
+    currentPages: Int,
+    incoming: Int,
+    maxPages: Int = DEFAULT_MAX_SCHEDULE_PAGES
+): Boolean = currentPages + incoming <= maxPages
+
+internal fun scheduleTargetWithinCap(
+    currentTargets: Int,
+    maxTargets: Int = DEFAULT_MAX_SCHEDULE_TARGETS
+): Boolean = currentTargets < maxTargets
+
+/** Pure, stateful form of the cap decision, so the boundary is JVM-testable. */
+internal class ScheduleRestoreBudget(
+    private val maxPages: Int = DEFAULT_MAX_SCHEDULE_PAGES,
+    private val maxTargets: Int = DEFAULT_MAX_SCHEDULE_TARGETS
+) {
+    private var pages = 0
+    private var targets = 0
+
+    /** Once true, no further pages or targets are accepted and progress is skipped. */
+    var exhausted: Boolean = false
+        private set
+
+    fun tryAddPage(size: Int): Boolean {
+        if (exhausted || size <= 0) return false
+        if (!schedulePageWithinCap(pages, size, maxPages)) {
+            exhausted = true
+            return false
+        }
+        pages += size
+        return true
+    }
+
+    fun tryAddTarget(): Boolean {
+        if (exhausted) return false
+        if (!scheduleTargetWithinCap(targets, maxTargets)) {
+            exhausted = true
+            return false
+        }
+        targets++
+        return true
+    }
+}
 
 /**
  * The per-batch writer shared by every streaming import (`StreamingImporter` for
@@ -54,8 +108,24 @@ internal class StreamingImportSession(
      * can be applied once it is read. Off for files with no review progress:
      * the map is per accepted question, and a plain bank does not pay it.
      */
-    private val captureSchedules: Boolean = false
+    private val captureSchedules: Boolean = false,
+    /** Bounds on the two progress-buffering structures; see [ScheduleRestoreBudget]. */
+    private val maxSchedulePages: Int = DEFAULT_MAX_SCHEDULE_PAGES,
+    private val maxScheduleTargets: Int = DEFAULT_MAX_SCHEDULE_TARGETS
 ) {
+    private val scheduleBudget = ScheduleRestoreBudget(maxSchedulePages, maxScheduleTargets)
+    private var warnedScheduleCap = false
+
+    /** One log line when a cap is hit; the UI notice comes from [report]. */
+    private fun noteScheduleCap(limit: String) {
+        if (warnedScheduleCap) return
+        warnedScheduleCap = true
+        Logger.w(
+            "STREAMIMPORT",
+            "Review progress exceeded the restore budget ($limit): importing questions " +
+                "only and skipping progress to stay within memory bounds"
+        )
+    }
     private var newPapers = 0
     private var updatedPapers = 0
     private var newQuestions = 0
@@ -236,6 +306,13 @@ internal class StreamingImportSession(
             }
             return
         }
+        if (!scheduleBudget.tryAddPage(entries.size)) {
+            noteScheduleCap("$maxSchedulePages pages")
+            // Release what was buffered: the questions matter, the progress
+            // does not, and holding it would defeat the cap entirely.
+            bufferedSchedules.clear()
+            return
+        }
         bufferedSchedules += entries
     }
 
@@ -274,7 +351,8 @@ internal class StreamingImportSession(
         answersRefreshed = answersRefreshed,
         restoredBookmarks = restoredBookmarks,
         restoredAttempts = restoredAttempts,
-        restoredSchedules = restoredSchedules
+        restoredSchedules = restoredSchedules,
+        progressRestoreSkipped = scheduleBudget.exhausted
     )
 
     // --- paper / category -------------------------------------------------
@@ -358,17 +436,17 @@ internal class StreamingImportSession(
     private suspend fun finishPaper() {
         if (!paperOpen) return
         if (flushEnabled) flushNow()
-        if (isNewPaper) newPapers++ else updatedPapers++
         // The whole-file skip is `isNewPaper && incomingHashes.isNotEmpty() &&
         // all already exist`: a brand-new paper with ZERO questions is not
         // skipped, so its categories are still created (and its paper shell is
         // already written by startPaper). Without `sawAnyQuestion` this treated
         // zero questions like all-duplicates and dropped the empty categories.
-        val skipped = isNewPaper && !needsWrite && sawAnyQuestion
+        val skipped = allDuplicatesPaperSkip(isNewPaper, needsWrite, sawAnyQuestion)
         if (skipped) {
-            // The whole-file importer skips categories entirely when every
-            // question already exists; the paper shell stays.
+            // Every question already exists: nothing was added, so remove the
+            // shell startPaper wrote and report no paper at all.
             pendingCategories.clear()
+            if (isNewPaper) db.paperDao().deleteById(effectivePaperId)
         } else {
             // No question ever turned writes on, so the pending categories are
             // still unwritten: a new paper with no questions writes them now.
@@ -381,6 +459,9 @@ internal class StreamingImportSession(
                 }
             }
         }
+        val (newForPaper, updatedForPaper) = countPaper(isNewPaper, skipped)
+        newPapers += newForPaper
+        updatedPapers += updatedForPaper
         // Resolve parent links now that every category of the paper has
         // streamed past. A remapped/title-matched parent resolves to the row
         // this import wrote; a parent the destination paper does not hold (a
@@ -635,16 +716,25 @@ internal class StreamingImportSession(
             if (!contentChanged) {
                 // Accepted, so a tail `scheduling` entry naming it applies at
                 // [finish]: remember the file's own ids, the row it landed
-                // under and the hash of its stored bytes.
-                acceptedSchedules?.add(
-                    ScheduleTarget(
-                        sourcePaperId = sourcePaperId,
-                        sourceQuestionId = dto.id,
-                        paperId = effectivePaperId,
-                        questionId = effectiveQuestionId,
-                        contentHash = contentHash
-                    )
-                )
+                // under and the hash of its stored bytes — while the budget
+                // still allows one more target. Beyond it the questions keep
+                // importing; only progress is dropped.
+                val targets = acceptedSchedules
+                if (targets != null) {
+                    if (scheduleBudget.tryAddTarget()) {
+                        targets.add(
+                            ScheduleTarget(
+                                sourcePaperId = sourcePaperId,
+                                sourceQuestionId = dto.id,
+                                paperId = effectivePaperId,
+                                questionId = effectiveQuestionId,
+                                contentHash = contentHash
+                            )
+                        )
+                    } else {
+                        noteScheduleCap("$maxScheduleTargets targets")
+                    }
+                }
 
                 // Review progress is applied only to a question this import
                 // accepted, exactly as the whole-file importer applies the file's
@@ -655,29 +745,29 @@ internal class StreamingImportSession(
                 // keyed by bare question id — the version-1 shape — so the
                 // version-1 precedence is the one that describes it; a
                 // composite key cannot occur here.
-                lookupCardSchedule(schedules, sourcePaperId, dto.id, JSON_LEGACY_VERSION)?.let { schedule ->
-                    db.cardStateDao().upsert(
-                        CardStateEntity(
-                            paperId = effectivePaperId,
-                            questionId = effectiveQuestionId,
-                            ease = schedule.ease,
-                            intervalDays = schedule.intervalDays,
-                            dueAt = schedule.dueAt,
-                            reps = schedule.reps,
-                            lapses = schedule.lapses,
-                            leech = schedule.leech,
-                            lastReviewedAt = schedule.lastReviewedAt,
-                            difficulty = schedule.difficulty,
-                            stability = schedule.stability,
-                            stabilityFast = schedule.stabilityFast,
-                            cardState = runCatching {
-                                CardStateKind.valueOf(schedule.cardState)
-                            }.getOrDefault(CardStateKind.NEW),
-                            reviewCount = schedule.reviewCount,
-                            contentHash = contentHash
+                if (!scheduleBudget.exhausted) {
+                    lookupCardSchedule(schedules, sourcePaperId, dto.id, JSON_LEGACY_VERSION)?.let { schedule ->
+                        db.cardStateDao().upsert(
+                            CardStateEntity(
+                                paperId = effectivePaperId,
+                                questionId = effectiveQuestionId,
+                                ease = schedule.ease,
+                                intervalDays = schedule.intervalDays,
+                                dueAt = schedule.dueAt,
+                                reps = schedule.reps,
+                                lapses = schedule.lapses,
+                                leech = schedule.leech,
+                                lastReviewedAt = schedule.lastReviewedAt,
+                                difficulty = schedule.difficulty,
+                                stability = schedule.stability,
+                                stabilityFast = schedule.stabilityFast,
+                                cardState = importedCardState(schedule.cardState, schedule.stability),
+                                reviewCount = schedule.reviewCount,
+                                contentHash = contentHash
+                            )
                         )
-                    )
-                    restoredSchedules++
+                        restoredSchedules++
+                    }
                 }
             }
         }
@@ -902,6 +992,11 @@ internal class StreamingImportSession(
      * member orders stream into the same apply.
      */
     private suspend fun applyTailSchedules(tail: LegacyParser.StreamedFile) {
+        if (scheduleBudget.exhausted) {
+            // The cap was hit: questions are already written, progress is not.
+            bufferedSchedules.clear()
+            return
+        }
         val pages = bufferedSchedules + tail.scheduling.map { it.key to it.value }
         bufferedSchedules.clear()
         if (pages.isEmpty()) return
@@ -956,9 +1051,7 @@ internal class StreamingImportSession(
                     difficulty = schedule.difficulty,
                     stability = schedule.stability,
                     stabilityFast = schedule.stabilityFast,
-                    cardState = runCatching {
-                        CardStateKind.valueOf(schedule.cardState)
-                    }.getOrDefault(CardStateKind.NEW),
+                    cardState = importedCardState(schedule.cardState, schedule.stability),
                     reviewCount = schedule.reviewCount,
                     contentHash = target.contentHash
                 )

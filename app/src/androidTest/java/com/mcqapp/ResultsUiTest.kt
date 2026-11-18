@@ -20,6 +20,7 @@ import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewFilters
+import com.mcqapp.domain.labelRes
 import com.mcqapp.ui.Verdict
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -104,6 +105,9 @@ class ResultsUiTest {
         }
     }
 
+    /** The chip label resolved through the same resource the screen renders. */
+    private fun chipLabel(key: String): String = app.getString(key.labelRes)
+
     private fun spoken(verdict: Verdict): String = app.getString(
         R.string.verdict_spoken,
         app.getString(verdict.labelRes),
@@ -173,16 +177,16 @@ class ResultsUiTest {
         waitForSpoken(Verdict.CORRECT)
 
         compose.onNodeWithTag("results-list").performScrollToNode(
-            hasText(ReviewFilters.CORRECT, substring = false)
+            hasText(chipLabel(ReviewFilters.CORRECT), substring = false)
         )
         listOf(
             ReviewFilters.ALL, ReviewFilters.CORRECT, ReviewFilters.WRONG,
             ReviewFilters.SKIPPED, ReviewFilters.UNGRADED
-        ).forEach { label ->
-            compose.onNodeWithText(label, substring = false).assertIsDisplayed()
+        ).forEach { key ->
+            compose.onNodeWithText(chipLabel(key), substring = false).assertIsDisplayed()
         }
 
-        compose.onNodeWithText(ReviewFilters.CORRECT, substring = false).performClick()
+        compose.onNodeWithText(chipLabel(ReviewFilters.CORRECT), substring = false).performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.CORRECT), substring = false)
                 .fetchSemanticsNodes().isNotEmpty() &&
@@ -197,7 +201,7 @@ class ResultsUiTest {
             .assertIsDisplayed()
 
         // Going back to All restores the other verdict rows.
-        compose.onNodeWithText(ReviewFilters.ALL, substring = false).performClick()
+        compose.onNodeWithText(chipLabel(ReviewFilters.ALL), substring = false).performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.WRONG), substring = false)
                 .fetchSemanticsNodes().isNotEmpty()

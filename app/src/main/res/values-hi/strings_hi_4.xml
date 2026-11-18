@@ -28,7 +28,6 @@
     <string name="report_memory_title">Study अनुमान बनाम परीक्षा सटीकता</string>
     <string name="report_mistakes_line">गलतियाँ: %1$d जोड़ी गईं · %2$d हटाई गईं · %3$d शेष</string>
     <string name="report_mock">मॉक</string>
-    <string name="report_no_filter_questions">कोई %1$s प्रश्न नहीं</string>
     <string name="report_no_margin">कोई हाशिया नहीं</string>
     <string name="report_no_marking_note">कोई नकारात्मक अंक कटौती नहीं</string>
     <string name="report_no_study">Study में कोई इतिहास नहीं</string>

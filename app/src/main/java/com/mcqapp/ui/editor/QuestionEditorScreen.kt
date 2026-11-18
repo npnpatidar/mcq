@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -117,8 +118,10 @@ fun QuestionEditorScreen(
     // the edit in one tap (question_editor_audit.md H-02). A write in flight
     // blocks leaving, so navigation can neither cancel it nor double-pop
     // (M-13).
-    var showLeaveDialog by remember { mutableStateOf(false) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
+    // saveable so a rotation keeps the open dialog: dismissing it used to
+    // leave unsaved edits one Back tap from being discarded (round-2 E2).
+    var showLeaveDialog by rememberSaveable { mutableStateOf(false) }
+    var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     val requestLeave: () -> Unit = {
         when {
             state.busy -> Unit
@@ -127,6 +130,12 @@ fun QuestionEditorScreen(
         }
     }
     BackHandler { requestLeave() }
+
+    // Mirror the dirty flag app-wide so the navigation layer can consult it
+    // before an externally-originated navigate (round-2 E4). This is an
+    // exposure, not an interceptor: the NavHost must choose to check it.
+    LaunchedEffect(state.isDirty) { EditorDirtyGuard.setDirty(state.isDirty) }
+    DisposableEffect(Unit) { onDispose { EditorDirtyGuard.clear() } }
 
     // Generic gallery picker for image blocks. The target lives in the
     // ViewModel (a rotation keeps it) and the encoding runs off the main
@@ -147,10 +156,14 @@ fun QuestionEditorScreen(
     // instead computed the value once during the loading state and never
     // again, so Save/Prev/Next stayed disabled however much was typed.
     val canProceed = state.canSave
-    val queueIndex = EditorSession.index
-    val queueSize = EditorSession.size
-    val prevId = EditorSession.prevId
-    val nextId = EditorSession.nextId
+    // One immutable snapshot, observed as state: a re-anchor off Main now
+    // recomposes the counter and Prev/Next (round-2 E5), and index/size/
+    // neighbours are always read from the same coherent value.
+    val sessionSnapshot by EditorSession.snapshotFlow.collectAsStateWithLifecycle()
+    val queueIndex = sessionSnapshot.index
+    val queueSize = sessionSnapshot.size
+    val prevId = sessionSnapshot.prevId
+    val nextId = sessionSnapshot.nextId
 
     Scaffold(
         topBar = {
@@ -168,7 +181,7 @@ fun QuestionEditorScreen(
                     }
                 },
                 actions = {
-                    if (EditorSession.hasQueue && queueSize > 0) {
+                    if (queueIndex in 0 until queueSize) {
                         Text(
                             stringResource(R.string.editor_queue_position, queueIndex + 1, queueSize),
                             style = MaterialTheme.typography.labelMedium,
@@ -911,7 +924,7 @@ private fun DifficultyDropdown(
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
-            value = difficulty.label,
+            value = stringResource(difficulty.labelRes),
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(R.string.difficulty)) },
@@ -923,7 +936,7 @@ private fun DifficultyDropdown(
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             Difficulty.entries.forEach { d ->
                 DropdownMenuItem(
-                    text = { Text(d.label) },
+                    text = { Text(stringResource(d.labelRes)) },
                     onClick = {
                         onSelect(d)
                         expanded = false

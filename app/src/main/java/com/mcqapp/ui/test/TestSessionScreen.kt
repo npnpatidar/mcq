@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -74,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -99,6 +102,28 @@ import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+
+/** The three ways the top-bar arrow can resolve, mirroring system Back. */
+internal enum class TestBackAction { CLOSE_PALETTE, CONFIRM_SUBMIT, POP }
+
+/**
+ * The arrow's decision, kept pure so it can be tested without a Compose host.
+ * System Back closes an open palette; the top-bar arrow must do the same rather
+ * than pop the test out from under an open overlay. The mid-save guard is
+ * unchanged: `backConfirmsSubmit` is false while saving, and `popBack()` itself
+ * refuses to navigate, so an in-flight attempt is never discarded.
+ */
+internal fun testBackAction(
+    showPalette: Boolean,
+    backConfirmsSubmit: Boolean,
+    saving: Boolean
+): TestBackAction = when {
+    showPalette -> TestBackAction.CLOSE_PALETTE
+    // Mid-save the arrow must never open the confirmation: popBack() is the
+    // guarded no-op that keeps the screen-scoped ViewModel owning the write.
+    saving || !backConfirmsSubmit -> TestBackAction.POP
+    else -> TestBackAction.CONFIRM_SUBMIT
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +179,13 @@ fun TestSessionScreen(
     }
     LaunchedEffect(state.saveError) {
         state.saveError?.let { announcer.announce(it) }
+    }
+    // The countdown itself is deliberately NOT spoken each tick — live regions
+    // must not read a ticking timer. Speak each threshold warning once, when it
+    // first appears; `warnedThresholds` in the ViewModel keeps it from re-firing
+    // and the warning text itself is the 60-second (and 5-minute) announcement.
+    LaunchedEffect(state.timeWarning) {
+        state.timeWarning?.let { announcer.announce(it) }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -343,14 +375,15 @@ fun TestSessionScreen(
                 navigationIcon = {
                     IconButton(
                         onClick = {
-                            // The arrow is the same gesture: confirm, do not
-                            // leave the paper half done. While saving, it is a
-                            // no-op via popBack() — leaving would discard the
-                            // attempt being written.
-                            if (backConfirmsSubmit) {
-                                showSubmitDialog = true
-                            } else {
-                                popBack()
+                            // Same gesture as system Back: an open palette is
+                            // dismissed first; otherwise confirm rather than
+                            // drop a half-done paper. Mid-save resolves to POP,
+                            // which popBack() turns into a no-op so the
+                            // in-flight attempt is never cancelled.
+                            when (testBackAction(showPalette, backConfirmsSubmit, state.saving)) {
+                                TestBackAction.CLOSE_PALETTE -> showPalette = false
+                                TestBackAction.CONFIRM_SUBMIT -> showSubmitDialog = true
+                                TestBackAction.POP -> popBack()
                             }
                         }
                     ) {
@@ -362,15 +395,22 @@ fun TestSessionScreen(
                         val minutes = state.remainingSeconds / 60
                         val seconds = state.remainingSeconds % 60
                         val urgent = state.remainingSeconds <= 60
-                        // Was a focusable, unlabelled IconButton that did
-                        // nothing; a plain Row cannot be mistaken for a control.
+                        // One merged node, not an icon plus a bare number:
+                        // TalkBack reads "Time remaining 00:42" in one breath.
+                        // The ticking value is intentionally not a live region;
+                        // the one-shot threshold warning is announced separately.
+                        val timerLabel = stringResource(
+                            R.string.r2_test_time_remaining, minutes, seconds
+                        )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .clearAndSetSemantics { contentDescription = timerLabel }
                         ) {
                             Icon(
                                 Icons.Default.Timer,
-                                contentDescription = stringResource(R.string.time_remaining),
+                                contentDescription = null,
                                 tint = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(Modifier.width(4.dp))
@@ -384,33 +424,47 @@ fun TestSessionScreen(
                     if (question != null) {
                         if (ExamMode.canFlag(state.strictMode)) {
                             // The result is being saved (or already is): the real
-                        // guard lives in the view model, this only keeps the
-                        // control from promising otherwise.
-                        IconButton(
-                            onClick = {
-                                haptics.toggle(question.id !in state.flagged)
-                                viewModel.toggleFlag()
-                            },
-                            enabled = !(state.saving || state.submitted)
-                        ) {
+                            // guard lives in the view model, this only keeps the
+                            // control from promising otherwise.
+                            val flagged = question.id in state.flagged
+                            val flagState = stringResource(
+                                if (flagged) R.string.r2_test_flagged else R.string.r2_test_unflagged
+                            )
+                            IconToggleButton(
+                                checked = flagged,
+                                onCheckedChange = { checked ->
+                                    haptics.toggle(checked)
+                                    viewModel.toggleFlag()
+                                },
+                                enabled = !(state.saving || state.submitted),
+                                modifier = Modifier.semantics { stateDescription = flagState }
+                            ) {
                                 Icon(
                                     Icons.Default.Flag,
                                     contentDescription = stringResource(R.string.flag_question),
-                                    tint = if (question.id in state.flagged) verdictColors().tricky else MaterialTheme.colorScheme.onSurface
+                                    tint = if (flagged) verdictColors().tricky
+                                    else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
-                        IconButton(
-                            onClick = {
-                                haptics.toggle(question.id !in state.bookmarked)
+                        val bookmarked = question.id in state.bookmarked
+                        val bookmarkState = stringResource(
+                            if (bookmarked) R.string.r2_test_bookmarked
+                            else R.string.r2_test_not_bookmarked
+                        )
+                        IconToggleButton(
+                            checked = bookmarked,
+                            onCheckedChange = { checked ->
+                                haptics.toggle(checked)
                                 viewModel.toggleBookmarkCurrent()
-                            }
+                            },
+                            modifier = Modifier.semantics { stateDescription = bookmarkState }
                         ) {
                             Icon(
-                                if (question.id in state.bookmarked) Icons.Default.Bookmark
+                                if (bookmarked) Icons.Default.Bookmark
                                 else Icons.Default.BookmarkBorder,
                                 contentDescription = stringResource(R.string.bookmark_question),
-                                tint = if (question.id in state.bookmarked) MaterialTheme.colorScheme.primary
+                                tint = if (bookmarked) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -561,18 +615,34 @@ fun TestSessionScreen(
 
             val question = state.currentQuestion
             if (question == null) {
-                // An empty order really is empty; a null card over a non-empty
-                // order is the first resolve still in flight — `loading` is
-                // already false here, so showing the empty text flashed for a
-                // frame at session start (consolidated_bugs.md F19).
+                // An empty order really is empty. A null card over a non-empty
+                // order is either the first resolve still in flight (spinner)
+                // or an id that no longer resolves (currentUnavailable). In the
+                // latter case an eternal spinner used to freeze the countdown —
+                // timerShouldRun requires a question, so the exam could never
+                // reach auto-submit. Offer Skip (continue) and Submit instead.
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     if (state.questionCount == 0) {
                         Text(stringResource(R.string.no_questions_in_this_selection))
-                    } else {
+                    } else if (!state.currentUnavailable) {
                         CircularProgressIndicator()
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(stringResource(R.string.r2_test_question_unavailable))
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { viewModel.next() }) {
+                                Text(stringResource(R.string.r2_test_skip_question))
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            // Skip at the last slot is a no-op; Submit is always
+                            // reachable so the sitting can be finished.
+                            Button(onClick = { showSubmitDialog = true }) {
+                                Text(stringResource(R.string.submit_test_2))
+                            }
+                        }
                     }
                 }
                 return@Scaffold
@@ -966,15 +1036,20 @@ fun TestSessionScreen(
                         key = reviewItems.itemKey { it.questionId }
                     ) { index ->
                         val row = reviewItems[index] ?: return@items
+                        val goToLabel = stringResource(
+                            R.string.r2_test_go_to_question, row.number
+                        )
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clickable {
                                     haptics.tick()
                                     viewModel.dismissAnswerReview()
                                     viewModel.goTo(row.number - 1)
                                 }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 6.dp)
+                                .semantics { contentDescription = goToLabel },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(

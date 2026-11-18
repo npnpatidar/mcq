@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,10 +93,19 @@ fun SearchScreen(
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 com.mcqapp.domain.QuestionSearch.Scope.entries.forEach { scope ->
+                    // B5: the scope labels used to be English literals on the
+                    // domain enum; resolve them here so they follow the locale.
+                    val scopeLabel = stringResource(
+                        when (scope) {
+                            com.mcqapp.domain.QuestionSearch.Scope.ALL -> R.string.r2_browse_scope_all
+                            com.mcqapp.domain.QuestionSearch.Scope.QUESTION -> R.string.r2_browse_scope_questions
+                            com.mcqapp.domain.QuestionSearch.Scope.OPTIONS -> R.string.r2_browse_scope_options
+                        }
+                    )
                     androidx.compose.material3.FilterChip(
                         selected = state.scope == scope,
                         onClick = { viewModel.updateScope(scope) },
-                        label = { Text(scope.label) }
+                        label = { Text(scopeLabel) }
                     )
                 }
             }
@@ -108,19 +118,34 @@ fun SearchScreen(
             // said there is no next page.
             val possiblyMore = append.hasMore() && refresh.hasMore()
             Spacer(Modifier.height(8.dp))
+            // B6: announce status changes politely, not just the result count.
+            val announced = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
             when {
                 debouncing ->
-                    Text(stringResource(R.string.searching), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.searching),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = announced
+                    )
                 // A blank query used to fall through to a silent empty list.
                 searchShowsTypeHint(state.query, debouncing) ->
                     Text(
                         stringResource(R.string.followup_search_type_to_hint),
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = announced
                     )
                 refresh is LoadState.Loading && hits.itemCount == 0 ->
-                    Text(stringResource(R.string.searching), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.searching),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = announced
+                    )
                 refresh is LoadState.NotLoading && hits.itemCount == 0 && state.query.isNotBlank() ->
-                    Text(stringResource(R.string.no_matches), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        stringResource(R.string.no_matches),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = announced
+                    )
                 hits.itemCount > 0 ->
                     Text(
                         pluralStringResource(
@@ -154,10 +179,16 @@ fun SearchScreen(
                     contentType = { "hit" }
                 ) { index ->
                     val hit = hits[index] ?: return@items
+                    // B6: a clickable Card is a button to TalkBack, with a
+                    // spoken action; without this it is just a group. The
+                    // label is resolved in composition and passed to the
+                    // clickable overload (its semantics lambda is not
+                    // @Composable, and this BOM has no onClickLabel setter).
+                    val openLabel = stringResource(R.string.r2_browse_open_question)
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
+                            .clickable(onClickLabel = openLabel, role = Role.Button) {
                                 navController.navigate(com.mcqapp.ui.navigation.browseRoute(hit.paperId, hit.question.id))
                             }
                     ) {
@@ -173,7 +204,9 @@ fun SearchScreen(
                                     // visible text (what the search matched),
                                     // while `text` is the stored shape, markup
                                     // and all.
-                                    hit.question.previewText.ifBlank { "(blank text)" },
+                                    hit.question.previewText.ifBlank {
+                                        stringResource(R.string.r2_browse_blank_text)
+                                    },
                                     style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis

@@ -1,5 +1,6 @@
 package com.mcqapp.domain
 
+import androidx.annotation.StringRes
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -201,10 +202,16 @@ data class QuestionOption(
     )
 }
 
-enum class Difficulty(val label: String) {
-    EASY("Easy"),
-    MEDIUM("Medium"),
-    HARD("Hard");
+enum class Difficulty(
+    /** Stable storage/import token. Never localised: it is written to DTOs and
+     *  compared with `fromLabel`, so changing it would break imports and FKs. */
+    val label: String,
+    /** Display copy, resolved with `stringResource` at the call site. */
+    @StringRes val labelRes: Int
+) {
+    EASY("Easy", com.mcqapp.R.string.r2_editor_difficulty_easy),
+    MEDIUM("Medium", com.mcqapp.R.string.r2_editor_difficulty_medium),
+    HARD("Hard", com.mcqapp.R.string.r2_editor_difficulty_hard);
 
     companion object {
         fun fromLabel(label: String): Difficulty =

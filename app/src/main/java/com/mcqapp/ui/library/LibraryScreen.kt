@@ -135,6 +135,18 @@ fun LibraryScreen(
     // losing typed input and — for a blueprint — turning an edit into a create.
     val editingPaper by viewModel.editingPaper.collectAsStateWithLifecycle()
     val pendingTestSetup by viewModel.pendingTestSetup.collectAsStateWithLifecycle()
+    // Test-Start navigation is a VM-owned one-shot: a rotation between clearing
+    // the sheet and the blueprint lookup used to cancel the composition scope
+    // and silently drop the tap (L2). The screen only consumes the route.
+    val testStartRoute by viewModel.testStartRoute.collectAsStateWithLifecycle()
+    LaunchedEffect(testStartRoute) {
+        val route = testStartRoute
+        if (route != null) {
+            viewModel.consumeTestStartRoute()
+            navController.navigate(route)
+        }
+    }
+    val isLoadingSample by viewModel.isLoadingSample.collectAsStateWithLifecycle()
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var categoryDialogPaperId by rememberSaveable { mutableStateOf("") }
     var categoryDialogParentId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -327,7 +339,10 @@ fun LibraryScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = { viewModel.loadSampleData() }) {
+                            TextButton(
+                                onClick = { viewModel.loadSampleData() },
+                                enabled = !isLoadingSample
+                            ) {
                                 Text(stringResource(R.string.load_sample_paper))
                             }
                         }
@@ -546,36 +561,11 @@ fun LibraryScreen(
             onDeleteBlueprint = { blueprintId -> viewModel.deleteBlueprint(blueprintId) },
             onDismiss = { viewModel.setPendingTestSetup(null) },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
-                viewModel.setPendingTestSetup(null)
-                // Plan §10: the next setup sheet starts from this length.
-                viewModel.rememberTestLength(requestedCount)
-                // A blueprint's route carries its section union, not the
-                // ticked categories: the session derives its scope from it.
-                scope.launch {
-                    val routeCategories = if (type == TestType.BLUEPRINT) {
-                        val blueprint = variant?.toLongOrNull()?.let { repository.blueprint(it) }
-                        blueprint?.let { repository.buildPlanBlueprint(it)?.categoryIds }
-                            ?: request.categoryIds
-                    } else {
-                        request.categoryIds
-                    }
-                    Logger.i(
-                        "LIB",
-                        "Test: paperId=${request.paper.id}, type=${type.name}, categories=${routeCategories.size}, count=$requestedCount, minutes=$minutes, exclusion=${exclusion.name}, breadth=${breadth.name}, variant=${variant ?: ""}"
-                    )
-                    navController.navigate(
-                        com.mcqapp.ui.navigation.testRoute(
-                            request.paper.id,
-                            routeCategories,
-                            minutes = minutes,
-                            type = type.name,
-                            count = requestedCount,
-                            exclusion = exclusion.name,
-                            breadth = breadth.name,
-                            variant = variant ?: ""
-                        )
-                    )
-                }
+                // The ViewModel clears the sheet, remembers the length, resolves
+                // a blueprint's section union and emits the route. Keeping this
+                // out of rememberCoroutineScope means a rotation can no longer
+                // cancel the lookup after the sheet is gone (L2).
+                viewModel.startTest(request, type, requestedCount, minutes, exclusion, breadth, variant)
             }
         )
     }
@@ -773,11 +763,16 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { closeExportDialog() },
             title = {
+                // The formerly hardcoded "Export selection (N categories)" and
+                // "Export format" titles now come from resources in both locales.
+                val selection = pendingExportTarget?.selection
                 Text(
-                    if (pendingExportTarget?.selection != null) {
-                        "Export selection (${pendingExportTarget?.selection?.third} categories)"
+                    if (selection != null) {
+                        pluralStringResource(
+                            R.plurals.r2_lib_export_selection_title, selection.third, selection.third
+                        )
                     } else {
-                        "Export format"
+                        stringResource(R.string.r2_lib_export_format_title)
                     }
                 )
             },
@@ -805,9 +800,21 @@ fun LibraryScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(format.title, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    format.description,
+                                    stringResource(format.titleRes),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                // stringResource is @Composable, so resolve both pieces in
+                                // composition and hand the helper already-localized values.
+                                val baseDescription = stringResource(format.descriptionRes)
+                                val caveat = if (format.contentOnlyNoteRes != 0) {
+                                    stringResource(format.contentOnlyNoteRes)
+                                } else ""
+                                val descriptionWithNote = format.descriptionWithCaveat { id ->
+                                    if (id == format.contentOnlyNoteRes) caveat else baseDescription
+                                }
+                                Text(
+                                    descriptionWithNote,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

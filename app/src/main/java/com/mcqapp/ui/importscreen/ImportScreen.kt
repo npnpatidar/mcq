@@ -613,6 +613,14 @@ internal fun ImportReportDetails(report: ImportReport) {
             style = MaterialTheme.typography.bodyMedium
         )
     }
+    // I3: a restore that hit its progress budget still imported every
+    // question. Say so plainly instead of implying a complete restore.
+    importReportNotice(report)?.let { notice ->
+        Text(
+            text = stringResource(notice),
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
 }
 
 @Composable
@@ -680,7 +688,10 @@ private fun PreviewQuestionCard(
             }
             if (question.explanation.isNotBlank()) {
                 Text(
-                    stringResource(R.string.import_explanation_label, question.explanation),
+                    stringResource(
+                        R.string.import_explanation_label,
+                        displayTitle(question.explanation)
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(top = 2.dp)
                 )

@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Pre-Android-12 equivalent of data_extraction_rules.xml. Same reasoning:
-     the question banks and logs stay out of cloud backup. -->
+<!-- Pre-Android-12 equivalent of data_extraction_rules.xml. An <include> is an
+     allow-list: once one is present Android backs up only the matched files,
+     so question banks, logs and every other file stay out of cloud backup by
+     default. Only shared preferences and the Preferences DataStore settings
+     file are matched here. No path-scoped logs exclude is needed — and lint
+     rejects an exclude whose path is not inside an included path. -->
 <full-backup-content>
     <exclude domain="database" />
     <exclude domain="log" />
-    <exclude domain="file" />
     <exclude domain="external" />
     <include domain="sharedpref" />
+    <include domain="file" path="datastore/settings.preferences_pb" />
 </full-backup-content>

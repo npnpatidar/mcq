@@ -1,6 +1,7 @@
 package com.mcqapp.data.io
 
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.textContent
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -57,13 +58,10 @@ object LegacyParser {
             difficulty = entry["difficulty"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             stability = entry["stability"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
             stabilityFast = entry["stabilityFast"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
-            cardState = entry["cardState"]?.jsonPrimitive
-                ?.takeIf { it.isString }?.content
-                ?.let { name ->
-                    runCatching { com.mcqapp.domain.CardStateKind.valueOf(name) }
-                        .getOrNull()
-                }?.name
-                ?: com.mcqapp.domain.CardStateKind.NEW.name,
+            cardState = importedCardState(
+                entry["cardState"]?.jsonPrimitive?.takeIf { it.isString }?.content,
+                entry["stability"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            ).name,
             reviewCount = entry["reviewCount"]?.jsonPrimitive?.intOrNull ?: 0
         )
     } catch (_: Exception) {
@@ -104,7 +102,7 @@ object LegacyParser {
         val value = obj[name] ?: return JsonArray(emptyList())
         if (value is JsonArray) return value
         val kind = value.javaClass.simpleName ?: "value"
-        warnings.add("$where: \"$name\" is $kind, not a list — its contents were skipped")
+        warnings.add(droppedParserMessage("$where: \"$name\" is $kind, not a list — its contents were skipped"))
         return JsonArray(emptyList())
     }
 
@@ -363,7 +361,7 @@ object LegacyParser {
                     try {
                         parsePassage(obj)
                     } catch (e: Exception) {
-                        warnings.add("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                        warnings.add(droppedParserMessage("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}"))
                         null
                     }
                 }
@@ -373,7 +371,7 @@ object LegacyParser {
                         try {
                             parseAttempt(obj)
                         } catch (e: Exception) {
-                            warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                            warnings.add(droppedParserMessage("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}"))
                             null
                         }
                     }
@@ -404,7 +402,7 @@ object LegacyParser {
         scan: LocalImageScan
     ): Int {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return 0
         }
@@ -423,7 +421,7 @@ object LegacyParser {
                 // file — the parse has to stop here.
                 throw e
             } catch (e: Exception) {
-                warnings.add("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}")
+                warnings.add(droppedParserMessage("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}"))
                 skipValueQuietly(reader)
             }
         }
@@ -502,7 +500,7 @@ object LegacyParser {
         emitHeader()
         for ((index, detail) in categorySkips) {
             warnings.add(
-                "Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail"
+                droppedParserMessage("Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail")
             )
         }
     }
@@ -517,7 +515,7 @@ object LegacyParser {
         skips: MutableList<Pair<Int, String>>
     ): Int {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("File: \"categories\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("File: \"categories\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return 0
         }
@@ -569,7 +567,7 @@ object LegacyParser {
             .also { resolvedId = it }
         fun announce() {
             if (announced) return
-            sink.onCategory(CategoryDto(categoryId(), title ?: "Category", parentId))
+            sink.onCategory(CategoryDto(categoryId(), title ?: FALLBACK_CATEGORY_LABEL, parentId))
             announced = true
         }
         reader.beginObject()
@@ -594,10 +592,10 @@ object LegacyParser {
             }
         }
         reader.endObject()
-        val label = title ?: "Category"
+        val label = title ?: FALLBACK_CATEGORY_LABEL
         if (typeMismatch) {
             warnings.add(
-                "Category '$label': \"questions\" is $wrongShape, not a list — its contents were skipped"
+                droppedParserMessage("Category '$label': \"questions\" is $wrongShape, not a list — its contents were skipped")
             )
         }
         announce()
@@ -648,7 +646,7 @@ object LegacyParser {
                     batch.add(unique)
                     if (batch.size >= batchSize) flush()
                 }
-                else -> warnings.add("Skipped malformed $label $at: not an object")
+                else -> warnings.add(droppedParserMessage("Skipped malformed $label $at: not an object"))
             }
         }
         reader.endArray()
@@ -702,7 +700,7 @@ object LegacyParser {
                     try {
                         parsePassage(obj)
                     } catch (e: Exception) {
-                        warnings.add("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                        warnings.add(droppedParserMessage("Skipped malformed passage ${index + 1}: ${e.message ?: e.javaClass.simpleName}"))
                         null
                     }
                 }
@@ -712,7 +710,7 @@ object LegacyParser {
                     try {
                         parseAttempt(obj)
                     } catch (e: Exception) {
-                        warnings.add("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}")
+                        warnings.add(droppedParserMessage("Skipped malformed attempt ${index + 1}: ${e.message ?: e.javaClass.simpleName}"))
                         null
                     }
                 }
@@ -740,7 +738,7 @@ object LegacyParser {
         onPaper: (PaperDto) -> Unit
     ): Int {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("File: \"papers\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return 0
         }
@@ -754,7 +752,7 @@ object LegacyParser {
                 onPaper(readPaper(reader, warnings))
                 emitted++
             } catch (e: Exception) {
-                warnings.add("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}")
+                warnings.add(droppedParserMessage("Skipped malformed paper $at: ${e.message ?: e.javaClass.simpleName}"))
                 skipValueQuietly(reader)
             }
         }
@@ -794,7 +792,7 @@ object LegacyParser {
         reader.endObject()
         for ((index, detail) in categorySkips) {
             warnings.add(
-                "Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail"
+                droppedParserMessage("Skipped malformed category $index in paper '${title ?: FALLBACK_UNTITLED_PAPER_TITLE}': $detail")
             )
         }
         val effectiveCategories = when {
@@ -837,7 +835,7 @@ object LegacyParser {
         skips: MutableList<Pair<Int, String>>
     ) {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("File: \"categories\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("File: \"categories\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return
         }
@@ -885,10 +883,10 @@ object LegacyParser {
             }
         }
         reader.endObject()
-        val label = title ?: "Category"
+        val label = title ?: FALLBACK_CATEGORY_LABEL
         if (typeMismatch) {
             warnings.add(
-                "Category '$label': \"questions\" is $wrongShape, not a list — its contents were skipped"
+                droppedParserMessage("Category '$label': \"questions\" is $wrongShape, not a list — its contents were skipped")
             )
         }
         return CategoryDto(
@@ -920,7 +918,7 @@ object LegacyParser {
             when (val element = readElement(reader)) {
                 is JsonObject ->
                     safeQuestion(element, "$label $at", warnings)?.let(out::add)
-                else -> warnings.add("Skipped malformed $label $at: not an object")
+                else -> warnings.add(droppedParserMessage("Skipped malformed $label $at: not an object"))
             }
         }
         reader.endArray()
@@ -937,7 +935,7 @@ object LegacyParser {
         mapper: (Int, JsonObject) -> T?
     ): List<T> {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("$where: \"$name\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("$where: \"$name\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return emptyList()
         }
@@ -951,7 +949,7 @@ object LegacyParser {
             if (slice is JsonObject) {
                 mapper(at - 1, slice)?.let(out::add)
             } else {
-                warnings.add("Skipped malformed $entryName $at: not an object — it was skipped")
+                warnings.add(droppedParserMessage("Skipped malformed $entryName $at: not an object — it was skipped"))
             }
         }
         reader.endArray()
@@ -974,7 +972,7 @@ object LegacyParser {
         onPage: (List<T>) -> Unit
     ) {
         if (reader.peek() != JsonPull.Token.BEGIN_ARRAY) {
-            warnings.add("$where: \"$name\" is ${kindOf(reader.peek())}, not a list — its contents were skipped")
+            warnings.add(droppedParserMessage("$where: \"$name\" is ${kindOf(reader.peek())}, not a list — its contents were skipped"))
             reader.skipValue()
             return
         }
@@ -988,7 +986,7 @@ object LegacyParser {
             if (slice is JsonObject) {
                 mapper(at - 1, slice)?.let(page::add)
             } else {
-                warnings.add("Skipped malformed $entryName $at: not an object — it was skipped")
+                warnings.add(droppedParserMessage("Skipped malformed $entryName $at: not an object — it was skipped"))
             }
             if (page.size >= pageSize) {
                 onPage(page.toList())
@@ -1220,7 +1218,7 @@ object LegacyParser {
         return PassageDto(
             id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                 ?: throw IllegalArgumentException("missing id"),
-            title = obj["title"]?.jsonPrimitive?.contentOrNull ?: "Passage",
+            title = obj["title"]?.jsonPrimitive?.contentOrNull ?: FALLBACK_PASSAGE_TITLE,
             elements = elements,
             image = obj["image"]?.jsonPrimitive?.contentOrNull,
             categoryId = obj["categoryId"]?.jsonPrimitive?.contentOrNull
@@ -1301,7 +1299,7 @@ object LegacyParser {
     private fun safeQuestion(element: JsonElement, where: String, warnings: MutableList<String>): QuestionDto? = try {
         parseQuestion(element.jsonObject, warnings)
     } catch (e: Exception) {
-        warnings.add("Skipped malformed $where: ${e.message ?: e.javaClass.simpleName}")
+        warnings.add(droppedParserMessage("Skipped malformed $where: ${e.message ?: e.javaClass.simpleName}"))
         null
     }
 

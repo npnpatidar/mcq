@@ -1,5 +1,6 @@
 package com.mcqapp.ui.stats.sections
 
+import androidx.annotation.ArrayRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
@@ -42,7 +44,15 @@ internal fun MemorySection(bundle: MemoryData) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item(contentType = "distribution") { DistributionCard(bundle.stability, R.string.stats_stability, R.string.stats_stability_help) }
+        item(contentType = "distribution") {
+            DistributionCard(
+                bundle.stability,
+                R.string.stats_stability,
+                R.string.stats_stability_help,
+                binLabelsRes = R.array.r2_stats_stability_bins,
+                captionRes = R.string.r2_stats_stability_caption
+            )
+        }
         item(contentType = "distribution") { DistributionCard(bundle.difficulty, R.string.stats_difficulty, R.string.stats_difficulty_help) }
         item(contentType = "retrievability") { RetrievabilityCard(bundle) }
         if (bundle.byPaper.isNotEmpty()) {
@@ -57,7 +67,11 @@ internal fun MemorySection(bundle: MemoryData) {
 private fun DistributionCard(
     distribution: com.mcqapp.domain.stats.Distribution,
     @androidx.annotation.StringRes titleRes: Int,
-    @androidx.annotation.StringRes helpRes: Int
+    @androidx.annotation.StringRes helpRes: Int,
+    /** Localized bin names, indexed by bin position, when the domain's labels
+     *  are not user-facing (ST2/ST3). Null keeps the domain label as-is. */
+    @ArrayRes binLabelsRes: Int? = null,
+    @androidx.annotation.StringRes captionRes: Int? = null
 ) {
     ChartCard(
         testTag = "stats-dist-$titleRes",
@@ -68,16 +82,24 @@ private fun DistributionCard(
             ChartEmpty(R.string.stats_no_data)
             return@ChartCard
         }
+        val binLabels = binLabelsRes?.let { stringArrayResource(it).toList() }
         StackedBarChart(
-            points = distribution.bins.map { bin ->
+            points = distribution.bins.mapIndexed { index, bin ->
                 com.mcqapp.domain.stats.StackedPoint(
-                    label = bin.label,
+                    label = binLabels?.getOrNull(index) ?: bin.label,
                     segments = listOf(bin.count.toDouble()),
                     total = bin.count
                 )
             },
             segmentCount = 1
         )
+        if (captionRes != null) {
+            Text(
+                stringResource(captionRes),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         SummaryLine(distribution)
     }
 }
@@ -155,10 +177,13 @@ private fun IntervalCard(bundle: MemoryData) {
             running += bin.count.toDouble()
             cumul.add(if (total == 0) 0.0 else running / total)
         }
+        // Interval bins are real day/month durations; use the localized names
+        // rather than the domain's English "d"/"m" tokens (ST2).
+        val intervalLabels = stringArrayResource(R.array.r2_stats_interval_bins).toList()
         StackedBarChart(
-            points = bundle.intervals.bins.map { bin ->
+            points = bundle.intervals.bins.mapIndexed { index, bin ->
                 com.mcqapp.domain.stats.StackedPoint(
-                    label = bin.label,
+                    label = intervalLabels.getOrNull(index) ?: bin.label,
                     segments = listOf(bin.count.toDouble()),
                     total = bin.count
                 )

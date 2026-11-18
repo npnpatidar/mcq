@@ -17,6 +17,7 @@ import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.Question
 import com.mcqapp.ui.editor.EditorSession
+import com.mcqapp.ui.results.OneShotEvents
 import com.mcqapp.util.Logger
 import com.mcqapp.util.parseNonNegativeDecimal
 import kotlinx.coroutines.CoroutineDispatcher
@@ -879,6 +880,32 @@ class BrowseViewModel(
 
     private val _isSharing = MutableStateFlow(false)
     val isSharing: StateFlow<Boolean> = _isSharing.asStateFlow()
+
+    /**
+     * B3 — one-shot handoff of the rendered share intent to the screen. The
+     * render runs in the VM's scope so a rotation cannot cancel it (the old
+     * composition-scoped launch dropped the chooser and stranded the rendered
+     * file). A replayed [OneShotEvents] (rather than a non-replaying
+     * SharedFlow) also covers the recreation gap: an event emitted before the
+     * new screen attaches is still delivered, and consume(id) stops it firing
+     * twice. `null` means the render failed and [error] already carries the
+     * user-facing message; the screen just closes the dialog in that case.
+     */
+    val shareEvents = OneShotEvents<android.content.Intent?>()
+
+    /**
+     * Render on the VM scope and publish the result. Callers must not launch
+     * this from a composition scope — that is the cancellation this replaces.
+     */
+    fun shareSelection(
+        questionIds: Set<String>,
+        title: String,
+        format: com.mcqapp.data.export.ExportFormat
+    ) {
+        viewModelScope.launch {
+            shareEvents.send(shareSelectionIntent(questionIds, title, format))
+        }
+    }
 
     /**
      * Renders the ticked questions into `cacheDir/shared` and returns the raw

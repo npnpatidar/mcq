@@ -95,6 +95,19 @@ internal fun blueprintEditId(isEditing: Boolean, selectedVariant: String?): Long
     if (isEditing) selectedVariant?.toLongOrNull() else null
 
 /**
+ * The picker rows after a delete attempt. The old code dropped the row from
+ * the local list even when `runCatching` swallowed a repository failure, so a
+ * locked database read as a successful delete until the next reload (L7). The
+ * row is removed only on success; failure leaves it in place for a retry.
+ */
+internal fun <T> rowsAfterDelete(
+    result: Result<Unit>,
+    rows: List<T>,
+    idOf: (T) -> Long,
+    deletedId: Long
+): List<T> = if (result.isSuccess) rows.filterNot { idOf(it) == deletedId } else rows
+
+/**
  * The phase-1 setup sheet: what kind of test, how many questions, how long,
  * and what the learner is about to get (sections 7.2-7.5).
  *
@@ -271,6 +284,8 @@ internal fun TestSetupSheet(
     /** The blueprint awaiting delete confirmation (id + name ride rotation). */
     var blueprintToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
     var blueprintToDeleteName by rememberSaveable { mutableStateOf("") }
+    /** Name of an item whose delete failed; its row is kept and an error shown. */
+    var deleteErrorName by rememberSaveable { mutableStateOf<String?>(null) }
     val panelScope = rememberCoroutineScope()
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1091,9 +1106,13 @@ internal fun TestSetupSheet(
                 TextButton(onClick = {
                     clearPanelDelete()
                     panelScope.launch {
-                        runCatching { onDeletePanel(panelId) }
-                        if (variant == panelId.toString()) variant = null
-                        panels = panels.orEmpty().filterNot { it.id == panelId }
+                        val result = runCatching { onDeletePanel(panelId) }
+                        if (result.isSuccess) {
+                            if (variant == panelId.toString()) variant = null
+                            panels = rowsAfterDelete(result, panels.orEmpty(), { it.id }, panelId)
+                        } else {
+                            deleteErrorName = panelName
+                        }
                     }
                 }) {
                     Text(stringResource(R.string.delete))
@@ -1130,9 +1149,15 @@ internal fun TestSetupSheet(
                 }
             },
             onDelete = { id ->
-                onDeleteBlueprint(id)
-                if (variant == id.toString()) variant = null
-                blueprints = blueprints.orEmpty().filterNot { it.id == id }
+                runCatching { onDeleteBlueprint(id) }.also { result ->
+                    if (result.isSuccess) {
+                        if (variant == id.toString()) variant = null
+                        blueprints = rowsAfterDelete(result, blueprints.orEmpty(), { it.id }, id)
+                    } else {
+                        deleteErrorName = blueprints.orEmpty()
+                            .firstOrNull { it.id == id }?.name.orEmpty()
+                    }
+                }
             },
             onDismiss = {
                 showBlueprintEditor = false
@@ -1174,9 +1199,13 @@ internal fun TestSetupSheet(
                 TextButton(onClick = {
                     clearBlueprintDelete()
                     panelScope.launch {
-                        runCatching { onDeleteBlueprint(blueprintId) }
-                        if (variant == blueprintId.toString()) variant = null
-                        blueprints = blueprints.orEmpty().filterNot { it.id == blueprintId }
+                        val result = runCatching { onDeleteBlueprint(blueprintId) }
+                        if (result.isSuccess) {
+                            if (variant == blueprintId.toString()) variant = null
+                            blueprints = rowsAfterDelete(result, blueprints.orEmpty(), { it.id }, blueprintId)
+                        } else {
+                            deleteErrorName = blueprintName
+                        }
                     }
                 }) {
                     Text(stringResource(R.string.delete))
@@ -1185,6 +1214,29 @@ internal fun TestSetupSheet(
             dismissButton = {
                 TextButton(onClick = { clearBlueprintDelete() }) {
                     Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    // A refused delete keeps its row. Report it once, in the selected locale:
+    // the old code discarded `runCatching`'s result and read failure as success.
+    deleteErrorName?.let { failedName ->
+        AlertDialog(
+            onDismissRequest = { deleteErrorName = null },
+            title = { Text(stringResource(R.string.error)) },
+            text = {
+                Text(
+                    if (failedName.isBlank()) {
+                        stringResource(R.string.r2_lib_delete_generic_failed)
+                    } else {
+                        stringResource(R.string.r2_lib_delete_failed, failedName)
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { deleteErrorName = null }) {
+                    Text(stringResource(R.string.ok))
                 }
             }
         )
@@ -1315,28 +1367,38 @@ private fun breadthLabel(breadth: Breadth): Int = when (breadth) {
     Breadth.BROAD -> R.string.test_setup_breadth_broad
 }
 
+/**
+ * Resource id for one recorded segment's short label. Pure: the four labels
+ * that used to be mislabelled (two authored difficulties and the two blueprint
+ * fills) are asserted in JVM tests without needing a Composition (L4).
+ */
+internal fun fillSourceLabelRes(source: String): Int = when (source.uppercase()) {
+    "WEAKEST_TOPICS" -> R.string.test_setup_fill_weakest
+    "TOUGHEST_QUESTIONS" -> R.string.test_setup_fill_toughest
+    "EASIEST_QUESTIONS" -> R.string.test_setup_fill_easiest
+    "TRICKY" -> R.string.test_setup_fill_tricky
+    "AT_RISK" -> R.string.test_setup_fill_at_risk
+    "UNSEEN" -> R.string.test_setup_fill_unseen
+    "BALANCED" -> R.string.test_setup_fill_balanced
+    "COVERAGE" -> R.string.test_setup_fill_coverage
+    "COVERAGE_EXPOSURE" -> R.string.test_setup_fill_coverage_exposure
+    "MIXED" -> R.string.test_setup_fill_mixed
+    "BOOKMARKED" -> R.string.test_setup_fill_bookmarked
+    "TAG" -> R.string.test_setup_fill_tag
+    "AUTHORED_EASY" -> R.string.test_setup_fill_authored_easy
+    "AUTHORED_HARD" -> R.string.r2_lib_fill_authored_hard
+    "AUTHORED_MEDIUM" -> R.string.r2_lib_fill_authored_medium
+    "BLUEPRINT" -> R.string.r2_lib_fill_blueprint
+    "BLUEPRINT_FILL" -> R.string.r2_lib_fill_blueprint_fill
+    "SLOWEST" -> R.string.test_setup_fill_slowest
+    "PANEL" -> R.string.test_setup_fill_panel
+    "LEAST_RECENTLY_REVIEWED" -> R.string.test_setup_fill_recent
+    else -> R.string.test_setup_fill_random
+}
+
 /** One recorded segment's short label, e.g. `weakest` or `random`. */
 @Composable
-private fun fillSourceLabel(source: String): String = when (source.uppercase()) {
-    "WEAKEST_TOPICS" -> stringResource(R.string.test_setup_fill_weakest)
-    "TOUGHEST_QUESTIONS" -> stringResource(R.string.test_setup_fill_toughest)
-    "EASIEST_QUESTIONS" -> stringResource(R.string.test_setup_fill_easiest)
-    "TRICKY" -> stringResource(R.string.test_setup_fill_tricky)
-    "AT_RISK" -> stringResource(R.string.test_setup_fill_at_risk)
-    "UNSEEN" -> stringResource(R.string.test_setup_fill_unseen)
-    "BALANCED" -> stringResource(R.string.test_setup_fill_balanced)
-    "COVERAGE" -> stringResource(R.string.test_setup_fill_coverage)
-    "COVERAGE_EXPOSURE" -> stringResource(R.string.test_setup_fill_coverage_exposure)
-    "MIXED" -> stringResource(R.string.test_setup_fill_mixed)
-    "BOOKMARKED" -> stringResource(R.string.test_setup_fill_bookmarked)
-    "TAG" -> stringResource(R.string.test_setup_fill_tag)
-    "AUTHORED_EASY" -> stringResource(R.string.test_setup_fill_authored_easy)
-    "SLOWEST" -> stringResource(R.string.test_setup_fill_slowest)
-    "PANEL" -> stringResource(R.string.test_setup_fill_panel)
-    "LEAST_RECENTLY_REVIEWED", "AUTHORED_HARD", "AUTHORED_MEDIUM" ->
-        stringResource(R.string.test_setup_fill_recent)
-    else -> stringResource(R.string.test_setup_fill_random)
-}
+private fun fillSourceLabel(source: String): String = stringResource(fillSourceLabelRes(source))
 
 /** `12 weakest + 8 random`, or an em dash when the selection is empty. */
 @Composable

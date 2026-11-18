@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,24 +73,31 @@ internal fun AppearanceSection(
     onRemoveTheme: (String) -> Unit
 ) {
     var themeMenuExpanded by remember { mutableStateOf(false) }
-    var themePendingRemoval by remember { mutableStateOf<CustomTheme?>(null) }
+    // Rotation-safe: save the key (a String), not the CustomTheme — the latter
+    // is not Parcelable and would lose the pending confirm on recreate. Resolve
+    // it back to the live theme each composition; a removal that already
+    // completed simply makes the dialog disappear.
+    var pendingRemovalKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val themePendingRemoval = pendingRemovalKey?.let { key ->
+        customThemes.firstOrNull { it.key == key }
+    }
     val feedback = LocalHapticFeedback.current
 
     themePendingRemoval?.let { theme ->
         AlertDialog(
-            onDismissRequest = { themePendingRemoval = null },
+            onDismissRequest = { pendingRemovalKey = null },
             title = { Text(stringResource(R.string.remove_imported_theme)) },
             text = { Text(theme.name) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         onRemoveTheme(theme.key)
-                        themePendingRemoval = null
+                        pendingRemovalKey = null
                     }
                 ) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { themePendingRemoval = null }) {
+                TextButton(onClick = { pendingRemovalKey = null }) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -286,7 +294,7 @@ internal fun AppearanceSection(
             Text(stringResource(R.string.import_theme))
         }
         if (selectedCustom != null) {
-            TextButton(onClick = { themePendingRemoval = selectedCustom }) {
+            TextButton(onClick = { pendingRemovalKey = selectedCustom.key }) {
                 Icon(Icons.Default.Delete, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(R.string.remove_imported_theme))

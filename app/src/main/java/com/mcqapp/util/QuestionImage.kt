@@ -71,7 +71,7 @@ fun QuestionImage(
                 contentScale = ContentScale.Fit
             )
         } else if (decoded is DecodeResult.Failed) {
-            Text("Invalid image data", modifier = modifier)
+            Text(stringResource(R.string.invalid_image_data), modifier = modifier)
         }
     } else if (isRemoteImageSrc(src) && !LocalLoadRemoteImages.current) {
         // Privacy default: never hand Coil a network URL while the setting

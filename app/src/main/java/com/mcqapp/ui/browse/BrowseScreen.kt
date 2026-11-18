@@ -55,6 +55,7 @@ import com.mcqapp.ui.theme.verdictColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -338,7 +339,7 @@ fun BrowseScreen(
             categoryFilterIds.size == 1 -> categoryFilterIds.first().let { id ->
                 flatCategories.firstOrNull { it.first.id == id }?.first?.title
             } ?: stringResource(R.string.all_categories)
-            else -> stringResource(R.string.study_scope_many, categoryFilterIds.size)
+            else -> pluralStringResource(R.plurals.study_scope_many, categoryFilterIds.size, categoryFilterIds.size)
         }
 
         // Delayed spinner: fast loads show blank instead of flashing text.
@@ -697,7 +698,7 @@ fun BrowseScreen(
                 parseNonNegativeDecimal(bulkMarks) == null
             AlertDialog(
                 onDismissRequest = { showBulkDialog = false },
-                title = { Text(stringResource(R.string.edit_n_questions, selectedIds.size)) },
+                title = { Text(pluralStringResource(R.plurals.edit_n_questions, selectedIds.size, selectedIds.size)) },
                 text = {
                     Column {
                         Text(
@@ -766,7 +767,7 @@ fun BrowseScreen(
         if (showDeleteConfirm) {
             AlertDialog(
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { Text(stringResource(R.string.delete_n_questions, selectedIds.size)) },
+                title = { Text(pluralStringResource(R.plurals.delete_n_questions, selectedIds.size, selectedIds.size)) },
                 text = { Text(stringResource(R.string.this_cannot_be_undone)) },
                 confirmButton = {
                     TextButton(onClick = {
@@ -840,7 +841,7 @@ fun BrowseScreen(
 
             AlertDialog(
                 onDismissRequest = { showExportDialog = false },
-                title = { Text("Export ${exportIds.size} selected questions") },
+                title = { Text(pluralStringResource(R.plurals.export_n_selected, exportIds.size, exportIds.size)) },
                 text = {
                     Column {
                         if (isSharing) {
@@ -911,7 +912,10 @@ fun BrowseScreen(
                     viewModel.clearMoveScope()
                 },
                 title = {
-                    Text("${if (moveIsCopy) "Copy" else "Move"} ${selectedIds.size} questions to…")
+                    Text(pluralStringResource(
+                        if (moveIsCopy) R.plurals.copy_n_questions_to else R.plurals.move_n_questions_to,
+                        selectedIds.size, selectedIds.size
+                    ))
                 },
                 text = {
                     Column {
@@ -977,7 +981,7 @@ fun BrowseScreen(
                         if (!moveIsCopy && affected != null && affected > selectedIds.size) {
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                stringResource(R.string.move_includes_passage, affected),
+                                pluralStringResource(R.plurals.move_includes_passage, affected, affected),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1061,7 +1065,7 @@ private fun BrowseRowSkeleton(index: Int) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "$index.",
+                    stringResource(R.string.editor_index, index),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(end = 8.dp)
@@ -1132,7 +1136,7 @@ private fun BrowseQuestionCard(
                     Checkbox(checked = selected, onCheckedChange = { onToggleSelect() })
                 } else {
                     Text(
-                        "$index.",
+                        stringResource(R.string.editor_index, index),
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.padding(end = 8.dp)
                     )

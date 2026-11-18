@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -8,6 +9,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -135,29 +140,40 @@ class SessionsLoadingUiTest {
     fun failedLoadShowsGenericErrorAndRetryRecovers() {
         val app = ApplicationProvider.getApplicationContext() as McqApplication
         val viewModel = SessionsViewModel(app)
+        val rawDetail = "sqlite detail: disk I/O error"
+
+        // Publish the failure before composition. Main.immediate inside
+        // runOnIdle makes the state transition synchronous, so the error branch
+        // is present on the first frame and there is no spinner to settle.
+        compose.runOnIdle {
+            viewModel.load(
+                range = StatsAggregator.Range.D30,
+                loader = { throw IllegalStateException(rawDetail) },
+                dispatcher = Dispatchers.Main.immediate
+            )
+        }
+        // Hold the screen at STARTED: collectAsStateWithLifecycle still observes
+        // the state, but the screen's ON_RESUME refresh cannot clear the injected
+        // error before it is asserted (the old version raced that refresh).
+        val lifecycleOwner = object : LifecycleOwner {
+            val registry = LifecycleRegistry(this)
+            override val lifecycle: Lifecycle get() = registry
+        }
+        // LifecycleRegistry requires main-thread state transitions.
+        compose.runOnIdle {
+            lifecycleOwner.registry.currentState = Lifecycle.State.STARTED
+        }
         compose.setContent {
-            MaterialTheme {
-                SessionsScreen(
-                    repository = app.repository,
-                    navController = rememberNavController(),
-                    viewModel = viewModel
-                )
+            CompositionLocalProvider(LocalLifecycleOwner provides lifecycleOwner) {
+                MaterialTheme {
+                    SessionsScreen(
+                        repository = app.repository,
+                        navController = rememberNavController(),
+                        viewModel = viewModel
+                    )
+                }
             }
         }
-        // Wait for the first real load to settle before injecting a failure, so
-        // the assertion cannot race the screen's ON_RESUME refresh.
-        compose.waitUntil(30_000) {
-            compose.onAllNodesWithTag("sessions-list").fetchSemanticsNodes().isNotEmpty()
-        }
-
-        val rawDetail = "sqlite detail: disk I/O error"
-        // Main.immediate publishes the failure synchronously when launched on
-        // the main thread; the test thread dispatches it there.
-        viewModel.load(
-            range = StatsAggregator.Range.D30,
-            loader = { throw IllegalStateException(rawDetail) },
-            dispatcher = Dispatchers.Main.immediate
-        )
         waitForText("Sessions could not be loaded.")
 
         compose.onNodeWithText(

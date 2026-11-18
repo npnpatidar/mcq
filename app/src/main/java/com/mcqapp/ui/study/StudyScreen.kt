@@ -530,7 +530,7 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
                 )
             }
             Text(
-                "Next in ${result.nextIn}",
+                stringResource(R.string.study_next_in, result.nextIn),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -638,7 +638,7 @@ private fun StudyStickyHeader(
                         ScopeLabel.WholePaper -> ""
                         is ScopeLabel.One -> label.title
                         is ScopeLabel.Many ->
-                            stringResource(R.string.study_scope_many, label.count)
+                            pluralStringResource(R.plurals.study_scope_many, label.count, label.count)
                     }
                     if (scopeText.isNotEmpty()) {
                         Text(
@@ -727,7 +727,7 @@ private fun StudyStickyHeader(
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        stringResource(R.string.break_suggestion, state.reviewed),
+                        pluralStringResource(R.plurals.break_suggestion, state.reviewed, state.reviewed),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f)
                     )
@@ -1077,7 +1077,7 @@ private fun StudySummary(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "${state.reviewed} reviewed • ${state.againCount} again • ${state.goodCount} remembered",
+                stringResource(R.string.study_session_summary, state.reviewed, state.againCount, state.goodCount),
                 style = MaterialTheme.typography.bodyMedium
             )
             if (state.reviewed > 0) {

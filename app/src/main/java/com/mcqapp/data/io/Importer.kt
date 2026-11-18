@@ -34,7 +34,11 @@ data class ImportReport(
     val restoredBookmarks: Int = 0,
     val restoredAttempts: Int = 0,
     /** Cards whose review progress was carried in, e.g. from an Anki package. */
-    val restoredSchedules: Int = 0
+    val restoredSchedules: Int = 0,
+    /** Anki card instances whose whole stem was empty (no text, no image) and were dropped. */
+    val droppedAnkiStems: Int = 0,
+    /** Anki notes with no choices, kept as single-option recall cards. */
+    val recallConverted: Int = 0
 )
 
 /**

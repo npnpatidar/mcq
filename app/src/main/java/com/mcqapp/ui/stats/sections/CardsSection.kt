@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
@@ -182,7 +183,7 @@ private fun CardCountsCard(counts: CardCountsData) {
         if (counts.leeches > 0) {
             Spacer(Modifier.height(8.dp))
             Text(
-                stringResource(R.string.stats_leeches_count, counts.leeches),
+                pluralStringResource(R.plurals.stats_leeches_count, counts.leeches, counts.leeches),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error
             )

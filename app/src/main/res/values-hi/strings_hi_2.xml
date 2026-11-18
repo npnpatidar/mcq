@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="followup_import_duplicate_questions">
+        <item quantity="one">• %1$d प्रश्न पहले से मौजूद था (छोड़ दिया गया)</item>
+        <item quantity="other">• %1$d प्रश्न पहले से मौजूद थे (छोड़ दिए गए)</item>
+    </plurals>
+    <plurals name="followup_import_new_papers">
+        <item quantity="one">• %1$d नया पेपर</item>
+        <item quantity="other">• %1$d नए पेपर</item>
+    </plurals>
+    <plurals name="followup_import_new_questions">
+        <item quantity="one">• %1$d नया प्रश्न जोड़ा गया</item>
+        <item quantity="other">• %1$d नए प्रश्न जोड़े गए</item>
+    </plurals>
+    <plurals name="followup_import_recall_converted">
+        <item quantity="one">• %1$d नोट को रिकॉल कार्ड में बदला गया</item>
+        <item quantity="other">• %1$d नोटों को रिकॉल कार्ड में बदला गया</item>
+    </plurals>
+    <plurals name="followup_import_restored_attempts">
+        <item quantity="one">• %1$d टेस्ट प्रयास बहाल किया गया</item>
+        <item quantity="other">• %1$d टेस्ट प्रयास बहाल किए गए</item>
+    </plurals>
+    <plurals name="followup_import_restored_bookmarks">
+        <item quantity="one">• %1$d बुकमार्क बहाल किया गया</item>
+        <item quantity="other">• %1$d बुकमार्क बहाल किए गए</item>
+    </plurals>
+    <plurals name="followup_import_restored_schedules">
+        <item quantity="one">• %1$d अध्ययन शेड्यूल बहाल किया गया</item>
+        <item quantity="other">• %1$d अध्ययन शेड्यूल बहाल किए गए</item>
+    </plurals>
+    <plurals name="followup_import_updated_papers">
+        <item quantity="one">• %1$d पेपर अपडेट किया गया</item>
+        <item quantity="other">• %1$d पेपर अपडेट किए गए</item>
+    </plurals>
+    <plurals name="followup_import_updated_questions">
+        <item quantity="one">• %1$d प्रश्न अपडेट किया गया</item>
+        <item quantity="other">• %1$d प्रश्न अपडेट किए गए</item>
+    </plurals>
+    <string name="followup_search_type_to_hint">सभी पेपरों में खोजने के लिए टाइप करें</string>
+    <string name="formula">सूत्र</string>
+    <string name="fsrs7_upgrade_notice">FSRS-6 के फिट किए गए वेट्स को FSRS-7 में बदला नहीं जा सका: मॉडल बदला है, सिर्फ़ वेट्स की संख्या नहीं। शेड्यूलिंग आधिकारिक डिफ़ॉल्ट पर है; दोबारा फिट करने के लिए Optimize दबाएँ।</string>
+    <string name="fsrs_scheduling_help">अध्ययन के लिए FSRS शेड्यूलिंग। ये Anki\'s समीक्षा विकल्पों से मेल खाते हैं, इसलिए दोनों ऐप्स में एक ही मान काम करते हैं। बदलाव अगली समीक्षा से लागू होंगे; जिन कार्ड्स का शेड्यूल पहले से तय है, उनकी मौजूदा तारीख़ बनी रहेगी।</string>
+    <string name="go_back">वापस जाएँ</string>
+    <string name="grade_again">फिर से</string>
+    <string name="grade_correctness_only">केवल सही-गलत के आधार पर ग्रेड करें</string>
+    <string name="grade_correctness_only_help">सही उत्तर Good माने जाते हैं; गलत, अनुमान लगाए गए या छोड़े गए उत्तर Again माने जाते हैं। टाइमर चलता रहता है और उसका समय बाद के विश्लेषण के लिए दर्ज होता है, लेकिन वह कभी ग्रेड या उसके रंग को नहीं बदलता। जब यह चालू हो, Easy/Hard कटफ़ के फ़ील्ड और आँकड़ों (Statistics) के कैलिब्रेशन कार्ड में कटफ़ का प्रमाण छिपे रहते हैं; पूर्वानुमान (Brier) ग्राफ़ बना रहता है। जब आपके उत्तर देने के समय पर्याप्त हो जाएँ, तो आँकड़े (Statistics) उनसे निकले कटफ़ सुझाते हैं। नए इंस्टॉल में यह शुरू से चालू रहता है: इन समयों को इकट्ठा करने के लिए इसे चालू छोड़ें, फिर इसे बंद करें और आँकड़ों (Statistics) द्वारा सुझाया गया युग्म दर्ज करें। इसे चालू या बंद करने पर ग्रेडिंग का एक नया संस्करण शुरू होता है, जिससे दोनों नियम कभी मिश्रित नहीं होते।</string>
+    <string name="grade_easy">आसान</string>
+    <string name="grade_good">अच्छा</string>
+    <string name="grade_hard">कठिन</string>
+    <string name="grade_study_cards_automatically_from_your_answers_instead_of_">हर कार्ड के बाद Again, Hard, Good या Easy चुनने के बजाय, अपने उत्तरों के आधार पर अध्ययन कार्डों को स्वतः ग्रेड करें।</string>
+    <string name="guessed_right_marked_again">अनुमान से सही — Again माना गया, जल्दी वापस मिलेंगे।</string>
+    <string name="guessed_right_marked_x">अनुमान से सही — %1$s माना गया।</string>
+    <string name="guessing">अनुमान लगा रहे हैं</string>
+    <string name="guessing_this_is_a_guess">मैं अनुमान लगा रहा हूँ — सही उत्तर को भी Again माना जाएगा।</string>
+    <string name="haptic_feedback">स्पर्श प्रतिक्रिया</string>
+    <string name="haptic_feedback_help">उत्तर चुनने, उसे दिखाने या कार्ड को ग्रेड करने पर थोड़ा कंपन करें।</string>
+    <string name="hard_answer_threshold">Hard उत्तर की सीमा</string>
+    <string name="hard_answer_threshold_help">जब सही उत्तर में कम से कम इतना समय लगे, तो स्वतः Hard ग्रेड दिया जाए।</string>
+    <string name="hardest_questions">सबसे कठिन प्रश्न</string>
+    <string name="hide_passage_questions">प्रश्न छिपाएँ (%1$d)</string>
+    <string name="hides_answers_flags_and_the_question_palette">उत्तर, फ़्लैग और प्रश्न पैलेट को छिपाता है</string>
+    <string name="history">इतिहास</string>
+    <string name="history_correct_line">%1$d/%2$d सही</string>
+    <string name="history_delta_points">%1$s %2$s अंक</string>
+    <string name="history_mastery_line">%1$s · %2$s · %3$d/%4$d</string>
+    <string name="history_trend_attempts_best">%1$s · सर्वश्रेष्ठ %2$s</string>
+    <string name="history_wrong_skipped_line">%1$s गलत · %2$s छोड़े गए · %3$d प्रयास</string>
+    <string name="how_well_did_you_recall_it">आपने इसे कितनी अच्छी तरह याद किया?</string>
+    <string name="image">चित्र</string>
+    <string name="image_for_this_option">इस विकल्प का चित्र</string>
+    <string name="image_url">चित्र का URL</string>
+    <string name="image_weight_help">चित्र का वज़न अंदर लगे चित्रों को गिनता है; बड़े संग्रह आयात के समय अपने आप छोटे हो जाते हैं।</string>
+    <string name="import_complete">आयात पूरा हुआ</string>
+    <string name="import_explanation_label">स्पष्टीकरण: %1$s</string>
+    <string name="import_importing_progress">%1$d (कुल %2$d) प्रश्न आयात किए जा रहे हैं…</string>
+    <string name="import_large_bank_notice">बड़ा संग्रह: पहले %1$d (कुल %2$d) प्रश्नों का पूर्वावलोकन दिखाया जा रहा है। संपादन और हटाने का असर केवल पूर्वावलोकन वाले प्रश्नों पर होगा; शेष प्रश्न फ़ाइल में जैसे हैं वैसे ही आयात होंगे।</string>
+    <plurals name="import_more_notes">
+        <item quantity="one">+%1$d और नोट</item>
+        <item quantity="other">+%1$d और नोट</item>
+    </plurals>
+    <string name="import_more_skipped">+%1$d और छोड़े गए</string>
+    <plurals name="import_more_warnings">
+        <item quantity="one">+%1$d और चेतावनी</item>
+        <item quantity="other">+%1$d और चेतावनियाँ</item>
+    </plurals>
+    <string name="import_preview_changed_count">बदले गए (%1$d) — मौजूदा प्रश्न अपडेट होंगे</string>
+    <string name="import_preview_duplicate_count">डुप्लिकेट (%1$d) — पहले से लाइब्रेरी में हैं, छोड़ दिए जाएँगे</string>
+    <plurals name="import_preview_new_count">
+        <item quantity="one">नया प्रश्न (%1$d) — जोड़ा जाएगा</item>
+        <item quantity="other">नए प्रश्न (%1$d) — जोड़े जाएँगे</item>
+    </plurals>
+    <string name="import_preview_notes_count">फ़ाइल से नोट (%1$d) — कुछ नहीं हटाया गया</string>
+    <string name="import_preview_skipped_count">छोड़े गए (%1$d) — फ़ाइल से सामग्री हटाई गई</string>
+    <string name="import_preview_warnings_count">चेतावनियाँ (%1$d) — आयात ठीक होगा, लेकिन इनकी जाँच करें</string>
+    <string name="import_questions">प्रश्न आयात करें</string>
+    <string name="import_theme">थीम आयात करें…</string>
+    <string name="imported">आयात किया गया</string>
+    <string name="imported_theme">आयात किया गया</string>
+    <string name="in_passage_label">पैसेज में: %1$s</string>
+    <string name="incorrect">गलत</string>
+    <string name="incorrect_answer_review_soon">गलत उत्तर — दोबारा कोशिश के लिए जल्दी वापस मिलेंगे।</string>
+    <string name="increase_label">%1$s बढ़ाएँ</string>
+    <string name="introduce_new_cards">नए कार्ड पेश करें</string>
+    <string name="introduce_new_cards_help">केवल समीक्षा वाले सत्रों के लिए इसे बंद करें। बहुत सारे नए कार्ड भविष्य में समीक्षा का बोझ बढ़ा देते हैं।</string>
+    <string name="invalid_image_data">अमान्य चित्र डेटा</string>
+    <string name="keep">रखें</string>
+    <string name="lapses">भूलें</string>
+    <string name="learning_step">सीखने का चरण</string>
+    <string name="leech_threshold">लीच सीमा</string>
+    <string name="leech_threshold_help">किसी कार्ड को कठिन (लीच) माना जाने से पहले हुए गलत उत्तरों की संख्या</string>
+    <string name="likely_to_be_forgotten_soon">जल्द भुलाने की संभावना</string>
+    <string name="load_remote_images">दूरस्थ चित्र लोड करें</string>
+    <string name="load_sample_paper">नमूना पेपर लोड करें</string>
+    <string name="loading">लोड हो रहा है…</string>
+    <string name="manage">प्रबंधित करें</string>
+    <string name="marked_x">%1$s माना गया।</string>
+    <string name="marks_blank_keep">अंक (खाली = वैसे ही रखें)</string>
+    <string name="marks_default_1">अंक (डिफ़ॉल्ट 1)</string>
+    <string name="marks_invalid">अंक शून्य या धनात्मक संख्या होने चाहिए।</string>
+    <string name="marks_many">%1$s अंक</string>
+    <string name="marks_must_be_non_negative">अंक शून्य या उससे बड़ा होना चाहिए।</string>
+    <string name="marks_one">%1$s अंक</string>
+    <string name="matched_by_question_text_options">प्रश्न के पाठ + विकल्पों के आधार पर मिलान किया गया।</string>
+    <string name="maximum_interval">अधिकतम अंतराल</string>
+    <string name="maximum_interval_help">किसी भी समीक्षा को मिलने वाला सबसे लंबा अंतराल</string>
+    <string name="measuring">मापा जा रहा है…</string>
+    <string name="memory_first">याददाश्त पहले</string>
+    <string name="menu">मेन्यू</string>
+    <string name="mistakes_round_previously_missed_questions">गलतियों का चरण — पहले गलत हुए प्रश्न</string>
+    <string name="move">स्थानांतरित करें</string>
+    <string name="move_block_down_named">ब्लॉक %1$d को नीचे ले जाएँ</string>
+    <string name="move_block_up_named">ब्लॉक %1$d को ऊपर ले जाएँ</string>
+    <string name="move_category_down">पूरी श्रेणी को नीचे ले जाएँ</string>
+    <string name="move_category_up">पूरी श्रेणी को ऊपर ले जाएँ</string>
+    <string name="move_cross_paper_warning">दूसरे पेपर में ले जाने पर हर कार्ड का शेड्यूल और समीक्षा इतिहास बना रहता है। गंतव्य पेपर के आँकड़ों में वे समीक्षाएँ भी शामिल होंगी।</string>
+    <string name="move_down">नीचे ले जाएँ</string>
+    <plurals name="move_includes_passage">
+        <item quantity="one">एक ही पैसेज वाले प्रश्न साथ ले जाए जाएँगे: कुल %1$d प्रश्न।</item>
+        <item quantity="other">एक ही पैसेज वाले प्रश्न साथ ले जाए जाएँगे: कुल %1$d प्रश्न।</item>
+    </plurals>
+    <plurals name="move_n_questions_to">
+        <item quantity="one">%1$d प्रश्न को ले जाएँ…</item>
+        <item quantity="other">%1$d प्रश्नों को ले जाएँ…</item>
+    </plurals>
+    <string name="move_option_down_named">विकल्प %1$s को नीचे ले जाएँ</string>
+    <string name="move_option_up_named">विकल्प %1$s को ऊपर ले जाएँ</string>
+    <string name="move_paper_down">पेपर को नीचे ले जाएँ</string>
+    <string name="move_paper_up">पेपर को ऊपर ले जाएँ</string>
+    <string name="move_passage_down">पैसेज और उसके प्रश्नों को नीचे ले जाएँ</string>
+    <string name="move_passage_up">पैसेज और उसके प्रश्नों को ऊपर ले जाएँ</string>
+    <string name="move_to_the_next_question_after_answering_single_answer_only">एक-उत्तर वाले टेस्ट में उत्तर चुनते ही अगले प्रश्न पर बढ़ें। अभ्यास मोड में आप स्पष्टीकरण पढ़ने के लिए उसी प्रश्न पर रहते हैं।</string>
+    <string name="move_up">ऊपर ले जाएँ</string>
+    <string name="moving_progress">स्थानांतरित कर रहे हैं…</string>
+    <string name="multiple_correct_select_all_that_apply">कई सही उत्तर — जो लागू हों सभी चुनें</string>
+    <string name="n_selected">%1$d चुने गए</string>
+    <string name="name_count_line">%1$s · %2$d</string>
+    <string name="negative_marking">निगेटिव मार्किंग</string>
+    <string name="negative_marking_e_g_0_33">निगेटिव मार्किंग (जैसे 0.33)</string>
+    <string name="nest_category">ऊपर वाली श्रेणी के भीतर रखें</string>
+    <string name="new_cards_are_switched_off">नए कार्ड बंद हैं, इसलिए कुछ नया पेश नहीं किया जा रहा।</string>
+    <string name="new_category">नई श्रेणी</string>
+    <string name="new_paper">नया पेपर</string>
+    <string name="new_passage">नया पैसेज</string>
+    <string name="new_question">नया प्रश्न</string>
+    <string name="new_question_title">नया प्रश्न</string>
+    <string name="next">अगला</string>
+    <string name="next_day_starts_at">अगला दिन शुरू होता है</string>
+    <string name="next_day_starts_at_help">इस डिवाइस की घड़ी के अनुसार, नया अध्ययन दिन किस घंटे शुरू होता है</string>
+    <string name="no_answer_key_not_scored">कोई उत्तर कुंजी नहीं — अंक नहीं दिए गए</string>
+    <string name="no_attempts_yet">अभी कोई प्रयास नहीं</string>
+    <string name="no_bookmarked_questions">कोई बुकमार्क किया प्रश्न नहीं</string>
+    <string name="no_correct_answer_warning">किसी उत्तर को सही नहीं माना गया — इस प्रश्न को ग्रेड नहीं किया जाएगा।</string>
+    <string name="no_explanation">कोई स्पष्टीकरण नहीं दिया गया।</string>
+    <string name="no_matches">कोई मिलान नहीं</string>
+    <string name="no_papers_yet">अभी कोई पेपर नहीं</string>
+    <string name="no_passage">कोई पैसेज नहीं</string>
+    <string name="no_questions_in_this_paper">इस पेपर में कोई प्रश्न नहीं</string>
+    <string name="no_questions_in_this_selection">इस चयन में कोई प्रश्न नहीं</string>
+    <string name="no_questions_match_this_filter">इस फ़िल्टर से कोई प्रश्न मेल नहीं खाता</string>
+    <string name="none_top_level">कोई नहीं (शीर्ष स्तर)</string>
+    <string name="nothing_due">अभी कुछ देय नहीं है।</string>
+    <string name="nothing_due_in_scope">चुनी गई श्रेणियों में कुछ देय नहीं है।</string>
+    <string name="nothing_tricky">अभी कोई कठिन प्रश्न नहीं है।</string>
+    <string name="nothing_tricky_in_scope">चुनी गई श्रेणियों में कोई कठिन प्रश्न नहीं है।</string>
+    <string name="ok">ठीक है</string>
+    <string name="open_menu">मेन्यू खोलें</string>
+    <string name="optimize_fsrs_done">%1$d समीक्षा बिंदुओं पर %2$d कार्डों से फिट किया गया। आपके मौजूदा वेट्स की तुलना में log loss: %3$s → %4$s।</string>
+    <string name="optimize_fsrs_done_kept">%1$d समीक्षा बिंदुओं पर %2$d कार्डों से फिट किया गया। आपके मौजूदा वेट्स की तुलना में log loss: %3$s → %4$s। कोई सुधार नहीं हुआ, इसलिए आपके मौजूदा वेट्स बरकरार रखे गए।</string>
+    <string name="optimize_fsrs_failed">अनुकूलन विफल: %1$s</string>
+    <string name="optimize_fsrs_needs_reviews">दर्ज समीक्षाएँ: %1$d / %2$d आवश्यक।</string>
+    <string name="optimize_fsrs_parameters">FSRS पैरामीटर अनुकूलित करें</string>
+    <string name="optimize_fsrs_parameters_help">यह शेड्यूलिंग वेट्स को आपके अपने समीक्षा इतिहास के अनुसार फिट करता है, जैसे Anki\'s Optimize करता है। %1$d समीक्षाओं के बाद अनलॉक होता है।</string>
+    <string name="optimizing_fsrs">अनुकूलित किया जा रहा है… %1$d/%2$d</string>
+    <string name="optimizing_fsrs_start">अनुकूलित किया जा रहा है…</string>
+    <string name="option_correct_chosen">सही उत्तर, आपने यही चुना</string>
+</resources>

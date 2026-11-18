@@ -26,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -108,14 +109,25 @@ fun SearchScreen(
             val possiblyMore = append.hasMore() && refresh.hasMore()
             Spacer(Modifier.height(8.dp))
             when {
-                debouncing || (refresh is LoadState.Loading && hits.itemCount == 0) ->
+                debouncing ->
+                    Text(stringResource(R.string.searching), style = MaterialTheme.typography.bodyMedium)
+                // A blank query used to fall through to a silent empty list.
+                searchShowsTypeHint(state.query, debouncing) ->
+                    Text(
+                        stringResource(R.string.followup_search_type_to_hint),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                refresh is LoadState.Loading && hits.itemCount == 0 ->
                     Text(stringResource(R.string.searching), style = MaterialTheme.typography.bodyMedium)
                 refresh is LoadState.NotLoading && hits.itemCount == 0 && state.query.isNotBlank() ->
                     Text(stringResource(R.string.no_matches), style = MaterialTheme.typography.bodyMedium)
                 hits.itemCount > 0 ->
                     Text(
-                        "${hits.itemCount}${if (possiblyMore) "+" else ""} " +
-                            "match${if (hits.itemCount == 1 && !possiblyMore) "" else "es"}",
+                        pluralStringResource(
+                            if (possiblyMore) R.plurals.search_result_count_more
+                            else R.plurals.search_result_count,
+                            hits.itemCount, hits.itemCount
+                        ),
                         style = MaterialTheme.typography.labelMedium,
                         // The count changes as paged results arrive; speak the
                         // new total without stealing focus.

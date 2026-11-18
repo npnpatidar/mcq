@@ -42,6 +42,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class ResultsUiState(
     val loading: Boolean = true,
@@ -54,7 +55,9 @@ data class ResultsUiState(
     val categoryBreakdown: List<Pair<String, Pair<Int, Int>>> = emptyList(),
     /** The derived report (section 11.14); null until the attempt loads. */
     val report: TestReport? = null,
-    val filter: String = ReviewFilters.ALL
+    val filter: String = ReviewFilters.ALL,
+    /** True while one export is running; the screen disables and shows it. */
+    val exporting: Boolean = false
 )
 
 /**
@@ -207,9 +210,28 @@ class ResultsViewModel(
         }
     }
 
+    /**
+     * Only one export may run at a time. A double-tap on the menu (or a CSV and
+     * a PDF tap in quick succession) used to write the same file from two
+     * coroutines; [ExportGate] rejects every caller but the first, and the
+     * screen disables the controls while [ResultsUiState.exporting] is set.
+     */
+    private val exportGate = ExportGate()
+
+    private suspend fun guardedExport(write: suspend () -> Intent?): Intent? {
+        if (!exportGate.tryAcquire()) return null
+        _state.update { it.copy(exporting = true) }
+        return try {
+            withContext(Dispatchers.IO) { write() }
+        } finally {
+            _state.update { it.copy(exporting = false) }
+            exportGate.release()
+        }
+    }
+
     /** Slice 5: export the report as CSV and return a share intent, or null. */
-    suspend fun exportCsvIntent(): Intent? = withContext(Dispatchers.IO) {
-        val report = _state.value.report ?: return@withContext null
+    suspend fun exportCsvIntent(): Intent? = guardedExport {
+        val report = _state.value.report ?: return@guardedExport null
         try {
             val entities = repository.getAttemptResultEntities(attemptId)
             val tagsById = repository.getQuestionTagsByIds(entities.map { it.questionId }.distinct())
@@ -236,8 +258,8 @@ class ResultsViewModel(
     }
 
     /** Slice 5: export the report as a simple PDF and return a share intent. */
-    suspend fun exportPdfIntent(): Intent? = withContext(Dispatchers.IO) {
-        val report = _state.value.report ?: return@withContext null
+    suspend fun exportPdfIntent(): Intent? = guardedExport {
+        val report = _state.value.report ?: return@guardedExport null
         try {
             val file = reportFile("pdf")
             FileOutputStream(file).use { out -> ReportPdf.write(report, out) }
@@ -273,6 +295,23 @@ class ResultsViewModel(
 
     companion object {
         private const val RESULTS_PAGE = 40
+    }
+}
+
+/**
+ * A one-slot latch for exports. Kept as a small pure class so the double-tap
+ * guard can be tested without a ViewModel, a database or a share intent.
+ */
+internal class ExportGate {
+    private val busy = AtomicBoolean(false)
+
+    val isBusy: Boolean get() = busy.get()
+
+    /** True only for the first caller until [release]. */
+    fun tryAcquire(): Boolean = busy.compareAndSet(false, true)
+
+    fun release() {
+        busy.set(false)
     }
 }
 

@@ -344,8 +344,26 @@ class StudyViewModel(
      *  session. Reset when a new session loads. */
     private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /**
+     * Set by the real [onCleared] (a ViewModelStore.clear(), not the normal
+     * Back/Done path, which goes through [stop]). A grade in flight at that
+     * moment is tallied on the durable [sessionScope] *after* onCleared ran —
+     * possibly before any review was counted, so onCleared's endSitting saw
+     * nothing to write. The grade's continuation must end the sitting once the
+     * review is tallied; [sittingEnded] covers both exit paths.
+     */
+    private val cleared = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** The end-of-sitting controller run; a restart waits for it. */
     private var sessionEndJob: Job? = null
+
+    /**
+     * Whether the sitting was ended while a grade was in flight: the normal
+     * exit latches [stopped], a bare clear latches [cleared]. Either way the
+     * persisted review has to be followed by exactly one study_sessions row,
+     * written after the tally and guarded by endSitting's CAS.
+     */
+    private fun sittingEnded(): Boolean = stopped.get() || cleared.get()
 
     init {
         load()
@@ -1056,11 +1074,12 @@ class StudyViewModel(
                         "leech=${next.leech}"
                 )
                 advanceStats(proposed)
-                // stop() during the write ends the session; serving a new
-                // card would undo it (consolidated_bugs.md I4). The stop may
-                // have ended the sitting before this review was tallied, so
-                // record the row now; endSitting's CAS keeps it to one row.
-                if (stopped.get()) {
+                // A stop or a bare clear during the write ends the session;
+                // serving a new card would undo it (consolidated_bugs.md I4).
+                // Either may have ended the sitting before this review was
+                // tallied, so record the row now; endSitting's CAS keeps it
+                // to exactly one row.
+                if (sittingEnded()) {
                     endSitting()
                     _state.update { it.copy(grading = false) }
                     return@launch
@@ -1143,10 +1162,10 @@ class StudyViewModel(
                         "leech=${next.leech}"
                 )
                 advanceStats(grade)
-                // A stop that landed during the write may have ended the
-                // sitting before this review was tallied; record the row now
-                // (the CAS guard keeps it to exactly one).
-                if (stopped.get()) {
+                // A stop or a bare clear that landed during the write may
+                // have ended the sitting before this review was tallied;
+                // record the row now (the CAS guard keeps it to exactly one).
+                if (sittingEnded()) {
                     endSitting()
                     _state.update { it.copy(grading = false) }
                     return@launch
@@ -1499,12 +1518,13 @@ class StudyViewModel(
 
     /**
      * Writes this sitting's study time once. Called from both exit paths, from
-     * the stopped branch of an in-flight grade, and from [onCleared]; the flag
+     * the end branch of an in-flight grade, and from [onCleared]; the flag
      * makes the race harmless. A sitting with no reviews is not recorded — and
-     * does not burn the flag — so on a stop the grade writes the row once its
-     * review is tallied. A bare clear has no such follow-up: a grade still in
-     * flight at the clear lands its review but leaves no session row, because
-     * nothing calls endSitting again after the tally.
+     * does not burn the flag — so when a grade is still in flight at the exit,
+     * the write's continuation calls this again once the review is tallied.
+     * That covers a bare clear as well as stop(): the [sittingEnded] check in
+     * the grade paths is not gated on [stopped] alone. The CAS keeps the two
+     * calls to exactly one row.
      */
     private fun endSitting() {
         if (_state.value.reviewed <= 0) return
@@ -1523,6 +1543,11 @@ class StudyViewModel(
     }
 
     override fun onCleared() {
+        // Latch the bare-clear path before flushing: a grade in flight on the
+        // durable scope may tally its review after this returns, and its
+        // continuation then has to end the sitting even though stop() was
+        // never called.
+        cleared.set(true)
         // The screen can be destroyed without either exit path running. Bank
         // the clocks first, then flush; the write is idempotent.
         bankSessionClock()

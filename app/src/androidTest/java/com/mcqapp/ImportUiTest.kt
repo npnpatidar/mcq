@@ -201,8 +201,20 @@ class ImportUiTest {
             compose.onAllNodesWithText(app.getString(R.string.import_complete))
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("1 new questions added", substring = true).assertExists()
-        compose.onNodeWithText("already existed (skipped)", substring = true).assertExists()
+        // Locale-proof the count lines: the report is rendered from plurals, so
+        // match the same quantity string the dialog uses rather than English text.
+        val oneNew = app.resources.getQuantityString(
+            R.plurals.followup_import_new_questions, 1, 1
+        )
+        val oneDuplicate = app.resources.getQuantityString(
+            R.plurals.followup_import_duplicate_questions, 1, 1
+        )
+        // This fixture imports one genuinely new question into a fresh paper, so
+        // the report must list that one addition and no duplicate line: the
+        // duplicate count is only rendered when it is non-zero. A "skipped"
+        // line would claim a duplicate this import never produced.
+        compose.onNodeWithText(oneNew, substring = true).assertExists()
+        compose.onNodeWithText(oneDuplicate, substring = true).assertDoesNotExist()
     }
 
     /** Only an Anki-classified source shows the scheduling-memory notice. */

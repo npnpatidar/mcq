@@ -84,8 +84,27 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         val text: String?,
         val state: com.mcqapp.domain.CardState?,
         val retrievability: Double?,
-        val history: List<com.mcqapp.domain.stats.ReviewHistoryEntry>
-    )
+        val history: List<com.mcqapp.domain.stats.ReviewHistoryEntry>,
+        /** Non-null when the load failed: the sheet stays mounted so Retry is reachable. */
+        val error: String? = null
+    ) {
+        companion object {
+            /**
+             * The sheet's state after a failed load: its identity is kept and
+             * an inline error is carried, rather than dropping the sheet.
+             */
+            internal fun failedLoad(paperId: String, questionId: String, message: String): CardDetail =
+                CardDetail(
+                    paperId = paperId,
+                    questionId = questionId,
+                    text = null,
+                    state = null,
+                    retrievability = null,
+                    history = emptyList(),
+                    error = message
+                )
+        }
+    }
 
     private val _cardDetail = MutableStateFlow<CardDetail?>(null)
     val cardDetail: StateFlow<CardDetail?> = _cardDetail.asStateFlow()
@@ -144,13 +163,24 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 throw e
             } catch (e: Exception) {
                 Logger.e("STATS", "Failed to load card detail", e)
-                // Same interference rule as above: only clear the sheet when
-                // it still belongs to this open's question.
+                // Keep the sheet mounted on failure: clearing it made it flash
+                // and vanish with no way to retry. The interference guard still
+                // applies — only touch a sheet that still shows this question.
                 if (_cardDetail.value?.questionId == questionId) {
-                    _cardDetail.value = null
+                    _cardDetail.value = CardDetail.failedLoad(
+                        paperId = paperId,
+                        questionId = questionId,
+                        message = e.message ?: "error"
+                    )
                 }
             }
         }
+    }
+
+    /** Re-runs the load for the sheet that is still on screen. */
+    fun retryCard() {
+        val detail = _cardDetail.value ?: return
+        openCard(detail.paperId, detail.questionId)
     }
 
     fun dismissCard() {

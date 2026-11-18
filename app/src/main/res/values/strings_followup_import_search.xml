@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Import completion report. One line per non-zero count, plural-aware. -->
+    <plurals name="followup_import_new_papers">
+        <item quantity="one">• %1$d new paper</item>
+        <item quantity="other">• %1$d new papers</item>
+    </plurals>
+    <plurals name="followup_import_updated_papers">
+        <item quantity="one">• %1$d paper updated</item>
+        <item quantity="other">• %1$d papers updated</item>
+    </plurals>
+    <plurals name="followup_import_new_questions">
+        <item quantity="one">• %1$d new question added</item>
+        <item quantity="other">• %1$d new questions added</item>
+    </plurals>
+    <plurals name="followup_import_updated_questions">
+        <item quantity="one">• %1$d question updated</item>
+        <item quantity="other">• %1$d questions updated</item>
+    </plurals>
+    <plurals name="followup_import_duplicate_questions">
+        <item quantity="one">• %1$d question already existed (skipped)</item>
+        <item quantity="other">• %1$d questions already existed (skipped)</item>
+    </plurals>
+    <plurals name="followup_import_answers_refreshed">
+        <item quantity="one">• %1$d answer refreshed</item>
+        <item quantity="other">• %1$d answers refreshed</item>
+    </plurals>
+    <!-- Backup restore reassurance: progress really came back. -->
+    <plurals name="followup_import_restored_schedules">
+        <item quantity="one">• %1$d study schedule restored</item>
+        <item quantity="other">• %1$d study schedules restored</item>
+    </plurals>
+    <plurals name="followup_import_restored_bookmarks">
+        <item quantity="one">• %1$d bookmark restored</item>
+        <item quantity="other">• %1$d bookmarks restored</item>
+    </plurals>
+    <plurals name="followup_import_restored_attempts">
+        <item quantity="one">• %1$d test attempt restored</item>
+        <item quantity="other">• %1$d test attempts restored</item>
+    </plurals>
+    <!-- Anki deck conversion counts, shown in the import report. -->
+    <plurals name="followup_import_dropped_stems">
+        <item quantity="one">• %1$d card dropped — its stem had no text or picture</item>
+        <item quantity="other">• %1$d cards dropped — their stems had no text or picture</item>
+    </plurals>
+    <plurals name="followup_import_recall_converted">
+        <item quantity="one">• %1$d note converted to a recall card</item>
+        <item quantity="other">• %1$d notes converted to recall cards</item>
+    </plurals>
+
+    <!-- Search: a blank query gets a prompt instead of a silent empty list. -->
+    <string name="followup_search_type_to_hint">Type to search across all papers</string>
+</resources>

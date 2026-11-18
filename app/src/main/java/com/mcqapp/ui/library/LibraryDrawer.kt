@@ -19,7 +19,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueryStats
@@ -235,7 +235,7 @@ internal fun DrawerContent(
                     ) {
                         Icon(
                             if (expandedPaperId == paper.id) Icons.Default.KeyboardArrowDown
-                            else Icons.Default.KeyboardArrowRight,
+                            else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = null
                         )
                         Spacer(Modifier.width(8.dp))

@@ -70,8 +70,9 @@ class SharedPrefsImportRunJournal(context: Context) : ImportRunJournal {
 
 /**
  * The notice shown when a previous streaming import of the same file stopped
- * before it finished. It deliberately avoids the word "skipped": that word
- * routes a warning to the "content was dropped" panel.
+ * before it finished. It is advisory — an interrupted run saved nothing and a
+ * retry starts fresh. Severity is now carried explicitly by the warning model,
+ * so no wording rule (such as avoiding "skipped") is needed to route it.
  */
 fun interruptedImportNotice(
     record: ImportRunRecord?,

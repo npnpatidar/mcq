@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -30,11 +31,16 @@ import java.util.Locale
 
 /**
  * The per-card drill-down, Anki's Card Info: the question, its memory state
- * right now, and its full logged review history.
+ * right now, and its full logged review history. A failed load keeps the
+ * sheet up with an inline error and a Retry action instead of vanishing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> Unit) {
+internal fun CardInfoSheet(
+    detail: StatsViewModel.CardDetail,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit
+) {
     val dateTimeFormat = DateTimeFormatter.ofPattern("d MMM yy, HH:mm", Locale.ENGLISH)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -50,79 +56,92 @@ internal fun CardInfoSheet(detail: StatsViewModel.CardDetail, onDismiss: () -> U
                 style = MaterialTheme.typography.titleSmall
             )
             Spacer(Modifier.padding(top = 8.dp))
-            val state = detail.state
-            if (state == null) {
+            val error = detail.error
+            if (error != null) {
                 Text(
-                    stringResource(R.string.stats_no_schedule),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    stringResource(R.string.stats_card_detail_error),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
                 )
-            } else {
-                StatLine(R.string.stats_state, stateLabel(state.state))
-                StatLine(R.string.stats_interval_label, "${state.intervalDays} d")
-                val dueLabel = when {
-                    state.dueAt == 0L -> stringResource(R.string.stats_never)
-                    else -> Instant.ofEpochMilli(state.dueAt).atZone(ZoneId.systemDefault())
-                        .format(dateTimeFormat)
+                Spacer(Modifier.padding(top = 8.dp))
+                Button(onClick = onRetry) {
+                    Text(stringResource(R.string.retry))
                 }
-                StatLine(R.string.stats_due_label, dueLabel)
-                StatLine(
-                    R.string.stats_stability_label,
-                    // FSRS-7: stability is the model's memory strength, not a
-                    // delay. Printing it as "Xd" would claim a due date the
-                    // interval column already carries.
-                    state.stability.takeIf { it > 0.0 }
-                        ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
-                )
-                StatLine(
-                    R.string.stats_stability_fast_label,
-                    // The second trace, the one FSRS-7 added. Unknown (and so
-                    // read by the scheduler as equal to the slow one) shows as
-                    // a dash rather than as a fabricated number.
-                    state.stabilityFast.takeIf { it > 0.0 }
-                        ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
-                )
-                StatLine(
-                    R.string.stats_difficulty_label,
-                    state.difficulty.takeIf { it > 0.0 }?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
-                )
-                StatLine(
-                    R.string.stats_predicted,
-                    // Rounded: 0.999 truncated to "99%", unlike every other
-                    // percentage in the app (consolidated_bugs.md E13).
-                    detail.retrievability?.let { "${Math.round(it * 100)}%" } ?: "—"
-                )
-                StatLine(R.string.stats_lapses, state.lapses.toString())
-                StatLine(R.string.stats_reviews_label, state.reviewCount.toString())
-            }
-            Spacer(Modifier.padding(top = 16.dp))
-            Text(
-                stringResource(R.string.stats_history),
-                style = MaterialTheme.typography.titleSmall
-            )
-            // Plan §8.2: the headline figures come from the rows already
-            // loaded for this sheet, not another query.
-            val summary = CardHistorySummary.of(detail.history)
-            if (summary.reviews > 0) {
-                StatLine(
-                    R.string.stats_card_again_rate,
-                    summary.againRate?.let { formatPct(it) } ?: "—"
-                )
-                StatLine(
-                    R.string.stats_card_mean_time,
-                    summary.meanSeconds?.let { formatSeconds(it) } ?: "—"
-                )
-            }
-            Spacer(Modifier.padding(top = 4.dp))
-            if (detail.history.isEmpty()) {
-                Text(
-                    stringResource(R.string.stats_no_history),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             } else {
-                detail.history.reversed().forEach { entry ->
-                    HistoryRow(entry, dateTimeFormat)
+                val state = detail.state
+                if (state == null) {
+                    Text(
+                        stringResource(R.string.stats_no_schedule),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    StatLine(R.string.stats_state, stateLabel(state.state))
+                    StatLine(R.string.stats_interval_label, "${state.intervalDays} d")
+                    val dueLabel = when {
+                        state.dueAt == 0L -> stringResource(R.string.stats_never)
+                        else -> Instant.ofEpochMilli(state.dueAt).atZone(ZoneId.systemDefault())
+                            .format(dateTimeFormat)
+                    }
+                    StatLine(R.string.stats_due_label, dueLabel)
+                    StatLine(
+                        R.string.stats_stability_label,
+                        // FSRS-7: stability is the model's memory strength, not a
+                        // delay. Printing it as "Xd" would claim a due date the
+                        // interval column already carries.
+                        state.stability.takeIf { it > 0.0 }
+                            ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
+                    )
+                    StatLine(
+                        R.string.stats_stability_fast_label,
+                        // The second trace, the one FSRS-7 added. Unknown (and so
+                        // read by the scheduler as equal to the slow one) shows as
+                        // a dash rather than as a fabricated number.
+                        state.stabilityFast.takeIf { it > 0.0 }
+                            ?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
+                    )
+                    StatLine(
+                        R.string.stats_difficulty_label,
+                        state.difficulty.takeIf { it > 0.0 }?.let { "%.1f".format(Locale.ENGLISH, it) } ?: "—"
+                    )
+                    StatLine(
+                        R.string.stats_predicted,
+                        // Rounded: 0.999 truncated to "99%", unlike every other
+                        // percentage in the app (consolidated_bugs.md E13).
+                        detail.retrievability?.let { "${Math.round(it * 100)}%" } ?: "—"
+                    )
+                    StatLine(R.string.stats_lapses, state.lapses.toString())
+                    StatLine(R.string.stats_reviews_label, state.reviewCount.toString())
+                }
+                Spacer(Modifier.padding(top = 16.dp))
+                Text(
+                    stringResource(R.string.stats_history),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                // Plan §8.2: the headline figures come from the rows already
+                // loaded for this sheet, not another query.
+                val summary = CardHistorySummary.of(detail.history)
+                if (summary.reviews > 0) {
+                    StatLine(
+                        R.string.stats_card_again_rate,
+                        summary.againRate?.let { formatPct(it) } ?: "—"
+                    )
+                    StatLine(
+                        R.string.stats_card_mean_time,
+                        summary.meanSeconds?.let { formatSeconds(it) } ?: "—"
+                    )
+                }
+                Spacer(Modifier.padding(top = 4.dp))
+                if (detail.history.isEmpty()) {
+                    Text(
+                        stringResource(R.string.stats_no_history),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    detail.history.reversed().forEach { entry ->
+                        HistoryRow(entry, dateTimeFormat)
+                    }
                 }
             }
         }

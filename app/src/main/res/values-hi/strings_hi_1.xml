@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_chart_band">अनुमानित %1$s, देखा गया %2$s</string>
+    <string name="a11y_chart_bar">बार चार्ट</string>
+    <string name="a11y_chart_calendar">समीक्षा कैलेंडर</string>
+    <string name="a11y_chart_calibration">कैलिब्रेशन चार्ट</string>
+    <string name="a11y_chart_donut">डोनट चार्ट</string>
+    <string name="a11y_chart_line">लाइन चार्ट</string>
+    <string name="a11y_chart_more">इसके अलावा %1$d और</string>
+    <plurals name="a11y_chart_n_reviews">
+        <item quantity="one">%1$d समीक्षा</item>
+        <item quantity="other">%1$d समीक्षाएँ</item>
+    </plurals>
+    <string name="a11y_chart_point">%1$s: %2$s</string>
+    <string name="a11y_chart_series">श्रृंखला %1$d</string>
+    <string name="a11y_chart_series_points">%1$s: %2$s</string>
+    <string name="a11y_chart_summary">%1$s. %2$s</string>
+    <string name="a11y_chart_total">कुल %1$s</string>
+    <string name="a11y_formula_editor">फ़ॉर्मूला एडिटर। कोई गणितीय अभिव्यक्ति लिखें।</string>
+    <string name="a11y_formula_editor_value">फ़ॉर्मूला एडिटर। वर्तमान फ़ॉर्मूला: %1$s</string>
+    <string name="a11y_rich_content">फ़ॉर्मूलों सहित प्रदर्शित प्रश्न सामग्री</string>
+    <string name="action_failed">कार्रवाई विफल रही</string>
+    <string name="add_block">ब्लॉक जोड़ें</string>
+    <string name="add_category">श्रेणी जोड़ें</string>
+    <string name="add_column">कॉलम जोड़ें</string>
+    <string name="add_option">विकल्प जोड़ें</string>
+    <string name="add_question">प्रश्न जोड़ें</string>
+    <string name="add_row">पंक्ति जोड़ें</string>
+    <string name="add_tag">टैग जोड़ें…</string>
+    <string name="add_tag_button">जोड़ें</string>
+    <string name="advanced_anki_settings">उन्नत Anki सेटिंग्स</string>
+    <string name="all_categories">सभी श्रेणियाँ</string>
+    <string name="anki_memory_notice_body">Anki डेक में सहेजी गई शेड्यूलिंग की याददाश्त आयात नहीं की जाती। अगली समीक्षाएँ हर कार्ड के अंतराल से 90 प्रतिशत की निश्चित धारण क्षमता पर निकाली जाती हैं, इसलिए Anki ने जो याददाश्त सहेजी थी उसे बिलकुल वैसा रखने के बजाय लगभग-सा अनुमानित किया जाता है।</string>
+    <string name="anki_memory_notice_title">समीक्षा शेड्यूल के बारे में</string>
+    <string name="answered_in_xs">%1$d सेकंड में उत्तर दिया</string>
+    <string name="answered_progress_text">%1$d/%2$d उत्तर दिए गए</string>
+    <string name="app_about_help">MCQ App आपके अपने बहुविकल्पीय पेपरों को अभ्यास सामग्री बना देता है, वह भी पूरी तरह ऑफ़लाइन। JSON प्रश्न बैंक आयात करें, फिर उसे spaced repetition से पढ़ें या समय-सीमा वाला टेस्ट दें जिसमें गलत उत्तर पर अंक कटते हैं और पूरा परिणाम विश्लेषण मिलता है। हर उत्तर के साथ उसकी व्याख्या होती है, और आपका इतिहास, सटीकता व सबसे कमज़ोर श्रेणियाँ डिवाइस पर ही रहती हैं।</string>
+    <string name="app_about_made_by">नरेश द्वारा बनाया गया</string>
+    <string name="apply">लागू करें</string>
+    <string name="assign_to_passage">गद्यांश से जोड़ें</string>
+    <string name="attempt_not_found">प्रयास नहीं मिला</string>
+    <string name="attempt_review">प्रयास की समीक्षा</string>
+    <string name="attempts">प्रयास</string>
+    <plurals name="attempts_count">
+        <item quantity="one">%1$d प्रयास</item>
+        <item quantity="other">%1$d प्रयास</item>
+    </plurals>
+    <string name="auto_advance">स्वतः आगे बढ़ें</string>
+    <string name="avoid_recent_questions">हाल ही में पूछे गए प्रश्नों से बचें</string>
+    <string name="avoid_recent_questions_help">Random, Balanced, Easiest या Blueprint टेस्ट उन्हीं प्रश्नों को छोड़ देता है जो इसी लंबाई के आपके पिछले तीन मिलते-जुलते टेस्टों में पूछे गए हों — बशर्ते पर्याप्त अन्य प्रश्न बचे हों। ऐसा टेस्ट एक ताज़ा नमूना होता है, जिसकी तुलना भी सिर्फ़ किसी दूसरे ताज़ा नमूने से की जाती है।</string>
+    <string name="back">वापस</string>
+    <string name="back_to_library">लाइब्रेरी पर वापस जाएँ</string>
+    <string name="back_to_submit">सबमिट पर वापस जाएँ</string>
+    <string name="backup_failed">बैकअप विफल रहा</string>
+    <string name="backup_full">बैकअप (zip)</string>
+    <string name="backup_full_description">सब कुछ — पेपर, प्रश्न, शेड्यूल, समीक्षा इतिहास, प्रयास, बुकमार्क और सेटिंग्स — एक आसानी से पढ़ी जा सकने वाली zip फ़ाइल में। जिस स्थिति से यह ली गई थी, बिलकुल उसी स्थिति में बहाल कर देता है।</string>
+    <string name="blank_fields_keep_existing_values">खाली छोड़े गए फ़ील्ड पुराने मान ही रखते हैं।</string>
+    <string name="block_label">ब्लॉक %1$d (%2$s)</string>
+    <string name="blueprint_editor_delete_confirm">“%1$s” को हटाएँ? इसके खंड चले जाएँगे; पिछले प्रयासों का दर्ज किया गया ढाँचा बना रहेगा।</string>
+    <string name="blueprint_editor_empty">इस पेपर में अभी कोई श्रेणी नहीं है। ब्लूप्रिंट बनाने से पहले प्रश्नों वाली एक श्रेणी जोड़ें।</string>
+    <string name="blueprint_editor_error_name">ब्लूप्रिंट को कोई नाम दें।</string>
+    <string name="blueprint_editor_error_no_sections">सेव करने से पहले कम से कम एक खंड जोड़ें।</string>
+    <string name="blueprint_editor_name">ब्लूप्रिंट का नाम</string>
+    <string name="blueprint_editor_new_title">नया ब्लूप्रिंट</string>
+    <string name="blueprint_editor_orphans">अब इस पेपर में नहीं हैं, सेव करते समय हटा दिए जाएँगे: %1$s</string>
+    <string name="blueprint_editor_parts_help">भाग (parts) अपने समूह के भीतर हर खंड का वज़न तय करते हैं; 0 रखने पर खंड बाहर रहता है। किसी बच्चे (child) को चुनने का अर्थ है उसका मूल (parent) भी शामिल करना।</string>
+    <string name="blueprint_editor_questions">%1$d प्रश्न, कुल %2$d में से · टेस्ट का %3$d%%</string>
+    <string name="blueprint_editor_share">%1$d/%2$d भाग · %3$d%% · %4$d%% · %5$d प्रश्न</string>
+    <string name="blueprint_editor_share_help">भाग · अपने समूह में हिस्सा · पूरे पेपर में हिस्सा · इस लंबाई पर प्रश्न</string>
+    <string name="blueprint_editor_short">इस लंबाई पर %1$d की कमी है</string>
+    <string name="blueprint_editor_title">ब्लूप्रिंट संपादित करें</string>
+    <string name="blueprint_editor_total">कुल: %1$d भाग (%2$s)</string>
+    <string name="bookmark_question">प्रश्न को बुकमार्क करें</string>
+    <string name="bookmarks">बुकमार्क</string>
+    <plurals name="bookmarks_count">
+        <item quantity="one">%1$d बुकमार्क</item>
+        <item quantity="other">%1$d बुकमार्क</item>
+    </plurals>
+    <plurals name="break_suggestion">
+        <item quantity="one">%1$d कार्ड की समीक्षा हो गई — ब्रेक लेने का अच्छा समय है।</item>
+        <item quantity="other">%1$d कार्डों की समीक्षा हो गई — ब्रेक लेने का अच्छा समय है।</item>
+    </plurals>
+    <string name="browse">ब्राउज़ करें</string>
+    <string name="browse_title">प्रश्न ब्राउज़ करें</string>
+    <string name="bullet_item">• %1$s</string>
+    <string name="cancel">रद्द करें</string>
+    <string name="cannot_open_file">फ़ाइल खोली नहीं जा सकी</string>
+    <string name="categories">श्रेणियाँ</string>
+    <string name="category">श्रेणी</string>
+    <string name="category_actions">%1$s के लिए और कार्रवाइयाँ</string>
+    <string name="category_name_for_all_questions">सभी प्रश्नों के लिए श्रेणी का नाम</string>
+    <string name="change_grade">ग्रेड बदलें</string>
+    <string name="check">जाँचें</string>
+    <string name="clear_search">खोज साफ़ करें</string>
+    <string name="clock_paused">रुका हुआ</string>
+    <string name="clock_running">चल रहा है</string>
+    <string name="close">बंद करें</string>
+    <string name="collapse_category">उपश्रेणियाँ समेटें</string>
+    <string name="color_theme">रंग थीम</string>
+    <string name="continue_label">जारी रखें</string>
+    <string name="copy">कॉपी करें</string>
+    <plurals name="copy_n_questions_to">
+        <item quantity="one">%1$d प्रश्न को इसमें कॉपी करें…</item>
+        <item quantity="other">%1$d प्रश्नों को इसमें कॉपी करें…</item>
+    </plurals>
+    <string name="correct">सही</string>
+    <string name="correct_answer">सही उत्तर</string>
+    <plurals name="counts_due">
+        <item quantity="one">%d बकाया</item>
+        <item quantity="other">%d बकाया</item>
+    </plurals>
+    <plurals name="counts_new">
+        <item quantity="one">%d नया</item>
+        <item quantity="other">%d नए</item>
+    </plurals>
+    <plurals name="counts_tricky">
+        <item quantity="one">%d कठिन</item>
+        <item quantity="other">%d कठिन</item>
+    </plurals>
+    <string name="data">डेटा</string>
+    <string name="decrease_label">%1$s घटाएँ</string>
+    <string name="delete">हटाएँ</string>
+    <string name="delete_category">श्रेणी हटाएँ</string>
+    <string name="delete_category_confirm">“%1$s” और उसके भीतर हर प्रश्न को हटाएँ? इसे वापस नहीं लिया जा सकता।</string>
+    <plurals name="delete_n_questions">
+        <item quantity="one">%1$d प्रश्न हटाएँ?</item>
+        <item quantity="other">%1$d प्रश्न हटाएँ?</item>
+    </plurals>
+    <string name="delete_paper">पेपर हटाएँ</string>
+    <string name="delete_paper_also_deletes">इससे ये भी हटेंगे:</string>
+    <string name="delete_paper_confirm_title">“%1$s” हटाएँ?</string>
+    <string name="delete_passage">गद्यांश हटाएँ</string>
+    <string name="delete_question">प्रश्न हटाएँ</string>
+    <string name="delete_question_confirm">“%1$s” हटाएँ? इसका समीक्षा शेड्यूल, समीक्षा इतिहास, आँकड़े और बुकमार्क भी चले जाएँगे। इसे वापस नहीं लिया जा सकता।</string>
+    <string name="delete_question_fallback_name">यह प्रश्न</string>
+    <string name="delete_question_title">प्रश्न हटाएँ?</string>
+    <string name="deleting">हटाया जा रहा है…</string>
+    <string name="description">विवरण</string>
+    <string name="description_optional">विवरण (वैकल्पिक)</string>
+    <string name="difficulty">कठिनाई</string>
+    <string name="discard">खारिज करें</string>
+    <string name="dismiss">बंद करें</string>
+    <string name="done">हो गया</string>
+    <string name="done_for_now">अभी के लिए हो गया</string>
+    <plurals name="drill_banner_text">
+        <item quantity="one">ड्रिल — समय-सीमा के साथ %1$d प्रश्न</item>
+        <item quantity="other">ड्रिल — समय-सीमा के साथ %1$d प्रश्न</item>
+    </plurals>
+    <string name="drill_overshoot_shown">%1$d पूछे गए, %2$d दिखाए गए — गद्यांश को पूरा रखा जाता है</string>
+    <string name="duplicate_question">प्रश्न डुप्लिकेट करें</string>
+    <string name="duration_min">अवधि (मिनट)</string>
+    <string name="duration_minutes_0_untimed">अवधि (मिनट, 0 = बिना समय सीमा)</string>
+    <string name="dwell_here">%1$s यहाँ</string>
+    <string name="easy_answer_threshold">आसान उत्तर की न्यूनतम सीमा</string>
+    <string name="easy_answer_threshold_help">जब उत्तर इससे भी तेज़ी से आए तो उसे अपने आप आसान (Easy) ग्रेड दिया जाता है। समय को नज़दीकी सेकंड में गोल किया जाता है, और पहले सेकंड में आया सही उत्तर बिना समय के माना जाता है तथा उसे अच्छा (Good) ग्रेड मिलता है — इसलिए यह सीमा 2 s से कम नहीं हो सकती; 1 s रखने पर इसमें कोई उत्तर ही नहीं बचेगा। घड़ी कार्ड दिखते ही चलती है, इसलिए पढ़ने का समय भी उसी में गिना जाता है।</string>
+    <string name="edit">संपादित करें</string>
+    <string name="edit_category">श्रेणी संपादित करें</string>
+    <plurals name="edit_n_questions">
+        <item quantity="one">%1$d प्रश्न संपादित करें</item>
+        <item quantity="other">%1$d प्रश्न संपादित करें</item>
+    </plurals>
+    <string name="edit_paper">पेपर संपादित करें</string>
+    <string name="edit_passage">गद्यांश संपादित करें</string>
+    <string name="edit_question">प्रश्न संपादित करें</string>
+    <string name="edit_question_title">प्रश्न संपादित करें</string>
+    <string name="editor_index">%1$d.</string>
+    <string name="editor_queue_position">%1$d/%2$d</string>
+    <string name="editor_save_resets_schedule_note">यह बदलाव सेव करने पर इस कार्ड की पढ़ाई का शेड्यूल फिर से शुरू हो जाएगा। इसका समीक्षा इतिहास वैसा ही रहता है।</string>
+    <string name="error">त्रुटि</string>
+    <string name="expand_category">उपश्रेणियाँ फैलाएँ</string>
+    <string name="explanation">व्याख्या</string>
+    <string name="explanation_image">व्याख्या की छवि</string>
+    <string name="explore_new_cards">नए कार्ड देखें</string>
+    <string name="export">एक्सपोर्ट करें</string>
+    <string name="export_all_data_json">सारा डेटा एक्सपोर्ट करें (JSON)</string>
+    <string name="export_all_help">हर पेपर, श्रेणी, प्रश्न, गद्यांश, बुकमार्क, प्रयास और कार्ड शेड्यूल को एक JSON फ़ाइल में सुरक्षित करता है। सामग्री और इतिहास बहाल करने के लिए इसे कहीं भी दोबारा आयात करें। सेटिंग्स और समीक्षा लॉग सिर्फ़ zip बैकअप में होते हैं।</string>
+    <plurals name="export_bookmarked_questions">
+        <item quantity="one">%d बुकमार्कित प्रश्न एक्सपोर्ट करें</item>
+        <item quantity="other">%d बुकमार्कित प्रश्न एक्सपोर्ट करें</item>
+    </plurals>
+    <string name="export_bookmarks">बुकमार्क एक्सपोर्ट करें</string>
+    <string name="export_failed">एक्सपोर्ट विफल रहा</string>
+    <string name="export_logs">लॉग एक्सपोर्ट करें</string>
+    <plurals name="export_n_selected">
+        <item quantity="one">चयनित %1$d प्रश्न एक्सपोर्ट करें</item>
+        <item quantity="other">चयनित %1$d प्रश्न एक्सपोर्ट करें</item>
+    </plurals>
+    <string name="feedback">फ़ीडबैक</string>
+    <string name="flag_question">प्रश्न फ़्लैग करें</string>
+    <string name="flow_questions_down_the_left_column_then_the_right">प्रश्न बाएँ कॉलम में ऊपर से नीचे क्रम में, उसके बाद दाएँ कॉलम में रखें</string>
+    <plurals name="followup_import_answers_refreshed">
+        <item quantity="one">• %1$d उत्तर रीफ़्रेश हुआ</item>
+        <item quantity="other">• %1$d उत्तर रीफ़्रेश हुए</item>
+    </plurals>
+    <plurals name="followup_import_dropped_stems">
+        <item quantity="one">• %1$d कार्ड हटाया गया — इसके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
+        <item quantity="other">• %1$d कार্ড हटाए गए — इनके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
+    </plurals>
+</resources>

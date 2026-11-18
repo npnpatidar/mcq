@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -65,6 +66,7 @@ import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
+import com.mcqapp.ui.importscreen.ImportReportDetails
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -606,38 +608,35 @@ fun LibraryScreen(
         val impact = pending.impact
         AlertDialog(
             onDismissRequest = { viewModel.cancelDelete() },
-            title = { Text("Delete \u201c${pending.title}\u201d?") },
+            title = { Text(stringResource(R.string.delete_paper_confirm_title, pending.title)) },
             text = {
                 Column {
                     Text(
-                        if (impact.questions == 1) "1 question" else "${impact.questions} questions",
+                        pluralStringResource(R.plurals.sessions_questions, impact.questions, impact.questions),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     // Deletion also takes history, bookmarks and schedules, so
                     // say so rather than letting one tap destroy them.
                     if (impact.hasMoreThanQuestions) {
                         Spacer(Modifier.height(8.dp))
-                        Text("This also deletes:", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.delete_paper_also_deletes), style = MaterialTheme.typography.bodySmall)
                         buildList {
                             if (impact.attempts > 0) add(
-                                if (impact.attempts == 1) "1 past attempt"
-                                else "${impact.attempts} past attempts"
+                                pluralStringResource(R.plurals.past_attempts_count, impact.attempts, impact.attempts)
                             )
                             if (impact.bookmarks > 0) add(
-                                if (impact.bookmarks == 1) "1 bookmark"
-                                else "${impact.bookmarks} bookmarks"
+                                pluralStringResource(R.plurals.bookmarks_count, impact.bookmarks, impact.bookmarks)
                             )
                             if (impact.schedules > 0) add(
-                                if (impact.schedules == 1) "1 review schedule"
-                                else "${impact.schedules} review schedules"
+                                pluralStringResource(R.plurals.review_schedules_count, impact.schedules, impact.schedules)
                             )
                         }.forEach {
-                            Text("\u2022 $it", style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.bullet_item, it), style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "This cannot be undone.",
+                        stringResource(R.string.this_cannot_be_undone),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -676,27 +675,11 @@ fun LibraryScreen(
             title = { Text(stringResource(R.string.imported)) },
             text = {
                 Column {
-                    Text(
-                        buildString {
-                            append(importReportTitle ?: "Deck")
-                            append(": ")
-                            append("${report.newPapers} new")
-                            if (report.updatedPapers > 0) append(", ${report.updatedPapers} updated")
-                            append(" paper${if (report.newPapers + report.updatedPapers == 1) "" else "s"}, ")
-                            append("${report.newQuestions} new questions")
-                            if (report.updatedQuestions > 0) append(", ${report.updatedQuestions} updated")
-                            if (report.answersRefreshed > 0) {
-                                append(", ${report.answersRefreshed} answers refreshed")
-                            }
-                            if (report.duplicateQuestions > 0) {
-                                append(", ${report.duplicateQuestions} already present")
-                            }
-                            append('.')
-                            if (report.restoredSchedules > 0) {
-                                append(" Review progress kept for ${report.restoredSchedules} cards.")
-                            }
-                        }
-                    )
+                    Text(importReportTitle ?: "Deck", style = MaterialTheme.typography.titleSmall)
+                    // The same tested, plural-aware enumeration the JSON import
+                    // dialog uses: it now names restored schedules, papers and
+                    // the Anki drops/conversions that never reached the library.
+                    ImportReportDetails(report)
                     // This dialog is opened only by importAnkiPackage, so an
                     // Anki deck's scheduling memory is always in play here. The
                     // note is informational and never blocks the dialog.

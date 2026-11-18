@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.io.ImportOverrides
+import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.ImportRunJournal
 import com.mcqapp.data.io.JSON_LEGACY_VERSION
 import com.mcqapp.data.io.LegacyParser
@@ -25,6 +26,9 @@ import com.mcqapp.data.local.getExistingIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.ImportWarningSeverity
+import com.mcqapp.domain.ParserWarning
+import com.mcqapp.domain.severityOfParserWarning
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Files above this size are previewed and imported by streaming instead of
@@ -62,6 +67,61 @@ enum class ImportSource { ANKI, DOCX, JSON }
  */
 internal fun ankiMemoryDisclosureApplies(source: ImportSource?): Boolean =
     source == ImportSource.ANKI
+
+/**
+ * A single-use gate for the Import button. A fast double-tap delivers two
+ * clicks before the state flow can flip `importing`, so the state alone cannot
+ * stop the second run. The compare-and-set is synchronous and atomic: exactly
+ * one caller gets `true` until [release] is called on a path that allows a new
+ * run (a failure, or dismissing a finished report).
+ */
+internal class SingleShotGuard {
+    private val fired = AtomicBoolean(false)
+    fun tryFire(): Boolean = fired.compareAndSet(false, true)
+    fun release() {
+        fired.set(false)
+    }
+}
+
+/** One line of the completion report: a count and which plural string to use. */
+internal enum class ImportReportLineKind {
+    NEW_PAPERS, UPDATED_PAPERS, NEW_QUESTIONS, UPDATED_QUESTIONS,
+    DUPLICATE_QUESTIONS, ANSWERS_REFRESHED, RESTORED_SCHEDULES,
+    RESTORED_BOOKMARKS, RESTORED_ATTEMPTS, DROPPED_ANKI_STEMS, RECALL_CONVERTED
+}
+
+internal data class ImportReportLine(val kind: ImportReportLineKind, val count: Int)
+
+/**
+ * The completion report's lines, in display order, for the non-zero counts.
+ * Pure so the plural-aware UI is driven by tested data rather than by ad-hoc
+ * string concatenation; restored schedules and papers are named explicitly,
+ * because that is the reassurance a backup restore needs.
+ */
+internal fun importReportLines(report: ImportReport): List<ImportReportLine> = buildList {
+    fun line(kind: ImportReportLineKind, count: Int) {
+        if (count > 0) add(ImportReportLine(kind, count))
+    }
+    line(ImportReportLineKind.NEW_PAPERS, report.newPapers)
+    line(ImportReportLineKind.UPDATED_PAPERS, report.updatedPapers)
+    line(ImportReportLineKind.NEW_QUESTIONS, report.newQuestions)
+    line(ImportReportLineKind.UPDATED_QUESTIONS, report.updatedQuestions)
+    line(ImportReportLineKind.DUPLICATE_QUESTIONS, report.duplicateQuestions)
+    line(ImportReportLineKind.ANSWERS_REFRESHED, report.answersRefreshed)
+    line(ImportReportLineKind.RESTORED_SCHEDULES, report.restoredSchedules)
+    line(ImportReportLineKind.RESTORED_BOOKMARKS, report.restoredBookmarks)
+    line(ImportReportLineKind.RESTORED_ATTEMPTS, report.restoredAttempts)
+    line(ImportReportLineKind.DROPPED_ANKI_STEMS, report.droppedAnkiStems)
+    line(ImportReportLineKind.RECALL_CONVERTED, report.recallConverted)
+}
+
+/** Severity is known for notices the VM itself writes — declare it, don't guess. */
+private fun advisoryNotice(message: String): ParserWarning =
+    ParserWarning(message, ImportWarningSeverity.ADVISORY)
+
+/** Bare strings from the parsers are classified once, at the UI boundary. */
+private fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
+    messages.map { ParserWarning(it, severityOfParserWarning(it)) }
 
 object ImportDataHolder {
     /**
@@ -134,8 +194,8 @@ data class ImportUiState(
     /** Existing library category names, for the category field's suggestions. */
     val categorySuggestions: List<String> = emptyList(),
     val questions: List<QuestionDto> = emptyList(),
-    /** Row-level parse diagnostics (skipped malformed rows); empty for clean files. */
-    val parseWarnings: List<String> = emptyList(),
+    /** Row-level parse diagnostics, each tagged with its severity; empty for clean files. */
+    val parseWarnings: List<ParserWarning> = emptyList(),
     /** Ids of preview questions already in the library (same content hash). */
     val duplicateIds: Set<String> = emptySet(),
     /** Ids whose content changed vs the library row with the same id (will UPDATE). */
@@ -423,6 +483,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     private val importJournal: ImportRunJournal = SharedPrefsImportRunJournal(application)
 
+    /** Synchronous double-tap guard; state flow updates are too late to stop it. */
+    private val importGate = SingleShotGuard()
+
     private val _state = MutableStateFlow(ImportUiState())
     val state: StateFlow<ImportUiState> = _state.asStateFlow()
 
@@ -693,7 +756,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarkingText = numericTextFor(header.negativeMarking),
             categoryName = preview.effectiveCategoryTitle,
             questions = sampleQuestions,
-            parseWarnings = listOfNotNull(interruptedNotice) + preview.warnings + backupNotice,
+            parseWarnings = buildList {
+                interruptedNotice?.let { add(advisoryNotice(it)) }
+                addAll(typedParserWarnings(preview.warnings))
+                backupNotice.forEach { add(advisoryNotice(it)) }
+            },
             originalFile = null,
             totalQuestionCount = preview.totalQuestions,
             previewTruncated = sampleQuestions.size < preview.totalQuestions,
@@ -831,7 +898,11 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             negativeMarkingText = numericTextFor(paper.negativeMarking),
             categoryName = effectiveCategory,
             questions = allQuestions,
-            parseWarnings = extraWarnings + backupNotice + file.warnings,
+            parseWarnings = buildList {
+                addAll(typedParserWarnings(extraWarnings))
+                backupNotice.forEach { add(advisoryNotice(it)) }
+                addAll(typedParserWarnings(file.warnings))
+            },
             originalFile = file,
             importSource = currentSource,
             paperTitleSuggestions = _state.value.paperTitleSuggestions,
@@ -895,13 +966,23 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun import() {
+        // Synchronous, single-shot. A double-tap arrives before `importing`
+        // reaches the state flow, so only this atomic gate can stop the second
+        // run from starting a second transaction.
+        if (!importGate.tryFire()) {
+            Logger.d("IMPORTVM", "import(): ignored, a run is already in flight")
+            return
+        }
         val s = _state.value
         // The file streams: it is re-opened and written a batch at a time, with
         // only the previewed sample's edits applied. A backup streams its other
         // papers and its schedules the same way.
         val source = streamSource
         if (source != null) {
-            if (s.paperTitle.isBlank()) return
+            if (s.paperTitle.isBlank()) {
+                importGate.release()
+                return
+            }
             val runKey = loadedDirectFp ?: s.paperTitle
             _state.update {
                 it.copy(importing = true, importDone = false, importReport = null, importedQuestions = 0)
@@ -951,6 +1032,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                         // show as an error dialog. No partial import remains,
                         // so do not leave a stale journal for a retry either.
                         importJournal.clear()
+                        importGate.release()
                         throw e
                     }
                     // The whole run was one transaction, so a failure rolled
@@ -958,6 +1040,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     // library. Clear the journal too — there is no partial
                     // import for a retry to continue over.
                     importJournal.clear()
+                    importGate.release()
                     Logger.e("IMPORTVM", "Streaming import failed", e)
                     _state.update {
                         it.copy(
@@ -989,7 +1072,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val backup = original != null && isBackupFile(original)
         // Single-paper imports need something to import; a backup still carries
         // papers 2+ (and schedules) even if paper 1 was emptied in preview.
-        if (!backup && (s.paperTitle.isBlank() || s.questions.isEmpty())) return
+        if (!backup && (s.paperTitle.isBlank() || s.questions.isEmpty())) {
+            importGate.release()
+            return
+        }
         _state.update { it.copy(importing = true, importDone = false, importReport = null) }
 
         viewModelScope.launch {
@@ -1028,12 +1114,15 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 // stopping with no explanation, so a failed import was
                 // indistinguishable from a successful one.
                 Logger.e("IMPORTVM", "Import failed", e)
+                importGate.release()
                 _state.update { it.copy(importing = false, error = "Import failed: ${e.message}") }
             }
         }
     }
 
     fun consumeImportResult() {
+        // A finished report is dismissed: a new import is a legitimate new run.
+        importGate.release()
         _state.update { it.copy(importDone = false, importReport = null) }
     }
 

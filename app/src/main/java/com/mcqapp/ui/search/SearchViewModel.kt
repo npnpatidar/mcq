@@ -31,7 +31,20 @@ data class SearchUiState(
     val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL
 )
 
-private data class SearchRequest(val query: String, val scope: QuestionSearch.Scope)
+internal data class SearchRequest(val query: String, val scope: QuestionSearch.Scope)
+
+/**
+ * True while the live request differs from the last committed one — i.e. the
+ * debounce window is still open. Comparing the WHOLE request is the point: a
+ * scope-only change used to read as "not debouncing" and show the previous
+ * scope's hits with no "Searching…" cue for the whole 300 ms.
+ */
+internal fun isSearchPending(current: SearchRequest, committed: SearchRequest): Boolean =
+    current.query.isNotBlank() && current != committed
+
+/** A blank query is a prompt to type, never a "Searching…" state. */
+internal fun searchShowsTypeHint(query: String, debouncing: Boolean): Boolean =
+    query.isBlank() && !debouncing
 
 /**
  * Cross-paper search, paged. The old path asked the repository for every hit
@@ -58,11 +71,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         .distinctUntilChanged()
         .debounce(SEARCH_DEBOUNCE_MS)
 
-    val debouncing: StateFlow<Boolean> = combine(
-        _state.map { it.query.trim() },
-        committed
-    ) { raw, request -> raw.isNotBlank() && raw != request.query }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private val currentRequest: Flow<SearchRequest> = _state
+        .map { SearchRequest(it.query.trim(), it.scope) }
+
+    val debouncing: StateFlow<Boolean> = combine(currentRequest, committed) { current, request ->
+        isSearchPending(current, request)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     val pagingData: Flow<PagingData<QuestionSearch.Hit>> = committed
         .flatMapLatest { request ->

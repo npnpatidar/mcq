@@ -5,7 +5,10 @@
     <string name="final_theme_too_large">That theme file is too large (over %1$d KB). Please choose a smaller one.</string>
     <string name="final_theme_invalid">That doesn’t look like a valid theme file.</string>
     <string name="final_theme_import_failed">Couldn’t import the theme. Please try again.</string>
-    <string name="final_theme_limit">You can keep up to %1$d imported themes. Remove one before adding another.</string>
+    <plurals name="final_theme_limit">
+        <item quantity="one">You can keep up to %1$d imported theme. Remove one before adding another.</item>
+        <item quantity="other">You can keep up to %1$d imported themes. Remove one before adding another.</item>
+    </plurals>
     <string name="final_theme_not_stored">The theme couldn’t be saved. Please try again.</string>
     <string name="final_optimize_failed">Optimization couldn’t be completed. Please try again.</string>
 

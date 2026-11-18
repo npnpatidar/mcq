@@ -70,6 +70,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return AppLocale.localized(app, _appLanguage.value).getString(resId, *args)
     }
 
+    /** Quantity-aware variant for copy that agrees with a count ("1 theme" / "N themes"). */
+    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String {
+        val app = getApplication<Application>()
+        return AppLocale.localized(app, _appLanguage.value)
+            .resources.getQuantityString(resId, quantity, *args)
+    }
+
     private val _themeMode = MutableStateFlow("system")
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
@@ -180,8 +187,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } catch (e: InvalidThemeException) {
                 // The exception carries a plain res id and args, from the codec
                 // or the size/limit checks above. Resolve here so the learner
-                // gets friendly copy in the selected language.
-                onError(msg(e.resId, *e.args.toTypedArray()))
+                // gets friendly copy in the selected language. The theme cap
+                // is a plural, so it needs a quantity as well as a format arg.
+                onError(
+                    if (e.resId == R.plurals.final_theme_limit) {
+                        val count = e.args.firstOrNull() as? Int ?: MAX_CUSTOM_THEMES
+                        pluralMsg(e.resId, count, count)
+                    } else {
+                        msg(e.resId, *e.args.toTypedArray())
+                    }
+                )
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Theme import failed", e)
                 onError(msg(R.string.final_theme_import_failed))
@@ -205,7 +220,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 existing.size >= MAX_CUSTOM_THEMES
             ) {
                 throw InvalidThemeException(
-                    R.string.final_theme_limit,
+                    R.plurals.final_theme_limit,
                     listOf(MAX_CUSTOM_THEMES)
                 )
             }

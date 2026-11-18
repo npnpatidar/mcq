@@ -25,6 +25,18 @@ class FinalErrorResourcesTest {
             .associate { it.groupValues[1] to it.groupValues[2] }
     }
 
+    private fun finalPluralEntries(path: String): Map<String, Map<String, String>> {
+        val xml = File(path).readText()
+        return Regex("""<plurals name="(final_[a-z0-9_]+)"[^>]*>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(xml)
+            .associate { plural ->
+                plural.groupValues[1] to
+                    Regex("""<item quantity="([a-z]+)">(.*?)</item>""", RegexOption.DOT_MATCHES_ALL)
+                        .findAll(plural.groupValues[2])
+                        .associate { it.groupValues[1] to it.groupValues[2] }
+            }
+    }
+
     @Test
     fun englishAndHindiFinalErrorResourcesMatchNamesAndPlaceholders() {
         val en = finalEntries("src/main/res/values/strings_final_errors_b.xml")
@@ -37,6 +49,24 @@ class FinalErrorResourcesTest {
                 specifier.findAll(value).map { it.value }.toList(),
                 specifier.findAll(hi.getValue(name)).map { it.value }.toList()
             )
+        }
+    }
+
+    @Test
+    fun englishAndHindiFinalPluralsMatchQuantitiesAndPlaceholders() {
+        val en = finalPluralEntries("src/main/res/values/strings_final_errors_b.xml")
+        val hi = finalPluralEntries("src/main/res/values-hi/strings_final_errors_b_hi.xml")
+        assertTrue("the theme cap must be a plural", "final_theme_limit" in en)
+        assertEquals("English and Hindi plural name sets differ", en.keys, hi.keys)
+        en.forEach { (name, quantities) ->
+            assertEquals("$name quantities differ", quantities.keys, hi.getValue(name).keys)
+            quantities.forEach { (quantity, value) ->
+                assertEquals(
+                    "$name/$quantity must bind the same placeholders in both locales",
+                    specifier.findAll(value).map { it.value }.toList(),
+                    specifier.findAll(hi.getValue(name).getValue(quantity)).map { it.value }.toList()
+                )
+            }
         }
     }
 

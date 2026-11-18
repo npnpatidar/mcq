@@ -5,7 +5,10 @@
     <string name="final_theme_too_large">यह थीम फ़ाइल बहुत बड़ी है (%1$d KB से अधिक)। कृपया छोटी फ़ाइल चुनें।</string>
     <string name="final_theme_invalid">यह मान्य थीम फ़ाइल नहीं लगती।</string>
     <string name="final_theme_import_failed">थीम आयात नहीं हो सकी। कृपया फिर से प्रयास करें।</string>
-    <string name="final_theme_limit">आप %1$d तक आयातित थीम रख सकते हैं। नई जोड़ने से पहले एक हटाएँ।</string>
+    <plurals name="final_theme_limit">
+        <item quantity="one">आप %1$d तक आयातित थीम रख सकते हैं। नई जोड़ने से पहले एक हटाएँ।</item>
+        <item quantity="other">आप %1$d तक आयातित थीम रख सकते हैं। नई जोड़ने से पहले एक हटाएँ।</item>
+    </plurals>
     <string name="final_theme_not_stored">थीम सहेजी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
     <string name="final_optimize_failed">अनुकूलन पूरा नहीं हो सका। कृपया फिर से प्रयास करें।</string>
 

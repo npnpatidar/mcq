@@ -168,6 +168,15 @@ android {
         buildConfig = true
     }
 
+    bundle {
+        language {
+            // The in-app language picker (English/Hindi) switches locale at
+            // runtime without Play Core, so no Play language packs are ever
+            // downloaded: ship all translations in every APK instead.
+            enableSplit = false
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

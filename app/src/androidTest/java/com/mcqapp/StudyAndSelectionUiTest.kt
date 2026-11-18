@@ -569,6 +569,16 @@ class StudyAndSelectionUiTest {
         // Offered before anything has been graded: a stop is always reachable.
         waitFor("Done for now")
         compose.onNodeWithText("Alpha", substring = false).performClick()
+        // The tap dispatches to the option Row's selectable action, which flips
+        // ViewModel state and recomposes. performClick can return before that
+        // state has settled, and Check then grades an empty selection as Again
+        // — the summary would read 1/1/0 instead of 1/0/1. Wait for the
+        // selection to actually land in the semantics tree before grading.
+        val selectedOption = SemanticsMatcher.expectValue(SemanticsProperties.Selected, true)
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(selectedOption).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNode(selectedOption).assertIsDisplayed()
         compose.onNodeWithTag("study-check").performClick()
         compose.onNodeWithTag("study-next").performClick()
         waitFor("UITest ui-stop-q2?")

@@ -60,14 +60,15 @@ class ImportRemintedOptionIdsTest {
         extraOnFirstOption: List<ContentElement> = emptyList()
     ): McqFileDto {
         val options = optionIds.mapIndexed { index, id ->
+            // Options must carry their text as an element: OptionListJson writes
+            // only `elements`, and parseOptions derives `text` from them with no
+            // flat-text fallback. A flat-only option loses its text when the
+            // streaming source round-trips through the file serializer.
             OptionDto(
                 id = id,
                 text = optionTexts[index],
-                elements = if (index == 0 && extraOnFirstOption.isNotEmpty()) {
-                    listOf(ContentElement.TextElement(optionTexts[0])) + extraOnFirstOption
-                } else {
-                    emptyList()
-                }
+                elements = listOf(ContentElement.TextElement(optionTexts[index])) +
+                    if (index == 0) extraOnFirstOption else emptyList()
             )
         }
         return McqFileDto(
@@ -208,5 +209,6 @@ class ImportRemintedOptionIdsTest {
         assertEquals(0, report.answersRefreshed)
         assertEquals(2, db.questionDao().countQuestions())
         assertEquals(listOf("b"), db.correctAnswerDao().getCorrectIds("q1"))
+        assertEquals(listOf("o0"), db.correctAnswerDao().getCorrectIds("q2"))
     }
 }

@@ -50,8 +50,11 @@ class StudyRestartDuringGradeTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    private fun awaitCondition(condition: () -> Boolean): Boolean {
-        repeat(400) {
+    private fun awaitCondition(condition: () -> Boolean): Boolean = awaitCondition(400, condition)
+
+    /** The fresh pull runs on the durable IO scope, so give it a wider window. */
+    private fun awaitCondition(attempts: Int, condition: () -> Boolean): Boolean {
+        repeat(attempts) {
             shadowOf(Looper.getMainLooper()).idle()
             if (condition()) return true
             Thread.sleep(5)
@@ -73,12 +76,25 @@ class StudyRestartDuringGradeTest {
                 correctOptionIds = setOf("q1-a")
             )
         )
-        // One overdue relearning step so the pull always has a card, without
-        // depending on the introduce-new-cards toggle other tests may leave set.
+        // An overdue relearning step makes q1 the first card served. Grading it
+        // GOOD reschedules it past now, so the restarted sitting needs a second
+        // eligible card: q2 has no card_state and is therefore a fresh pull.
         val day = 86_400_000L
         val now = System.currentTimeMillis()
         repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = now - 30 * day)
         repository.recordStudyReview("p1", "q1", ReviewGrade.AGAIN, now = now - 30 * day + 3_600_000L)
+        repository.saveQuestion(
+            Question(
+                id = "q2",
+                categoryId = "c1",
+                text = "Q q2?",
+                options = listOf(
+                    QuestionOption("q2-a", "A"),
+                    QuestionOption("q2-b", "B")
+                ),
+                correctOptionIds = setOf("q2-a")
+            )
+        )
     }
 
     private suspend fun reviewCount(id: String): Int =
@@ -123,7 +139,7 @@ class StudyRestartDuringGradeTest {
         assertTrue("the original sitting must get exactly one session row", awaitCondition {
             runBlocking { sessionRowCount() } == beforeSessions + 1
         })
-        assertTrue("state=${viewModel.state.value}", awaitCondition {
+        assertTrue("state=${viewModel.state.value}", awaitCondition(1000) {
             !viewModel.state.value.finished &&
                 !viewModel.state.value.loading &&
                 viewModel.state.value.current != null

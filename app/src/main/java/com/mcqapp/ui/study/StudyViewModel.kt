@@ -1444,7 +1444,13 @@ class StudyViewModel(
 
     /** Re-pulls from the top so a session can be repeated. */
     fun restart() {
-        viewModelScope.launch {
+        // Durable IO scope, not viewModelScope: the grade write and the sitting's
+        // row write this joins both live on sessionScope (IO). Joining them from
+        // Main parks this coroutine across a dispatcher hop, and the fresh pull's
+        // own DataStore/Room resumes then depend on the UI looper; running the
+        // whole chain on IO keeps it independent of that pump. _state is a
+        // thread-safe StateFlow, so the UI still sees every update.
+        sessionScope.launch {
             try {
                 // A grade earned by the old sitting may still be on the durable
                 // session scope. Join it BEFORE clearing the exit latches: while

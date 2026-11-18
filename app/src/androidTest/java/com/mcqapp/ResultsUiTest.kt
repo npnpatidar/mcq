@@ -25,9 +25,8 @@ import com.mcqapp.ui.Verdict
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
 import com.mcqapp.ui.results.ResultsScreen
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -220,8 +219,13 @@ class ResultsUiTest {
         val reports = File(app.cacheDir, "reports")
         check(reports.createNewFile()) { "could not stage the export failure" }
 
-        val delivered = CompletableDeferred<UiMessage>()
-        setContentCapturingMessages { delivered.complete(it) }
+        // The VM now renders on IO and emits a one-shot completion event that
+        // the screen delivers through LocalUiMessageSender in a LaunchedEffect.
+        // Blocking this thread on a Deferred would starve that effect (Main is
+        // the test dispatcher), so capture into an atomic and let waitUntil
+        // pump the composition instead.
+        val delivered = AtomicReference<UiMessage>()
+        setContentCapturingMessages { delivered.set(it) }
 
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(
@@ -234,7 +238,8 @@ class ResultsUiTest {
         compose.onNodeWithText(app.getString(R.string.report_export_csv), substring = false)
             .performClick()
 
-        val message = runBlocking { withTimeout(30_000) { delivered.await() } }
+        compose.waitUntil(30_000) { delivered.get() != null }
+        val message = delivered.get()!!
         assertEquals(app.getString(R.string.report_export_failed), message.text)
     }
 }

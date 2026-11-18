@@ -55,8 +55,12 @@ class StudyAndSelectionUiTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
+    // Locale-proof copy assertions: resolve the same resources the composables
+    // render instead of pinning English text, as ImportUiTest already does.
+    private val app get() = ApplicationProvider.getApplicationContext() as McqApplication
+
     private val repository
-        get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
+        get() = app.repository
 
     private fun single(id: String, categoryId: String) = Question(
         id = id,
@@ -571,7 +575,10 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithText("Done for now", substring = false).performClick()
         waitFor("Session complete")
-        compose.onNodeWithText("1 reviewed • 0 again • 1 remembered", substring = false)
+        // The tally is now localized; resolve the exact resource the Summary
+        // renders with the 1/0/1 this sitting actually produced.
+        val summary = app.getString(R.string.study_session_summary, 1, 0, 1)
+        compose.onNodeWithText(summary, substring = false)
             .assertIsDisplayed()
         // Done means done: the stop affordance is gone, nothing asks to go on.
         assertTrue(
@@ -740,7 +747,12 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("paper-study-ui-empty").performClick()
 
         waitFor("New cards are switched off")
-        compose.onNodeWithText("Introduce new cards", substring = false).performClick()
+        // H3 relabelled this control to say it applies to every paper; match
+        // the rendered resource so the copy change stays covered, not bypassed.
+        compose.onNodeWithText(
+            app.getString(R.string.r2_study_enable_new_cards_all_papers),
+            substring = false
+        ).performClick()
         waitFor("UITest ui-empty-q1?")
         // The offer is not a one-screen gesture: the toggle behind it persists.
         assertTrue(runBlocking { repository.schedulerConfigNow().introduceNewCards })
@@ -948,11 +960,15 @@ class StudyAndSelectionUiTest {
         // One ticked branch: the dialog says so, instead of "Export format".
         // Export is the card's icon now, aimed by its own tag.
         compose.onNodeWithTag("paper-export-ui-cexp").performScrollTo().performClick()
-        compose.onNodeWithText("Export selection (1 categories)", substring = false)
-            .assertIsDisplayed()
+        // The dialog title is a localized plural keyed by the selected count
+        // (one branch here); resolve the same resource instead of English copy.
+        val exportTitle = app.resources.getQuantityString(
+            R.plurals.r2_lib_export_selection_title, 1, 1
+        )
+        compose.onNodeWithText(exportTitle, substring = false).assertIsDisplayed()
         compose.onNodeWithText("Cancel", substring = false).performClick()
         compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("Export selection (1 categories)", substring = false)
+            compose.onAllNodesWithText(exportTitle, substring = false)
                 .fetchSemanticsNodes().isEmpty()
         }
     }
@@ -967,8 +983,11 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithTag("card-cat-ui-cexp-share-c1").performScrollTo().performClick()
         compose.onNodeWithTag("paper-export-ui-cexp-share").performScrollTo().performClick()
 
-        compose.onNodeWithText("Export selection (1 categories)", substring = false)
-            .assertIsDisplayed()
+        // Same localized plural as the production dialog, for one selection.
+        val exportTitle = app.resources.getQuantityString(
+            R.plurals.r2_lib_export_selection_title, 1, 1
+        )
+        compose.onNodeWithText(exportTitle, substring = false).assertIsDisplayed()
         // The actions are direct buttons, not FilterChips with a Selected
         // mode that a second confirm tap follows.
         compose.onNodeWithText("Save to file", substring = false).assertIsDisplayed()

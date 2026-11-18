@@ -12,6 +12,7 @@ import com.mcqapp.data.local.AppDatabase
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -292,11 +293,14 @@ class StreamingImporterEquivalenceTest {
         wholeFileImport(wholeFileDb, seed)
         streamingImport(streamingDb, seed)
         wholeFileImport(wholeFileDb, copy)
-        streamingImport(streamingDb, copy)
+        // Keep the copy's report: an all-duplicate paper is not counted as new.
+        val copyReport = StreamingImporter(streamingDb)
+            .import(source = { ByteArrayInputStream(copy.toByteArray()) })
         assertSameState()
-        // The skipped paper kept its shell and no categories.
-        assertEquals("Copy", streamingDb.paperDao().getById("p-copy")!!.title)
-        assertEquals(null, streamingDb.categoryDao().getById("cc"))
+        // The skipped paper leaves no shell and no categories.
+        assertNull(streamingDb.paperDao().getById("p-copy"))
+        assertNull(streamingDb.categoryDao().getById("cc"))
+        assertEquals(0, copyReport.newPapers)
     }
 
     private val singleCategoryBank = """

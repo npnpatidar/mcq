@@ -18,6 +18,7 @@ import com.mcqapp.util.ImportTooLargeException
 import com.mcqapp.util.SendCopyResult
 import com.mcqapp.util.SharedImport
 import com.mcqapp.util.copySendToCache
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -172,8 +173,18 @@ class FinalErrorMessagesTest {
         val viewModel = StatsViewModel(app)
         app.repository.db().close()
         viewModel.openCard("paper-1", "question-1")
-        assertTrue("a failed load must surface an error", awaitIdle { viewModel.cardDetail.value?.error != null })
-        val error = viewModel.cardDetail.value!!.error!!
+        // openCard's load runs on viewModelScope (Main.immediate) and its
+        // closed-DB read resumes there from Room's executor thread, so the
+        // test thread must keep pumping the paused main looper while it waits
+        // for the StateFlow to emit the failure. Sampling .value on a timer
+        // can time out before that continuation publishes the error.
+        val detail = runOffMainWhilePumping(condition = "a failed card detail load") {
+            viewModel.cardDetail.first { it?.error != null }
+        }
+        // The interference guard must keep the sheet on the question that
+        // failed; a dropped error would leave the placeholder (no error).
+        assertEquals("question-1", detail!!.questionId)
+        val error = detail.error!!
         assertEquals(string(R.string.final_card_detail_load_failed), error)
         assertFalse("raw cause leaked: $error", "Exception" in error || "closed" in error)
     }

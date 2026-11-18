@@ -156,10 +156,12 @@ class SessionsLoadingUiTest {
         // the state, but the screen's ON_RESUME refresh cannot clear the injected
         // error before it is asserted (the old version raced that refresh).
         val lifecycleOwner = object : LifecycleOwner {
-            private val registry = LifecycleRegistry(this).apply {
-                currentState = Lifecycle.State.STARTED
-            }
+            val registry = LifecycleRegistry(this)
             override val lifecycle: Lifecycle get() = registry
+        }
+        // LifecycleRegistry requires main-thread state transitions.
+        compose.runOnIdle {
+            lifecycleOwner.registry.currentState = Lifecycle.State.STARTED
         }
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides lifecycleOwner) {

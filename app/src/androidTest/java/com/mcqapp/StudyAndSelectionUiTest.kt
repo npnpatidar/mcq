@@ -578,7 +578,11 @@ class StudyAndSelectionUiTest {
         // The tally is now localized; resolve the exact resource the Summary
         // renders with the 1/0/1 this sitting actually produced.
         val summary = app.getString(R.string.study_session_summary, 1, 0, 1)
+        // The tally sits under the clock/verdict copy, which can push it past
+        // the fold on the emulator; bring it into view before asserting it is
+        // displayed, the same way the other study assertions do.
         compose.onNodeWithText(summary, substring = false)
+            .performScrollTo()
             .assertIsDisplayed()
         // Done means done: the stop affordance is gone, nothing asks to go on.
         assertTrue(

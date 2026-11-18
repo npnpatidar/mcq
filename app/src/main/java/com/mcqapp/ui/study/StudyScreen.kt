@@ -1094,6 +1094,11 @@ private fun StudySummary(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // The parent Box is bounded, not scrollable. Large font scales or
+            // a short viewport can push the tally and actions off screen (the
+            // longer clock header makes this easy to hit), so let the whole
+            // summary scroll instead of trapping the buttons below the fold.
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally

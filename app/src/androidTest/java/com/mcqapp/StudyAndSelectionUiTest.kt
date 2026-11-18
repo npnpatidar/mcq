@@ -578,6 +578,13 @@ class StudyAndSelectionUiTest {
         // The tally is now localized; resolve the exact resource the Summary
         // renders with the 1/0/1 this sitting actually produced.
         val summary = app.getString(R.string.study_session_summary, 1, 0, 1)
+        // The heading renders before the tally does; with the summary now
+        // scrollable, wait for the exact node to exist so the scroll does not
+        // race the async body render.
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(summary, substring = false)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
         // The tally sits under the clock/verdict copy, which can push it past
         // the fold on the emulator; bring it into view before asserting it is
         // displayed, the same way the other study assertions do.

@@ -435,7 +435,10 @@ class Importer(
                             if (sameContentId != null) {
                                 val stored = candidate.entity
                                 val storedCorrect = candidate.correctIds
-                                if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, scaledQuestion)) {
+                                if (ContentHash.nonHashedFieldsDiffer(
+                                        stored, candidate.options, storedCorrect, scaledQuestion
+                                    )
+                                ) {
                                     if (CardContent.of(stored, candidate.options, storedCorrect) !=
                                         CardContent.of(scaledQuestion)
                                     ) {
@@ -445,8 +448,13 @@ class Importer(
                                         db.cardStateDao().deleteByQuestion(sameContentId)
                                     }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
+                                    // Keep the stored option rows, so map the file's
+                                    // key onto their ids by position instead of writing
+                                    // re-minted ids that reference no option at all.
                                     db.correctAnswerDao().upsertAll(
-                                        questionDto.correctOptionIds.map { optionId ->
+                                        ContentHash.remapCorrectIdsOntoStored(
+                                            candidate.options, scaledQuestion
+                                        ).map { optionId ->
                                             com.mcqapp.data.local.CorrectAnswerEntity(
                                                 questionId = sameContentId,
                                                 optionId = optionId

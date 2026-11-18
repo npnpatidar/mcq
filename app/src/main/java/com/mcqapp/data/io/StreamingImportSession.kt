@@ -491,7 +491,9 @@ internal class StreamingImportSession(
                 }
                 val sameContentId = candidate?.entity?.id
                 if (sameContentId != null &&
-                    ContentHash.nonHashedFieldsDiffer(candidate.entity, candidate.correctIds, scaledQuestion)
+                    ContentHash.nonHashedFieldsDiffer(
+                        candidate.entity, candidate.options, candidate.correctIds, scaledQuestion
+                    )
                 ) {
                     // A refreshed answer means the whole-file importer would
                     // not have taken its "all questions already exist" skip,
@@ -506,8 +508,12 @@ internal class StreamingImportSession(
                         db.cardStateDao().deleteByQuestion(sameContentId)
                     }
                     db.correctAnswerDao().deleteByQuestion(sameContentId)
+                    // The stored option rows keep their ids: translate the
+                    // file's key by position, never write re-minted ids that
+                    // point at options this row does not have.
                     db.correctAnswerDao().upsertAll(
-                        dto.correctOptionIds.map { CorrectAnswerEntity(sameContentId, it) }
+                        ContentHash.remapCorrectIdsOntoStored(candidate.options, scaledQuestion)
+                            .map { CorrectAnswerEntity(sameContentId, it) }
                     )
                     val tagsCsv = dto.tags.joinToString(",")
                     db.questionDao().updateNonHashedFields(

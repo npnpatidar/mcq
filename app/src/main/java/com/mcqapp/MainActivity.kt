@@ -26,7 +26,38 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Decides whether a `SEND` intent should be turned into a shared-import
+ * request. Extracted from [MainActivity] so the "handle exactly once per task"
+ * rule is testable without launching an Activity, Compose, or Room.
+ *
+ * Android redelivers the *same* SEND intent to a recreated Activity on a
+ * config change (e.g. rotation). Handling it in `onCreate` unconditionally
+ * re-copies the file, re-requests the import and pushes `import/direct` again —
+ * losing typed Import input and yanking the learner out of Study/Test. A fresh
+ * create handles the intent; a recreation (`savedInstanceState != null`) and
+ * the one-shot guard do not. A later, distinct share arrives via
+ * `onNewIntent` and is always handled.
+ */
+internal class SendIntentRouter(private val onSendIntent: () -> Unit) {
+    private var freshStartHandled = false
+
+    /** Called from `Activity.onCreate`; [isRecreation] is `savedInstanceState != null`. */
+    fun onActivityCreate(isSend: Boolean, isRecreation: Boolean) {
+        if (isRecreation || freshStartHandled || !isSend) return
+        freshStartHandled = true
+        onSendIntent()
+    }
+
+    /** Called from `Activity.onNewIntent` for a subsequent, distinct share. */
+    fun onNewIntent(isSend: Boolean) {
+        if (isSend) onSendIntent()
+    }
+}
+
 class MainActivity : ComponentActivity() {
+    private lateinit var sendIntentRouter: SendIntentRouter
+
     override fun attachBaseContext(newBase: Context?) {
         // Below API 33 this is the only hook that changes the resources Compose
         // reads. On 33+ AppLocale leaves the context alone: the platform has
@@ -72,13 +103,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        handleSendIntent(intent)
+        sendIntentRouter = SendIntentRouter { handleSendIntent(intent) }
+        sendIntentRouter.onActivityCreate(
+            isSend = intent?.action == Intent.ACTION_SEND,
+            isRecreation = savedInstanceState != null
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleSendIntent(intent)
+        sendIntentRouter.onNewIntent(isSend = intent.action == Intent.ACTION_SEND)
     }
 
     /**

@@ -189,6 +189,32 @@ object ContentHash {
         stored: QuestionEntity,
         storedCorrectIds: Set<String>,
         dto: QuestionDto
+    ): Boolean = nonHashedFieldsDiffer(stored, dto) {
+        storedCorrectIds != dto.correctOptionIds.toSet()
+    }
+
+    /**
+     * The duplicate-refresh variant: the key is compared by the *positions*
+     * marked correct, not by raw ids. The refresh rewrites only the key and
+     * leaves the stored option rows (and their ids) in place, while a
+     * regenerated bank re-mints those ids. Comparing raw ids would both
+     * mistake an unchanged key for a correction and lose which stored option
+     * the corrected key refers to. Positions are the same rule
+     * [CardContent.of] fingerprints.
+     */
+    fun nonHashedFieldsDiffer(
+        stored: QuestionEntity,
+        storedOptions: List<OptionEntity>,
+        storedCorrectIds: Set<String>,
+        dto: QuestionDto
+    ): Boolean = nonHashedFieldsDiffer(stored, dto) {
+        correctPositions(storedOptions.map { it.id }, storedCorrectIds) != correctPositions(dto)
+    }
+
+    private fun nonHashedFieldsDiffer(
+        stored: QuestionEntity,
+        dto: QuestionDto,
+        correctKeyDiffers: () -> Boolean
     ): Boolean {
         val storedExplanation = stored.explanation.parseContentElements(json).textContent
         val dtoExplanation = dto.explanationElements.ifEmpty {
@@ -204,6 +230,34 @@ object ContentHash {
             // as one. Casing alone is not a content change.
             !stored.difficulty.equals(dto.difficulty, ignoreCase = true) ||
             stored.tags != dto.tags.joinToString(",") ||
-            storedCorrectIds != dto.correctOptionIds.toSet()
+            correctKeyDiffers()
+    }
+
+    /** Which positions in [optionIds] the key marks correct. */
+    fun correctPositions(optionIds: List<String>, correctIds: Set<String>): Set<Int> =
+        optionIds.withIndex()
+            .filter { (_, id) -> id in correctIds }
+            .mapTo(mutableSetOf<Int>()) { it.index }
+
+    /** The positions [dto]'s key marks, judged against [dto]'s own options. */
+    fun correctPositions(dto: QuestionDto): Set<Int> =
+        correctPositions(dto.options.map { it.id }, dto.correctOptionIds.toSet())
+
+    /**
+     * The incoming correct-option ids translated onto the ids of
+     * [storedOptions] by position — the same positional order
+     * [sameQuestionContent] matched. The refresh keeps the stored option rows
+     * but rewrites the key; writing the file's ids straight through leaves the
+     * key pointing at options that do not exist, so the question imports
+     * cleanly and then never grades.
+     */
+    fun remapCorrectIdsOntoStored(
+        storedOptions: List<OptionEntity>,
+        dto: QuestionDto
+    ): List<String> {
+        val positions = correctPositions(dto)
+        return storedOptions.withIndex()
+            .filter { (index, _) -> index in positions }
+            .map { (_, option) -> option.id }
     }
 }

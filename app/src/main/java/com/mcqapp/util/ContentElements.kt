@@ -26,9 +26,113 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.mcqapp.R
+import com.mcqapp.data.docx.MathNode
+import com.mcqapp.data.docx.decodeXmlEntities
+import com.mcqapp.data.docx.parseMathTree
+import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
 import kotlinx.coroutines.delay
+
+/** Which renderer [ContentElements] picks, exposed for pure-JVM tests. */
+internal enum class ContentRenderPath { PLAIN_TEXT, NATIVE, MIXED }
+
+/**
+ * The branch decision as a pure function so it can be asserted without
+ * Compose: a formula always goes to the mixed (WebView) view, a lone text run
+ * keeps the legacy plain path, anything else uses the native column.
+ */
+internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPath = when {
+    elements.any { it is ContentElement.MathElement } -> ContentRenderPath.MIXED
+    elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
+    else -> ContentRenderPath.NATIVE
+}
+
+/**
+ * Speech-friendly linearisation of MathML, used ONLY by the accessibility
+ * fallback. The visual page keeps MathJax and `mathMlLinearText` untouched;
+ * flattening a fraction to "ab" would lose its meaning, so structural
+ * elements are named. Token elements are concatenated exactly as before.
+ * Pure JVM, so it is testable on every host.
+ */
+internal fun accessibleMathText(mathml: String): String {
+    fun MathNode.speak(): String = when (this) {
+        is MathNode.Txt -> text
+        is MathNode.El -> {
+            val parts = children.filterIsInstance<MathNode.El>()
+            fun spoken(i: Int): String = parts.getOrNull(i)?.speak().orEmpty()
+            val flat = children.joinToString("") { it.speak() }
+            when (name) {
+                "mfrac" -> if (parts.size == 2) "${spoken(0)} over ${spoken(1)}" else flat
+                "msqrt" -> "square root of $flat"
+                "mroot" -> if (parts.size == 2) {
+                    "root of ${spoken(0)} with index ${spoken(1)}"
+                } else flat
+                "msup" -> if (parts.size == 2) "${spoken(0)} superscribed ${spoken(1)}" else flat
+                "msub" -> if (parts.size == 2) "${spoken(0)} subscripted ${spoken(1)}" else flat
+                "msubsup" -> if (parts.size == 3) {
+                    "${spoken(0)} subscripted ${spoken(1)} superscribed ${spoken(2)}"
+                } else flat
+                else -> flat
+            }
+        }
+    }
+    return decodeXmlEntities(parseMathTree(mathml).joinToString("") { it.speak() })
+        .replace(Regex("\\s+"), " ").trim()
+}
+
+/**
+ * Readable plain text for the mixed view's accessibility label: the WebView
+ * is one Android view with no text semantics of its own, so the actual
+ * question (text, table cells and formulas) is spelled out here instead of
+ * leaving TalkBack with a fixed generic description. Pure JVM — no Android
+ * or Compose runtime — so it is testable on every host.
+ */
+internal fun accessibleContentText(elements: List<ContentElement>): String = buildString {
+    elements.forEachIndexed { index, element ->
+        if (index > 0) append(' ')
+        when (element) {
+            is ContentElement.TextElement ->
+                append(InlineHtml.parse(element.text).text.trim())
+            is ContentElement.MathElement ->
+                append(accessibleMathText(element.mathml))
+            is ContentElement.TableElement ->
+                append(element.rows.joinToString(" ") { row ->
+                    row.joinToString(" ") { cell ->
+                        // A cell may hold a formula or a picture; turn both
+                        // into readable text before the inline parser strips
+                        // the tags it does not know. Escape the spoken math
+                        // first: a decoded "<b>" is data, not a bold tag.
+                        val withMath = cellMathPattern.replace(cell) { match ->
+                            escapeHtmlText(accessibleMathText(match.value))
+                        }
+                        InlineHtml.parse(cellImgPattern.replace(withMath, CELL_IMAGE_MARKER))
+                            .text.trim()
+                    }
+                })
+            is ContentElement.ImageElement -> append(CELL_IMAGE_MARKER)
+        }
+    }
+}.replace(Regex("\\s+"), " ").trim()
+
+/**
+ * The description to put on the mixed view, or null on the plain/native
+ * paths: only the WebView needs an injected label, so a plain-text question
+ * is never labelled twice.
+ */
+internal fun accessibleContentLabelFor(elements: List<ContentElement>): String? =
+    if (contentRenderPath(elements) == ContentRenderPath.MIXED) {
+        accessibleContentText(elements)
+    } else {
+        null
+    }
+
+/**
+ * The exact string the merged semantics node announces. Keeping the label
+ * and fallback combination in one pure function lets a JVM test assert what
+ * TalkBack hears, with no Compose test harness on this host.
+ */
+internal fun mixedContentDescription(label: String, fallback: String): String = "$label: $fallback"
 
 /**
  * Renders a list of content elements: text, images, tables, and MathML
@@ -46,11 +150,12 @@ fun ContentElements(
     maxLines: Int = Int.MAX_VALUE,
     overflow: TextOverflow = TextOverflow.Clip
 ) {
-    if (elements.any { it is ContentElement.MathElement }) {
+    val path = contentRenderPath(elements)
+    if (path == ContentRenderPath.MIXED) {
         MixedContentView(elements, textStyle, modifier)
         return
     }
-    if (elements.size == 1 && elements[0] is ContentElement.TextElement) {
+    if (path == ContentRenderPath.PLAIN_TEXT) {
         ElementText((elements[0] as ContentElement.TextElement).text, textStyle, maxLines, overflow, modifier)
         return
     }
@@ -462,11 +567,14 @@ private fun MixedContentView(
     }
     val measuredPx = heightPx
     val showContent = measuredPx != null || revealUnmeasured
-    // The rendered page is a single Android view with no accessible text:
-    // merge it into one labelled node so TalkBack says what it contains.
-    // Modifier-only — the keyed WebView's factory, bridge and teardown below
-    // are untouched, so it is never remounted on recomposition.
-    val contentLabel = stringResource(R.string.a11y_rich_content)
+    // The rendered page is one Android view with no accessible text: merge it
+    // into one labelled node, but make the label carry the real content (text,
+    // cells, formulas) instead of a fixed description that said nothing.
+    // Modifier only — the WebView's factory, bridge and teardown are untouched.
+    val fallback = checkNotNull(accessibleContentLabelFor(elements)) {
+        "MixedContentView requires formula-bearing content"
+    }
+    val contentLabel = mixedContentDescription(stringResource(R.string.a11y_rich_content), fallback)
     // Recreate the WebView when the page changes (e.g. theme toggle),
     // so the colors baked into the HTML never go stale.
     androidx.compose.runtime.key(html) {

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings: theme import. Friendly copy only; the exception is logged, never shown. -->
+    <string name="final_theme_open_failed">Couldn’t open that theme file. Please choose another file.</string>
+    <string name="final_theme_too_large">That theme file is too large (over %1$d KB). Please choose a smaller one.</string>
+    <string name="final_theme_invalid">That doesn’t look like a valid theme file.</string>
+    <string name="final_theme_import_failed">Couldn’t import the theme. Please try again.</string>
+    <string name="final_theme_limit">You can keep up to %1$d imported themes. Remove one before adding another.</string>
+    <string name="final_theme_not_stored">The theme couldn’t be saved. Please try again.</string>
+    <string name="final_optimize_failed">Optimization couldn’t be completed. Please try again.</string>
+
+    <!-- Settings: export and backup. -->
+    <string name="final_open_for_write_failed">Couldn’t open that location for writing.</string>
+    <string name="final_export_failed">Couldn’t export your data. Please try again.</string>
+    <string name="final_backup_failed">Couldn’t create the backup. Please try again.</string>
+    <string name="final_backup_rule_moved">Your study settings changed while the backup was being written, so the saved settings and study history would not match. No file was saved — please try again.</string>
+    <string name="final_read_file_failed">Couldn’t read that file. Please try again.</string>
+
+    <!-- Import screen. -->
+    <string name="final_import_parse_failed">Couldn’t read that file. Make sure it’s a valid question file and try again.</string>
+    <string name="final_import_docx_failed">Couldn’t read that Word file. Make sure it’s a valid document and try again.</string>
+    <string name="final_import_no_papers">No question papers were found in this file.</string>
+    <string name="final_pick_again">Couldn’t read the file. Please pick it again.</string>
+    <string name="final_import_failed">Import failed. Please try again.</string>
+    <string name="final_import_failed_no_changes">Import failed. No changes were made to your library.</string>
+
+    <!-- Library screen. -->
+    <string name="final_read_picked_failed">Couldn’t read the picked file. Please try again.</string>
+    <string name="final_delete_failed">Couldn’t delete it. Please try again.</string>
+    <string name="final_reorder_failed">Couldn’t reorder the paper. Please try again.</string>
+    <string name="final_add_paper_failed">Couldn’t add the paper. Please try again.</string>
+    <string name="final_update_paper_failed">Couldn’t update the paper. Please try again.</string>
+    <string name="final_paper_gone">Couldn’t update the paper because it no longer exists.</string>
+    <string name="final_add_category_failed">Couldn’t add the category. Please try again.</string>
+    <string name="final_nest_failed">Couldn’t nest the category. Please try again.</string>
+    <string name="final_promote_failed">Couldn’t promote the category. Please try again.</string>
+    <string name="final_edit_category_failed">Couldn’t save the category. Check its name and parent, then try again.</string>
+    <string name="final_move_failed">Couldn’t move the item. Please try again.</string>
+    <string name="final_import_anki_failed">Import failed. No changes were made to your library.</string>
+    <string name="final_sample_load_failed">Couldn’t load the sample questions. Please try again.</string>
+    <string name="final_anki_package_rejected">Couldn’t read this Anki package. Export the deck again as a plain .apkg file and try again.</string>
+
+    <!-- Results screen. -->
+    <string name="final_result_load_failed">Couldn’t load this result. Please try again.</string>
+
+    <!-- Bookmarks screen. -->
+    <string name="final_bookmarks_export_failed">Couldn’t export your bookmarks. Please try again.</string>
+
+    <!-- Stats screen. -->
+    <string name="final_stats_load_failed">Couldn’t load the statistics. Please try again.</string>
+    <string name="final_card_detail_load_failed">Couldn’t load this card’s details. Please try again.</string>
+
+    <!-- Restore and shared-file imports. -->
+    <string name="final_restore_failed">Couldn’t restore the backup. Please try again.</string>
+    <string name="final_restore_too_large">That backup is too large to restore (over %1$d MB). It may be corrupt.</string>
+    <string name="final_import_too_large">That file is over the %1$d MB import limit (at least %2$d MB). Import the bank in parts, or drop the pictures — they are stored inside the file and add about a third to its size.</string>
+
+    <!-- Fallback titles. Persisted titles keep a stable English token (see FALLBACK_* in the data
+         layer); these resources are the localized display forms for those tokens in the UI. -->
+    <string name="final_fallback_category_title">Uncategorized</string>
+    <string name="final_fallback_paper_title">Imported Questions</string>
+    <string name="final_fallback_deck_title">Deck</string>
+</resources>

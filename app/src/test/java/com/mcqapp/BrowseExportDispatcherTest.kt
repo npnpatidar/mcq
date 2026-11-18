@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -113,5 +114,37 @@ class BrowseExportDispatcherTest {
 
         assertFalse("the URI must never be opened when the render fails", opened)
         assertEquals("no partial content may reach the SAF URI", 0, uriOut.size())
+    }
+
+    /**
+     * A failed export shows a plain, friendly message and never the exception's
+     * own text. The sentinel is thrown from the render seam, so the test knows
+     * exactly what raw detail must not leak into the visible error.
+     */
+    @Test
+    fun aFailedExportShowsAFriendlyMessageWithoutRawException() {
+        val app = ApplicationProvider.getApplicationContext<Context>() as McqApplication
+        val viewModel = BrowseViewModel(app, "p")
+        val rawDetail = "RAW_EXPORT_DETAIL_9F3A_SENTINEL"
+
+        runBlocking {
+            viewModel.exportSelectionOn(
+                uri = Uri.parse("content://unused/export.json"),
+                questionIds = setOf("q1"),
+                title = "Selected",
+                format = ExportFormat.JSON_INLINE,
+                buildDto = { _, _ -> PaperDto(id = "p", title = "Selected") },
+                renderExport = { _, _ -> throw IOException(rawDetail) }
+            )
+        }
+
+        val error = viewModel.error.value
+        assertNotNull("a failed export must surface an error", error)
+        assertEquals(R.string.export, error!!.titleRes)
+        assertEquals(app.getString(R.string.browse_export_failed), error.message)
+        assertFalse(
+            "raw exception detail must not reach the dialog: ${error.message}",
+            error.message.contains(rawDetail)
+        )
     }
 }

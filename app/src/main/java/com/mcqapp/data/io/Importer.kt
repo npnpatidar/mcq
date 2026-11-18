@@ -23,6 +23,19 @@ import com.mcqapp.util.Logger
 import androidx.room.withTransaction
 import kotlinx.serialization.json.Json
 
+/**
+ * Stable fallback titles used when a picked file carries no paper/category name.
+ *
+ * These are deliberately the canonical English values, not localized copy: the
+ * importer writes them into the database and out-of-scope readers (the browse
+ * "Uncategorized" filter and its SQL) compare the stored title by equality. The
+ * UI maps these tokens to localized display strings (see `final_fallback_*`
+ * resources and `ImportViewModel.resolveFallbackTitle`).
+ */
+const val FALLBACK_CATEGORY_TITLE = "Uncategorized"
+const val FALLBACK_PAPER_TITLE = "Imported Questions"
+const val FALLBACK_UNTITLED_PAPER_TITLE = "Untitled Paper"
+
 data class ImportReport(
     val newPapers: Int,
     val updatedPapers: Int,
@@ -179,7 +192,7 @@ class Importer(
                 }
 
                 val effectiveCategories = if (paperDto.categories.isEmpty()) {
-                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = paperDto.topLevelQuestions()))
+                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = FALLBACK_CATEGORY_TITLE, questions = paperDto.topLevelQuestions()))
                 } else if (paperDto.questions.isNotEmpty()) {
                     // A bank that keeps a paper's standalone questions beside
                     // its categories: the whole-file JSON reader folds them
@@ -189,7 +202,7 @@ class Importer(
                     // the floor while the restore report counts them.
                     paperDto.categories + CategoryDto(
                         id = "$effectivePaperId-root",
-                        title = "Uncategorized",
+                        title = FALLBACK_CATEGORY_TITLE,
                         questions = paperDto.topLevelQuestions()
                     )
                 } else {
@@ -198,11 +211,11 @@ class Importer(
                 // Scaled twin of effectiveCategories, in the same order: the
                 // synthesized category mirrors the paper's top-level questions.
                 val scaledCategories = if (paperDto.categories.isEmpty()) {
-                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = "Uncategorized", questions = scaledPaper.topLevelQuestions()))
+                    listOf(CategoryDto(id = "$effectivePaperId-uncat", title = FALLBACK_CATEGORY_TITLE, questions = scaledPaper.topLevelQuestions()))
                 } else if (paperDto.questions.isNotEmpty()) {
                     scaledPaper.categories + CategoryDto(
                         id = "$effectivePaperId-root",
-                        title = "Uncategorized",
+                        title = FALLBACK_CATEGORY_TITLE,
                         questions = scaledPaper.topLevelQuestions()
                     )
                 } else {

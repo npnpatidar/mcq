@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.mcqapp.AppLocale
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.ui.common.LocalAnnouncer
@@ -48,6 +49,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
     val themePalette by viewModel.themePalette.collectAsStateWithLifecycle()
     val customThemes by viewModel.customThemes.collectAsStateWithLifecycle()
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
@@ -89,6 +91,13 @@ fun SettingsScreen(
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
+
+    // The ViewModel applies the platform locale and writes the preference; the
+    // only UI side effect left is to recreate this activity so every Compose
+    // resource is read again in the new language.
+    LaunchedEffect(Unit) {
+        viewModel.languageChanged.collect { AppLocale.recreate(context) }
+    }
 
     // Restore/export/reset/storage failures surface in an error dialog already;
     // announce each new message so it is not silent under TalkBack.
@@ -207,6 +216,8 @@ fun SettingsScreen(
         ) {
             AppearanceSection(
                 themeMode = themeMode,
+                appLanguage = appLanguage,
+                onAppLanguageChange = { viewModel.setAppLanguage(it) },
                 themePalette = themePalette,
                 customThemes = customThemes,
                 fontScale = fontScale,

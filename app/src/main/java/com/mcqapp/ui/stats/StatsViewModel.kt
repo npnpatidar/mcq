@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
@@ -35,6 +36,9 @@ import kotlinx.coroutines.withContext
 class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
 
     /** One tab of the statistics screen; each owns a slice of the payload. */
     enum class Tab { OVERVIEW, RETENTION, WORKLOAD, SESSIONS, MEMORY, CARDS, GUESSING, TESTS, PROGRESS }
@@ -170,7 +174,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                     _cardDetail.value = CardDetail.failedLoad(
                         paperId = paperId,
                         questionId = questionId,
-                        message = e.message ?: "error"
+                        message = msg(R.string.final_card_detail_load_failed)
                     )
                 }
             }
@@ -211,7 +215,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 throw e
             } catch (e: Exception) {
                 Logger.e("STATS", "Failed to load statistics", e)
-                _state.update { it.copy(loading = false, loadError = e.message ?: "error") }
+                _state.update { it.copy(loading = false, loadError = msg(R.string.final_stats_load_failed)) }
             }
         }
     }
@@ -320,7 +324,7 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
                 Logger.e("STATS", "Failed to load statistics", e)
                 withContext(Dispatchers.Main.immediate) {
                     if (gen == generation) {
-                        _state.update { it.copy(loading = false, loadError = e.message ?: "error") }
+                        _state.update { it.copy(loading = false, loadError = msg(R.string.final_stats_load_failed)) }
                     }
                 }
             }

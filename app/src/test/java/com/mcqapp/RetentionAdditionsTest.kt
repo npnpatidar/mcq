@@ -61,7 +61,7 @@ class RetentionAdditionsTest {
                 scheduler = FsrsScheduler(config = config),
                 config = config,
                 now = now,
-                zoneOffsetMillis = 0L,
+                zone = DayBoundary.utc(),
                 tagsOfQuestion = tags
             ),
             scopePaperId,

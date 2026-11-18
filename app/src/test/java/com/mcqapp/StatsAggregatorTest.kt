@@ -88,7 +88,7 @@ class StatsAggregatorTest {
         scheduler = FsrsScheduler(config = config),
         config = config,
         now = at,
-        zoneOffsetMillis = 0L
+        zone = DayBoundary.utc()
     )
 
     // --- empty input ---------------------------------------------------------

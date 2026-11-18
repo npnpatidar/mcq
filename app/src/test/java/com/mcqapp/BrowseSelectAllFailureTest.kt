@@ -7,8 +7,8 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.ui.browse.BrowseViewModel
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,10 +27,11 @@ import org.robolectric.annotation.Config
 class BrowseSelectAllFailureTest {
 
     private lateinit var viewModel: BrowseViewModel
+    private lateinit var app: McqApplication
 
     @Before
     fun setUp() {
-        val app = ApplicationProvider.getApplicationContext<Context>() as McqApplication
+        app = ApplicationProvider.getApplicationContext<Context>() as McqApplication
         viewModel = BrowseViewModel(app, "p1")
         // Closed after construction: the ViewModel subscribes to DAO flows in
         // its initialiser; the select-all read under test must be the failure.
@@ -66,9 +67,13 @@ class BrowseSelectAllFailureTest {
         val error = viewModel.error.value
         assertNotNull("a failed Select all must surface an error", error)
         assertEquals(R.string.action_failed, error!!.titleRes)
-        assertTrue(
-            "error message should name Select all, was: ${error.message}",
-            error.message.contains("select all", ignoreCase = true)
+        // Equality with the plain resource proves no raw exception detail is
+        // shown: the message is exactly the friendly copy, nothing appended.
+        assertEquals(app.getString(R.string.browse_select_all_failed), error.message)
+        assertFalse(
+            "raw exception detail must not reach the dialog: ${error.message}",
+            error.message.contains("Exception", ignoreCase = true) ||
+                error.message.contains("closed", ignoreCase = true)
         )
         // The callback still receives an empty set, as before — the difference
         // is that the failure is now visible to the user.

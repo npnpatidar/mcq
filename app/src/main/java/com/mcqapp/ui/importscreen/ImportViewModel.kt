@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
+import com.mcqapp.R
+import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+import com.mcqapp.data.io.FALLBACK_PAPER_TITLE
 import com.mcqapp.data.io.ImportOverrides
 import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.ImportRunJournal
@@ -188,7 +191,7 @@ data class ImportUiState(
      */
     val durationMinutesText: String = "",
     val negativeMarkingText: String = "",
-    val categoryName: String = "Uncategorized",
+    val categoryName: String = FALLBACK_CATEGORY_TITLE,
     /** Existing library paper titles, for the title field's suggestions. */
     val paperTitleSuggestions: List<String> = emptyList(),
     /** Existing library category names, for the category field's suggestions. */
@@ -241,7 +244,7 @@ internal fun buildPreviewPaperDto(
             categories = listOf(
                 CategoryDto(
                     id = paperId + "-cat",
-                    title = s.categoryName.trim().ifBlank { "Uncategorized" },
+                    title = s.categoryName.trim().ifBlank { FALLBACK_CATEGORY_TITLE },
                     questions = s.questions
                 )
             )
@@ -477,9 +480,36 @@ internal fun numericTextFor(value: Double): String = if (value == 0.0) "" else v
 
 internal fun numericTextFor(value: Int): String = if (value == 0) "" else value.toString()
 
+/**
+ * Maps a persisted fallback-title token to the resource that localizes it for
+ * display; null for any real title. The token itself stays canonical in state
+ * and storage (SQL/search compare it by equality) — only the UI resolves it.
+ * Shared by the ViewModel seam and the Compose render path so the two cannot
+ * drift apart.
+ */
+internal fun fallbackTitleRes(token: String): Int? = when (token) {
+    FALLBACK_CATEGORY_TITLE -> R.string.final_fallback_category_title
+    FALLBACK_PAPER_TITLE -> R.string.final_fallback_paper_title
+    else -> null
+}
+
 class ImportViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int, vararg args: Any): String =
+        getApplication<Application>().getString(resId, *args)
+
+    /**
+     * The UI-side seam for the data layer's stable fallback-title tokens. The
+     * tokens stay as the persisted title (out-of-scope readers compare it by
+     * equality); only the *display* form is localized here. The render path uses
+     * [fallbackTitleRes] with `stringResource` so an in-app locale choice applies
+     * on every API level; this seam keeps that mapping unit-testable.
+     */
+    internal fun resolveFallbackTitle(token: String): String =
+        fallbackTitleRes(token)?.let { msg(it) } ?: token
 
     private val importJournal: ImportRunJournal = SharedPrefsImportRunJournal(application)
 
@@ -667,7 +697,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
-                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
+                _state.update { it.copy(loading = false, error = msg(R.string.final_import_parse_failed)) }
             }
         }
     }
@@ -702,7 +732,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON from uri", e)
-                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
+                _state.update { it.copy(loading = false, error = msg(R.string.final_import_parse_failed)) }
             }
         }
     }
@@ -719,12 +749,10 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val preview = scanImportPreview(open, PREVIEW_SAMPLE_SIZE)
         val header = preview.header
         if (header == null) {
-            val detail = preview.warnings.joinToString("\n")
+            Logger.w("IMPORTVM", "No papers in preview; warnings: " +
+                preview.warnings.joinToString("\n"))
             _state.update {
-                it.copy(
-                    loading = false,
-                    error = "No papers found in this file." + if (detail.isNotEmpty()) "\n$detail" else ""
-                )
+                it.copy(loading = false, error = msg(R.string.final_import_no_papers))
             }
             return
         }
@@ -793,7 +821,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 loadedDirectFp = null
                 Logger.e("IMPORTVM", "Failed to parse JSON", e)
-                _state.update { it.copy(loading = false, error = "Could not parse the file: ${e.message}") }
+                _state.update { it.copy(loading = false, error = msg(R.string.final_import_parse_failed)) }
             }
         }
     }
@@ -822,7 +850,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 )
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "Failed to parse Word file", e)
-                _state.update { it.copy(loading = false, error = "Could not parse the Word file: ${e.message}") }
+                _state.update { it.copy(loading = false, error = msg(R.string.final_import_docx_failed)) }
             }
         }
     }
@@ -855,22 +883,19 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val file = parse()
         val paper = file.papers.firstOrNull()
         if (paper == null) {
-            Logger.e("IMPORTVM", "No papers found in JSON")
-            val detail = file.warnings.joinToString("\n")
+            Logger.w("IMPORTVM", "No papers found in JSON; warnings: " +
+                file.warnings.joinToString("\n"))
             _state.update {
-                it.copy(
-                    loading = false,
-                    error = "No papers found in this file." + if (detail.isNotEmpty()) "\n$detail" else ""
-                )
+                it.copy(loading = false, error = msg(R.string.final_import_no_papers))
             }
             return
         }
 
         val allQuestions = paper.categories.flatMap { it.questions }
         val effectiveCategory = if (paper.categories.isEmpty() || paper.categories.all { it.questions.isEmpty() }) {
-            "Uncategorized"
+            FALLBACK_CATEGORY_TITLE
         } else {
-            paper.categories.firstOrNull { it.questions.isNotEmpty() }?.title ?: "Uncategorized"
+            paper.categories.firstOrNull { it.questions.isNotEmpty() }?.title ?: FALLBACK_CATEGORY_TITLE
         }
 
         // Backups preview only the first paper for editing, but import
@@ -930,7 +955,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             _state.update {
                 it.copy(
                     loading = false,
-                    error = "Could not read the file. Please pick it again."
+                    error = msg(R.string.final_pick_again)
                 )
             }
         }
@@ -1045,8 +1070,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     _state.update {
                         it.copy(
                             importing = false,
-                            error = "Import failed: ${e.message}. " +
-                                "No changes were made to your library."
+                            error = msg(R.string.final_import_failed_no_changes)
                         )
                     }
                     return@launch
@@ -1115,7 +1139,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 // indistinguishable from a successful one.
                 Logger.e("IMPORTVM", "Import failed", e)
                 importGate.release()
-                _state.update { it.copy(importing = false, error = "Import failed: ${e.message}") }
+                _state.update { it.copy(importing = false, error = msg(R.string.final_import_failed)) }
             }
         }
     }

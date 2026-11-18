@@ -8,6 +8,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,6 +24,9 @@ data class BookmarksUiState(val count: Int = 0)
 @OptIn(ExperimentalCoroutinesApi::class)
 class BookmarksViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
 
     private val _state = MutableStateFlow(BookmarksUiState())
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
@@ -108,7 +112,7 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
                 _exportError.value = null
             } catch (e: Exception) {
                 Logger.e("BOOKVM", "Export failed", e)
-                _exportError.value = "Export failed: ${e.message}"
+                _exportError.value = msg(R.string.final_bookmarks_export_failed)
             }
         }
     }
@@ -153,7 +157,7 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
             }
         } catch (e: Exception) {
             Logger.e("BOOKVM", "Share failed", e)
-            _exportError.value = "Export failed: ${e.message}"
+            _exportError.value = msg(R.string.final_bookmarks_export_failed)
             return null
         } finally {
             _isSharing.value = false

@@ -106,12 +106,15 @@ domain-specific.
 - `gh run list --commit` is unreliable for `pull_request` runs; resolve run ids
   with `gh run list --branch <branch>`.
 - After every push, CI uploads the build artifacts (`if: always()`). Download
-  them and keep them under the names the project uses — the artifact names
-  follow the module layout (see `PROJECT_NOTES.md`):
+  them and keep them under the names the project uses: `app-debug`, `app-release`,
+  `test-results`, `lint-report`, `ui-test-results` (see `PROJECT_NOTES.md`):
 
   ```bash
   gh run download <run-id> --name app-debug   -D <download-dir>   # -> app-debug.apk
   gh run download <run-id> --name app-release -D <download-dir>   # -> app-release.apk
+  gh run download <run-id> --name test-results   -D <download-dir>
+  gh run download <run-id> --name lint-report   -D <download-dir>
+  gh run download <run-id> --name ui-test-results -D <download-dir>
   ```
 
   `gh` may lack `--clobber`: download to a scratch directory, then copy over the

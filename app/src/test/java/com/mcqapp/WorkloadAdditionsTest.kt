@@ -78,7 +78,7 @@ class WorkloadAdditionsTest {
             scheduler = FsrsScheduler(config = SchedulerConfig()),
             config = SchedulerConfig(),
             now = now,
-            zoneOffsetMillis = 0L
+            zone = DayBoundary.utc()
         ),
         scopePaperId = null,
         range = range

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Friendly, plain-language messages for errors shown by Browse, Editor,
+  Study and Test. Raw exception detail is logged only, never shown here.
+  Names are additive; this file never overrides the shared strings.xml.
+-->
+<resources>
+    <!-- Browse -->
+    <string name="browse_select_all_failed">Could not select all questions.</string>
+    <string name="browse_delete_question_failed">Could not delete the question.</string>
+    <string name="browse_duplicate_question_failed">Could not duplicate the question.</string>
+    <string name="browse_delete_questions_failed">Could not delete the questions.</string>
+    <string name="browse_move_questions_failed">Could not move the questions.</string>
+    <string name="browse_copy_questions_failed">Could not copy the questions.</string>
+    <string name="browse_export_failed">Your questions could not be exported.</string>
+    <string name="browse_edit_failed">Your changes could not be applied.</string>
+
+    <!-- Editor -->
+    <string name="editor_import_draft_missing">This edit came from an import preview, but its draft is no longer available. Go back to the import and open the question again.</string>
+    <string name="editor_load_failed">Could not load this question.</string>
+    <string name="editor_save_failed">Your changes could not be saved.</string>
+    <string name="editor_move_invalid">Save or fix the highlighted problem before moving to another question.</string>
+    <string name="editor_import_next_missing">Could not open the next question in the import.</string>
+    <string name="editor_question_unavailable">That question is no longer available.</string>
+    <string name="editor_question_not_in_list">That question is no longer in the current list.</string>
+    <string name="editor_move_failed">Could not move to another question.</string>
+    <string name="editor_image_unreadable">That image could not be read. Try another image.</string>
+    <string name="editor_delete_failed">Could not delete the question.</string>
+
+    <!-- Study -->
+    <string name="study_session_start_failed">Could not start the session.</string>
+    <string name="study_next_card_failed">Could not load the next card.</string>
+    <string name="study_grade_save_failed">Could not save your grade.</string>
+
+    <!-- Test -->
+    <string name="test_start_failed">Could not start the test.</string>
+    <string name="test_result_save_failed">Your result could not be saved. You can try again.</string>
+</resources>

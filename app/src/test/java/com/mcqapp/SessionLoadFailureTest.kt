@@ -7,6 +7,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.ui.study.StudyViewModel
 import com.mcqapp.ui.test.TestViewModel
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -77,7 +78,12 @@ class SessionLoadFailureTest {
 
         val error = viewModel.state.value.loadError
         assertNotNull("a failed load must report why", error)
-        assertTrue(error!!.startsWith("Could not start the test"))
+        assertEquals(app.getString(R.string.test_start_failed), error)
+        assertFalse(
+            "raw exception detail must not reach the screen: $error",
+            error!!.contains("Exception", ignoreCase = true) ||
+                error.contains("closed", ignoreCase = true)
+        )
         // Crucially not a silently empty session the user could mistake for
         // an empty paper.
         assertFalse(viewModel.state.value.submitted)
@@ -93,7 +99,12 @@ class SessionLoadFailureTest {
 
         val error = viewModel.state.value.loadError
         assertNotNull("a failed load must report why", error)
-        assertTrue(error!!.startsWith("Could not start the session"))
+        assertEquals(app.getString(R.string.study_session_start_failed), error)
+        assertFalse(
+            "raw exception detail must not reach the screen: $error",
+            error!!.contains("Exception", ignoreCase = true) ||
+                error.contains("closed", ignoreCase = true)
+        )
         // The old code set finished = true here, which rendered
         // "Session complete / 0 reviewed • 0 again • 0 remembered".
         assertFalse(viewModel.state.value.finished)

@@ -69,7 +69,7 @@ class StatsGuessingTest {
             scheduler = FsrsScheduler(config = SchedulerConfig()),
             config = SchedulerConfig(),
             now = now,
-            zoneOffsetMillis = 0L,
+            zone = DayBoundary.utc(),
             chanceOfQuestion = chanceOfQuestion
         ),
         scopePaperId = null,

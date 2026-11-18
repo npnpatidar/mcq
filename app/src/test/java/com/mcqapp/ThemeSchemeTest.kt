@@ -234,6 +234,15 @@ class ThemeSchemeTest {
     }
 
     @Test
+    fun rejectedImportsCarryAFriendlyResourceIdNotEnglishCopy() {
+        val rejection = assertThrows(InvalidThemeException::class.java) {
+            CustomThemeCodec.parse("not json")
+        }
+        assertEquals(R.string.final_theme_invalid, rejection.resId)
+        assertTrue(rejection.args.isEmpty())
+    }
+
+    @Test
     fun aCorruptStoredBlobDoesNotTakeTheListDown() {
         assertEquals(emptyList<CustomTheme>(), CustomThemeCodec.decodeAll(null))
         assertEquals(emptyList<CustomTheme>(), CustomThemeCodec.decodeAll(""))

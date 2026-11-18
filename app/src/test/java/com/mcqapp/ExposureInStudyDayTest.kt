@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.TimeZone
 
 /**
  * `StudyStore.exposureInStudyDay` is the only production source of the
@@ -123,5 +124,44 @@ class ExposureInStudyDayTest {
         )
         // The card never studied today would be exposure 1; neither paper is.
         assertEquals(1, repository.exposureInStudyDay("pa", "never", config, now))
+    }
+
+    /**
+     * A review just before the spring-forward boundary must not be pulled into
+     * the next study day. At 01:45Z on 2024-03-31 the local clock is already
+     * 03:45 CEST (+2), but the study day that contains it started at 04:00 CET
+     * (+1) the day before, at 03:00Z. The old offset-at-`now` boundary landed
+     * at 02:00Z and over-counted the 02:30Z review below.
+     */
+    @Test
+    fun theExposureDayUsesTheBoundaryOfTheReviewDateAcrossDst() = runBlocking {
+        val originalZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Europe/Berlin"))
+            // The store captures its zone at construction, so build it while
+            // the DST-observing zone is installed.
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val berlinRepository = McqRepository(db, context)
+            berlinRepository.ensurePaperAndCategory("pa", "Paper A", "ca", "Cat")
+            berlinRepository.saveQuestion(
+                Question(
+                    id = "q",
+                    categoryId = "ca",
+                    text = "2 + 2?",
+                    options = listOf(QuestionOption("a", "3"), QuestionOption("b", "4")),
+                    correctOptionIds = setOf("b")
+                )
+            )
+            db.reviewLogDao().insertAll(
+                listOf(
+                    review("pa", "q", 1_711_765_800_000L), // 2024-03-30 02:30Z, previous study day
+                    review("pa", "q", 1_711_769_400_000L)  // 2024-03-30 03:30Z, this study day
+                )
+            )
+            val now = 1_711_849_500_000L // 2024-03-31 01:45Z, still before 04:00
+            assertEquals(2, berlinRepository.exposureInStudyDay("pa", "q", config, now))
+        } finally {
+            TimeZone.setDefault(originalZone)
+        }
     }
 }

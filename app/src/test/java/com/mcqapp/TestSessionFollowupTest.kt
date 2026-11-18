@@ -88,6 +88,32 @@ class TestSessionFollowupTest {
         return condition()
     }
 
+    /**
+     * A failed save shows a plain, friendly message and never the IOException's
+     * own text. `failSaveForTest` throws a known sentinel, so the test can prove
+     * the raw detail stays in the log and out of the visible error.
+     */
+    @Test
+    fun aFailedSaveShowsAFriendlyMessageWithoutRawException() {
+        seed(1)
+        val vm = TestViewModel(app, "p1", listOf("c1"), durationMinutes = 0)
+        assertTrue(awaitCondition { vm.state.value.current?.id == "q0" })
+        vm.toggleOption("a")
+        TestViewModel.failSaveForTest = { true }
+
+        vm.submit()
+        assertTrue(
+            awaitCondition { vm.state.value.saveError != null && !vm.state.value.saving }
+        )
+
+        val message = vm.state.value.saveError!!
+        assertEquals(app.getString(R.string.test_result_save_failed), message)
+        assertFalse(
+            "raw exception detail must not reach the screen: $message",
+            message.contains("simulated save failure")
+        )
+    }
+
     private fun seed(count: Int) = runBlocking {
         app.repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
         repeat(count) { i ->

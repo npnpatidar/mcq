@@ -1,18 +1,42 @@
 package com.mcqapp
 
+import androidx.annotation.RequiresApi
+import android.app.Activity
 import android.app.Application
+import android.app.LocaleManager
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.res.Configuration
+import android.os.Build
+import android.os.LocaleList
 import android.os.Process
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.mcqapp.data.anki.AnkiTempFiles
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.dataStore
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+
+/**
+ * API 33+ recreates activities itself when the app's locales change, so the
+ * screen must not ask for a second recreation. Below that the override is only
+ * read at attach time, so the screen has to trigger it. [platformRecreates] is
+ * a seam for a pure-JVM test.
+ */
+internal fun needsExplicitLanguageRecreate(
+    platformRecreates: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+): Boolean = !platformRecreates
 
 open class McqApplication : Application() {
 
@@ -55,6 +79,14 @@ open class McqApplication : Application() {
      */
     @VisibleForTesting
     internal open val runsFsrs7StartupJobs: Boolean = true
+
+    /**
+     * Whether `onCreate` syncs the platform's per-app locales from the stored
+     * language. Tests pin their own DataStore fixtures and must not inherit a
+     * locale written by another class, so they opt out.
+     */
+    @VisibleForTesting
+    internal open val syncsAppLocaleAtStartup: Boolean = true
 
     /** The production wiring: a new install is one whose database is empty. */
     val repository: McqRepository by lazy {
@@ -104,6 +136,92 @@ open class McqApplication : Application() {
                 runCatching { repository.decideInstallFreshness() }
                     .onFailure { Logger.e("APP", "Could not decide install freshness", it) }
             }
+        }
+
+        // The platform persists per-app locales itself, so it normally already
+        // matches the stored choice on a cold start. Re-syncing here also covers
+        // a settings restore that changed the language in a previous session.
+        if (syncsAppLocaleAtStartup) {
+            startupScope.launch {
+                runCatching {
+                    AppLocale.applyPlatform(this@McqApplication, repository.appLanguage().first())
+                }.onFailure { Logger.e("APP", "Could not sync app language", it) }
+            }
+        }
+    }
+}
+
+/**
+ * Applies the in-app language without touching the device's language.
+ *
+ * API 33+ uses the platform's per-app locales: the system persists them across
+ * process death and applies them to every activity before it is created. Below
+ * 33 there is no platform hook (and no AppCompat dependency here), so
+ * [wrap] rewrites the activity's configuration from the stored preference at
+ * attach time — the smallest path that actually changes Compose resources.
+ */
+internal object AppLocale {
+
+    /** Synchronous read for `attachBaseContext`, where a coroutine is unavailable. */
+    internal fun storedLanguage(context: Context): AppLanguage = runBlocking {
+        val stored = runCatching {
+            context.dataStore.data
+                .map { it[stringPreferencesKey(AppLanguage.PREFERENCE_KEY)] }
+                .first()
+        }.getOrNull()
+        AppLanguage.fromStored(stored)
+    }
+
+    internal fun wrap(context: Context?): Context? {
+        // On 33+ the platform has already applied the persisted locales to the
+        // activity's base context; reading DataStore here would only add a
+        // blocking disk read to every cold start and configuration change.
+        if (context == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return context
+        }
+        return localized(context, storedLanguage(context))
+    }
+
+    /**
+     * A context whose resources use [language], for string resolution outside
+     * an activity (e.g. the Settings ViewModel). On 33+ the platform already
+     * applies the app's locales to every context, so nothing is wrapped. The
+     * caller supplies the already-loaded language — no blocking DataStore read.
+     */
+    internal fun localized(context: Context, language: AppLanguage): Context {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return context
+        val locale = language.locale() ?: return context
+        val config = Configuration(context.resources.configuration)
+        config.setLocale(locale)
+        return context.createConfigurationContext(config)
+    }
+
+    /** Applies the platform override on API 33+; a no-op on older devices. */
+    internal fun applyPlatform(context: Context, language: AppLanguage) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        applyPlatform33(context, language)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun applyPlatform33(context: Context, language: AppLanguage) {
+        val manager = context.getSystemService(LocaleManager::class.java) ?: return
+        val desired = language.locale()?.let { LocaleList.forLanguageTags(it.toLanguageTag()) }
+            ?: LocaleList.getEmptyLocaleList()
+        // Setting locales reconfigures the whole app, so skip the write when the
+        // platform already holds this choice (or a redundant SYSTEM clear).
+        if (manager.applicationLocales == desired) return
+        manager.setApplicationLocales(desired)
+    }
+
+    /** Walks out of Compose's context wrappers to the activity and recreates it. */
+    internal fun recreate(context: Context) {
+        var current: Context? = context
+        while (current != null) {
+            if (current is Activity) {
+                current.recreate()
+                return
+            }
+            current = (current as? ContextWrapper)?.baseContext
         }
     }
 }

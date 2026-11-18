@@ -191,7 +191,7 @@ class StatsRetentionStreamTest {
                 ),
                 config = library.config,
                 now = now,
-                zoneOffsetMillis = DayBoundary.zoneOffset(now),
+                zone = DayBoundary.defaultZone(),
                 tagsOfQuestion = db.questionTagDao().tagsForQuestionsChunked(reviewedIds)
             ),
             scopePaperId,

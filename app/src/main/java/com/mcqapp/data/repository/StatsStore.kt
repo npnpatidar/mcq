@@ -156,13 +156,10 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            // One offset per load (the visit's own), not per historical
-            // instant: re-bucketing history through travel/DST shifts would
-            // move rows between visits. Within an hour of the 04:00 boundary
-            // a zone change mis-buckets until the next load — unobservable
-            // where the 04:00 day start sits far from a DST jump
-            // (consolidated_bugs.md E12).
-            zone = DayBoundary.zoneOffset(now),
+            // The zone (not a fixed offset) is captured per load, so every
+            // review is bucketed on its own calendar date's offset; a DST jump
+            // no longer shifts a day's rows by an hour.
+            zone = DayBoundary.defaultZone(),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
             // Only the scoped breakdown labels by category, and the map holds
             // one entry per question of the selected paper — never the whole
@@ -487,13 +484,10 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            // One offset per load (the visit's own), not per historical
-            // instant: re-bucketing history through travel/DST shifts would
-            // move rows between visits. Within an hour of the 04:00 boundary
-            // a zone change mis-buckets until the next load — unobservable
-            // where the 04:00 day start sits far from a DST jump
-            // (consolidated_bugs.md E12).
-            zone = DayBoundary.zoneOffset(now),
+            // The zone (not a fixed offset) is captured per load, so every
+            // review is bucketed on its own calendar date's offset; a DST jump
+            // no longer shifts a day's rows by an hour.
+            zone = DayBoundary.defaultZone(),
             scheduler = scheduler
         )
         replayInto(scheduler, accumulator::add)
@@ -519,7 +513,7 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.zoneOffset(now)
+            zone = DayBoundary.defaultZone()
         )
         replayInto(scheduler, accumulator::add)
         pageCardsInto(accumulator::addCard)
@@ -538,7 +532,7 @@ internal class StatsStore(
     ): MemoryData {
         val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
-        val zone = DayBoundary.zoneOffset(now)
+        val zone = DayBoundary.defaultZone()
         val overview = StatsAggregator.OverviewAccumulator(
             scopePaperId = scopePaperId,
             range = range,
@@ -624,7 +618,7 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.zoneOffset(now)
+            zone = DayBoundary.defaultZone()
         )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData()
@@ -649,7 +643,7 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.zoneOffset(now),
+            zone = DayBoundary.defaultZone(),
             collectEntries = collectEntries,
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         )
@@ -685,7 +679,7 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.zoneOffset(now),
+            zone = DayBoundary.defaultZone(),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
             categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
         )
@@ -857,9 +851,10 @@ internal class StatsStore(
  * The grading rule could not be resolved, and a report without one would pool
  * history from before the rule existed.
  *
- * `StatsViewModel` puts `e.message` into `loadError` and the Statistics screen
- * renders it in place of the tabs, so this message reaches the learner: keep it
- * a complete sentence, not a log label.
+ * The message below is a log label, not learner-facing copy: `StatsViewModel`
+ * no longer puts `e.message` into `loadError`. Every load failure resolves the
+ * friendly, localized `final_stats_load_failed` resource, and that is what the
+ * Statistics screen renders in place of the tabs.
  */
 internal class GradingRuleUnavailable :
     IllegalStateException("The grading rule could not be loaded.")

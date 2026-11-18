@@ -67,6 +67,7 @@ import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.importscreen.ImportReportDetails
+import com.mcqapp.ui.importscreen.displayTitle
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -608,7 +609,7 @@ fun LibraryScreen(
         val impact = pending.impact
         AlertDialog(
             onDismissRequest = { viewModel.cancelDelete() },
-            title = { Text(stringResource(R.string.delete_paper_confirm_title, pending.title)) },
+            title = { Text(stringResource(R.string.delete_paper_confirm_title, displayTitle(pending.title))) },
             text = {
                 Column {
                     Text(
@@ -675,7 +676,11 @@ fun LibraryScreen(
             title = { Text(stringResource(R.string.imported)) },
             text = {
                 Column {
-                    Text(importReportTitle ?: "Deck", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        importReportTitle?.let { displayTitle(it) }
+                            ?: stringResource(R.string.final_fallback_deck_title),
+                        style = MaterialTheme.typography.titleSmall
+                    )
                     // The same tested, plural-aware enumeration the JSON import
                     // dialog uses: it now names restored schedules, papers and
                     // the Anki drops/conversions that never reached the library.

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings: theme import. Friendly copy only; the exception is logged, never shown. -->
+    <string name="final_theme_open_failed">इस थीम की फ़ाइल खोली नहीं जा सकी। कृपया दूसरी फ़ाइल चुनें।</string>
+    <string name="final_theme_too_large">यह थीम फ़ाइल बहुत बड़ी है (%1$d KB से अधिक)। कृपया छोटी फ़ाइल चुनें।</string>
+    <string name="final_theme_invalid">यह मान्य थीम फ़ाइल नहीं लगती।</string>
+    <string name="final_theme_import_failed">थीम आयात नहीं हो सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="final_theme_limit">आप %1$d तक आयातित थीम रख सकते हैं। नई जोड़ने से पहले एक हटाएँ।</string>
+    <string name="final_theme_not_stored">थीम सहेजी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="final_optimize_failed">अनुकूलन पूरा नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+
+    <!-- Settings: export and backup. -->
+    <string name="final_open_for_write_failed">इस स्थान पर लिखने के लिए फ़ाइल खोली नहीं जा सकी।</string>
+    <string name="final_export_failed">आपका डेटा निर्यात नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_backup_failed">बैकअप नहीं बनाया जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_backup_rule_moved">बैकअप बनाते समय आपकी पढ़ाई की सेटिंग बदल गई, इसलिए सहेजी गई सेटिंग और अध्ययन इतिहास मेल नहीं खाते। कोई फ़ाइल सहेजी नहीं गई — कृपया फिर से प्रयास करें।</string>
+    <string name="final_read_file_failed">यह फ़ाइल पढ़ी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+
+    <!-- Import screen. -->
+    <string name="final_import_parse_failed">यह फ़ाइल पढ़ी नहीं जा सकी। सुनिश्चित करें कि यह मान्य प्रश्न फ़ाइल है और फिर से प्रयास करें।</string>
+    <string name="final_import_docx_failed">यह Word फ़ाइल पढ़ी नहीं जा सकी। सुनिश्चित करें कि यह मान्य दस्तावेज़ है और फिर से प्रयास करें।</string>
+    <string name="final_import_no_papers">इस फ़ाइल में कोई प्रश्न-पत्र नहीं मिला।</string>
+    <string name="final_pick_again">फ़ाइल पढ़ी नहीं जा सकी। कृपया उसे फिर से चुनें।</string>
+    <string name="final_import_failed">आयात विफल रहा। कृपया फिर से प्रयास करें।</string>
+    <string name="final_import_failed_no_changes">आयात विफल रहा। आपके लाइब्रेरी में कोई बदलाव नहीं किया गया।</string>
+
+    <!-- Library screen. -->
+    <string name="final_read_picked_failed">चुनी गई फ़ाइल पढ़ी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="final_delete_failed">इसे हटाया नहीं जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_reorder_failed">प्रश्न-पत्र का क्रम बदला नहीं जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_add_paper_failed">प्रश्न-पत्र जोड़ा नहीं जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_update_paper_failed">प्रश्न-पत्र अद्यतन नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_paper_gone">प्रश्न-पत्र अद्यतन नहीं हो सका क्योंकि वह अब मौजूद नहीं है।</string>
+    <string name="final_add_category_failed">श्रेणी जोड़ी नहीं जा सकी। कृपया फिर से प्रयास करें।</string>
+    <string name="final_nest_failed">श्रेणी को अंदर नहीं ले जाया जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_promote_failed">श्रेणी को बाहर नहीं लाया जा सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_edit_category_failed">श्रेणी सहेजी नहीं जा सकी। उसका नाम और मूल श्रेणी जाँचें, फिर प्रयास करें।</string>
+    <string name="final_move_failed">आइटम स्थानांतरित नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_import_anki_failed">आयात विफल रहा। आपके लाइब्रेरी में कोई बदलाव नहीं किया गया।</string>
+    <string name="final_sample_load_failed">नमूना प्रश्न लोड नहीं हो सके। कृपया फिर से प्रयास करें।</string>
+    <string name="final_anki_package_rejected">यह Anki पैकेज पढ़ा नहीं जा सका। डेक को फिर से सादे .apkg फ़ाइल के रूप में निर्यात करें और प्रयास करें।</string>
+
+    <!-- Results screen. -->
+    <string name="final_result_load_failed">यह परिणाम लोड नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+
+    <!-- Bookmarks screen. -->
+    <string name="final_bookmarks_export_failed">आपके बुकमार्क निर्यात नहीं हो सके। कृपया फिर से प्रयास करें।</string>
+
+    <!-- Stats screen. -->
+    <string name="final_stats_load_failed">आँकड़े लोड नहीं हो सके। कृपया फिर से प्रयास करें।</string>
+    <string name="final_card_detail_load_failed">इस कार्ड का विवरण लोड नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+
+    <!-- Restore and shared-file imports. -->
+    <string name="final_restore_failed">बैकअप बहाल नहीं हो सका। कृपया फिर से प्रयास करें।</string>
+    <string name="final_restore_too_large">यह बैकअप बहाल करने के लिए बहुत बड़ा है (%1$d MB से अधिक)। यह खराब हो सकता है।</string>
+    <string name="final_import_too_large">यह फ़ाइल %1$d MB आयात सीमा से अधिक है (कम से कम %2$d MB)। बैंक को हिस्सों में आयात करें, या चित्र हटाएँ — वे फ़ाइल के अंदर संग्रहीत होते हैं और इसके आकार में लगभग एक तिहाई जोड़ते हैं।</string>
+
+    <!-- Fallback titles. Persisted titles keep a stable English token (see FALLBACK_* in the data
+         layer); these resources are the localized display forms for those tokens in the UI. -->
+    <string name="final_fallback_category_title">श्रेणीहीन</string>
+    <string name="final_fallback_paper_title">आयात किए गए प्रश्न</string>
+    <string name="final_fallback_deck_title">डेक</string>
+</resources>

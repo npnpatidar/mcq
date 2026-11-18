@@ -45,7 +45,7 @@ class StatsScaleTest {
             range = StatsAggregator.Range.ALL,
             now = now,
             cfg = config,
-            zone = 0L,
+            zone = DayBoundary.utc(),
             scheduler = scheduler
         )
 

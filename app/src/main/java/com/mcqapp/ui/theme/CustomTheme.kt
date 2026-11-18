@@ -2,6 +2,8 @@ package com.mcqapp.ui.theme
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
+import com.mcqapp.R
+import com.mcqapp.util.Logger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -42,7 +44,16 @@ internal fun resolveScheme(
     customThemes.firstOrNull { it.key == key }?.scheme(dark)
         ?: AppTheme.fromKey(key).scheme(dark)
 
-internal class InvalidThemeException(message: String) : Exception(message)
+/**
+ * A rejected theme, carrying only a plain resource id and its arguments —
+ * never a user-facing sentence. The caller resolves [resId] through its
+ * localized `msg()` so the learner sees friendly copy in their own language;
+ * the raw reason is logged here, not shown.
+ */
+internal class InvalidThemeException(
+    val resId: Int,
+    val args: List<Any> = emptyList()
+) : Exception()
 
 /** How many imported themes one install may keep. */
 internal const val MAX_CUSTOM_THEMES = 20
@@ -129,16 +140,17 @@ internal object CustomThemeCodec {
         val file = try {
             json.decodeFromString<CustomThemeFile>(source)
         } catch (e: Exception) {
-            throw InvalidThemeException(
-                "That file is not a theme file (expected JSON with a name, four accents and light/dark colours)."
-            )
+            Logger.w("THEME", "Theme file could not be parsed", e)
+            throw InvalidThemeException(R.string.final_theme_invalid)
         }
         val name = file.name.trim()
         if (name.isEmpty() || name.length > 40) {
-            throw InvalidThemeException("A theme needs a name of 1–40 characters.")
+            Logger.w("THEME", "Theme name length rejected: ${name.length}")
+            throw InvalidThemeException(R.string.final_theme_invalid)
         }
         if (name.any { it.isISOControl() }) {
-            throw InvalidThemeException("The theme name contains control characters.")
+            Logger.w("THEME", "Theme name contains control characters")
+            throw InvalidThemeException(R.string.final_theme_invalid)
         }
         return ParsedCustomTheme(name, file.toSpec())
     }
@@ -178,9 +190,12 @@ private val hexColor = Regex("^#?([0-9a-fA-F]{6})$")
 
 private fun parseColor(value: String, field: String): Color {
     val match = hexColor.matchEntire(value.trim())
-        ?: throw InvalidThemeException(
-            "$field must be a hex colour like #7AA2F7 (six digits)."
-        )
+    if (match == null) {
+        // The field name is diagnostic detail for the log only; the learner
+        // gets one friendly, localized "not a theme file" message.
+        Logger.w("THEME", "Invalid colour for theme field '$field'")
+        throw InvalidThemeException(R.string.final_theme_invalid)
+    }
     return Color(0xFF000000L or match.groupValues[1].toLong(16))
 }
 

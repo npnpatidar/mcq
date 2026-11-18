@@ -11,6 +11,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.R
 import com.mcqapp.data.export.ReportCsv
 import com.mcqapp.data.export.ReportCsvHeader
 import com.mcqapp.data.export.ReportCsvRow
@@ -73,6 +74,9 @@ class ResultsViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /** Friendly, localized copy for the learner; exception text goes to the log only. */
+    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
 
     private val _state = MutableStateFlow(ResultsUiState())
     val state: StateFlow<ResultsUiState> = _state.asStateFlow()
@@ -189,7 +193,7 @@ class ResultsViewModel(
                 Logger.e("RESULTVM", "Failed to load attempt $attemptId", e)
                 _state.update {
                     if (generation != loadGeneration) it
-                    else it.copy(loading = false, loadError = "Could not load this result: ${e.message}")
+                    else it.copy(loading = false, loadError = msg(R.string.final_result_load_failed))
                 }
             }
         }

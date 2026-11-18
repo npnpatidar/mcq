@@ -62,6 +62,18 @@ import com.mcqapp.util.Logger
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
 
+/**
+ * The display form of a persisted title. Fallback-title tokens stay canonical
+ * in state and in the file the importer writes (SQL/search compare them by
+ * equality); only what the learner reads is resolved here, through the
+ * composition's locale-aware resources so an in-app language choice applies on
+ * every API level. Editing the field writes the user's text, not this display
+ * value, so an untouched fallback still imports as its canonical token.
+ */
+@Composable
+internal fun displayTitle(raw: String): String =
+    fallbackTitleRes(raw)?.let { stringResource(it) } ?: raw
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
@@ -255,7 +267,7 @@ fun ImportScreen(
                     Spacer(Modifier.height(8.dp))
                     SuggestionTextField(
                         label = stringResource(R.string.paper_title),
-                        value = state.paperTitle,
+                        value = displayTitle(state.paperTitle),
                         onValueChange = viewModel::updatePaperTitle,
                         suggestions = state.paperTitleSuggestions
                     )
@@ -289,7 +301,7 @@ fun ImportScreen(
                     Spacer(Modifier.height(8.dp))
                     SuggestionTextField(
                         label = stringResource(R.string.category_name_for_all_questions),
-                        value = state.categoryName,
+                        value = displayTitle(state.categoryName),
                         onValueChange = viewModel::updateCategoryName,
                         suggestions = state.categorySuggestions
                     )

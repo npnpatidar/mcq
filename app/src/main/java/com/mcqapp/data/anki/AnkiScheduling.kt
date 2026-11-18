@@ -244,15 +244,20 @@ object AnkiScheduling {
             )
         }
 
-        // Counted from the start of the study day the collection was created in,
-        // not from the creation instant. Due dates are aligned to that boundary
-        // too, so a card due at 04:00 the next morning is one day out even when
-        // the package is written at 23:00; measuring from the creation instant
-        // and rounding would call it due today. Every schedule this app writes
-        // anchors its due dates to a day start, so the division below is an
-        // exact whole number of days and truncation loses nothing.
-        val daysFromExport = ((state.dueAt - startOfDay(crtSeconds * 1000L)).toDouble() / DAY_MS)
-            .toLong().coerceAtLeast(0L).toInt()
+        // Anki's `due` is a count of study days, not a count of 24-hour ticks.
+        // Compare the calendar study-day indices of both endpoints in the
+        // device's zone: across a DST jump the two 04:00 boundaries are 23 or
+        // 25 real hours apart, so dividing the instant gap by DAY_MS truncates
+        // to the wrong day (a card due tomorrow exports as "today"). Indices
+        // make the result integral by construction, with no rounding.
+        val zone = com.mcqapp.domain.DayBoundary.defaultZone()
+        val daysFromExport = (
+            com.mcqapp.domain.DayBoundary.studyDayIndex(
+                state.dueAt, DAY_START_HOUR, zone
+            ) - com.mcqapp.domain.DayBoundary.studyDayIndex(
+                crtSeconds * 1000L, DAY_START_HOUR, zone
+            )
+            ).coerceAtLeast(0L).toInt()
         return AnkiCardSchedule(
             type = TYPE_REVIEW,
             queue = QUEUE_REVIEW,

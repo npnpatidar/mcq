@@ -28,10 +28,40 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
+import java.util.Locale
 
 // Internal, not private: RepositorySettingsTest seeds the same file directly to
 // prove legacy keys are inert and that corrupt values fall back to defaults.
 internal val Context.dataStore by preferencesDataStore(name = "settings")
+
+/**
+ * The in-app language choice. SYSTEM is the original behaviour (follow the
+ * device) and is the default for installs that never touched this preference.
+ * The other two are explicit overrides applied to this app only.
+ */
+enum class AppLanguage(val storedValue: String) {
+    SYSTEM("system"),
+    ENGLISH("en"),
+    HINDI("hi");
+
+    /** Null means "no override": let the device decide, as before this picker. */
+    fun localeTag(): String? = when (this) {
+        SYSTEM -> null
+        ENGLISH -> "en"
+        HINDI -> "hi"
+    }
+
+    /** The override locale, or null for SYSTEM. Pure JVM, so it is directly testable. */
+    fun locale(): Locale? = localeTag()?.let { Locale.forLanguageTag(it) }
+
+    companion object {
+        const val PREFERENCE_KEY = "app_language"
+
+        /** Unknown or corrupt stored values fall back to following the device. */
+        fun fromStored(value: String?): AppLanguage =
+            entries.firstOrNull { it.storedValue == value } ?: SYSTEM
+    }
+}
 
 /**
  * The stored values a backup's `settings.json` and its streamed study rows
@@ -93,6 +123,26 @@ internal class SettingsStore(
 
     suspend fun setThemePalette(key: String) {
         context.dataStore.edit { it[themePaletteKey] = key }
+    }
+
+    /**
+     * The in-app language. Stored as a plain string so it rides the generic
+     * backup snapshot/restore like every other preference. SYSTEM is written as
+     * an absent key: choosing it again clears the override rather than leaving
+     * a stale locale behind.
+     */
+    private val appLanguageKey = stringPreferencesKey(AppLanguage.PREFERENCE_KEY)
+
+    fun appLanguage(): Flow<AppLanguage> =
+        context.dataStore.data.map { prefs ->
+            AppLanguage.fromStored(prefs[appLanguageKey])
+        }
+
+    suspend fun setAppLanguage(language: AppLanguage) {
+        context.dataStore.edit { prefs ->
+            if (language == AppLanguage.SYSTEM) prefs.remove(appLanguageKey)
+            else prefs[appLanguageKey] = language.storedValue
+        }
     }
 
     private val customThemesKey = stringPreferencesKey("custom_themes")

@@ -29,7 +29,7 @@ class FsrsImportGuardTest {
     private fun exactScheduler() = FsrsScheduler(
         desiredRetention = FsrsScheduler.DEFAULT_DESIRED_RETENTION,
         config = SchedulerConfig(dayStartHour = 0),
-        zoneOffset = { 0L }
+        zone = com.mcqapp.domain.DayBoundary.utc()
     )
 
     /**

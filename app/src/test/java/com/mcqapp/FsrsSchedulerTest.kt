@@ -35,7 +35,7 @@ class FsrsSchedulerTest {
         FsrsScheduler(
             desiredRetention = desiredRetention,
             config = SchedulerConfig(dayStartHour = 0),
-            zoneOffset = { 0L }
+            zone = com.mcqapp.domain.DayBoundary.utc()
         )
 
     private fun at(days: Double): Long = t0 + (days * dayMs).toLong()
@@ -124,7 +124,7 @@ class FsrsSchedulerTest {
         val scheduler = FsrsScheduler(
             parameters = weights,
             config = SchedulerConfig(dayStartHour = 0),
-            zoneOffset = { 0L }
+            zone = com.mcqapp.domain.DayBoundary.utc()
         )
         val first = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, t0)
         val rounded = Math.round(weights[2] * 1e8) / 1e8
@@ -165,7 +165,7 @@ class FsrsSchedulerTest {
         val scheduler = FsrsScheduler(
             parameters = weights,
             config = SchedulerConfig(dayStartHour = 0),
-            zoneOffset = { 0L }
+            zone = com.mcqapp.domain.DayBoundary.utc()
         )
 
         data class Expected(val s: Double, val sf: Double, val d: Double)
@@ -513,7 +513,7 @@ class FsrsSchedulerTest {
     fun intervalsLandOnTheStudyDayBoundary() {
         // Default config: 04:00 day start. A whole-day interval is counted from
         // the boundary, not from the instant of grading.
-        val scheduler = FsrsScheduler(config = SchedulerConfig(), zoneOffset = { 0L })
+        val scheduler = FsrsScheduler(config = SchedulerConfig(), zone = com.mcqapp.domain.DayBoundary.utc())
         val now = t0 + 12 * 3_600_000L // 12:30
         val next = scheduler.next(scheduler.initial("q"), ReviewGrade.GOOD, now)
 
@@ -646,7 +646,7 @@ class FsrsSchedulerTest {
         val upper = SchedulerConfig(fsrsParameters = com.mcqapp.domain.FsrsOptimizer.UPPER_BOUNDS.toList())
 
         listOf(lower, upper).forEach { config ->
-            val scheduler = FsrsScheduler(config = config, zoneOffset = { 0L })
+            val scheduler = FsrsScheduler(config = config, zone = com.mcqapp.domain.DayBoundary.utc())
             var state = scheduler.initial("q")
             ReviewGrade.entries.forEach { grade ->
                 val next = scheduler.next(state, grade, t0)

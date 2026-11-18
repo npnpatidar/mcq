@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -26,6 +27,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: Context?) {
+        // Below API 33 this is the only hook that changes the resources Compose
+        // reads. On 33+ AppLocale leaves the context alone: the platform has
+        // already applied the app's persisted locales to it.
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -86,7 +94,7 @@ class MainActivity : ComponentActivity() {
                 is SendCopyResult.Ready ->
                     SharedImport.request(result.request.uri, result.request.displayName)
                 is SendCopyResult.Failed ->
-                    SharedImport.requestError(result.message)
+                    SharedImport.requestError(result.resId, result.args)
             }
         }
     }

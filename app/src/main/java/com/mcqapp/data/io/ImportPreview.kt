@@ -41,7 +41,7 @@ fun scanImportPreview(
     var firstHeader: LegacyParser.PaperHeader? = null
     var firstPaperCategoryCount = 0
     var effectiveCategoryTitle: String? = null
-    var currentCategoryTitle = "Uncategorized"
+    var currentCategoryTitle = FALLBACK_CATEGORY_TITLE
     var scheduleCount = 0
     var attemptCount = 0
     val sample = ArrayList<PreviewQuestion>(minOf(sampleSize, 1024))
@@ -95,7 +95,7 @@ fun scanImportPreview(
         attemptCount = attemptCount,
         hasScheduling = scheduleCount > 0,
         firstPaperCategoryCount = firstPaperCategoryCount,
-        effectiveCategoryTitle = effectiveCategoryTitle ?: "Uncategorized",
+        effectiveCategoryTitle = effectiveCategoryTitle ?: FALLBACK_CATEGORY_TITLE,
         sample = sample,
         totalQuestions = total,
         warnings = tail.warnings

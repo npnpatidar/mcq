@@ -9,6 +9,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,6 +90,11 @@ fun McqNavHost(repository: McqRepository) {
 
     val pendingImport by SharedImport.pending.collectAsStateWithLifecycle()
     val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
+    // Resolve in the composable body: LaunchedEffect's block is not @Composable.
+    val importFailure = pendingImportError
+    val importErrorMessage = if (importFailure != null) {
+        stringResource(importFailure.resId, *importFailure.args.toTypedArray())
+    } else null
     LaunchedEffect(pendingImport) {
         val request = SharedImport.consume() ?: return@LaunchedEffect
         libraryViewModel.onImportPicked(
@@ -110,8 +116,8 @@ fun McqNavHost(repository: McqRepository) {
         )
     }
     LaunchedEffect(pendingImportError) {
-        val message = SharedImport.consumeError() ?: return@LaunchedEffect
-        // SharedImport's copy-failure copy is already plain and generic.
+        if (SharedImport.consumeError() == null) return@LaunchedEffect
+        val message = importErrorMessage ?: return@LaunchedEffect
         messageBus.send(UiMessage(message, UiMessageTone.Error))
     }
     val fontScale by repository.fontScale().collectAsStateWithLifecycle(

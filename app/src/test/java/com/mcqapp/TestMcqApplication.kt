@@ -19,4 +19,7 @@ package com.mcqapp
 class TestMcqApplication : McqApplication() {
     override val seedsInstallFreshnessAtStartup: Boolean = false
     override val runsFsrs7StartupJobs: Boolean = false
+    // Locale sync writes through the platform per-app locale API and would
+    // reconfigure a Robolectric activity; no test needs it.
+    override val syncsAppLocaleAtStartup: Boolean = false
 }

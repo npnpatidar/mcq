@@ -34,13 +34,13 @@ class LanguagePreferenceTest {
     private fun store(): SettingsStore = SettingsStore(context(), freshInstall = false)
 
     @Before
-    fun clearPreference() = runBlocking {
-        context().dataStore.edit { it.remove(key) }
+    fun clearPreference() {
+        runBlocking { context().dataStore.edit { it.remove(key) } }
     }
 
     @After
-    fun clearAgain() = runBlocking {
-        context().dataStore.edit { it.remove(key) }
+    fun clearAgain() {
+        runBlocking { context().dataStore.edit { it.remove(key) } }
     }
 
     @Test

@@ -159,6 +159,12 @@ android {
     // well below the daemon's 4g.
     testOptions {
         unitTests.all { it.maxHeapSize = "2g" }
+        // Robolectric resolves R.string / R.plurals in ViewModel tests (friendly
+        // error copy) from the app's compiled resources. Without this AGP never
+        // packages apk-for-local-test.ap_, so Robolectric loads only the
+        // framework package and every getString(id) fails with
+        // "No package ID 7f found for ID 0x7f...".
+        unitTests.isIncludeAndroidResources = true
     }
 
     buildFeatures {

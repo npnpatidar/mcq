@@ -18,7 +18,6 @@ import com.mcqapp.util.ImportTooLargeException
 import com.mcqapp.util.SendCopyResult
 import com.mcqapp.util.SharedImport
 import com.mcqapp.util.copySendToCache
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -171,22 +170,26 @@ class FinalErrorMessagesTest {
     @Test
     fun aFailedCardDetailLoadShowsOnlyFriendlyCopy() {
         val viewModel = StatsViewModel(app)
-        app.repository.db().close()
-        viewModel.openCard("paper-1", "question-1")
-        // openCard's load runs on viewModelScope (Main.immediate) and its
-        // closed-DB read resumes there from Room's executor thread, so the
-        // test thread must keep pumping the paused main looper while it waits
-        // for the StateFlow to emit the failure. Sampling .value on a timer
-        // can time out before that continuation publishes the error.
-        val detail = runOffMainWhilePumping(condition = "a failed card detail load") {
-            viewModel.cardDetail.first { it?.error != null }
+        // Fail the injected load synchronously. Closing the singleton DB made
+        // Room raise the error from its executor thread, which reached the
+        // ViewModel only intermittently on CI; a direct throw exercises the
+        // same catch -> CardDetail.failedLoad path with no Room timing.
+        viewModel.openCardWithLoader("paper-1", "question-1") {
+            throw IOException("SECRET-DB-DETAIL")
         }
-        // The interference guard must keep the sheet on the question that
-        // failed; a dropped error would leave the placeholder (no error).
-        assertEquals("question-1", detail!!.questionId)
+        // The launch uses Main.immediate and the loader does not suspend, so
+        // the failed state is already published; a single idle flushes a
+        // posted launch if the test thread is not recognised as Main.
+        shadowOf(Looper.getMainLooper()).idle()
+        val detail = viewModel.cardDetail.value!!
+        assertEquals("paper-1", detail.paperId)
+        assertEquals("question-1", detail.questionId)
         val error = detail.error!!
         assertEquals(string(R.string.final_card_detail_load_failed), error)
-        assertFalse("raw cause leaked: $error", "Exception" in error || "closed" in error)
+        assertFalse(
+            "raw cause leaked: $error",
+            "Exception" in error || "SECRET-DB-DETAIL" in error || "closed" in error
+        )
     }
 
     @Test

@@ -68,7 +68,22 @@ jobs:
         # (the override is only needed on ARM64 hosts with QEMU).
         # Force remote re-resolution: a restored Gradle cache has repeatedly
         # served stale plugin metadata (compose 2.2.10 not found) in this job.
-        run: sh gradlew :app:assembleDebug :app:testDebugUnitTest --refresh-dependencies --no-daemon
+        #
+        # TEMP DIAGNOSTIC: the unit suite has wedged at a different class each
+        # run. Dump the test worker's stacks from the outside (the Gradle task
+        # timeout only kills it), so a wedge names the thread that is stuck.
+        shell: bash
+        run: |
+          ( sleep 420; for pid in $(pgrep -f GradleWorkerMain || true); do
+              echo "=== WEDGE DUMP (7 min) pid=$pid ==="; jstack "$pid" || true
+            done; sleep 120; for pid in $(pgrep -f GradleWorkerMain || true); do
+              echo "=== WEDGE DUMP (9 min) pid=$pid ==="; jstack "$pid" || true
+            done ) &
+          WATCH=$!
+          sh gradlew :app:assembleDebug :app:testDebugUnitTest --refresh-dependencies --no-daemon
+          STATUS=$?
+          kill "$WATCH" 2>/dev/null || true
+          exit $STATUS
 
       - name: Lint
         # Catches the Android-specific problems the unit tests cannot: missing

@@ -316,6 +316,13 @@ tasks.withType<Test>().configureEach {
     // a deadlocked Room/Robolectric observer, since). Ten minutes is several
     // times the whole suite's normal wall clock.
     timeout.set(Duration.ofMinutes(10))
+    // Recycle the test JVM every 40 classes. The stalls above land at a
+    // different class every run, which is the signature of state that
+    // accumulates across classes — leaked coroutines, an orphaned DataStore
+    // actor, a Robolectric sandbox thread — rather than one bad test. A fresh
+    // process caps that accumulation; a genuinely hung class still fails the
+    // timeout, and the extra JVM starts cost well under a minute.
+    forkEvery = 40
 }
 
 // ----- Pure-JVM test selection (for ARM64 hosts) ----------------------------

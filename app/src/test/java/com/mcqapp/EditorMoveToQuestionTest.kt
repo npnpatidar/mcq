@@ -180,7 +180,7 @@ class EditorMoveToQuestionTest {
         vm.updateOptionBlock("a", 0, ContentElement.TextElement(""))
         assertTrue(!vm.state.value.canSave)
         vm.moveToQuestion("q2")
-        Thread.sleep(200)
+        pumpUntil { vm.state.value.moveError != null }
         shadowOf(Looper.getMainLooper()).runToEndOfTasks()
         assertEquals("q1", vm.state.value.questionId)
     }

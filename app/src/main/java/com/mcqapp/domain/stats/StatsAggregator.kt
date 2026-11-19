@@ -67,6 +67,13 @@ object StatsAggregator {
          */
         val zone: TimeZone,
         /**
+         * Locale used for date/axis labels in the charts (month names). Defaults
+         * to English so pure tests and callers that do not localize keep their
+         * stable labels; the data layer passes the selected in-app locale (ST2).
+         * This does not affect any numeric formatting, which stays deliberate.
+         */
+        val locale: Locale = Locale.ENGLISH,
+        /**
          * Row-based coverage (plan §4). The pure aggregator cannot derive it
          * from the card list: an unseen question has no card at all. The
          * database path supplies the same value, so both builds agree.
@@ -99,6 +106,7 @@ object StatsAggregator {
     ) {
         val cfg: SchedulerConfig get() = input.config
         val zone: TimeZone get() = input.zone
+        val locale: Locale get() = input.locale
 
         companion object {
             fun of(input: Input, scopePaperId: String?, range: Range): Context = Context(
@@ -181,7 +189,8 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             collectEntries = collectEntries,
-            paperTitleOf = ctx.input.paperTitleOf
+            paperTitleOf = ctx.input.paperTitleOf,
+            locale = ctx.locale
         )
         // The whole log: the accumulator applies the scope and the range
         // itself, exactly as the streamed store build does.
@@ -205,6 +214,7 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             scheduler = ctx.input.scheduler,
+            locale = ctx.locale,
             collectWeakest = collectWeakest
         )
         // The whole log and every card, not the scope's own slices: the
@@ -225,7 +235,8 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             paperTitleOf = ctx.input.paperTitleOf,
-            categoryOfQuestion = ctx.input.categoryOfQuestion
+            categoryOfQuestion = ctx.input.categoryOfQuestion,
+            locale = ctx.locale
         )
         ctx.inScope.forEach(accumulator::add)
         return accumulator.toData(
@@ -240,7 +251,8 @@ object StatsAggregator {
             range = ctx.range,
             now = ctx.input.now,
             cfg = ctx.cfg,
-            zone = ctx.zone
+            zone = ctx.zone,
+            locale = ctx.locale
         )
         // The whole log and every card, not the scope's own slices: the
         // accumulator applies the scope itself, so the streamed build — which
@@ -257,7 +269,8 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             scheduler = ctx.input.scheduler,
-            paperTitleOf = ctx.input.paperTitleOf
+            paperTitleOf = ctx.input.paperTitleOf,
+            locale = ctx.locale
         )
         ctx.input.reviews.forEach(accumulator::add)
         ctx.input.cards.forEach(accumulator::addCard)
@@ -283,7 +296,8 @@ object StatsAggregator {
             range = ctx.range,
             now = ctx.input.now,
             cfg = ctx.cfg,
-            zone = ctx.zone
+            zone = ctx.zone,
+            locale = ctx.locale
         )
         // The whole log: the accumulator applies the scope and the range
         // itself, and the streamed build pages the same rows.
@@ -301,7 +315,8 @@ object StatsAggregator {
             // The whole-page build keeps the entries so a caller can inspect
             // the sittings without a second pass.
             collectEntries = true,
-            paperTitleOf = ctx.input.paperTitleOf
+            paperTitleOf = ctx.input.paperTitleOf,
+            locale = ctx.locale
         )
         ctx.input.reviews.forEach(accumulator::add)
         return accumulator.toData(ctx.input.categoryOfQuestion)
@@ -379,6 +394,8 @@ object StatsAggregator {
         private val cfg: SchedulerConfig,
         private val zone: TimeZone,
         private val scheduler: FsrsScheduler,
+        /** Locale for date/axis labels; numeric formatting is unaffected (ST2). */
+        private val locale: Locale = Locale.ENGLISH,
         /** The memory tab shares this class for its KPIs; it ranks nothing. */
         private val collectWeakest: Boolean = true
     ) {
@@ -685,7 +702,8 @@ object StatsAggregator {
         private val cfg: SchedulerConfig,
         private val zone: TimeZone,
         private val paperTitleOf: Map<String, String>,
-        private val categoryOfQuestion: Map<String, String>
+        private val categoryOfQuestion: Map<String, String>,
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private class Counts {
             var reviews = 0
@@ -866,7 +884,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliestInRange ?: now
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val reviewsByBucket = HashMap<Long, Int>()
             val passesByBucket = HashMap<Long, Int>()
@@ -1048,7 +1066,8 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: TimeZone
+        private val zone: TimeZone,
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private class DayBucket {
             /** LEARNING, REVIEW, RELEARNING, unknown — the chart's legend order. */
@@ -1269,7 +1288,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliest ?: return emptyList()
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val gradesByBucket = HashMap<Long, IntArray>()
             days.forEach { (day, bucket) ->
@@ -1328,7 +1347,7 @@ object StatsAggregator {
         }
 
         private fun forecast(): ForecastData {
-            val fmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
+            val fmt = DateTimeFormatter.ofPattern("d MMM", locale)
             return ForecastData(
                 days = (0 until FORECAST_DAYS).map { i ->
                     ForecastDay(
@@ -1349,7 +1368,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliest ?: return emptyList()
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val kindsByBucket = HashMap<Long, IntArray>()
             val reviewsByBucket = HashMap<Long, Int>()
@@ -1373,7 +1392,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliest ?: return emptyList()
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val secondsByBucket = HashMap<Long, Long>()
             val countByBucket = HashMap<Long, Int>()
@@ -1451,7 +1470,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliest ?: return emptyList()
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val secondsByBucket = HashMap<Long, Long>()
             val countByBucket = HashMap<Long, Int>()
@@ -1513,7 +1532,8 @@ object StatsAggregator {
         private val cfg: SchedulerConfig,
         private val zone: TimeZone,
         private val collectEntries: Boolean,
-        private val paperTitleOf: Map<String, String> = emptyMap()
+        private val paperTitleOf: Map<String, String> = emptyMap(),
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
@@ -1587,7 +1607,7 @@ object StatsAggregator {
             } else {
                 val granularity = granularityFor(windowStart, todayDay, cfg, zone)
                 val buckets = bucketList(
-                    studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                    studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
                 )
                 val sessionsByBucket = HashMap<Long, Int>()
                 sessionsByDay.forEach { (day, count) ->
@@ -1754,7 +1774,8 @@ object StatsAggregator {
         private val cfg: SchedulerConfig,
         private val zone: TimeZone,
         private val scheduler: FsrsScheduler,
-        private val paperTitleOf: Map<String, String> = emptyMap()
+        private val paperTitleOf: Map<String, String> = emptyMap(),
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private val stability = Values()
         private val difficulty = Values()
@@ -1868,7 +1889,7 @@ object StatsAggregator {
                     count = count
                 )
             }
-            val monthFmt = DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH)
+            val monthFmt = DateTimeFormatter.ofPattern("MMM yy", locale)
             val overTime = monthlySum.keys.sorted().map { key ->
                 val date = LocalDate.of((key / 12).toInt(), (key % 12 + 1).toInt(), 1)
                 SeriesPoint(
@@ -2087,7 +2108,8 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             paperTitleOf = input.paperTitleOf,
-            categoryOfQuestion = input.categoryOfQuestion
+            categoryOfQuestion = input.categoryOfQuestion,
+            locale = input.locale
         )
         ctx.inScope.forEach(accumulator::add)
         return accumulator.toData(input.chanceOfQuestion)
@@ -2101,7 +2123,8 @@ object StatsAggregator {
             cfg = ctx.cfg,
             zone = ctx.zone,
             paperTitleOf = ctx.input.paperTitleOf,
-            categoryOfQuestion = ctx.input.categoryOfQuestion
+            categoryOfQuestion = ctx.input.categoryOfQuestion,
+            locale = ctx.locale
         )
         ctx.inScope.forEach(accumulator::add)
         return accumulator.toData(ctx.input.chanceOfQuestion)
@@ -2127,7 +2150,8 @@ object StatsAggregator {
         private val cfg: SchedulerConfig,
         private val zone: TimeZone,
         private val paperTitleOf: Map<String, String>,
-        private val categoryOfQuestion: Map<String, String>
+        private val categoryOfQuestion: Map<String, String>,
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
@@ -2341,7 +2365,7 @@ object StatsAggregator {
             val start = rangeStart ?: earliest ?: return emptyList()
             val granularity = granularityFor(start, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(start, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(start, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val byBucket = HashMap<Long, IntArray>()
             days.forEach { (day, counts) ->
@@ -2403,7 +2427,8 @@ object StatsAggregator {
         private val range: Range,
         private val now: Long,
         private val cfg: SchedulerConfig,
-        private val zone: TimeZone
+        private val zone: TimeZone,
+        private val locale: Locale = Locale.ENGLISH
     ) {
         private val todayStart = DayBoundary.startOfDay(now, cfg.dayStartHour, zone)
         private val todayDay = studyEpochDay(todayStart, cfg, zone)
@@ -2517,7 +2542,7 @@ object StatsAggregator {
             val windowStart = rangeStart ?: earliestInRange ?: now
             val granularity = granularityFor(windowStart, todayDay, cfg, zone)
             val buckets = bucketList(
-                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone
+                studyEpochDay(windowStart, cfg, zone), todayDay, granularity, cfg, zone, locale
             )
             val byBucket = HashMap<Long, Counts>()
             trendDays.forEach { (day, counts) ->
@@ -2588,10 +2613,11 @@ object StatsAggregator {
         todayDay: Long,
         granularity: Granularity,
         cfg: SchedulerConfig,
-        zone: TimeZone
+        zone: TimeZone,
+        locale: Locale = Locale.ENGLISH
     ): List<Bucket> {
-        val dayFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
-        val monthFmt = DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH)
+        val dayFmt = DateTimeFormatter.ofPattern("d MMM", locale)
+        val monthFmt = DateTimeFormatter.ofPattern("MMM yy", locale)
         val firstKey = bucketKeyOf(startDay, granularity)
         val lastKey = bucketKeyOf(todayDay, granularity)
         return (firstKey..lastKey).map { key ->

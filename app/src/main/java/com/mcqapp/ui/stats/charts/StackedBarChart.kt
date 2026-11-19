@@ -17,6 +17,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -50,6 +52,10 @@ internal fun StackedBarChart(
      *  integer, which under a formatted axis ("1h") read "3600"
      *  (consolidated_bugs.md E7). */
     totalLabel: (Double) -> String = { it.roundToInt().toString() },
+    /** Spoken names for the segments, in the same order as each bar's segments.
+     *  When supplied, the screen-reader summary names each segment rather than
+     *  speaking only the bar total (ST6). */
+    segmentLabels: List<String> = emptyList(),
     emptyText: (@Composable () -> Unit)? = null
 ) {
     val textMeasurer = rememberTextMeasurer()
@@ -58,19 +64,34 @@ internal fun StackedBarChart(
     val labelColor = axisLabelColor()
     val overlayColor = MaterialTheme.colorScheme.onSurfaceVariant
     val tooltipBg = MaterialTheme.colorScheme.surface
+    // Axis labels are in sp; scale the canvas so large text cannot clip (ST6).
+    val chartHeight = chartHeightDp(LocalDensity.current.fontScale).dp
     var selected by remember(points) { mutableIntStateOf(-1) }
-    // Spoken summary of the bars: each bar's own label and total, capped to
-    // the latest few by [chartSummary]. Replaces the old test-tag label.
-    val summary = chartSummary(
-        kindRes = R.string.a11y_chart_bar,
-        series = listOf(
+    // Spoken summary of the bars. Without segment names this keeps the old
+    // flat "label: total" wording; with them, each stacked segment becomes a
+    // named series so a screen reader can distinguish the parts of a bar
+    // (ST6). Both go through [chartSummary]'s per-series bounding.
+    val summarySeries = if (segmentLabels.isEmpty()) {
+        listOf(
             ChartSeriesSummary(
                 points = points.map { bar ->
                     bar.label to totalLabel(bar.segments.take(segmentCount).sum())
                 }
             )
         )
-    )
+    } else {
+        val names = ArrayList<String>(segmentCount)
+        for (segment in 0 until segmentCount) {
+            names.add(segmentLabels.getOrNull(segment) ?: stringResource(R.string.a11y_chart_series, segment + 1))
+        }
+        stackedSegmentSeries(
+            barLabels = points.map { it.label },
+            barSegments = points.map { it.segments.take(segmentCount) },
+            segmentNames = names,
+            labelValue = totalLabel
+        )
+    }
+    val summary = chartSummary(kindRes = R.string.a11y_chart_bar, series = summarySeries)
 
     if (points.isEmpty()) {
         if (emptyText != null) {
@@ -99,7 +120,7 @@ internal fun StackedBarChart(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(200.dp)
+            .height(chartHeight)
             .semantics { contentDescription = summary }
             .pointerInput(points, overlay) {
                 detectTapGestures { tap ->

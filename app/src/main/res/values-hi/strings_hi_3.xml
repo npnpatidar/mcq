@@ -153,7 +153,6 @@
     <string name="report_export_in_progress">निर्यात हो रहा है…</string>
     <string name="report_export_pdf">PDF निर्यात करें</string>
     <string name="report_export_share">रिपोर्ट साझा करें</string>
-    <string name="report_filter_slow">धीमा</string>
     <string name="report_first_comparable">यह आपका पहला तुलनीय %1$d-प्रश्न वाला %2$s टेस्ट है।</string>
     <string name="report_fresh_comparable">नया नमूना · केवल नए नमूनों से तुलनीय</string>
     <string name="report_fresh_sample">नया नमूना</string>

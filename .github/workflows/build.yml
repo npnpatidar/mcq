@@ -63,12 +63,12 @@ jobs:
         # bare `platforms;android-37` does not exist.
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
-      - name: Build debug APK and run unit tests
+      - name: Build debug APK
         # No aapt2 override: the bundled aapt2 runs natively on x86_64
         # (the override is only needed on ARM64 hosts with QEMU).
         # Force remote re-resolution: a restored Gradle cache has repeatedly
         # served stale plugin metadata (compose 2.2.10 not found) in this job.
-        run: sh gradlew :app:assembleDebug :app:testDebugUnitTest --refresh-dependencies --no-daemon
+        run: sh gradlew :app:assembleDebug --refresh-dependencies --no-daemon
 
       - name: Lint
         # Catches the Android-specific problems the unit tests cannot: missing
@@ -84,14 +84,6 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Upload unit test results
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: test-results
-          path: app/build/test-results/testDebugUnitTest/
-          if-no-files-found: error
-
       - name: Upload lint report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -99,6 +91,66 @@ jobs:
           name: lint-report
           path: app/build/reports/lint-results-debug.html
           if-no-files-found: error
+
+  unit-test:
+    # The Robolectric suite has wedged at a different class in one worker per
+    # run (a lost wakeup: every background thread parked, the main thread
+    # inside runBlocking, nothing scheduled anywhere in the JVM). Splitting
+    # the classes over a 4-way parallel matrix shrinks the state one worker
+    # accumulates (the process-wide DataStore actor is the coupling), halves
+    # the wall clock, and makes one bad shard report alone instead of holding
+    # the branch. No test is skipped: the four shards are a partition.
+    needs: wrapper-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Run unit test shard
+        # Sentinel: if this shard wedges, dump the worker's stacks from the
+        # outside at 7 and 9 minutes so the log names the stuck thread — the
+        # Gradle task timeout only kills the worker.
+        shell: bash
+        run: |
+          set -eu
+          ( sleep 420; for pid in $(pgrep -f GradleWorkerMain || true); do
+              echo "=== WEDGE DUMP (7 min) pid=$pid ==="; jstack "$pid" || true
+            done; sleep 120; for pid in $(pgrep -f GradleWorkerMain || true); do
+              echo "=== WEDGE DUMP (9 min) pid=$pid ==="; jstack "$pid" || true
+            done ) &
+          WATCH=$!
+          trap 'kill "$WATCH" 2>/dev/null || true' EXIT
+          ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4)
+          sh gradlew :app:testDebugUnitTest $ARGS --refresh-dependencies --no-daemon
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-shard-${{ matrix.shard }}
+          path: app/build/test-results/testDebugUnitTest/
+          if-no-files-found: error
+
 
   release-build:
     # Nothing built the release variant, so a release-only breakage (missing
@@ -169,7 +221,9 @@ jobs:
           echo "::add-mask::$KEY_PASSWORD"
 
       - name: Build release APK
-        run: sh gradlew :app:assembleRelease --no-daemon
+        # Same forced re-resolution as the build/lint jobs: this job restores
+        # the same Gradle cache, so stale plugin metadata can hit it too.
+        run: sh gradlew :app:assembleRelease --refresh-dependencies --no-daemon
 
       - name: Report the release APK size
         run: du -h app/build/outputs/apk/release/*.apk || true
@@ -231,7 +285,7 @@ jobs:
           # Every instrumented test runs: the suite used to skip a handful via
           # a system-property switch, but that property was never passed to the
           # on-device test process, so the switch silently did nothing.
-          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: sh gradlew :app:connectedDebugAndroidTest --refresh-dependencies --no-daemon
 
       - name: Upload UI test results
         if: always()

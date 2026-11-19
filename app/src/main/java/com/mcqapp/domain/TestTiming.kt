@@ -19,6 +19,32 @@ object TimerWarnings {
         60 -> "1 minute left — the test auto-submits at zero"
         else -> "$thresholdSeconds seconds left"
     }
+
+    /**
+     * The localizable identity of a threshold. The clock owns the *when*
+     * ([newlyDue]) and the UI owns the *wording*: mapping to a [TimerWarningKind]
+     * keeps this object pure (no Android resources) while letting the ViewModel
+     * resolve the warning through `<plurals>` resources in both locales.
+     */
+    enum class TimerWarningKind { FIVE_MINUTES, ONE_MINUTE, SECONDS }
+
+    fun warningKind(thresholdSeconds: Int): TimerWarningKind = when (thresholdSeconds) {
+        300 -> TimerWarningKind.FIVE_MINUTES
+        60 -> TimerWarningKind.ONE_MINUTE
+        else -> TimerWarningKind.SECONDS
+    }
+
+    /**
+     * The count a warning reports: minutes for the minute thresholds, raw
+     * seconds otherwise. The ViewModel passes this same value as both the plural
+     * quantity and the `%1$d` argument, so "1 minute" and "5 minutes" each pick
+     * the right form. Pure so that quantity/argument contract is JVM-testable.
+     */
+    fun warningCount(thresholdSeconds: Int): Int = when (warningKind(thresholdSeconds)) {
+        TimerWarningKind.FIVE_MINUTES -> thresholdSeconds / 60
+        TimerWarningKind.ONE_MINUTE -> 1
+        TimerWarningKind.SECONDS -> thresholdSeconds
+    }
 }
 
 /**

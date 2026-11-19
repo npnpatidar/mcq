@@ -1,5 +1,6 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.domain.droppedParserMessage
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
@@ -69,10 +70,10 @@ internal fun readDocx(bytes: ByteArray): DocxRead {
             }
             child.isWord("tbl") -> blocks.add(DocxBlock.Table(reader.tableRows(child)))
             child.isWord("sectPr") -> Unit
-            else -> warnings.add(
+            else -> warnings.add(droppedParserMessage(
                 "Ignoring an unsupported top-level element <${child.tagName}> — " +
                     "only paragraphs and tables are read."
-            )
+            ))
         }
     }
     return DocxRead(blocks, warnings, payload)
@@ -453,11 +454,11 @@ private class BodyReader(
             if (q.isNotBlank()) q else it.getAttributeNS(REL_NS, local)
         }
         if (ref.isNullOrBlank()) {
-            warnings.add("A picture has no readable image reference and was skipped.")
+            warnings.add(droppedParserMessage("A picture has no readable image reference and was skipped."))
             return null
         }
         val bytes = resolveEntry(rels[ref] ?: ref) ?: run {
-            warnings.add("A picture points at a missing file ($ref) and was skipped.")
+            warnings.add(droppedParserMessage("A picture points at a missing file ($ref) and was skipped."))
             return null
         }
         val mime = mimeFor(rels[ref] ?: ref)

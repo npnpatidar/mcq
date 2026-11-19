@@ -537,7 +537,6 @@
     <string name="tags_comma_separated_blank_keep">Tags, comma separated (blank = keep)</string>
     <string name="text">Text</string>
     <string name="this_cannot_be_undone">This cannot be undone.</string>
-    <string name="time_remaining">Time remaining</string>
     <string name="title">Title</string>
     <string name="two_column_layout">Two-column layout</string>
     <string name="wrong_answer">Wrong answer</string>
@@ -1189,7 +1188,6 @@
     <string name="report_action_study">Study</string>
     <string name="report_action_review">Review</string>
     <string name="report_action_test">Start test</string>
-    <string name="report_filter_slow">Slow</string>
 
     <!-- Results: phase-2 evidence (stats.md §11.8, §11.10, §11.3, §11.5) -->
     <string name="report_memory_title">Study estimate vs test accuracy</string>
@@ -1258,7 +1256,6 @@
     <string name="increase_label">Increase %1$s</string>
 
     <!-- Accessibility: WebViews and canvas charts cannot be read by TalkBack on their own. -->
-    <string name="a11y_formula_editor">Formula editor. Type a mathematical expression.</string>
     <string name="a11y_formula_editor_value">Formula editor. Current formula: %1$s</string>
     <string name="a11y_rich_content">Rendered question content with formulas</string>
     <string name="a11y_chart_bar">Bar chart</string>

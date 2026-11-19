@@ -1,6 +1,7 @@
 package com.mcqapp.ui.settings
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,6 +12,7 @@ import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.data.backup.RestorePartialCopy
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
@@ -21,6 +23,7 @@ import com.mcqapp.ui.theme.CustomThemeCodec
 import com.mcqapp.ui.theme.InvalidThemeException
 import com.mcqapp.ui.theme.MAX_CUSTOM_THEMES
 import com.mcqapp.ui.theme.MAX_THEME_FILE_BYTES
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
 import kotlinx.coroutines.CancellationException
@@ -53,6 +56,111 @@ sealed interface FsrsOptimizeState {
     data class Failed(val message: String) : FsrsOptimizeState
 }
 
+/** A Backup & data failure: the title's string resource plus the friendly copy. */
+data class SettingsOperationError(val titleRes: Int, val message: String)
+
+/** A built share intent waiting for the (possibly recreated) Activity to show it. */
+internal data class ShareRequest(val intent: Intent, val id: Long)
+
+/**
+ * The Backup & data operation state, owned by the ViewModel so it outlives the
+ * Activity recreation a language change triggers (SE1). The screen renders from
+ * these flows instead of `rememberSaveable` locals: a completion that lands
+ * after recreation updates the live composition, not an orphan whose setters
+ * the still-running coroutine holds.
+ *
+ * Pure JVM on purpose — [runRestore] drives the same [handleRestoreCompletion]
+ * seam the ViewModel uses, so the recreation behaviour is testable without a
+ * Robolectric application or a database.
+ */
+internal class SettingsOperationState {
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private val _error = MutableStateFlow<SettingsOperationError?>(null)
+    val error: StateFlow<SettingsOperationError?> = _error.asStateFlow()
+
+    private val _restoreReport = MutableStateFlow<String?>(null)
+    val restoreReport: StateFlow<String?> = _restoreReport.asStateFlow()
+
+    fun begin() {
+        _busy.value = true
+    }
+
+    /**
+     * SE5: claim the slot for a one-shot action (share). Unlike [begin], this
+     * refuses a second claim while one is already running, so two taps that
+     * land in the same frame cannot both start a build. Called synchronously on
+     * the tap, before a coroutine is launched.
+     */
+    fun tryBegin(): Boolean {
+        if (_busy.value) return false
+        _busy.value = true
+        return true
+    }
+
+    /** H4: busy is cleared on every terminal path — success, failure, cancellation. */
+    fun finish() {
+        _busy.value = false
+    }
+
+    fun fail(titleRes: Int, message: String) {
+        _error.value = SettingsOperationError(titleRes, message)
+    }
+
+    fun publishReport(report: String) {
+        _restoreReport.value = report
+    }
+
+    fun dismissError() {
+        _error.value = null
+    }
+
+    fun dismissReport() {
+        _restoreReport.value = null
+    }
+
+    /**
+     * Runs a restore through the shared completion handler, keeping busy and
+     * the result here rather than in any composition's saved state. The handler
+     * still reports the friendly error and still clears busy in its `finally`.
+     */
+    suspend fun runRestore(
+        errorTitleRes: Int,
+        tooLargeResId: Int,
+        tooLargeArgs: List<Any>,
+        genericResId: Int,
+        renderError: (Int, List<Any>) -> String,
+        onSuccess: suspend () -> Unit = {},
+        restore: suspend () -> String
+    ) {
+        begin()
+        handleRestoreCompletion(
+            onError = { message -> fail(errorTitleRes, message) },
+            onDone = { report -> publishReport(report) },
+            onComplete = { finish() },
+            onSuccess = onSuccess,
+            restore = restore,
+            tooLargeResId = tooLargeResId,
+            tooLargeArgs = tooLargeArgs,
+            genericResId = genericResId,
+            renderError = renderError
+        )
+    }
+}
+
+/**
+ * SE4: the palette key to store after a custom theme is removed. [storedPalette]
+ * is the authoritative value read from DataStore at removal time — never the
+ * async-cached `themePalette` StateFlow, which can still lag a just-imported
+ * key and silently leave the palette pointing at a deleted theme. Pure JVM so
+ * the stale-cache case is directly testable.
+ */
+internal object ThemePaletteOnRemoval {
+    fun resolve(storedPalette: String, removedKey: String, materialKey: String): String =
+        if (storedPalette == removedKey) materialKey else storedPalette
+}
+
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: McqRepository = (application as McqApplication).repository
 
@@ -60,21 +168,47 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
      * Friendly, user-facing copy. Raw exception detail is only ever written to
      * the log (through [Logger]); the learner sees these resources.
      *
-     * On API < 33 the Application context still reads the device language,
-     * because only the activity's context is configuration-overridden. Resolve
-     * through the in-memory choice instead — no blocking DataStore read here.
-     * On 33+ the platform's app locales already cover every context.
+     * Delegates to the shared resolver, passing the live in-memory choice so
+     * behaviour is unchanged: on API < 33 the Application context still reads
+     * the device language, so the selected language must be applied explicitly;
+     * on 33+ the platform's app locales already cover every context.
      */
-    private fun msg(resId: Int, vararg args: Any): String {
-        val app = getApplication<Application>()
-        return AppLocale.localized(app, _appLanguage.value).getString(resId, *args)
-    }
+    private fun msg(resId: Int, vararg args: Any): String =
+        AppStrings.getString(getApplication<Application>(), _appLanguage.value, resId, *args)
 
     /** Quantity-aware variant for copy that agrees with a count ("1 theme" / "N themes"). */
-    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String {
-        val app = getApplication<Application>()
-        return AppLocale.localized(app, _appLanguage.value)
-            .resources.getQuantityString(resId, quantity, *args)
+    private fun pluralMsg(resId: Int, quantity: Int, vararg args: Any): String =
+        AppStrings.getQuantityString(
+            getApplication<Application>(), _appLanguage.value, resId, quantity, *args
+        )
+
+    // --- Backup & data operation state (SE1) ---
+    // All of it lives here, not in the composition, so a language-change
+    // recreation cannot leave the new screen stuck on a stale busy flag.
+
+    private val operations = SettingsOperationState()
+
+    val busy: StateFlow<Boolean> get() = operations.busy
+    val operationError: StateFlow<SettingsOperationError?> get() = operations.error
+    val restoreReport: StateFlow<String?> get() = operations.restoreReport
+
+    private val _shareRequest = MutableStateFlow<ShareRequest?>(null)
+    internal val shareRequest: StateFlow<ShareRequest?> = _shareRequest.asStateFlow()
+    private var nextShareId = 0L
+
+    fun dismissOperationError() = operations.dismissError()
+    fun dismissRestoreReport() = operations.dismissReport()
+
+    /** The chooser failed to start; its friendly copy is resolved here, in the chosen language. */
+    fun reportShareNoApp() {
+        operations.fail(R.string.export_failed, msg(R.string.share_no_app))
+    }
+
+    /** An error raised outside a coroutine (log export, theme import) with a fixed title. */
+    fun reportOperationError(titleRes: Int, message: String) = operations.fail(titleRes, message)
+
+    internal fun shareRequestHandled(id: Long) {
+        if (_shareRequest.value?.id == id) _shareRequest.value = null
     }
 
     private val _themeMode = MutableStateFlow("system")
@@ -245,9 +379,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                             .filterNot { it.key == key }
                     )
                 }
-                if (_themePalette.value == key) {
-                    repository.setThemePalette(AppTheme.MATERIAL.key)
-                }
+                // SE4: compare against the authoritative stored value, not the
+                // async-cached StateFlow snapshot. A removal that lands before
+                // the collector publishes a just-imported key used to leave the
+                // palette pointing at a deleted theme. Reading after the edit
+                // sees what is actually stored, so the key is always cleared
+                // when it names the removed theme.
+                val storedPalette = repository.themePalette().first()
+                val next = ThemePaletteOnRemoval.resolve(
+                    storedPalette, key, AppTheme.MATERIAL.key
+                )
+                if (next != storedPalette) repository.setThemePalette(next)
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Removing an imported theme failed", e)
             }
@@ -651,10 +793,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun exportAll(uri: Uri, onError: (String) -> Unit, onDone: () -> Unit = {}) {
+    fun exportAll(uri: Uri) {
         viewModelScope.launch {
-            exportAllOn(uri, onError = onError)
-            onDone()
+            operations.begin()
+            try {
+                exportAllOn(uri, onError = { message ->
+                    operations.fail(R.string.export_failed, message)
+                })
+            } finally {
+                // H4: no matter how the export ends, the live screen is re-enabled.
+                operations.finish()
+            }
         }
     }
 
@@ -699,8 +848,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Writes the full backup zip; every entry streams, nothing is held whole. */
-    fun backupAll(uri: Uri, onError: (String) -> Unit, onDone: () -> Unit = {}) {
+    fun backupAll(uri: Uri) {
         viewModelScope.launch {
+            operations.begin()
             try {
                 val app = getApplication<Application>()
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -746,7 +896,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     // still describe one instant.
                     val output = app.contentResolver.openOutputStream(uri)
                     if (output == null) {
-                        onError(msg(R.string.final_open_for_write_failed))
+                        operations.fail(
+                            R.string.backup_failed,
+                            msg(R.string.final_open_for_write_failed)
+                        )
                         return@withContext
                     }
                     output.use { out ->
@@ -809,7 +962,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
-                onError(
+                operations.fail(
+                    R.string.backup_failed,
                     msg(
                         if (e.message == BACKUP_RULE_MOVED) {
                             R.string.final_backup_rule_moved
@@ -819,7 +973,38 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     )
                 )
             } finally {
-                onDone()
+                // H4: the original fix was this `finally`; keep clearing busy here.
+                operations.finish()
+            }
+        }
+    }
+
+    /**
+     * Builds the share file on the ViewModel's scope, then hands the intent to
+     * the screen through [shareRequest] so the chooser starts with the fresh
+     * Activity context even if a language change recreated it mid-build.
+     * Busy, the failure dialog and the report all live in [operations].
+     */
+    fun shareAll() = share(failureTitleRes = R.string.export_failed, build = { shareAllIntent() })
+
+    fun shareBackup() = share(failureTitleRes = R.string.backup_failed, build = { shareBackupIntent() })
+
+    private fun share(failureTitleRes: Int, build: suspend () -> Intent?) {
+        // SE5: claim the slot synchronously on the tap, before launching the
+        // build. The old code called begin() inside the coroutine, so a second
+        // tap before recomposition could start a second build and hand two
+        // chooser intents to the system.
+        if (!operations.tryBegin()) return
+        viewModelScope.launch {
+            val intent = try {
+                build()
+            } finally {
+                operations.finish()
+            }
+            if (intent != null) {
+                _shareRequest.value = ShareRequest(intent, ++nextShareId)
+            } else {
+                operations.fail(failureTitleRes, msg(R.string.share_failed))
             }
         }
     }
@@ -827,7 +1012,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /**
      * Renders the whole bank JSON into `cacheDir/shared` and returns the raw
      * `ACTION_SEND` intent (the screen wraps it in a chooser). Null on
-     * failure; the screen shows the failure dialog it owns.
+     * failure; [share] reports it through the owned error state.
      */
     suspend fun shareAllIntent(): android.content.Intent? {
         return withContext(Dispatchers.IO) {
@@ -850,8 +1035,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Renders the full backup zip into `cacheDir/shared` and returns the raw
-     * `ACTION_SEND` intent. Null on failure; the screen shows the failure
-     * dialog it owns.
+     * `ACTION_SEND` intent. Null on failure; [share] reports it through the
+     * owned error state.
      */
     suspend fun shareBackupIntent(): android.content.Intent? {
         return withContext(Dispatchers.IO) {
@@ -930,28 +1115,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     /**
      * Reads and restores a backup zip. The wipe-and-replace is atomic in
-     * the database; settings flip after. [onDone] reports the summary the
-     * screen shows. [onComplete] runs on every terminal path — success,
-     * either failure or cancellation — so the screen can always clear its
-     * busy flag, mirroring [backupAll]'s `finally`. The error dialog is still
-     * shown through [onError] on failure; clearing busy does not hide it.
-     * [onComplete] defaults to a no-op, so any caller gating controls on a
-     * busy flag must pass the callback that clears it.
+     * the database; settings flip after. Busy, the friendly error and the
+     * success report all live in [operations], which the ViewModel owns, so a
+     * language-change recreation mid-restore still receives the real result.
+     * [handleRestoreCompletion]'s `finally` still clears busy on every path.
      */
-    fun restoreBackup(
-        uri: Uri,
-        onError: (String) -> Unit,
-        onDone: (String) -> Unit,
-        onComplete: () -> Unit = {}
-    ) {
+    fun restoreBackup(uri: Uri) {
         viewModelScope.launch {
-            restoreBackupHandling(
-                onError = onError,
-                onDone = onDone,
-                onComplete = onComplete,
-                restore = { restoreFrom(uri) }
-            )
+            runTrackedRestore { restoreFrom(uri) }
         }
+    }
+
+    /** Shared restore wiring: the same resources and resolver [restoreBackupHandling] uses. */
+    private suspend fun runTrackedRestore(restore: suspend () -> String) {
+        operations.runRestore(
+            errorTitleRes = R.string.restore_failed,
+            tooLargeResId = R.string.final_restore_too_large,
+            tooLargeArgs = listOf(com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES / (1024 * 1024)),
+            genericResId = R.string.final_restore_failed,
+            renderError = { resId, args -> msg(resId, *args.toTypedArray()) },
+            onSuccess = { refreshStorage() },
+            restore = restore
+        )
     }
 
     /**
@@ -997,6 +1182,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     applySettings = { repository.settingsRestore(it) },
                     applyInProgress = { snapshot ->
                         repository.restoreTestProgress(snapshot)
+                    },
+                    // SE3: the partial-restore note must follow the app's selected
+                    // language, not the English fallback built into BackupRestorer.
+                    // The throwable detail is already on Logger; only the stable
+                    // RestorePartial flags reach the resolver.
+                    renderPartialNote = { items ->
+                        RestorePartialCopy.localized(items) { resId -> msg(resId) }
                     }
                 )
             }

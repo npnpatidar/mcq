@@ -11,7 +11,6 @@ import com.mcqapp.ui.settings.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -116,8 +115,10 @@ class SettingsViewModelResetTest {
      * Removing that warm-up makes the first Room DAO access run on the test
      * thread and fail, so this test cannot pass through a test dispatcher.
      *
-     * The timeout bounds a cooperative failure; the class watchdog covers an
-     * uninterruptible native wait.
+     * The class watchdog is the bound. There is deliberately no `withTimeout`:
+     * the seed this path performs writes DataStore, and cancelling a DataStore
+     * write mid-flight poisons the process-wide store for every later test
+     * (see SettingsResetRule).
      */
     @Test
     fun firstDatabaseOpenAndSeedPathCompletes() {
@@ -127,9 +128,7 @@ class SettingsViewModelResetTest {
         val freshDb = AppDatabase.get(context)
         try {
             val freshRepository = McqRepository(freshDb, context)
-            val config = runBlocking {
-                withTimeout(30_000) { freshRepository.schedulerConfigNow() }
-            }
+            val config = runBlocking { freshRepository.schedulerConfigNow() }
             assertNotNull("seeding the first config must complete", config)
             assertTrue(config.gradingVersion > 0)
         } finally {

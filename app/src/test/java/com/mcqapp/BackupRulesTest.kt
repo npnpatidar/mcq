@@ -9,6 +9,11 @@ import java.io.File
  * The app's manifest opted into backup with no rules, so every question bank,
  * bookmark and attempt history was eligible for cloud backup. The rules are
  * XML with no runtime API to assert against, so the guarantee is pinned here.
+ *
+ * Backup is an <include> allow-list: only the DataStore settings file and a
+ * tiny shared-pref mirror go to a backup. The database, logs and every other
+ * file stay out, so the rules must carry no blanket file include and no
+ * include that re-opens the log or database domains.
  */
 class BackupRulesTest {
 
@@ -18,7 +23,38 @@ class BackupRulesTest {
         return file.readText()
     }
 
-    private val excludedDomains = listOf("database", "log", "file", "external")
+    private fun block(xml: String, transport: String): String {
+        val start = xml.indexOf("<$transport>")
+        assertTrue("missing <$transport>", start >= 0)
+        val end = xml.indexOf("</$transport>", start)
+        assertTrue("missing </$transport>", end >= 0)
+        return xml.substring(start, end)
+    }
+
+    private val excludedDomains = listOf("database", "log", "external")
+
+    private fun assertOnlyDataStoreIsIncluded(rules: String, scope: String) {
+        val includes = Regex("""<include\s+domain="([^"]+)"([^>]*)/>""").findAll(rules)
+            .map { it.value }.toList()
+        val fileIncludes = includes.filter { it.contains("domain=\"file\"") }
+        assertTrue(
+            "$scope must allow-list only datastore/settings.preferences_pb from files: $fileIncludes",
+            fileIncludes.size == 1 &&
+                fileIncludes[0].contains("path=\"datastore/settings.preferences_pb\"")
+        )
+        assertFalse(
+            "$scope has a blanket file include, which would back up logs and the database",
+            fileIncludes.any { Regex("""<include\s+domain="file"\s*/>""").matches(it) }
+        )
+        assertFalse(
+            "$scope re-opens the log domain: $includes",
+            includes.any { it.contains("domain=\"log\"") }
+        )
+        assertFalse(
+            "$scope re-opens the database domain: $includes",
+            includes.any { it.contains("domain=\"database\"") }
+        )
+    }
 
     @Test
     fun theManifestPointsAtBothRuleFiles() {
@@ -30,13 +66,16 @@ class BackupRulesTest {
     @Test
     fun android12RulesExcludeTheDatabaseAndLogs() {
         val rules = res("data_extraction_rules.xml")
-        for (domain in excludedDomains) {
-            val tag = "<exclude domain=\"$domain\""
-            assertTrue("cloud-backup should exclude $domain", rules.contains(tag))
-            assertTrue("device-transfer should exclude $domain", rules.contains(tag))
+        for (transport in listOf("cloud-backup", "device-transfer")) {
+            val transportRules = block(rules, transport)
+            for (domain in excludedDomains) {
+                assertTrue(
+                    "$transport should exclude $domain",
+                    transportRules.contains("<exclude domain=\"$domain\"")
+                )
+            }
+            assertOnlyDataStoreIsIncluded(transportRules, transport)
         }
-        assertTrue("both transports must be covered", rules.contains("<cloud-backup>"))
-        assertTrue(rules.contains("<device-transfer>"))
     }
 
     @Test
@@ -45,6 +84,7 @@ class BackupRulesTest {
         for (domain in excludedDomains) {
             assertTrue("legacy backup should exclude $domain", rules.contains("<exclude domain=\"$domain\""))
         }
+        assertOnlyDataStoreIsIncluded(rules, "legacy backup")
     }
 
     @Test

@@ -184,6 +184,15 @@ data class EditorUiState(
     /** A picked image could not be read/encoded; nothing was written. */
     val imageError: String? = null
 ) {
+    /**
+     * [CardContent] hash of THIS form, cached on the immutable state instance.
+     * A `copy()` (a keystroke, a load, a move) creates a new instance and so a
+     * new cache; repeated recompositions of the same instance reuse it. Before
+     * this, the disclosure getter hashed every block — including base64 images
+     * — on Main on every recomposition (round-2 E9).
+     */
+    private val cardFingerprint: String by lazy { editorCardFingerprint(this) }
+
     /** Any write (save/delete) or move is in flight; controls gate on it. */
     val busy: Boolean get() = operation != EditorOperation.IDLE
 
@@ -195,7 +204,7 @@ data class EditorUiState(
      * tags and category — none of which reset a schedule). Review history stays.
      */
     val willResetSchedule: Boolean
-        get() = baselineCardFingerprint != null && editorCardFingerprint(this) != baselineCardFingerprint
+        get() = baselineCardFingerprint != null && cardFingerprint != baselineCardFingerprint
 
     /** Backward-compat text for labels and previews. */
     val text: String get() = elements.textContent

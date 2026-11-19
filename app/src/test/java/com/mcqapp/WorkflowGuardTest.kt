@@ -120,14 +120,33 @@ class WorkflowGuardTest {
                 Regex("""(?m)^[ \t]*if-no-files-found: error[ \t]*$""").containsMatchIn(step)
             )
         }
-        for (name in listOf("app-debug", "app-release", "test-results", "lint-report", "ui-test-results")) {
+        // The `test-results` upload is a single step in the 4-way unit-test
+        // matrix: one YAML step, four artifacts when expanded.
+        for (name in listOf(
+            "app-debug", "app-release", "lint-report", "ui-test-results"
+        )) {
             assertTrue(
                 "build.yml: artifact '${name}' is missing",
                 Regex("""(?m)^[ \t]*name: ${name}[ \t]*$""").containsMatchIn(build)
             )
         }
+        assertTrue(
+            "build.yml: the sharded unit-test results upload is missing",
+            Regex(
+                """(?m)^[ \t]*name: test-results-shard-\$\{\{ matrix\.shard \}\}[ \t]*$"""
+            ).containsMatchIn(build)
+        )
     }
 
+    /**
+     * Accepted owner policy (round-2 finding C1): the release-notes check is a
+     * *deliberate* advisory reminder, not a publish gate. `--generate-notes`
+     * never contains the plain-language "What's new for you" section, so CI
+     * emits a warning and the supervisor adds the notes afterwards with
+     * `gh release edit --notes-file`. That manual flow has been followed for
+     * every release. The assertions below freeze the reminder on purpose —
+     * they are not a weakened substitute for a gate.
+     */
     @Test
     fun releaseWarnsWhenGeneratedNotesLackUserFacingSection() {
         assertTrue(
@@ -149,6 +168,43 @@ class WorkflowGuardTest {
         assertTrue(
             "the comment must describe the live R8 settings",
             build.contains("isShrinkResources = true")
+        )
+    }
+
+    /** Lines that actually invoke Gradle; comments only mention it. */
+    private fun gradleInvocationLines(yaml: String): List<String> =
+        yaml.lineSequence().filter { it.contains("sh gradlew ") }.toList()
+
+    private fun allGradleStepsRefreshDependencies(yaml: String): Boolean {
+        val invocations = gradleInvocationLines(yaml)
+        return invocations.isNotEmpty() && invocations.all { "--refresh-dependencies" in it }
+    }
+
+    @Test
+    fun everyGradleInvocationForcesDependencyRefresh() {
+        for ((label, yaml) in listOf("build.yml" to build, "release.yml" to release)) {
+            val invocations = gradleInvocationLines(yaml)
+            assertTrue("$label: no 'sh gradlew' invocations found", invocations.isNotEmpty())
+            assertTrue(
+                "$label: every Gradle step must pass --refresh-dependencies:\n" +
+                    invocations.joinToString("\n"),
+                allGradleStepsRefreshDependencies(yaml)
+            )
+        }
+    }
+
+    @Test
+    fun refreshDependenciesGuardDetectsAMissingFlag() {
+        // Negative case: strip one flag from the real workflow text and prove
+        // the guard rejects it, so the assertion above is not a tautology.
+        val regressed = build.replaceFirst("--refresh-dependencies", "")
+        assertTrue(
+            "the mutation must not delete a Gradle step",
+            gradleInvocationLines(regressed).size == gradleInvocationLines(build).size
+        )
+        assertFalse(
+            "the guard must reject a Gradle step missing --refresh-dependencies",
+            allGradleStepsRefreshDependencies(regressed)
         )
     }
 }

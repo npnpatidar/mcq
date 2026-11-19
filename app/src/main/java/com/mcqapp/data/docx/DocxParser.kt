@@ -1,6 +1,8 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.data.io.FALLBACK_CATEGORY_LABEL
 import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
@@ -505,7 +507,7 @@ private fun parseSectionedDocx(lines: List<DocxLine>, warnings: List<String>): D
                 categories.add(
                     CatOut(
                         id = id,
-                        title = title.ifBlank { "Category" },
+                        title = title.ifBlank { FALLBACK_CATEGORY_LABEL },
                         parentId = stack.lastOrNull()?.first
                     )
                 )
@@ -613,7 +615,7 @@ private fun passageJson(p: RawPassage, categoryId: String?): JsonObject = buildJ
 /** The one-line title after `Passage:`; blank falls back to a numbered default. */
 private fun passageTitle(p: RawPassage): String {
     val plain = stripTags(p.titleHtml).trim()
-    return plain.ifBlank { "Passage" }
+    return plain.ifBlank { FALLBACK_PASSAGE_TITLE }
 }
 
 private fun stripTags(html: String): String =

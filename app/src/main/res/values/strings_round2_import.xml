@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- I3: a studied backup too large to buffer is imported as questions only.
+         The learner is told plainly that progress was skipped, not silently left
+         behind. -->
+    <string name="r2_import_progress_skipped_notice">This backup is too large to restore review progress. Your questions were imported, but their progress was skipped.</string>
+
+    <!-- I6: display forms of the data-layer fallback tokens. The persisted token
+         values ("Category", "Passage", "Cloze card from Anki.") never change —
+         only what the learner reads is localized here. -->
+    <string name="r2_import_fallback_category">Category</string>
+    <string name="r2_import_fallback_passage">Passage</string>
+    <string name="r2_import_fallback_cloze_explanation">Cloze card from Anki.</string>
+</resources>

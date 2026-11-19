@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,6 +51,8 @@ internal fun LineChart(
     val textMeasurer = rememberTextMeasurer()
     val grid = gridColor()
     val labelColor = axisLabelColor()
+    // Axis labels are in sp; scale the canvas so large text cannot clip (ST6).
+    val chartHeight = chartHeightDp(LocalDensity.current.fontScale).dp
 
     val hasPoints = series.any { s -> s.values.any { it != null } }
     if (labels.isEmpty() || !hasPoints) {
@@ -81,7 +84,7 @@ internal fun LineChart(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(200.dp)
+            .height(chartHeight)
             .semantics { contentDescription = summary }
     ) {
         val leftPad = 40.dp.toPx()

@@ -272,6 +272,16 @@ internal class StudyGradeGateForTests {
     val completed = CompletableDeferred<Unit>()
 }
 
+/**
+ * Pure gate for changing the proposed grade, shared by the ViewModel and the
+ * screen's toggle. The write is asynchronous: a tap in the frame before
+ * recomposition must not rewrite `pendingGrade` after `next()` captured it.
+ * Keeping the predicate here makes that negative case JVM-testable.
+ */
+internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
+    !state.grading && state.simplified && state.revealed &&
+        state.pendingGrade != null && state.question != null
+
 class StudyViewModel(
     application: Application,
     private val paperId: String,
@@ -361,6 +371,15 @@ class StudyViewModel(
 
     /** The end-of-sitting controller run; a restart waits for it. */
     private var sessionEndJob: Job? = null
+
+    /**
+     * The in-flight grade write, if any (next, grade, or the pending grade a
+     * stop persists). A restart joins it before clearing the exit latches so a
+     * review earned by the old sitting is tallied and closed into that sitting's
+     * session row, instead of leaking its tally/error into the fresh sitting or
+     * pulling a second card.
+     */
+    private var gradeWriteJob: Job? = null
 
     /**
      * Whether the sitting was ended while a grade was in flight: the normal
@@ -1014,7 +1033,9 @@ class StudyViewModel(
     fun changeGrade(grade: ReviewGrade) {
         val current = _state.value
         val question = current.question ?: return
-        if (!current.simplified || !current.revealed || current.pendingGrade == null) return
+        // S4: a grade write already in flight owns the proposal. Ignore the tap
+        // rather than let it rewrite pendingGrade/lastResult after Next read it.
+        if (!studyCanChangeGrade(current)) return
         val now = System.currentTimeMillis()
         // The dwell was frozen at Check; changing the grade must not reread a
         // clock that could have moved while the answer was being read.
@@ -1053,7 +1074,7 @@ class StudyViewModel(
         val dwellSeconds = _state.value.gradedDwellSeconds
         // sessionScope, not viewModelScope: a pop of the screen clears the
         // latter and would cancel this write after the tap was already spent.
-        sessionScope.launch {
+        gradeWriteJob = sessionScope.launch {
             awaitGradeGateForTests()
             var persisted = false
             try {
@@ -1136,7 +1157,7 @@ class StudyViewModel(
         val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
         _state.update { it.copy(gradedDwellSeconds = dwellSeconds) }
         // Durable scope so popping the screen mid-write cannot lose the grade.
-        sessionScope.launch {
+        gradeWriteJob = sessionScope.launch {
             awaitGradeGateForTests()
             // Persist and pull are split: a pull failure after a persisted
             // grade must not read as a failed grade — the review is already
@@ -1265,7 +1286,7 @@ class StudyViewModel(
         _state.update { it.copy(grading = true, gradeError = null) }
         val dwellSeconds = current.gradedDwellSeconds
         // Durable scope: "Done" can pop the screen while this write is in flight.
-        sessionScope.launch {
+        gradeWriteJob = sessionScope.launch {
             try {
                 val next = repository.recordStudyReview(
                     paperId = paperId,
@@ -1435,16 +1456,31 @@ class StudyViewModel(
 
     /** Re-pulls from the top so a session can be repeated. */
     fun restart() {
-        // "Study again" revives a session that stop() ended. Without this the
-        // first grade persists and then the stopped guard suppresses the pull,
-        // leaving the same revealed card to be graded — and logged — again.
-        stopped.set(false)
-        viewModelScope.launch {
+        // Durable IO scope, not viewModelScope: the grade write and the sitting's
+        // row write this joins both live on sessionScope (IO). Joining them from
+        // Main parks this coroutine across a dispatcher hop, and the fresh pull's
+        // own DataStore/Room resumes then depend on the UI looper; running the
+        // whole chain on IO keeps it independent of that pump. _state is a
+        // thread-safe StateFlow, so the UI still sees every update.
+        sessionScope.launch {
             try {
+                // A grade earned by the old sitting may still be on the durable
+                // session scope. Join it BEFORE clearing the exit latches: while
+                // stopped/cleared still hold, its continuation closes the review
+                // into the original sitting (one session row) and neither pulls a
+                // second card nor lands a late error on the fresh sitting.
+                gradeWriteJob?.join()
                 // Never start a new sitting while the previous one's end-of-
                 // sitting write is still running: its timing row must land
-                // before the next session records its own start.
+                // before the next session records its own start. Read after the
+                // grade join, since that continuation may have just set it.
                 sessionEndJob?.join()
+                // "Study again" revives a session that stop() ended. Without this
+                // the next grade persists and then the stopped guard suppresses
+                // the pull, leaving the same revealed card to be graded — and
+                // logged — again. Cleared only once the old sitting is fully
+                // attributed and closed.
+                stopped.set(false)
                 // A drill restarts from the scheduler now, not from the list
                 // it loaded when the screen opened: "Study again" promises a
                 // fresh pass, and the world has moved on — cards graded

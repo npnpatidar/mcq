@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 test-session accessibility and timing copy. Paired one-for-one in
+  values-hi; the warning plurals carry an identical %1$d placeholder in every
+  quantity so Android substitutes the count in every locale.
+-->
+<resources>
+    <!-- Flag / bookmark toggle states (spoken by TalkBack). -->
+    <string name="r2_test_flagged">Flagged</string>
+    <string name="r2_test_unflagged">Not flagged</string>
+    <string name="r2_test_bookmarked">Bookmarked</string>
+    <string name="r2_test_not_bookmarked">Not bookmarked</string>
+
+    <!-- Answer-review rows: one "go to question N" control. -->
+    <string name="r2_test_go_to_question">Go to question %1$d</string>
+
+    <!-- One merged countdown node; mm:ss matches the visible readout. -->
+    <string name="r2_test_time_remaining">Time remaining %1$02d:%2$02d</string>
+
+    <!--
+      One-shot time warnings, localised in both locales. Each count is both the
+      plural quantity and the %1$d argument, so "1 minute" and "5 minutes" each
+      pick the right form in every language.
+    -->
+    <plurals name="r2_test_warning_minutes">
+        <item quantity="one">%1$d minute left</item>
+        <item quantity="other">%1$d minutes left</item>
+    </plurals>
+    <plurals name="r2_test_warning_one_minute">
+        <item quantity="one">%1$d minute left — the test auto-submits at zero</item>
+        <item quantity="other">%1$d minutes left — the test auto-submits at zero</item>
+    </plurals>
+    <plurals name="r2_test_warning_seconds">
+        <item quantity="one">%1$d second left</item>
+        <item quantity="other">%1$d seconds left</item>
+    </plurals>
+
+    <!-- An order id that no longer resolves: let the learner carry on. -->
+    <string name="r2_test_question_unavailable">This question is unavailable.</string>
+    <string name="r2_test_skip_question">Skip</string>
+</resources>

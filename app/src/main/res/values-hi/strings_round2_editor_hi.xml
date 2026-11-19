@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Difficulty dropdown copy: display only, the stored token stays English. -->
+    <string name="r2_editor_difficulty_easy">सरल</string>
+    <string name="r2_editor_difficulty_medium">मध्यम</string>
+    <string name="r2_editor_difficulty_hard">कठिन</string>
+
+    <!-- Passage member list load failure, with a retry action. -->
+    <string name="r2_editor_members_load_error">इस पैसेज के प्रश्न लोड नहीं हो सके।</string>
+    <string name="r2_editor_retry">फिर से कोशिश करें</string>
+</resources>

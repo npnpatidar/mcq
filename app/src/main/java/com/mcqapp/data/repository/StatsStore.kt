@@ -29,7 +29,9 @@ import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
 import com.mcqapp.util.Logger
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
 
 /**
  * Loads what the statistics page needs: the replayed review log, every card's
@@ -98,6 +100,15 @@ internal class StatsStore(
     private suspend fun requireConfig(): SchedulerConfig =
         currentConfig() ?: throw GradingRuleUnavailable()
 
+    /**
+     * The locale the learner chose in Settings, for date/axis labels (ST2).
+     * An explicit ENGLISH/HINDI override resolves directly; SYSTEM follows the
+     * device default. Kept here so both the in-memory and the streamed builds
+     * get the same labels without the domain reaching for a Context.
+     */
+    private suspend fun selectedLocale(): Locale =
+        settings.appLanguage().first().locale() ?: Locale.getDefault()
+
     /** The calibration report plus the answer-time pair that may stand alone. */
     private data class CalibrationLoad(
         val report: Calibration.Report,
@@ -164,7 +175,8 @@ internal class StatsStore(
             // Only the scoped breakdown labels by category, and the map holds
             // one entry per question of the selected paper — never the whole
             // bank — so the unscoped view skips building it.
-            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
+            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap(),
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         // Plan §6.2/§6.3: the tag and all-papers category slices look up only
@@ -488,7 +500,8 @@ internal class StatsStore(
             // review is bucketed on its own calendar date's offset; a DST jump
             // no longer shifts a day's rows by an hour.
             zone = DayBoundary.defaultZone(),
-            scheduler = scheduler
+            scheduler = scheduler,
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         pageCardsInto(accumulator::addCard)
@@ -513,7 +526,8 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.defaultZone()
+            zone = DayBoundary.defaultZone(),
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         pageCardsInto(accumulator::addCard)
@@ -533,6 +547,7 @@ internal class StatsStore(
         val config = requireConfig()
         val scheduler = FsrsScheduler(desiredRetention = config.desiredRetention, config = config)
         val zone = DayBoundary.defaultZone()
+        val locale = selectedLocale()
         val overview = StatsAggregator.OverviewAccumulator(
             scopePaperId = scopePaperId,
             range = range,
@@ -540,6 +555,7 @@ internal class StatsStore(
             cfg = config,
             zone = zone,
             scheduler = scheduler,
+            locale = locale,
             // Only the KPIs are wanted here; the memory tab ranks nothing.
             collectWeakest = false
         )
@@ -554,7 +570,8 @@ internal class StatsStore(
                 db.paperDao().getAll().associate { it.id to it.title }
             } else {
                 emptyMap()
-            }
+            },
+            locale = locale
         )
         replayInto(scheduler) { review ->
             overview.add(review)
@@ -618,7 +635,8 @@ internal class StatsStore(
             range = range,
             now = now,
             cfg = config,
-            zone = DayBoundary.defaultZone()
+            zone = DayBoundary.defaultZone(),
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData()
@@ -645,7 +663,8 @@ internal class StatsStore(
             cfg = config,
             zone = DayBoundary.defaultZone(),
             collectEntries = collectEntries,
-            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
+            paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         val categoryOfQuestion = if (!collectEntries) {
@@ -681,7 +700,8 @@ internal class StatsStore(
             cfg = config,
             zone = DayBoundary.defaultZone(),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title },
-            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap()
+            categoryOfQuestion = scopePaperId?.let { loadCategoryOfQuestion(it) } ?: emptyMap(),
+            locale = selectedLocale()
         )
         replayInto(scheduler, accumulator::add)
         return accumulator.toData(chanceOfQuestion(accumulator.guessedQuestionIds()))

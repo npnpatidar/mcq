@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ST5: an out-of-range rating is unknown, never a confident Easy. -->
+    <string name="r2_stats_unknown_grade">—</string>
+
+    <!-- ST3: stability is memory strength (S), not a time to 90% recall, so
+         the histogram bins are unitless and this caption says what they are. -->
+    <string name="r2_stats_stability_caption">Stability (S) ranges. S is memory strength, not a time interval.</string>
+
+    <!-- ST2/ST3: resource-backed, unitless names for the ten stability bins,
+         in the same order as the domain histogram edges. -->
+    <string-array name="r2_stats_stability_bins">
+        <item>&lt;1</item>
+        <item>1–3</item>
+        <item>3–7</item>
+        <item>7–14</item>
+        <item>14–21</item>
+        <item>21–45</item>
+        <item>45–90</item>
+        <item>90–180</item>
+        <item>180–365</item>
+        <item>&gt;365</item>
+    </string-array>
+
+    <!-- ST2: localized names for the ten interval bins (real day/month
+         durations), in the same order as the domain histogram edges. -->
+    <string-array name="r2_stats_interval_bins">
+        <item>1 d</item>
+        <item>2–3 d</item>
+        <item>4–7 d</item>
+        <item>8–15 d</item>
+        <item>16–31 d</item>
+        <item>1–2 mo</item>
+        <item>2–4 mo</item>
+        <item>4–8 mo</item>
+        <item>8–17 mo</item>
+        <item>17 mo+</item>
+    </string-array>
+</resources>

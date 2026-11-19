@@ -2,9 +2,7 @@ package com.mcqapp
 
 import android.os.Looper
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.robolectric.Shadows.shadowOf
 
 /**
@@ -18,8 +16,22 @@ import org.robolectric.Shadows.shadowOf
  * suspending work; the test thread owns the looper until the work completes.
  *
  * Never call this from a thread other than Robolectric's main/test thread for
- * a test that relies on looper pumping. Both the suspending work and the
- * fallback wait are bounded, and a timeout names [condition].
+ * a test that relies on looper pumping.
+ *
+ * **The block is never cancelled, not at the deadline and not by interrupt.**
+ * The wait is bounded: past [timeoutMs] (plus a small margin for work that
+ * cannot observe time) this throws, but the worker is left running as a
+ * daemon. Cancelling would be actively harmful for DataStore work:
+ * `updateData` wraps the caller's own coroutine context into the actor
+ * message and runs the transform under it inside the single serialized write
+ * actor (androidx datastore-core `DataStoreImpl.updateData`), so a
+ * cancellation that lands mid-edit is delivered inside that one loop. The
+ * actor then stops consuming and every later DataStore call in the process
+ * parks forever — the whole JVM idle, one test stuck in `runBlocking`. That
+ * is the exact wedge this suite has hit repeatedly under loaded CI runners
+ * (jstack: `Fsrs7SelectionTest.setUp` inside `dataStore.edit`, nothing else
+ * running anywhere). Failing the test while leaving the work uncancelled
+ * reports the hang without poisoning every test after it.
  */
 internal fun <T> runOffMainWhilePumping(
     timeoutMs: Long = 30_000,
@@ -32,17 +44,7 @@ internal fun <T> runOffMainWhilePumping(
     val worker = Thread({
         outcome.set(
             try {
-                WorkOutcome.Success(
-                    runBlocking {
-                        try {
-                            withTimeout(timeoutMs) { block() }
-                        } catch (e: TimeoutCancellationException) {
-                            throw AssertionError(
-                                "timed out after ${timeoutMs}ms waiting for $condition"
-                            ).also { it.initCause(e) }
-                        }
-                    }
-                )
+                WorkOutcome.Success(runBlocking { block() })
             } catch (e: Throwable) {
                 WorkOutcome.Failure(e)
             }
@@ -51,18 +53,29 @@ internal fun <T> runOffMainWhilePumping(
     worker.isDaemon = true
     worker.start()
 
-    // The coroutine timeout is the normal bound. Keep a small outer bound as
-    // well for work that does not cooperate with cancellation (for example a
-    // native SQLite call already in progress).
-    val hardTimeoutMs = timeoutMs + 2_000
-    val deadline = System.nanoTime() + hardTimeoutMs * 1_000_000
+    // No interrupt at the deadline: an interrupt cancels the worker's
+    // runBlocking, and a DataStore edit cancelled mid-flight poisons the
+    // process-wide store for every later test (see the KDoc above). The
+    // daemon worker is abandoned instead; a genuinely wedged block is the
+    // task-level timeout's problem, not the next test's.
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000
     while (outcome.get() == null) {
         shadowOf(Looper.getMainLooper()).idle()
         if (outcome.get() != null) break
         if (System.nanoTime() >= deadline) {
-            worker.interrupt()
+            // Name the block before abandoning it: the Gradle task timeout
+            // only kills the worker later, and a lost-wakeup wedge otherwise
+            // leaves no clue. Every thread's frame is printed so the next
+            // run's log shows exactly what the abandoned work is parked on
+            // (and what, if anything, holds the DataStore actor).
+            System.err.println("PUMP-DEADLINE-DUMP after ${timeoutMs}ms for $condition")
+            for ((thread, frames) in Thread.getAllStackTraces()) {
+                System.err.println("  ${thread.name} ${thread.state}")
+                frames.take(24).forEach { f -> System.err.println("      at $f") }
+            }
             throw AssertionError(
-                "timed out after ${hardTimeoutMs}ms waiting for $condition"
+                "timed out after ${timeoutMs}ms waiting for $condition " +
+                    "(work left running; it is never cancelled)"
             )
         }
         Thread.sleep(1)

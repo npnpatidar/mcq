@@ -24,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -39,7 +38,6 @@ import com.mcqapp.AppLocale
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.ui.common.LocalAnnouncer
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,25 +70,21 @@ fun SettingsScreen(
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val storageError by viewModel.storageError.collectAsStateWithLifecycle()
 
-    // rememberSaveable: the pickers and confirm dialogs recreate the activity,
-    // and plain `remember` dismissed the confirm and lost the picked URI and
-    // the typed-error strings (consolidated_bugs.md F4/H10).
-    // The failure dialog's title follows the operation: backup and restore
-    // failures used to report under "Export failed" (consolidated_bugs.md
-    // H1). H6: a busy flag keeps a second export/backup/restore from queuing
-    // behind (and wiping) the first.
-    var exportError by rememberSaveable { mutableStateOf<String?>(null) }
-    // The failure's title as a resource id, resolved inside the dialog's
-    // Text: the callbacks are not composable scopes (consolidated_bugs.md
-    // H1).
-    var exportErrorTitleRes by rememberSaveable { mutableStateOf(0) }
-    var busy by rememberSaveable { mutableStateOf(false) }
+    // SE1: operation state lives in the ViewModel, which survives the Activity
+    // recreation a language change triggers. Keeping it in rememberSaveable
+    // left the new composition stuck at busy=true while the VM's coroutine
+    // cleared the old, orphaned state setters. The controls and both result
+    // dialogs below now render from these flows.
+    val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val operationError by viewModel.operationError.collectAsStateWithLifecycle()
+    val restoreReport by viewModel.restoreReport.collectAsStateWithLifecycle()
+    val shareRequest by viewModel.shareRequest.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
-    // LocalResources (not LocalContext.current) keeps the share copy
+    // LocalResources (not LocalContext.current) keeps the chooser title
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
     val resources = LocalResources.current
-    val scope = rememberCoroutineScope()
 
     // The ViewModel applies the platform locale and writes the preference; the
     // only UI side effect left is to recreate this activity so every Compose
@@ -108,63 +102,40 @@ fun SettingsScreen(
     LaunchedEffect(storageError) {
         storageError?.let { announcer.announce(it) }
     }
-    LaunchedEffect(exportError) {
-        val error = exportError
-        if (error != null) announcer.announce(error)
+    LaunchedEffect(operationError) {
+        operationError?.let { announcer.announce(it.message) }
     }
 
-    /**
-     * The Backup & data share buttons: build the file in the cache, then hand
-     * it to a chooser. A failure reports through the same dialog the export,
-     * backup and restore buttons use.
-     */
-    fun share(failureTitleRes: Int, build: suspend () -> android.content.Intent?) {
-        busy = true
-        scope.launch {
-            val intent = build()
-            busy = false
-            if (intent != null) {
-                try {
-                    context.startActivity(
-                        android.content.Intent.createChooser(
-                            intent,
-                            resources.getString(R.string.share_chooser_title)
-                        )
-                    )
-                } catch (_: ActivityNotFoundException) {
-                    exportErrorTitleRes = R.string.export_failed
-                    exportError = resources.getString(R.string.share_no_app)
-                }
-            } else {
-                exportErrorTitleRes = failureTitleRes
-                exportError = resources.getString(R.string.share_failed)
-            }
+    // The VM builds the share file; this composition only shows the chooser,
+    // using its own (fresh) context so a language-change recreation mid-build
+    // cannot leave the chooser attached to a destroyed Activity.
+    LaunchedEffect(shareRequest) {
+        val request = shareRequest ?: return@LaunchedEffect
+        try {
+            context.startActivity(
+                android.content.Intent.createChooser(
+                    request.intent,
+                    resources.getString(R.string.share_chooser_title)
+                )
+            )
+        } catch (_: ActivityNotFoundException) {
+            viewModel.reportShareNoApp()
+        } finally {
+            viewModel.shareRequestHandled(request.id)
         }
-    }
-
-    fun fail(titleRes: Int) = { error: String ->
-        exportErrorTitleRes = titleRes
-        exportError = error
     }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
-        uri?.let {
-            busy = true
-            viewModel.exportAll(it, onError = fail(R.string.export_failed)) { busy = false }
-        }
+        uri?.let { viewModel.exportAll(it) }
     }
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
-        uri?.let {
-            busy = true
-            viewModel.backupAll(it, onError = fail(R.string.backup_failed)) { busy = false }
-        }
+        uri?.let { viewModel.backupAll(it) }
     }
     var showRestoreConfirm by rememberSaveable { mutableStateOf(false) }
-    var restoreDone by rememberSaveable { mutableStateOf<String?>(null) }
     var restoreUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -184,7 +155,7 @@ fun SettingsScreen(
             // there for pickers that do not label .json files.
             viewModel.importTheme(
                 it,
-                onError = fail(R.string.theme_import_failed)
+                onError = { error -> viewModel.reportOperationError(R.string.theme_import_failed, error) }
             )
         }
     }
@@ -295,16 +266,11 @@ fun SettingsScreen(
                 onRefreshStorage = { viewModel.refreshStorage() },
                 onExportClick = { exportLauncher.launch("mcq-export.json") },
                 onBackupClick = { backupLauncher.launch("mcqapp-backup.zip") },
-                onShareAllClick = {
-                    share(R.string.export_failed) { viewModel.shareAllIntent() }
-                },
-                onShareBackupClick = {
-                    share(R.string.backup_failed) { viewModel.shareBackupIntent() }
-                },
+                onShareAllClick = { viewModel.shareAll() },
+                onShareBackupClick = { viewModel.shareBackup() },
                 onRestoreClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                 onExportLogsError = { titleRes, message ->
-                    exportErrorTitleRes = titleRes
-                    exportError = message
+                    viewModel.reportOperationError(titleRes, message)
                 }
             )
 
@@ -326,15 +292,7 @@ fun SettingsScreen(
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     showRestoreConfirm = false
-                    restoreUri?.let { uri ->
-                        busy = true
-                        viewModel.restoreBackup(
-                            uri,
-                            onError = fail(R.string.restore_failed),
-                            onDone = { report -> restoreDone = report },
-                            onComplete = { busy = false }
-                        )
-                    }
+                    restoreUri?.let { uri -> viewModel.restoreBackup(uri) }
                 }) { Text(stringResource(R.string.restore_replace_everything)) }
             },
             dismissButton = {
@@ -344,13 +302,13 @@ fun SettingsScreen(
             }
         )
     }
-    restoreDone?.let { report ->
+    restoreReport?.let { report ->
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { restoreDone = null },
+            onDismissRequest = { viewModel.dismissRestoreReport() },
             title = { Text(stringResource(R.string.restore_backup)) },
             text = { Text(report) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { restoreDone = null }) {
+                androidx.compose.material3.TextButton(onClick = { viewModel.dismissRestoreReport() }) {
                     Text(stringResource(R.string.ok))
                 }
             }
@@ -370,23 +328,25 @@ fun SettingsScreen(
             }
         )
     }
-    exportError?.let { error ->
+    operationError?.let { error ->
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { exportError = null },
+            onDismissRequest = { viewModel.dismissOperationError() },
             title = {
                 Text(
                     stringResource(
-                        if (exportErrorTitleRes != 0) {
-                            exportErrorTitleRes
+                        if (error.titleRes != 0) {
+                            error.titleRes
                         } else {
                             R.string.export_failed
                         }
                     )
                 )
             },
-            text = { Text(error) },
+            text = { Text(error.message) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { exportError = null }) { Text(stringResource(R.string.ok)) }
+                androidx.compose.material3.TextButton(onClick = { viewModel.dismissOperationError() }) {
+                    Text(stringResource(R.string.ok))
+                }
             }
         )
     }

@@ -25,6 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
@@ -220,10 +222,13 @@ private fun ParentPicker(
             .heightIn(max = 280.dp)
             .verticalScroll(rememberScrollState())
     ) {
+        // The semantics lambda is not composable: resolve the label here.
+        val noParentLabel = stringResource(R.string.r2_lib_select_no_parent)
         Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(
                 selected = selectedParent == null,
-                onClick = { onSelect(null) }
+                onClick = { onSelect(null) },
+                modifier = Modifier.semantics { contentDescription = noParentLabel }
             )
             Text(stringResource(R.string.none_top_level))
         }
@@ -249,6 +254,7 @@ private fun ParentOptions(
 ) {
     // A category's own subtree is hidden from its parent picker (cycles).
     if (node.id == excludeSubtreeOf) return
+    val parentLabel = stringResource(R.string.r2_lib_select_parent, node.title)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -257,7 +263,8 @@ private fun ParentOptions(
     ) {
         RadioButton(
             selected = node.id == selectedParent,
-            onClick = { onSelect(node.id) }
+            onClick = { onSelect(node.id) },
+            modifier = Modifier.semantics { contentDescription = parentLabel }
         )
         Text(node.title)
     }

@@ -16,7 +16,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -131,7 +130,8 @@ class RestoreRebuildIsolationTest {
      * awaited, so a large backup's replay cannot stretch the restore's own
      * "restoring…" phase. The seam suspends on a gate the test completes
      * afterwards — the smallest "still streaming" body — and the restore call
-     * is bounded, so an await would fail here instead of hanging.
+     * is bounded (never cancelled; see the pump), so an await would fail here
+     * instead of hanging.
      */
     @Test
     fun theRestoreReturnsWhileTheRebuildIsStillRunning() = runBlocking {
@@ -149,7 +149,15 @@ class RestoreRebuildIsolationTest {
             }
         )
 
-        val report = withTimeout(5_000) {
+        // Bounded without cancelling: the restore writes DataStore through
+        // settingsRestore, and cancelling a DataStore edit mid-flight poisons
+        // the process-wide store for every later test (see
+        // SettingsResetRule). The pump bounds the *wait* and leaves the work
+        // running instead of cancelling it.
+        val report = runOffMainWhilePumping(
+            timeoutMs = 15_000,
+            condition = "the restore to return while the rebuild is still running"
+        ) {
             BackupRestorer(db).restore(
                 backup(),
                 applySettings = { repository.settingsRestore(it) }

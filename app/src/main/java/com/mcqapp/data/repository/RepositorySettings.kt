@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mcqapp.AppLanguageCache
 import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
@@ -143,6 +144,9 @@ internal class SettingsStore(
             if (language == AppLanguage.SYSTEM) prefs.remove(appLanguageKey)
             else prefs[appLanguageKey] = language.storedValue
         }
+        // Mirror for the pre-33 attach hook (SE6). DataStore is still the
+        // source of truth; this only keeps the synchronous read up to date.
+        AppLanguageCache.write(context, language)
     }
 
     private val customThemesKey = stringPreferencesKey("custom_themes")
@@ -707,10 +711,6 @@ internal class SettingsStore(
     internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
 
-    /** Which build of the cut rule the stored pair was saved under (v28). */
-    internal suspend fun gradingRulesVersionNow(): Int =
-        context.dataStore.data.map { it[gradingRulesVersionKey] ?: 0 }.first()
-
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
      * left alone: they are the learner's own history, and Settings offers a
@@ -993,6 +993,15 @@ internal class SettingsStore(
                 }
             }
         }
+        // A restore can change the language too. Mirror the restored choice
+        // for the pre-33 attach hook (SE6): the generic edit above wrote it to
+        // DataStore, so read it back from the snapshot just applied. An absent
+        // key means SYSTEM, which clears the mirror as well.
+        val restoredLanguage = AppLanguage.fromStored(
+            (settings.preferences[AppLanguage.PREFERENCE_KEY]?.value as? JsonPrimitive)?.content
+        )
+        AppLanguageCache.write(context, restoredLanguage)
+
         // A pre-v26 backup carries weights but no fit version. Version 0 is
         // the honest label there: the backup cannot say which fit produced
         // them, and claiming a bump would invent provenance.

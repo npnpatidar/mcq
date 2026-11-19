@@ -35,18 +35,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,10 +82,9 @@ fun BookmarksScreen(
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
     val items = viewModel.pagingData.collectAsLazyPagingItems()
 
-    var showFormatDialog by remember { mutableStateOf(false) }
-    var exportFormat by remember { mutableStateOf(ExportFormat.JSON_INLINE) }
+    val showFormatDialog = state.showFormatDialog
+    val exportFormat = state.exportFormat
     val isSharing by viewModel.isSharing.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
     val platformContext = androidx.compose.ui.platform.LocalContext.current
     // LocalResources (not LocalContext.current) keeps the chooser title
     // configuration-aware: LocalContext.getString() is not re-read when the
@@ -93,6 +96,24 @@ fun BookmarksScreen(
     // plain `remember` came back null so the re-delivered URI was dropped
     // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
     var pendingFormat by rememberSaveable { mutableStateOf<ExportFormat?>(null) }
+
+    // R1: the screen only starts the chooser; the ViewModel owns the render so
+    // rotation/Back cannot cancel the write before startActivity.
+    val shareEvent by viewModel.shareEvents.latest.collectAsStateWithLifecycle()
+    LaunchedEffect(shareEvent) {
+        val event = shareEvent ?: return@LaunchedEffect
+        try {
+            platformContext.startActivity(
+                Intent.createChooser(
+                    event.value,
+                    platformResources.getString(R.string.share_chooser_title)
+                )
+            )
+        } catch (_: ActivityNotFoundException) {
+            sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
+        }
+        viewModel.shareEvents.consume(event.id)
+    }
 
     fun onExportDocument(uri: Uri?) {
         val format = pendingFormat
@@ -139,7 +160,7 @@ fun BookmarksScreen(
                 },
                 actions = {
                     if (state.count > 0) {
-                        IconButton(onClick = { showFormatDialog = true }) {
+                        IconButton(onClick = { viewModel.openFormatDialog() }) {
                             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_bookmarks))
                         }
                     }
@@ -150,7 +171,18 @@ fun BookmarksScreen(
         // A failed refresh rendered as an empty or blank list with no way
         // back (consolidated_bugs.md F6).
         val refreshFailed = items.loadState.refresh is LoadState.Error
-        if (state.count == 0 && !refreshFailed) {
+        if (!state.loaded) {
+            // R7: the COUNT Flow has not emitted yet; showing the empty state
+            // here made real bookmarks flash an "empty" screen on entry.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            }
+        } else if (state.count == 0 && !refreshFailed) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -254,13 +286,13 @@ fun BookmarksScreen(
 
     if (showFormatDialog) {
         fun closeFormatDialog() {
-            showFormatDialog = false
             pendingFormat = null
+            viewModel.closeFormatDialog()
         }
 
         fun saveBookmarksToFile() {
-            showFormatDialog = false
             pendingFormat = exportFormat
+            viewModel.closeFormatDialog()
             exportSaver(exportFormat).launch(
                 PaperExporter.fileNameFor(
                     com.mcqapp.data.io.BookmarkExport.PAPER_TITLE,
@@ -269,27 +301,10 @@ fun BookmarksScreen(
             )
         }
 
-        fun shareBookmarks() {
-            scope.launch {
-                val intent = viewModel.shareBookmarksIntent(exportFormat)
-                closeFormatDialog()
-                if (intent != null) {
-                    try {
-                        platformContext.startActivity(
-                            Intent.createChooser(
-                                intent,
-                                platformResources.getString(R.string.share_chooser_title)
-                            )
-                        )
-                    } catch (_: ActivityNotFoundException) {
-                        sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))
-                    }
-                }
-            }
-        }
-
         AlertDialog(
-            onDismissRequest = { closeFormatDialog() },
+            // R8: a share render must not be dismissed out from under the user;
+            // rotation keeps the dialog because its state lives in the VM.
+            onDismissRequest = { if (!isSharing) closeFormatDialog() },
             title = {
                 Text(
                     pluralStringResource(
@@ -310,22 +325,46 @@ fun BookmarksScreen(
                         Spacer(Modifier.height(8.dp))
                     }
                     ExportFormat.entries.forEach { format ->
+                        val title = stringResource(format.titleRes)
+                        // stringResource is @Composable, so resolve both pieces in
+                        // composition and hand the helper already-localized values.
+                        val baseDescription = stringResource(format.descriptionRes)
+                        val caveat = if (format.contentOnlyNoteRes != 0) {
+                            stringResource(format.contentOnlyNoteRes)
+                        } else ""
+                        val description = format.descriptionWithCaveat { id ->
+                            if (id == format.contentOnlyNoteRes) caveat else baseDescription
+                        }
+                        val isSelected = exportFormat == format
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { exportFormat = format }
+                                .clickable(
+                                    enabled = !isSharing,
+                                    onClickLabel = title,
+                                    role = Role.RadioButton
+                                ) { viewModel.selectFormat(format) }
+                                .semantics {
+                                    contentDescription = title
+                                    // Spoken checked state, not just the radio glyph.
+                                    stateDescription = platformResources.getString(
+                                        if (isSelected) R.string.r2_res_format_selected
+                                        else R.string.r2_res_format_not_selected
+                                    )
+                                }
                                 .padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
-                                selected = exportFormat == format,
-                                onClick = { exportFormat = format }
+                                selected = isSelected,
+                                onClick = { viewModel.selectFormat(format) },
+                                enabled = !isSharing
                             )
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(format.title, style = MaterialTheme.typography.bodyMedium)
+                                Text(title, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    format.description,
+                                    description,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -339,7 +378,10 @@ fun BookmarksScreen(
                     TextButton(enabled = !isSharing, onClick = { saveBookmarksToFile() }) {
                         Text(stringResource(R.string.share_save))
                     }
-                    TextButton(enabled = !isSharing, onClick = { shareBookmarks() }) {
+                    TextButton(
+                        enabled = !isSharing,
+                        onClick = { viewModel.shareBookmarks(exportFormat) }
+                    ) {
                         Text(stringResource(R.string.share_share))
                     }
                 }

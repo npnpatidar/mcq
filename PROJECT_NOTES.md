@@ -258,8 +258,10 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
-  matches nothing. Full local pass ≈194 classes. The `:app:testPureJvm` Gradle task now
-  codifies this selection rule so it no longer depends on a shell recipe.
+  matches nothing. Full local pass ≈237 classes after the round-2 fix batch (the
+  guard classes are pure JVM too). The
+  `:app:testPureJvm` Gradle task now codifies this selection rule so it no longer
+  depends on a shell recipe.
 - Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.
 - APK artifacts download to `/home/naresh/Download`, not `/sdcard/Download`:
 
@@ -295,16 +297,34 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.60` is the
-  published release and `0.0.61` is the release being cut by the final housekeeping
-  branch. Room schema remains 28.
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.61` is the
+  published release and `0.0.62` is the release being cut by the round-2 review
+  fix branch. Room schema remains 28. Round-2 review reports are in
+  `review-reports-2/` (PR #94); the fix work is PR #95, with the High findings in
+  the first commit and the remaining Medium/Low findings in the follow-up.
+- `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
+  class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`,
+  `SignalQueryTest`). Cause (proven by a CI `jstack` sentinel): a DataStore write
+  cancelled mid-flight — `withTimeout` around `dataStore.edit`, on a loaded
+  runner — poisons the process-wide write actor (`updateData` runs the caller's
+  transform under the caller's own context inside that one loop), so every later
+  DataStore call parks forever with the whole JVM otherwise idle. **Never cancel
+  a DataStore write**: bound the *wait* instead (`runOffMainWhilePumping` never
+  cancels or interrupts its block). `DataStoreWriteCancellationGuardTest` pins
+  this; the suite runs as a 4-way shard matrix, and the JVM is recycled every 40
+  classes. Do not raise the task timeout to get past a stall — that hides the
+  poison.
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
-  `test-results`, `lint-report`, `ui-test-results`. After every push, download both
-  APKs and keep them under these exact names:
+  `lint-report`, `ui-test-results`, and the unit-test results as a 4-way
+  matrix `test-results-shard-0..3` (`apk-build/test-shards.sh` partitions the
+  363 classes; a Robolectric lost-wakeup wedge in one shard reports alone and
+  dumps its thread stacks instead of holding the branch). After every push,
+  download both APKs and keep them under these exact names:
 
 ```bash
 gh run download <run-id> --name app-debug   -D /sdcard/Download   # -> app-debug.apk
 gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-release.apk
+# unit-test results: repeat --name test-results-shard-0 .. -3
 ```
 
 - `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the

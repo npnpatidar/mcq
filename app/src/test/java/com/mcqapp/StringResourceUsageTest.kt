@@ -25,10 +25,26 @@ class StringResourceUsageTest {
      * to one of these is spoken by TalkBack or shown in a Snackbar, so it is
      * rendered even though it never sits inside a `Text(...)`. This does not
      * weaken the existing checks — it only recognises these real destinations,
-     * and [isRenderedByFeedbackSink] additionally proves a hoisted local is
-     * actually consumed by one before accepting it.
+     * and [isRenderedViaLocal] additionally proves a hoisted local is actually
+     * consumed by one before accepting it.
      */
     private val feedbackSinks = setOf("announce", "sendMessage", "UiMessage")
+
+    /**
+     * Other real destinations for a resolved string. Curated from the call
+     * sites the guard flagged: a chooser title, a settings error callback, a
+     * share/export title and the spoken `onClickLabel`. A local is only accepted
+     * when a use actually lands in one of these or in [renderingAssignments].
+     */
+    private val renderingSinkCalls = feedbackSinks + setOf(
+        "createChooser", "onExportLogsError", "exportSelection"
+    )
+
+    /** Property assignments whose value is always spoken or shown. */
+    private val renderingAssignments = listOf(
+        "contentDescription =", "stateDescription =", "onClickLabel =",
+        "label =", "help =", "value ="
+    )
 
     /** The nearest enclosing call at [offset]: its name and its opening `(`. */
     private fun enclosingCall(src: String, offset: Int): Pair<String?, Int>? {
@@ -52,23 +68,98 @@ class StringResourceUsageTest {
     }
 
     /**
-     * A resource is rendered when it is passed straight to a feedback sink, or
-     * when it is hoisted to a local `val` (needed because `stringResource` is
-     * composable-only while the callbacks that show the message are not) and
-     * that local is later read by a sink. A hoisted resource with no sink use
-     * is still reported — we trace the name, we do not assume.
+     * A resource is rendered when it is passed straight to a sink, or when it
+     * is hoisted to a local `val` (needed because `stringResource` is
+     * composable-only while callbacks/semantics lambdas are not) and that local
+     * is later read by a sink. A hoisted resource with no sink use is still
+     * reported — we trace the name through local-to-local and forwarding
+     * functions, we do not assume.
      */
-    private fun isRenderedByFeedbackSink(before: String, src: String, offset: Int): Boolean {
-        if (feedbackSinks.any { before.endsWith("$it(") }) return true
-        if (before.endsWith("contentDescription =")) return true
+    private fun isRenderedViaLocal(before: String, src: String, offset: Int): Boolean {
+        if (renderingSinkCalls.any { before.endsWith("$it(") }) return true
+        if (renderingAssignments.any { before.endsWith(it) }) return true
 
         val hoisted = Regex("""\bval\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*$""")
             .find(before)?.groupValues?.get(1) ?: return false
-        return Regex("""\b${Regex.escape(hoisted)}\b""").findAll(src, offset).any { use ->
-            enclosingCall(src, use.range.first)?.first in feedbackSinks ||
-                src.substring(0, use.range.first).trimEnd().endsWith("contentDescription =")
+        return flowsToSink(setOf(hoisted), src, offset, mutableSetOf())
+    }
+
+    /** Follow each use of [names] until one lands in a real rendering sink. */
+    private fun flowsToSink(
+        names: Set<String>,
+        src: String,
+        from: Int,
+        visited: MutableSet<String>
+    ): Boolean {
+        val fresh = names - visited
+        if (fresh.isEmpty()) return false
+        visited += fresh
+        for (name in fresh) {
+            for (use in Regex("""\b${Regex.escape(name)}\b""").findAll(src, from)) {
+                val at = use.range.first
+                val prior = src.substring(0, at).trimEnd()
+                if (renderingAssignments.any { prior.endsWith(it) }) return true
+                if (enclosingCall(src, at)?.first in renderingSinkCalls) return true
+
+                // The local may be returned from a helper that is itself called
+                // inside a sink (e.g. exportTitle() -> exportSelection(...)).
+                val owner = returnedFromEnclosingFunction(name, src, at)
+                if (owner != null && callsInsideSink(owner, src)) return true
+
+                // Local-to-local flow: `val msg = "...$name..."` then a sink reads msg.
+                val next = Regex("""\bval\s+([A-Za-z_][A-Za-z0-9_]*)\s*=""")
+                    .findAll(src.substring(maxOf(0, at - 400), at))
+                    .lastOrNull()?.groupValues?.get(1)
+                if (next != null && next !in visited && flowsToSink(setOf(next), src, at, visited)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /** Function whose body contains [at] and returns a value built from [name]. */
+    private fun returnedFromEnclosingFunction(name: String, src: String, at: Int): String? {
+        val owner = Regex("""\bfun\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\(""")
+            .findAll(src.substring(0, at)).lastOrNull()?.groupValues?.get(1) ?: return null
+        val window = src.substring(maxOf(0, at - 200), minOf(src.length, at + 200))
+        return owner.takeIf {
+            Regex("""\breturn\b[^;\n]*\b${Regex.escape(name)}\b""").containsMatchIn(window)
         }
     }
+
+    /** True when [function] is invoked as an argument to one of the sinks. */
+    private fun callsInsideSink(function: String, src: String): Boolean =
+        Regex("""\b${Regex.escape(function)}\s*\(""").findAll(src).any { call ->
+            enclosingCall(src, call.range.first)?.first in renderingSinkCalls
+        }
+
+    /**
+     * `segmentLabels = listOf(stringResource(...), ...)` is a chart legend: the
+     * chart folds these into its spoken `contentDescription`. Accept a resource
+     * only while still inside such a list literal.
+     */
+    private fun isInsideSegmentLabels(src: String, offset: Int): Boolean {
+        for (m in Regex("""segmentLabels\s*=\s*listOf\s*\(""").findAll(src)) {
+            if (m.range.last >= offset) break
+            var depth = 0
+            for (i in m.range.last until offset) {
+                when (src[i]) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                if (depth == 0) break
+            }
+            if (depth > 0) return true
+        }
+        return false
+    }
+
+    /** `stringResource(...) to SomeKey` is a chip/selector label paired with its key. */
+    private fun isKeyedLabel(src: String, offset: Int): Boolean =
+        Regex("""\)\s*to\s+[A-Za-z_]""").containsMatchIn(
+            src.substring(offset, minOf(src.length, offset + 80))
+        )
 
     /**
      * True only for a CONFIRMED rendered position: a direct sink, or a call
@@ -79,12 +170,9 @@ class StringResourceUsageTest {
      */
     private fun isRenderedConfirmed(before: String, src: String, offset: Int): Boolean {
         if (before.endsWith("Text(") ||
-            before.endsWith("contentDescription =") ||
-            before.endsWith("label =") ||
-            before.endsWith("help =") ||
-            before.endsWith("value =")
+            renderingAssignments.any { before.endsWith(it) }
         ) return true
-        if (isRenderedByFeedbackSink(before, src, offset)) return true
+        if (isRenderedViaLocal(before, src, offset)) return true
         return isInsideTextCall(src, offset)
     }
 
@@ -95,14 +183,12 @@ class StringResourceUsageTest {
      */
     private fun isRendered(before: String, src: String, offset: Int): Boolean {
         if (before.endsWith("Text(") ||
-            before.endsWith("contentDescription =") ||
-            before.endsWith("label =") ||
             // AnkiNumberRow renders label and help verbatim into Texts in
             // its own body, so a call assigned to help is a rendered sink.
-            before.endsWith("help =") ||
-            before.endsWith("value =")
+            renderingAssignments.any { before.endsWith(it) }
         ) return true
-        if (isRenderedByFeedbackSink(before, src, offset)) return true
+        if (isRenderedViaLocal(before, src, offset)) return true
+        if (isInsideSegmentLabels(src, offset) || isKeyedLabel(src, offset)) return true
         // A fallback branch: the value flows on into a rendered position
         // (`x ?: stringResource(...)` or the branches of a `when` that feeds
         // a field's value). Confirm the enclosing expression actually lands
@@ -305,9 +391,9 @@ sendMessage(UiMessage(shareNoAppText, UiMessageTone.Error))"""
 
     @Test
     fun aHoistedStringUsedAsAContentDescriptionIsRendered() {
-        val src = """val editorLabel = stringResource(R.string.a11y_formula_editor)
+        val src = """val editorLabel = stringResource(R.string.a11y_formula_editor_value)
 AndroidView(modifier = Modifier.semantics { contentDescription = editorLabel })"""
-        val offset = src.indexOf("stringResource(R.string.a11y_formula_editor")
+        val offset = src.indexOf("stringResource(R.string.a11y_formula_editor_value")
         assertTrue("a hoisted content description is spoken", checkRendered(src, offset))
     }
 
@@ -532,5 +618,201 @@ val answer = 42"""
             assertTrue("$path lost the translated prefix: $formatted", formatted.startsWith(prefix))
             assertTrue("$path did not render mm:ss: $formatted", formatted.endsWith("05:07"))
         }
+    }
+
+    // ---- Round-2 guard coverage (finding A7) --------------------------------
+    //
+    // The four syntactic patterns above cannot see a literal that is held in an
+    // enum/data holder and handed to a resource seam as a parameter. Instead of
+    // parsing arbitrary Kotlin, we keep a small curated registry of holders and
+    // check the one mechanical invariant that makes them safe: every public
+    // "label" String field is paired with a @StringRes field the UI can resolve.
+    // The rule is written against source text so it can be unit-tested with
+    // synthetic holders (see Round2GuardCoverageTest).
+
+    /** A holder whose public label fields must be paired with string resources. */
+    internal data class LabelHolder(
+        val className: String,
+        val sourcePath: String,
+        /** Field names that are stable tokens/non-user-facing and need no resource. */
+        val allowlist: Set<String> = emptySet()
+    )
+
+    internal val labelHolders = listOf(
+        LabelHolder("ExportFormat", "src/main/java/com/mcqapp/data/export/ExportFormat.kt"),
+        LabelHolder("Difficulty", "src/main/java/com/mcqapp/domain/Models.kt")
+    )
+
+    private val blockComment = Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL)
+    private val stringResAnnotation = Regex("""@(?:androidx\.annotation\.)?StringRes\b""")
+    private val labelFieldName = Regex("""(?i)(label|title|description|message|text)$""")
+
+    /** Strip annotations/modifiers from a constructor parameter, leaving `name: Type [= default]`. */
+    private fun bareParam(param: String): String = param
+        .replace(Regex("""@[A-Za-z0-9_.]+(?:\([^)]*\))?"""), "")
+        .replace(Regex("""\b(?:val|var|private|internal|public|override|open|final|reified)\b"""), "")
+        .trim()
+
+    private fun fieldNameOf(bare: String): String? =
+        Regex("""^([A-Za-z_][A-Za-z0-9_]*)\s*:""").find(bare)?.groupValues?.get(1)
+
+    private fun fieldTypeOf(bare: String): String? =
+        Regex("""^[A-Za-z_][A-Za-z0-9_]*\s*:\s*([A-Za-z0-9_?<>., ]+?)(?:\s*=|$)""")
+            .find(bare)?.groupValues?.get(1)?.trim()
+
+    /**
+     * One violation per public `String` constructor field of [className] that
+     * reads as user-facing copy but has no paired `@StringRes` field named
+     * `<field>Res`. Accepts synthetic source so the rule itself is testable.
+     */
+    internal fun enumLabelPairingViolations(
+        src: String,
+        className: String,
+        allowlist: Set<String> = emptySet()
+    ): List<String> {
+        // Block comments inside a constructor (KDoc on the fields) can carry
+        // commas/parens that confuse a depth-based splitter, so strip them first.
+        val clean = src.replace(blockComment, "")
+        val decl = Regex("""\benum\s+class\s+${Regex.escape(className)}\s*\(""").find(clean)
+            ?: return listOf("$className: enum declaration not found")
+        val params = callArguments(clean, decl.range.last)
+        if (params.isEmpty()) return listOf("$className: no constructor fields found")
+
+        val resFields = params.mapNotNull { param ->
+            val name = fieldNameOf(bareParam(param))
+            if (name != null && stringResAnnotation.containsMatchIn(param)) name else null
+        }.toSet()
+
+        val offenders = mutableListOf<String>()
+        for (param in params) {
+            val bare = bareParam(param)
+            if (Regex("""\bprivate\b""").containsMatchIn(param)) continue
+            val name = fieldNameOf(bare) ?: continue
+            val type = fieldTypeOf(bare) ?: continue
+            if (!type.contains("String")) continue
+            if (name in allowlist || !labelFieldName.containsMatchIn(name)) continue
+            if ("${name}Res" !in resFields) {
+                offenders += "$className.$name: user-facing label String with no paired @StringRes field"
+            }
+        }
+        return offenders
+    }
+
+    /** Names in [all] that are absent from [present] — used for parity/seam checks. */
+    internal fun missingFrom(all: Collection<String>, present: Set<String>): Set<String> =
+        all.toSet() - present
+
+    /** `<string name="...">` / `<plurals name="...">` names declared under a `res/values*` directory. */
+    internal fun resourceNamesIn(directory: String): Set<String> =
+        File(directory).walkTopDown()
+            .filter { it.isFile && it.name.startsWith("strings") && it.extension == "xml" }
+            .flatMap { file ->
+                Regex("""<(?:string|plurals) name="([a-z0-9_]+)"[^>]*>""")
+                    .findAll(file.readText()).map { it.groupValues[1] }
+            }.toSet()
+
+    /** `R.string.<name>` / `R.plurals.<name>` names referenced in the main Kotlin sources. */
+    internal fun referencedStringNames(): Set<String> =
+        mainSources().flatMap { file ->
+            Regex("""R\.(?:string|plurals)\.([a-z0-9_]+)""").findAll(file.readText())
+                .map { it.groupValues[1] }
+        }.toSet()
+
+    internal data class ResourceSeam(
+        val holder: String,
+        val sourcePath: String,
+        /** Hook the holder must expose so callers resolve copy through a resource. */
+        val mustDeclare: List<String>,
+        val resources: List<String>
+    )
+
+    /**
+     * Round-2 seams: each holder exposes a localizable hook (`titleRes`,
+     * `labelRes`, `warningKind`, ...) and every hook resolves to a resource that
+     * must exist in BOTH locales and be referenced from real code. A dropped
+     * hook, a missing translation, or a resource declared but never used through
+     * a seam are all caught here.
+     */
+    internal val round2Seams = listOf(
+        ResourceSeam(
+            "ExportFormat",
+            "src/main/java/com/mcqapp/data/export/ExportFormat.kt",
+            listOf("titleRes", "descriptionRes", "@StringRes"),
+            listOf(
+                "r2_res_export_json_inline_title", "r2_res_export_json_inline_description",
+                "r2_res_export_zip_title", "r2_res_export_zip_description",
+                "r2_res_export_html_title", "r2_res_export_html_description",
+                "r2_res_export_html_quiz_title", "r2_res_export_html_quiz_description",
+                "r2_res_export_pdf_title", "r2_res_export_pdf_description",
+                "r2_res_export_pdf_answer_key_title", "r2_res_export_pdf_answer_key_description",
+                "r2_res_export_apkg_title", "r2_res_export_apkg_description",
+                "r2_res_export_docx_title", "r2_res_export_docx_description"
+            )
+        ),
+        ResourceSeam(
+            "ReviewFilters",
+            "src/main/java/com/mcqapp/domain/ReviewFilters.kt",
+            listOf("labelRes"),
+            listOf(
+                "r2_res_filter_all", "r2_res_filter_correct", "r2_res_filter_wrong",
+                "r2_res_filter_skipped", "r2_res_filter_ungraded", "r2_res_filter_slow",
+                "r2_res_filter_saved"
+            )
+        ),
+        ResourceSeam(
+            "Difficulty",
+            "src/main/java/com/mcqapp/domain/Models.kt",
+            listOf("labelRes"),
+            listOf("r2_editor_difficulty_easy", "r2_editor_difficulty_medium", "r2_editor_difficulty_hard")
+        ),
+        ResourceSeam(
+            "TimerWarnings",
+            "src/main/java/com/mcqapp/domain/TestTiming.kt",
+            listOf("warningKind", "TimerWarningKind"),
+            listOf("r2_test_warning_minutes", "r2_test_warning_one_minute", "r2_test_warning_seconds")
+        ),
+        ResourceSeam(
+            "StudyOptionStates",
+            "src/main/java/com/mcqapp/ui/study/StudyScreen.kt",
+            listOf("studyOptionStateRes", "studyVerdictRes", "studyDwellBandRes", "@StringRes"),
+            listOf(
+                "r2_study_option_correct", "r2_study_option_selected_wrong",
+                "r2_study_option_selected", "r2_study_option_not_selected",
+                "r2_study_verdict_correct", "r2_study_verdict_incorrect",
+                "r2_study_band_neutral", "r2_study_band_easy", "r2_study_band_good", "r2_study_band_hard"
+            )
+        )
+    )
+
+    @Test
+    fun curatedEnumLabelFieldsArePairedWithStringResources() {
+        val offenders = labelHolders.flatMap { holder ->
+            enumLabelPairingViolations(File(holder.sourcePath).readText(), holder.className, holder.allowlist)
+        }
+        assertTrue("enum label fields with no @StringRes pair: $offenders", offenders.isEmpty())
+    }
+
+    @Test
+    fun round2SeamsExistInBothLocalesAndAreReferencedFromCode() {
+        val en = resourceNamesIn("src/main/res/values")
+        val hi = resourceNamesIn("src/main/res/values-hi")
+        val referenced = referencedStringNames()
+        val offenders = mutableListOf<String>()
+        for (seam in round2Seams) {
+            val holderSrc = File(seam.sourcePath).readText()
+            for (symbol in seam.mustDeclare) {
+                val declared = if (symbol == "@StringRes") {
+                    stringResAnnotation.containsMatchIn(holderSrc)
+                } else {
+                    symbol in holderSrc
+                }
+                if (!declared) offenders += "${seam.holder}: missing seam hook '$symbol'"
+            }
+            offenders += missingFrom(seam.resources, en).map { "${seam.holder}.$it missing in EN" }
+            offenders += missingFrom(seam.resources, hi).map { "${seam.holder}.$it missing in HI" }
+            offenders += missingFrom(seam.resources, referenced)
+                .map { "${seam.holder}.$it declared but not used through a resource seam" }
+        }
+        assertTrue("broken round-2 resource seams: $offenders", offenders.isEmpty())
     }
 }

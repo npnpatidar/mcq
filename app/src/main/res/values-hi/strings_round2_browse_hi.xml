@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hindi translation of strings_round2_browse.xml. Names, placeholders and
+  plural quantities match the base locale exactly.
+-->
+<resources>
+    <string name="r2_browse_selected">चयनित</string>
+    <plurals name="r2_browse_question_count">
+        <item quantity="one">(%1$d प्रश्न)</item>
+        <item quantity="other">(%1$d प्रश्न)</item>
+    </plurals>
+
+    <!-- Browse filter chips -->
+    <string name="r2_browse_filter_all">सभी</string>
+    <string name="r2_browse_filter_no_answer">कोई उत्तर नहीं</string>
+    <string name="r2_browse_filter_no_explanation">कोई स्पष्टीकरण नहीं</string>
+
+    <!-- Search -->
+    <string name="r2_browse_blank_text">(खाली पाठ)</string>
+    <string name="r2_browse_scope_all">सभी</string>
+    <string name="r2_browse_scope_questions">प्रश्न</string>
+    <string name="r2_browse_scope_options">विकल्प</string>
+    <string name="r2_browse_open_question">प्रश्न खोलें</string>
+
+    <!-- Cross-paper move: collision disclosure (warning + honest toast) -->
+    <string name="r2_browse_move_collision_warning">यदि गंतव्य पेपर में पहले से उस प्रश्न का कार्ड मौजूद है, तो वही कार्ड और उसका अपना अध्ययन इतिहास बना रहता है, और स्रोत पेपर का उस प्रश्न का इतिहास हटा दिया जाता है।</string>
+    <string name="r2_browse_move_collision_toast">जो स्रोत इतिहास गंतव्य के मौजूदा कार्ड से मेल खाता था, उसे हटा दिया गया।</string>
+
+    <!-- Accessibility labels -->
+    <string name="r2_browse_select_question">प्रश्न %1$d चुनें</string>
+    <string name="r2_browse_correct_option">सही उत्तर</string>
+    <string name="r2_browse_other_option">सही उत्तर नहीं</string>
+</resources>

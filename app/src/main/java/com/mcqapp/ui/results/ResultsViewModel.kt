@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -27,6 +28,7 @@ import com.mcqapp.domain.TestReport
 import com.mcqapp.domain.TestReportBuilder
 import com.mcqapp.domain.TestReportInput
 import com.mcqapp.ui.Verdict
+import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import androidx.paging.PagingSource
 import kotlinx.coroutines.Dispatchers
@@ -53,7 +55,6 @@ data class ResultsUiState(
     val bookmarked: Set<String> = emptySet(),
     /** Header tallies, one row from SQL instead of the whole result list. */
     val aggregates: ResultAggregates = ResultAggregates(),
-    val categoryBreakdown: List<Pair<String, Pair<Int, Int>>> = emptyList(),
     /** The derived report (section 11.14); null until the attempt loads. */
     val report: TestReport? = null,
     val filter: String = ReviewFilters.ALL,
@@ -65,23 +66,38 @@ data class ResultsUiState(
  * A review of one attempt. The rows stream in as a paged list, so a 250k
  * attempt no longer maps every `QuestionResult` (element JSON and option JSON
  * included) into memory before showing the first card; only the header
- * tallies and category breakdown are aggregated, in SQL.
+ * tallies are aggregated, in SQL.
+ *
+ * The filter is persisted in the [savedStateHandle] supplied by the screen's
+ * SavedState factory. That is the public production way to obtain a handle —
+ * the no-arg `SavedStateHandle()` constructor is @VisibleForTesting and is not
+ * bound to a registry owner, so it would not restore anything after process
+ * death. It is optional only so plain callers (tests and the legacy factory)
+ * can still build this ViewModel directly; on the real screen it is always
+ * present, so the filter survives process death as before.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ResultsViewModel(
     application: Application,
-    private val attemptId: Long
+    private val attemptId: Long,
+    /** Survives process death; rotation keeps the same ViewModel anyway. */
+    private val savedStateHandle: SavedStateHandle? = null
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
 
     /** Friendly, localized copy for the learner; exception text goes to the log only. */
-    private fun msg(resId: Int): String = getApplication<Application>().getString(resId)
+    private fun msg(resId: Int): String = AppStrings.getString(getApplication<Application>(), resId)
 
-    private val _state = MutableStateFlow(ResultsUiState())
+    /** Only known keys are restored from saved state; a stale key falls back to All. */
+    private val initialFilter: String =
+        savedStateHandle?.get<String>(KEY_FILTER)?.takeIf { it in KNOWN_FILTERS }
+            ?: ReviewFilters.ALL
+
+    private val _state = MutableStateFlow(ResultsUiState(filter = initialFilter))
     val state: StateFlow<ResultsUiState> = _state.asStateFlow()
 
-    private val request = MutableStateFlow(ResultsRequest(ReviewFilters.ALL))
+    private val request = MutableStateFlow(ResultsRequest(initialFilter))
 
     /** The live paging source; bookmark writes invalidate it in place (F14). */
     internal var liveSource: PagingSource<ResultPageKey, NumberedResult>? = null
@@ -150,8 +166,6 @@ class ResultsViewModel(
                 _state.update { it.copy(loading = true, loadError = null) }
                 val attempt = repository.getAttempt(attemptId)
                 val aggregates = repository.getResultAggregates(attemptId)
-                val breakdown = repository.getResultCategoryBreakdown(attemptId)
-                    .map { it.title to (it.correct to it.graded) }
                 // One bounded attempt is at most 150 rows, so the report loads
                 // one light projection and computes medians, the error mix and
                 // the topics in Kotlin. The question review stays paged.
@@ -183,7 +197,6 @@ class ResultsViewModel(
                         loading = false,
                         attempt = attempt,
                         aggregates = aggregates,
-                        categoryBreakdown = breakdown,
                         report = report
                     )
                 }
@@ -200,6 +213,7 @@ class ResultsViewModel(
     }
 
     fun updateFilter(filter: String) {
+        savedStateHandle?.set(KEY_FILTER, filter)
         _state.update { it.copy(filter = filter) }
         request.update { it.copy(filter = filter) }
     }
@@ -214,6 +228,21 @@ class ResultsViewModel(
         }
     }
 
+    /** The only two things the screen may do after an export completes. */
+    sealed interface ExportEvent {
+        data class Share(val intent: Intent) : ExportEvent
+        data object Failed : ExportEvent
+    }
+
+    /**
+     * R1: the chooser is a one-shot UI side effect. The render used to run in
+     * the screen's `rememberCoroutineScope`, which Compose cancels when the
+     * composition leaves — rotation/Back mid-render killed the startActivity
+     * line and left a partial file. The render now belongs to [viewModelScope]
+     * and the screen only starts the activity it is handed here.
+     */
+    val exportEvents = OneShotEvents<ExportEvent>()
+
     /**
      * Only one export may run at a time. A double-tap on the menu (or a CSV and
      * a PDF tap in quick succession) used to write the same file from two
@@ -222,21 +251,36 @@ class ResultsViewModel(
      */
     private val exportGate = ExportGate()
 
-    private suspend fun guardedExport(write: suspend () -> Intent?): Intent? {
-        if (!exportGate.tryAcquire()) return null
-        _state.update { it.copy(exporting = true) }
-        return try {
-            withContext(Dispatchers.IO) { write() }
-        } finally {
-            _state.update { it.copy(exporting = false) }
-            exportGate.release()
+    fun exportCsv() = launchExport(::renderCsvIntent)
+
+    fun exportPdf() = launchExport(::renderPdfIntent)
+
+    private fun launchExport(render: suspend () -> Intent?) {
+        viewModelScope.launch {
+            if (!exportGate.tryAcquire()) {
+                // Always answer the screen so its synchronous tap guard clears,
+                // even in the rare race where the UI guard missed a second tap.
+                exportEvents.send(ExportEvent.Failed)
+                return@launch
+            }
+            _state.update { it.copy(exporting = true) }
+            val intent = try {
+                withContext(Dispatchers.IO) { render() }
+            } catch (e: Exception) {
+                Logger.e("RESULTVM", "Export failed", e)
+                null
+            } finally {
+                _state.update { it.copy(exporting = false) }
+                exportGate.release()
+            }
+            exportEvents.send(if (intent != null) ExportEvent.Share(intent) else ExportEvent.Failed)
         }
     }
 
     /** Slice 5: export the report as CSV and return a share intent, or null. */
-    suspend fun exportCsvIntent(): Intent? = guardedExport {
-        val report = _state.value.report ?: return@guardedExport null
-        try {
+    private suspend fun renderCsvIntent(): Intent? {
+        val report = _state.value.report ?: return null
+        return try {
             val entities = repository.getAttemptResultEntities(attemptId)
             val tagsById = repository.getQuestionTagsByIds(entities.map { it.questionId }.distinct())
             val rows = buildCsvRows(entities, tagsById)
@@ -262,9 +306,9 @@ class ResultsViewModel(
     }
 
     /** Slice 5: export the report as a simple PDF and return a share intent. */
-    suspend fun exportPdfIntent(): Intent? = guardedExport {
-        val report = _state.value.report ?: return@guardedExport null
-        try {
+    private suspend fun renderPdfIntent(): Intent? {
+        val report = _state.value.report ?: return null
+        return try {
             val file = reportFile("pdf")
             FileOutputStream(file).use { out -> ReportPdf.write(report, out) }
             shareIntent(file, "application/pdf")
@@ -299,6 +343,16 @@ class ResultsViewModel(
 
     companion object {
         private const val RESULTS_PAGE = 40
+        private const val KEY_FILTER = "results_filter"
+        private val KNOWN_FILTERS = setOf(
+            ReviewFilters.ALL,
+            ReviewFilters.CORRECT,
+            ReviewFilters.WRONG,
+            ReviewFilters.SKIPPED,
+            ReviewFilters.UNGRADED,
+            ReviewFilters.SLOW,
+            ReviewFilters.SAVED
+        )
     }
 }
 

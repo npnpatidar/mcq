@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ST5: an out-of-range rating is unknown, never a confident Easy. -->
+    <string name="r2_stats_unknown_grade">—</string>
+
+    <!-- ST3: stability is memory strength (S), not a time to 90% recall, so
+         the histogram bins are unitless and this caption says what they are. -->
+    <string name="r2_stats_stability_caption">स्थिरता (S) सीमाएँ। S स्मृति की मज़बूती है, समय अंतराल नहीं।</string>
+
+    <!-- ST2/ST3: resource-backed, unitless names for the ten stability bins,
+         in the same order as the domain histogram edges. -->
+    <string-array name="r2_stats_stability_bins">
+        <item>&lt;१</item>
+        <item>१–३</item>
+        <item>३–७</item>
+        <item>७–१४</item>
+        <item>१४–२१</item>
+        <item>२१–४५</item>
+        <item>४५–९०</item>
+        <item>९०–१८०</item>
+        <item>१८०–३६५</item>
+        <item>&gt;३६५</item>
+    </string-array>
+
+    <!-- ST2: localized names for the ten interval bins (real day/month
+         durations), in the same order as the domain histogram edges. -->
+    <string-array name="r2_stats_interval_bins">
+        <item>१ दिन</item>
+        <item>२–३ दिन</item>
+        <item>४–७ दिन</item>
+        <item>८–१५ दिन</item>
+        <item>१६–३१ दिन</item>
+        <item>१–२ माह</item>
+        <item>२–४ माह</item>
+        <item>४–८ माह</item>
+        <item>८–१७ माह</item>
+        <item>१७+ माह</item>
+    </string-array>
+</resources>

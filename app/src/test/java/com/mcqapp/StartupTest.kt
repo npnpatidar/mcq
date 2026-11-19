@@ -203,10 +203,11 @@ class FreshStartupApplication : McqApplication() {
                 timeoutMs = SettingsResetRule.CLEAR_DEADLINE_MS,
                 condition = "FreshStartupApplication.onCreate key clear and DB reset before super.onCreate()"
             ) {
+                // No withTimeout: cancelling a DataStore write mid-flight poisons
+                // the process-wide store (see SettingsResetRule). The pump's
+                // deadline above is the bound.
                 withContext(Dispatchers.IO) {
-                    withTimeout(SettingsResetRule.CLEAR_DEADLINE_MS) {
-                        SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
-                    }
+                    SettingsResetRule.clearGradingKeysSuspend(this@FreshStartupApplication)
                 }
             }
             // Must complete before super.onCreate() launches the production freshness probe.
@@ -236,16 +237,17 @@ class UpgradeStartupApplication : McqApplication() {
                 timeoutMs = SettingsResetRule.CLEAR_DEADLINE_MS,
                 condition = "UpgradeStartupApplication.onCreate setup before super.onCreate()"
             ) {
+                // No withTimeout: cancelling a DataStore write mid-flight poisons
+                // the process-wide store (see SettingsResetRule). The pump's
+                // deadline above is the bound.
                 withContext(Dispatchers.IO) {
-                    withTimeout(SettingsResetRule.CLEAR_DEADLINE_MS) {
-                        SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
-                        // Reset and seed the paper on IO; must complete before super.onCreate().
-                        AppDatabase.resetInstanceForTests()
-                        AppDatabase.get(this@UpgradeStartupApplication).ensureOpen()
-                        AppDatabase.get(this@UpgradeStartupApplication)
-                            .paperDao()
-                            .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
-                    }
+                    SettingsResetRule.clearGradingKeysSuspend(this@UpgradeStartupApplication)
+                    // Reset and seed the paper on IO; must complete before super.onCreate().
+                    AppDatabase.resetInstanceForTests()
+                    AppDatabase.get(this@UpgradeStartupApplication).ensureOpen()
+                    AppDatabase.get(this@UpgradeStartupApplication)
+                        .paperDao()
+                        .insertIgnore(PaperEntity(id = "existing", title = "Already here"))
                 }
             }
             callSuperOnCreate()

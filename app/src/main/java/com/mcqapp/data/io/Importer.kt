@@ -36,6 +36,37 @@ const val FALLBACK_CATEGORY_TITLE = "Uncategorized"
 const val FALLBACK_PAPER_TITLE = "Imported Questions"
 const val FALLBACK_UNTITLED_PAPER_TITLE = "Untitled Paper"
 
+/**
+ * Stable tokens for the other data-layer fallbacks that used to be raw English
+ * literals (a blank DOCX heading, a blank passage, a cloze explanation). Their
+ * values are deliberately unchanged: the importer writes them into the database
+ * and search/SQL compare them by equality. The UI alone resolves them to
+ * localized copy through `fallbackTitleRes` (see `r2_import_*` resources).
+ */
+const val FALLBACK_CATEGORY_LABEL = "Category"
+const val FALLBACK_PASSAGE_TITLE = "Passage"
+const val FALLBACK_CLOZE_EXPLANATION = "Cloze card from Anki."
+
+/**
+ * A brand-new paper whose incoming questions all already exist writes no
+ * categories and no questions — only an empty shell. Treat that as "nothing was
+ * added": drop the shell and do not count it as a new paper. A paper with zero
+ * questions is NOT this case (the skip needs a non-empty set), nor is one where
+ * a duplicate's answer key was refreshed.
+ */
+internal fun allDuplicatesPaperSkip(
+    isNewPaper: Boolean,
+    needsWrite: Boolean,
+    sawAnyQuestion: Boolean
+): Boolean = isNewPaper && !needsWrite && sawAnyQuestion
+
+/** Paper counts for a finished paper; a skipped shell is neither new nor updated. */
+internal fun countPaper(isNewPaper: Boolean, skipped: Boolean): Pair<Int, Int> = when {
+    skipped -> 0 to 0
+    isNewPaper -> 1 to 0
+    else -> 0 to 1
+}
+
 data class ImportReport(
     val newPapers: Int,
     val updatedPapers: Int,
@@ -51,7 +82,12 @@ data class ImportReport(
     /** Anki card instances whose whole stem was empty (no text, no image) and were dropped. */
     val droppedAnkiStems: Int = 0,
     /** Anki notes with no choices, kept as single-option recall cards. */
-    val recallConverted: Int = 0
+    val recallConverted: Int = 0,
+    /**
+     * The streamed restore hit its explicit memory budget: the questions were
+     * imported, but review progress was deliberately skipped (with a notice).
+     */
+    val progressRestoreSkipped: Boolean = false
 )
 
 /**
@@ -144,7 +180,6 @@ class Importer(
                 val paperMatch = matchImportedPaper(db, paperDto.id, paperDto.title)
                 val effectivePaperId = paperMatch?.paper?.id ?: paperDto.id
                 val isNewPaper = paperMatch == null
-                if (isNewPaper) newPapers++ else updatedPapers++
                 Logger.d("IMPORT", "Paper '${paperDto.title}' (${paperDto.id} -> $effectivePaperId): " +
                     "${if (isNewPaper) "NEW" else "UPDATE"}" +
                     (if (paperMatch?.byTitle == true) " (matched by title)" else "") +
@@ -253,6 +288,9 @@ class Importer(
                     }
                     if (!hasAnswerOnlyChange) {
                         duplicateQuestions += incomingHashes.size
+                        // The shell inserted above holds nothing: remove it
+                        // instead of leaving an empty paper in the library.
+                        if (isNewPaper) db.paperDao().deleteById(effectivePaperId)
                         Logger.i("IMPORT", "Paper '${paperDto.title}' ($effectivePaperId): " +
                             "all ${incomingHashes.size} questions already exist, skipping paper creation")
                         continue
@@ -435,7 +473,10 @@ class Importer(
                             if (sameContentId != null) {
                                 val stored = candidate.entity
                                 val storedCorrect = candidate.correctIds
-                                if (ContentHash.nonHashedFieldsDiffer(stored, storedCorrect, scaledQuestion)) {
+                                if (ContentHash.nonHashedFieldsDiffer(
+                                        stored, candidate.options, storedCorrect, scaledQuestion
+                                    )
+                                ) {
                                     if (CardContent.of(stored, candidate.options, storedCorrect) !=
                                         CardContent.of(scaledQuestion)
                                     ) {
@@ -445,8 +486,13 @@ class Importer(
                                         db.cardStateDao().deleteByQuestion(sameContentId)
                                     }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
+                                    // Keep the stored option rows, so map the file's
+                                    // key onto their ids by position instead of writing
+                                    // re-minted ids that reference no option at all.
                                     db.correctAnswerDao().upsertAll(
-                                        questionDto.correctOptionIds.map { optionId ->
+                                        ContentHash.remapCorrectIdsOntoStored(
+                                            candidate.options, scaledQuestion
+                                        ).map { optionId ->
                                             com.mcqapp.data.local.CorrectAnswerEntity(
                                                 questionId = sameContentId,
                                                 optionId = optionId
@@ -638,9 +684,9 @@ class Importer(
                                     difficulty = schedule.difficulty,
                                     stability = schedule.stability,
                                     stabilityFast = schedule.stabilityFast,
-                                    cardState = runCatching {
-                                        com.mcqapp.domain.CardStateKind.valueOf(schedule.cardState)
-                                    }.getOrDefault(com.mcqapp.domain.CardStateKind.NEW),
+                                    cardState = importedCardState(
+                                        schedule.cardState, schedule.stability
+                                    ),
                                     reviewCount = schedule.reviewCount,
                                     contentHash = contentHash
                                 )
@@ -691,6 +737,10 @@ class Importer(
                         db.placeWithGroup(stray.id)
                     }
                 }
+
+                // An all-duplicates paper took `continue` above: no shell, no
+                // count. Every other paper is a real new or updated paper.
+                if (isNewPaper) newPapers++ else updatedPapers++
             }
 
             // Backup payload: bookmarks restore by id (harmless if the

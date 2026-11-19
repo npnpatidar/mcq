@@ -709,8 +709,17 @@ object Calibration {
 
     /**
      * The card-clustered 90% interval. Resampling cards rather than pairs keeps
-     * a card's reviews from counting as independent facts; both classes are
-     * resampled together so their covariance is preserved.
+     * a card's reviews from counting as independent facts. The two classes are
+     * drawn as ONE paired cluster sample: a single card-index draw is reused for
+     * both, so a card that contributed residuals to Easy and to Good enters both
+     * means together and their covariance is preserved (ST1).
+     *
+     * Upstream references: `scipy.stats.bootstrap`'s `paired=True` draws "an
+     * array of indices and uses the same indices for all arrays" — see
+     * https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html
+     * — and the cluster-bootstrap requirement to resample whole clusters while
+     * preserving within-cluster correlation (Cameron, Gelbach & Miller,
+     * https://www.nber.org/system/files/working_papers/t0344/t0344.pdf).
      */
     fun contrast(
         first: List<Sample>,
@@ -739,11 +748,41 @@ object Calibration {
                 ?: return Contrast(observed, null, null, IntervalMethod.NONE, binding)
             return Contrast(observed, interval.first, interval.second, IntervalMethod.T, binding)
         }
-        val deltas = DoubleArray(resamples)
+        // Paired cluster bootstrap: one card-index sample per replicate, used
+        // for BOTH classes. A card shared by the two classes therefore always
+        // contributes to both means of that replicate, keeping their covariance;
+        // drawing the classes independently (the old code) silently models them
+        // as unrelated and understates the interval.
+        val keyedFirst = cardsByKey(first)
+        val keyedGood = cardsByKey(good)
+        val unionCards = (keyedFirst.keys + keyedGood.keys)
+            .sortedWith(compareBy<CardKey>({ it.paperId }, { it.questionId }))
+        val firstMean = mean(first)
+        val goodMean = mean(good)
         val random = Random(seed)
-        for (i in 0 until resamples) {
-            val a = resampleMean(cardsFirst, random)
-            val b = resampleMean(cardsGood, random)
+        val deltas = DoubleArray(resamples)
+        repeat(resamples) { i ->
+            var aSum = 0.0
+            var bSum = 0.0
+            var aCount = 0
+            var bCount = 0
+            repeat(unionCards.size) {
+                val card = unionCards[random.nextInt(unionCards.size)]
+                keyedFirst[card]?.let { residuals ->
+                    aSum += residuals.sum()
+                    aCount += residuals.size
+                }
+                keyedGood[card]?.let { residuals ->
+                    bSum += residuals.sum()
+                    bCount += residuals.size
+                }
+            }
+            // A draw with no card from a class cannot estimate that class's mean.
+            // With >= MIN_CARDS_PER_CLASS cards per class this is vanishingly
+            // rare; fall back to the observed mean rather than emit NaN, so the
+            // seeded stream stays defined and reproducible.
+            val a = if (aCount > 0) aSum / aCount else firstMean
+            val b = if (bCount > 0) bSum / bCount else goodMean
             deltas[i] = a - b
         }
         deltas.sort()
@@ -753,7 +792,7 @@ object Calibration {
             (deltas.count { it < observed }.toDouble() / resamples)
                 .coerceIn(0.0005, 0.9995)
         )
-        val acceleration = acceleration(cardsFirst, cardsGood)
+        val acceleration = acceleration(keyedFirst, keyedGood)
         fun adjusted(alpha: Double): Double {
             val z = inverseNormal(alpha)
             val denom = 1.0 - acceleration * (z0 + z)
@@ -774,16 +813,14 @@ object Calibration {
 
     private fun mean(pairs: List<Sample>): Double = pairs.sumOf { it.residual } / pairs.size
 
-    private fun resampleMean(cards: List<DoubleArray>, random: Random): Double {
-        var sum = 0.0
-        var count = 0
-        repeat(cards.size) {
-            val card = cards[random.nextInt(cards.size)]
-            sum += card.sum()
-            count += card.size
-        }
-        return sum / count
-    }
+    /** Card identity, kept as a key so a shared card can be paired across classes. */
+    private data class CardKey(val paperId: String, val questionId: String)
+
+    /** Card key → that card's residuals, in a deterministic (paper, question) order. */
+    private fun cardsByKey(pairs: List<Sample>): Map<CardKey, DoubleArray> =
+        pairs.groupBy { CardKey(it.paperId, it.questionId) }
+            .toSortedMap(compareBy<CardKey>({ it.paperId }, { it.questionId }))
+            .mapValues { (_, rows) -> rows.map { it.residual }.toDoubleArray() }
 
     private fun isDegenerate(cards: List<DoubleArray>): Boolean {
         val all = cards.flatMap { it.toList() }
@@ -806,25 +843,69 @@ object Calibration {
         }
         val va = variance(a)
         val vb = variance(b)
-        val se = sqrt(va / a.size + vb / b.size)
+        val aTerm = va / a.size
+        val bTerm = vb / b.size
+        val se = sqrt(aTerm + bTerm)
         if (se == 0.0) return null
-        // 90% two-sided, df floored at 19 in this tier; t is ≈1.70 there and
-        // falls slowly. Using 1.70 is conservative for 20–39 cards.
-        val t = 1.70
+        // Welch–Satterthwaite degrees of freedom, floored at 19 because this
+        // tier guarantees >= DESCRIPTIVE_CARDS (20) cards per class. The old
+        // fixed t = 1.70 under-covers at that floor: the exact two-sided 90%
+        // critical value at df = 19 is ~1.729. Deriving it from df fixes the
+        // floor without widening tiers that genuinely have more information.
+        val df = if (aTerm + bTerm > 0.0) {
+            ((aTerm + bTerm) * (aTerm + bTerm)) /
+                (aTerm * aTerm / (a.size - 1) + bTerm * bTerm / (b.size - 1))
+        } else {
+            MIN_WELCH_DF
+        }
+        val t = welchTCritical(df)
         return (observed - t * se) to (observed + t * se)
     }
 
-    /** Jackknife acceleration over the pooled card list. */
-    private fun acceleration(first: List<DoubleArray>, good: List<DoubleArray>): Double {
-        val cards = first + good
-        if (cards.size < 2) return 0.0
-        fun deltaWithout(skip: Int): Double {
-            val a = first.filterIndexed { i, _ -> i != skip }
-            val b = good.filterIndexed { i, _ -> first.size + i != skip }
+    /** The smallest Welch df this tier can resolve. */
+    private const val MIN_WELCH_DF = 19.0
+
+    /**
+     * Two-sided 90% Student-t critical value for [dfRaw] degrees of freedom,
+     * via the Cornish–Fisher expansion from the normal 95th percentile. Accurate
+     * to <1e-4 for df >= 19, which is this tier's whole domain. df is floored at
+     * 19, where the expansion gives ~1.7291 — the exact two-sided 90% value —
+     * so the tier's floor is no longer the old, under-covering 1.70.
+     */
+    internal fun welchTCritical(dfRaw: Double): Double {
+        val df = dfRaw.coerceAtLeast(MIN_WELCH_DF)
+        val z = inverseNormal(0.95) // ≈ 1.6448536269514722
+        val z2 = z * z
+        val z3 = z2 * z
+        val z5 = z3 * z2
+        val z7 = z5 * z2
+        val c1 = (z3 + z) / (4.0 * df)
+        val c2 = (5.0 * z5 + 16.0 * z3 + 3.0 * z) / (96.0 * df * df)
+        val c3 = (3.0 * z7 + 19.0 * z5 + 17.0 * z3 - 15.0 * z) /
+            (384.0 * df * df * df)
+        return z + c1 + c2 + c3
+    }
+
+    /**
+     * Jackknife acceleration over the UNION of cards. Deleting a shared card
+     * removes it from BOTH classes (the old code deleted it from one only, so
+     * the acceleration was computed under a different scheme than the paired
+     * bootstrap). This keeps the jackknife consistent with the resampling above.
+     */
+    private fun acceleration(
+        first: Map<CardKey, DoubleArray>,
+        good: Map<CardKey, DoubleArray>
+    ): Double {
+        val union = (first.keys + good.keys)
+            .sortedWith(compareBy<CardKey>({ it.paperId }, { it.questionId }))
+        if (union.size < 2) return 0.0
+        fun deltaWithout(skip: CardKey): Double {
+            val a = first.filterKeys { it != skip }.values.flatMap { it.toList() }
+            val b = good.filterKeys { it != skip }.values.flatMap { it.toList() }
             if (a.isEmpty() || b.isEmpty()) return 0.0
-            return a.flatMap { it.toList() }.average() - b.flatMap { it.toList() }.average()
+            return a.average() - b.average()
         }
-        val jack = cards.indices.map { deltaWithout(it) }
+        val jack = union.map { deltaWithout(it) }
         val avg = jack.average()
         val num = jack.sumOf { (avg - it) * (avg - it) * (avg - it) }
         val den = 6.0 * Math.pow(jack.sumOf { (avg - it) * (avg - it) }, 1.5)

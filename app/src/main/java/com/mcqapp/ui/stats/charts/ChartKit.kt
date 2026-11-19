@@ -153,6 +153,40 @@ internal fun windowSeries(
     SeriesWindow(s.name, shown, s.points.size - shown.size)
 }
 
+/** The unscaled canvas height used by the line and stacked-bar charts. */
+internal const val CHART_BASE_HEIGHT_DP = 200f
+
+/**
+ * Canvas height in dp for the current font scale. Axis labels are in `sp`, so
+ * they grow with the font scale; a fixed `200.dp` canvas clipped them at large
+ * text sizes (ST6). Clamped to 1x–2x so an extreme accessibility scale cannot
+ * make a chart dominate the screen.
+ */
+internal fun chartHeightDp(fontScale: Float): Float =
+    CHART_BASE_HEIGHT_DP * fontScale.coerceIn(1f, 2f)
+
+/**
+ * One named series per stacked-bar segment, each carrying that segment's value
+ * at every bar. Feeding these to [chartSummary] makes a screen reader announce
+ * the segments instead of only the bar total (ST6). Bars with no value for a
+ * segment are skipped, so a truncated `segmentCount` cannot invent data.
+ */
+internal fun stackedSegmentSeries(
+    barLabels: List<String>,
+    barSegments: List<List<Double>>,
+    segmentNames: List<String>,
+    labelValue: (Double) -> String
+): List<ChartSeriesSummary> = segmentNames.indices.map { segment ->
+    ChartSeriesSummary(
+        name = segmentNames[segment],
+        points = barLabels.mapIndexedNotNull { barIndex, label ->
+            barSegments.getOrNull(barIndex)
+                ?.getOrNull(segment)
+                ?.let { label to labelValue(it) }
+        }
+    )
+}
+
 @Composable
 internal fun chartSummary(
     @StringRes kindRes: Int,

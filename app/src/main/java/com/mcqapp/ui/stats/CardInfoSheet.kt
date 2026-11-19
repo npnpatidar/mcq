@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -41,7 +42,11 @@ internal fun CardInfoSheet(
     onDismiss: () -> Unit,
     onRetry: () -> Unit
 ) {
-    val dateTimeFormat = DateTimeFormatter.ofPattern("d MMM yy, HH:mm", Locale.ENGLISH)
+    // The selected in-app locale drives month names, not the device default or
+    // a hard-coded English (ST2). LocalConfiguration is configuration-aware, so
+    // a language change re-reads it.
+    val dateLocale = LocalConfiguration.current.locales[0]
+    val dateTimeFormat = DateTimeFormatter.ofPattern("d MMM yy, HH:mm", dateLocale)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -177,7 +182,10 @@ private fun gradeLabel(rating: Int): String = when (rating) {
     1 -> stringResource(R.string.grade_again)
     2 -> stringResource(R.string.grade_hard)
     3 -> stringResource(R.string.grade_good)
-    else -> stringResource(R.string.grade_easy)
+    4 -> stringResource(R.string.grade_easy)
+    // Out-of-range ratings (corrupt or hand-edited rows) are unknown, not a
+    // confident Easy (ST5).
+    else -> stringResource(R.string.r2_stats_unknown_grade)
 }
 
 @Composable
@@ -185,7 +193,8 @@ private fun gradeColor(rating: Int): androidx.compose.ui.graphics.Color = when (
     1 -> MaterialTheme.colorScheme.error
     2 -> MaterialTheme.colorScheme.tertiary
     3 -> MaterialTheme.colorScheme.primary
-    else -> MaterialTheme.colorScheme.secondary
+    4 -> MaterialTheme.colorScheme.secondary
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 /** "6s · S 4.2 · D 5.0 · I 10d", from what the row recorded. */

@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -32,7 +33,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * GitHub-style calendar of reviews per study day, Anki's Calendar graph.
@@ -58,8 +58,12 @@ internal fun HeatmapChart(
 
     val weeks = ((days.size + 6) / 7).coerceAtLeast(1)
     val maxReviews = (days.maxOfOrNull { it.reviews } ?: 0).coerceAtLeast(1)
-    val dateFmt = DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH)
-    val monthFmt = DateTimeFormatter.ofPattern("MMM", Locale.ENGLISH)
+    // Month names follow the selected in-app locale, not hard-coded English
+    // (ST2). The formatter patterns are language-neutral; the locale supplies
+    // the month labels.
+    val chartLocale = LocalConfiguration.current.locales[0]
+    val dateFmt = DateTimeFormatter.ofPattern("d MMM", chartLocale)
+    val monthFmt = DateTimeFormatter.ofPattern("MMM", chartLocale)
 
     fun dayDate(day: HeatmapDay): LocalDate =
         Instant.ofEpochMilli(day.dayStart).atZone(ZoneId.systemDefault()).toLocalDate()

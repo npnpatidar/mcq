@@ -685,17 +685,26 @@ class FsrsScheduler private constructor(
          * (`w0 ≤ w1 ≤ w2 ≤ w3`) and the slow anchor must sit above the fast one
          * (`w26 ≥ max(w25, 0.5)`).
          *
-         * A NaN is replaced by the shipped default: `NaN.coerceIn(a, b)` is NaN
-         * in Kotlin, so a bare clamp would let it through and poison every
-         * later step.
+         * Every non-finite value (NaN, +Inf, -Inf) is mapped to the parameter's
+         * lower bound, matching upstream's `clamp_safe` in
+         * `parameter_clipper_v7.rs`: `value = if value.is_finite() { value } else {
+         * low }`. A bare Kotlin `coerceIn` would pass NaN straight through
+         * (neither comparison holds) and would send the infinities to the upper
+         * bound instead, both of which diverge from the reference. Normal
+         * preferences already reject non-finite lists, so this only governs a
+         * hand-edited backup.
          */
         internal fun clipInPlace(weights: DoubleArray) {
             require(weights.size == PARAMETER_COUNT) {
                 "FSRS-7 needs $PARAMETER_COUNT parameters, got ${weights.size}"
             }
             for (i in weights.indices) {
-                if (weights[i].isNaN()) weights[i] = DEFAULT_FSRS_PARAMETERS[i]
-                weights[i] = weights[i].coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
+                val w = weights[i]
+                weights[i] = if (w.isFinite()) {
+                    w.coerceIn(LOWER_BOUNDS[i], UPPER_BOUNDS[i])
+                } else {
+                    LOWER_BOUNDS[i]
+                }
             }
             weights[1] = max(weights[1], weights[0])
             weights[2] = max(weights[2], weights[1])

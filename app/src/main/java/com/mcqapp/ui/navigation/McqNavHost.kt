@@ -2,19 +2,27 @@ package com.mcqapp.ui.navigation
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
@@ -24,6 +32,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
@@ -33,6 +42,7 @@ import com.mcqapp.ui.common.UiMessageBus
 import com.mcqapp.ui.common.UiMessagePresenter
 import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.browse.BrowseScreen
+import com.mcqapp.ui.editor.EditorDirtyGuard
 import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.history.BookmarksScreen
 import com.mcqapp.ui.history.HistoryScreen
@@ -57,6 +67,37 @@ fun McqNavHost(repository: McqRepository) {
     // the pipeline raises stay visible when the library is reached.
     val libraryViewModel: LibraryViewModel = viewModel()
     val platformContext = LocalContext.current
+
+    // Round-2 E4: the editor mirrors its dirty flag app-wide
+    // (EditorDirtyGuard). `NavController.navigate(String)` is final, so a
+    // transparent subclass cannot intercept it; instead every navigation the
+    // NavHost itself issues goes through this seam. The editor's own Back/top
+    // bar paths already show their in-screen leave dialog; this closes the gap
+    // where an externally-originated navigate (the SEND/import flow below)
+    // used to pop a dirty editor silently.
+    val editorDirty by EditorDirtyGuard.isDirty.collectAsStateWithLifecycle(
+        initialValue = false
+    )
+    // rememberSaveable keeps a held exit through rotation while the leave
+    // dialog is up; plain remember dropped it and stranded the staged SEND
+    // payload. The custom saver handles the nullable String explicitly.
+    var pendingExitDestination by rememberSaveable(saver = PendingExitSaver) {
+        mutableStateOf<String?>(null)
+    }
+    // If the editor is saved/discarded through its own dialog while an
+    // external exit is waiting, there is nothing left to confirm.
+    LaunchedEffect(editorDirty) {
+        if (!editorDirty) pendingExitDestination = null
+    }
+    // [bypass] is set only by the confirm dialog's own leave action: it must
+    // never be blocked by the very guard it just satisfied, or the user could
+    // not leave at all (deadlock).
+    val navigateWithGuard: (String, Boolean) -> Unit = { destination, bypass ->
+        when (EditorExitGuard.decide(EditorDirtyGuard.isDirty.value, destination, bypass)) {
+            EditorExitDecision.CONFIRM -> pendingExitDestination = destination
+            EditorExitDecision.PROCEED -> navController.navigate(destination)
+        }
+    }
 
     // The single app-wide feedback host. Screens push UiMessages into the bus;
     // the presenter announces each one through the activity's announcer and
@@ -103,15 +144,15 @@ fun McqNavHost(repository: McqRepository) {
             onDocx = { bytes, name ->
                 ImportDataHolder.pendingDocxBytes = bytes
                 ImportDataHolder.pendingDocxName = name
-                navController.navigate("import/direct")
+                navigateWithGuard("import/direct", false)
             },
             onJsonUri = {
                 ImportDataHolder.pendingJsonUri = it
-                navController.navigate("import/direct")
+                navigateWithGuard("import/direct", false)
             },
             onJsonBytes = {
                 ImportDataHolder.pendingJsonBytes = it
-                navController.navigate("import/direct")
+                navigateWithGuard("import/direct", false)
             }
         )
     }
@@ -329,6 +370,76 @@ fun McqNavHost(repository: McqRepository) {
         }
     }
     SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
+
+    // Round-2 E4: a blocked external exit surfaces the same leave copy the
+    // editor uses. Discard drops the unsaved edit and performs the held
+    // navigation with bypass = true; Cancel keeps the editor on screen. The
+    // held destination is remembered, so the SEND/import payload staged before
+    // the block is still delivered when the learner chooses to leave.
+    val pendingExit = pendingExitDestination
+    if (pendingExit != null && editorDirty) {
+        AlertDialog(
+            onDismissRequest = { pendingExitDestination = null },
+            title = { Text(stringResource(R.string.unsaved_changes_title)) },
+            text = { Text(stringResource(R.string.unsaved_changes_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingExitDestination = null
+                    EditorDirtyGuard.clear()
+                    navigateWithGuard(pendingExit, true)
+                }) {
+                    Text(stringResource(R.string.discard))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExitDestination = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
     }
+    }
+}
+
+/**
+ * Round-2 E4 decision seam: whether a navigation request would silently leave
+ * a dirty editor. Pure JVM code so the guard can be tested without Compose,
+ * Room or a NavController; the NavHost owns the dialog and the actual navigate.
+ */
+internal enum class EditorExitDecision { PROCEED, CONFIRM }
+
+/** Rotation-safe encoding of the held exit destination. Route strings are
+ *  never empty, so "" is an unambiguous sentinel for "nothing pending". */
+internal fun encodePendingExit(destination: String?): String = destination.orEmpty()
+internal fun decodePendingExit(saved: String): String? = saved.ifEmpty { null }
+
+/** Saves the pending leave-confirmation destination across configuration
+ *  changes so a rotation cannot silently drop the staged SEND/import nav. */
+internal val PendingExitSaver = Saver<MutableState<String?>, String>(
+    save = { state -> encodePendingExit(state.value) },
+    restore = { saved -> mutableStateOf(decodePendingExit(saved)) }
+)
+
+internal object EditorExitGuard {
+    /** Both the route template and filled editor routes start with "editor". */
+    fun isEditorRoute(route: String?): Boolean =
+        route != null && (route == "editor" || route.startsWith("editor?"))
+
+    /**
+     * CONFIRM when [destination] would leave an editor that still has unsaved
+     * edits (a null destination is a pop, which also leaves it); the caller
+     * must surface the leave confirmation and retry with [bypass] = true once
+     * the user chooses to leave. PROCEED otherwise:
+     *  - `!isDirty`: nothing unsaved, so nothing to confirm;
+     *  - an editor destination: we are not leaving the editor;
+     *  - `bypass`: the confirmation's own leave action must never be blocked
+     *    by the guard it just satisfied (no deadlock).
+     */
+    fun decide(isDirty: Boolean, destination: String?, bypass: Boolean): EditorExitDecision =
+        if (!bypass && isDirty && !isEditorRoute(destination)) {
+            EditorExitDecision.CONFIRM
+        } else {
+            EditorExitDecision.PROCEED
+        }
 }

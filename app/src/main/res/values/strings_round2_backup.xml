@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- SE2: the two Export Logs failure messages, previously hardcoded English. -->
+    <string name="r2_backup_no_log_file">No log file exists yet.</string>
+    <string name="r2_backup_no_share_app">No app can handle this share.</string>
+
+    <!-- H4: shown before the log file is shared; a log can contain paper titles
+         and stack traces, so the learner gets a chance to check it first. -->
+    <string name="r2_backup_export_logs_warning">This file may contain paper titles and error details, including stack traces. Check it before sharing.</string>
+
+    <!-- SE3: a settings/in-progress write failed after the library itself was
+         restored. These are deliberately generic: the exception detail goes to
+         the log only, never into this sentence. -->
+    <string name="r2_backup_partial_prefix">The library itself came back;</string>
+    <string name="r2_backup_partial_settings">settings were not restored</string>
+    <string name="r2_backup_partial_in_progress">the in-progress test was not restored</string>
+
+    <!-- H2: a single-paper JSON/ZIP export carries content only. The picker
+         description belongs to ExportFormat (owned elsewhere); this honest note
+         travels with the backup/export settings so the difference is visible. -->
+    <string name="r2_backup_paper_export_content_only">Single-paper JSON and ZIP exports contain questions only - study progress is not included. Use Full Backup or Export All Data JSON to keep schedules and review history.</string>
+</resources>

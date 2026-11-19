@@ -1,6 +1,9 @@
 package com.mcqapp.ui.editor
 
 import com.mcqapp.data.io.QuestionDto
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.jvm.Volatile
 
 /**
@@ -38,15 +41,35 @@ object EditorSession {
     /** A navigation target captured together with its position. */
     data class MoveTarget(val id: String, val index: Int)
 
-    // Re-anchoring mutates these off Main; the screen reads them on Main.
-    @Volatile var index: Int = -1
-        private set
-    @Volatile var size: Int = 0
-        private set
-    @Volatile var prevId: String? = null
-        private set
-    @Volatile var nextId: String? = null
-        private set
+    /**
+     * The whole cursor state as one immutable value. Publishing a new snapshot
+     * in a single write is what stops a re-anchor from showing a fresh [size]
+     * with the old [prevId]/[nextId], and lets the screen observe re-anchors
+     * (which used to leave the counter/Prev/Next stale until an unrelated
+     * state change happened to recompose the screen).
+     */
+    data class Snapshot(
+        val index: Int = -1,
+        val size: Int = 0,
+        val prevId: String? = null,
+        val nextId: String? = null
+    )
+
+    private val _snapshot = MutableStateFlow(Snapshot())
+    /** Emits on every cursor change, including a re-anchor. */
+    val snapshotFlow: StateFlow<Snapshot> = _snapshot.asStateFlow()
+
+    @Volatile private var current: Snapshot = Snapshot()
+
+    private fun publish(next: Snapshot) {
+        current = next
+        _snapshot.value = next
+    }
+
+    val index: Int get() = current.index
+    val size: Int get() = current.size
+    val prevId: String? get() = current.prevId
+    val nextId: String? get() = current.nextId
 
     /** Live read-through for import preview lists (set by ImportScreen). */
     var importReader: ((String) -> QuestionDto?)? = null
@@ -61,21 +84,24 @@ object EditorSession {
     private var cursorCount: (suspend () -> Int)? = null
     private var cursorIndexOf: (suspend (String) -> Int)? = null
 
-    val hasQueue: Boolean get() = index in 0 until size
+    val hasQueue: Boolean get() = current.index in 0 until current.size
 
     private suspend fun idAt(i: Int): String? =
         cursor?.let { it(i) } ?: ids.getOrNull(i)
 
     /** Recomputes the immediate neighbours for the current index. */
     suspend fun refreshNeighbors() {
-        val i = index
-        if (i !in 0 until size) {
-            prevId = null
-            nextId = null
+        val s = current
+        if (s.index !in 0 until s.size) {
+            publish(s.copy(prevId = null, nextId = null))
             return
         }
-        prevId = if (i > 0) idAt(i - 1) else null
-        nextId = if (i < size - 1) idAt(i + 1) else null
+        publish(
+            s.copy(
+                prevId = if (s.index > 0) idAt(s.index - 1) else null,
+                nextId = if (s.index < s.size - 1) idAt(s.index + 1) else null
+            )
+        )
     }
 
     /**
@@ -85,14 +111,15 @@ object EditorSession {
      * while the session advanced twice (question_editor_audit.md H-03).
      */
     fun captureTarget(id: String): MoveTarget? {
-        if (!hasQueue) return null
+        val s = current
+        if (s.index !in 0 until s.size) return null
         val delta = when (id) {
-            prevId -> -1
-            nextId -> 1
+            s.prevId -> -1
+            s.nextId -> 1
             else -> return null
         }
-        val target = index + delta
-        if (target !in 0 until size) return null
+        val target = s.index + delta
+        if (target !in 0 until s.size) return null
         return MoveTarget(id, target)
     }
 
@@ -100,7 +127,8 @@ object EditorSession {
      * Re-reads a cursor scope's live count and this anchor's position in it.
      * An anchor that left the scope leaves no coherent index: [index]
      * becomes -1 and the neighbours clear rather than describing the old
-     * result set. In-memory scopes are fixed lists and need no re-anchor.
+     * result set. Neighbours are resolved from the new position *before* the
+     * snapshot is published, so no torn intermediate state is ever visible.
      */
     suspend fun reanchor(anchorId: String) {
         val count = cursorCount ?: return
@@ -108,15 +136,17 @@ object EditorSession {
         val newSize = count()
         val newIndex = indexOf(anchorId)
         if (newSize <= 0 || newIndex !in 0 until newSize || idAt(newIndex) != anchorId) {
-            size = newSize.coerceAtLeast(0)
-            index = -1
-            prevId = null
-            nextId = null
+            publish(Snapshot(size = newSize.coerceAtLeast(0), index = -1))
             return
         }
-        size = newSize
-        index = newIndex
-        refreshNeighbors()
+        publish(
+            Snapshot(
+                index = newIndex,
+                size = newSize,
+                prevId = if (newIndex > 0) idAt(newIndex - 1) else null,
+                nextId = if (newIndex < newSize - 1) idAt(newIndex + 1) else null
+            )
+        )
     }
 
     /**
@@ -131,7 +161,7 @@ object EditorSession {
             return if (i >= 0) i else null
         }
         val i = indexOf(id)
-        return if (i in 0 until size && idAt(i) == id) i else null
+        return if (i in 0 until current.size && idAt(i) == id) i else null
     }
 
     /** Opens the editor on a bounded in-memory list. */
@@ -145,12 +175,17 @@ object EditorSession {
         this.cursor = null
         this.cursorCount = null
         this.cursorIndexOf = null
-        this.size = ids.size
-        this.index = index.coerceIn(-1, ids.size - 1)
         this.importReader = reader
         this.importWriter = writer
-        this.prevId = if (this.index > 0) ids.getOrNull(this.index - 1) else null
-        this.nextId = if (this.index in 0 until ids.size - 1) ids.getOrNull(this.index + 1) else null
+        val resolved = index.coerceIn(-1, ids.size - 1)
+        publish(
+            Snapshot(
+                index = resolved,
+                size = ids.size,
+                prevId = if (resolved > 0) ids.getOrNull(resolved - 1) else null,
+                nextId = if (resolved in 0 until ids.size - 1) ids.getOrNull(resolved + 1) else null
+            )
+        )
     }
 
     /** Opens the editor on a large scope, resolving neighbours lazily. */
@@ -163,10 +198,10 @@ object EditorSession {
         this.cursor = cursor.idAt
         this.cursorCount = cursor.count
         this.cursorIndexOf = cursor.indexOf
-        this.size = cursor.size
-        this.index = cursor.index.coerceIn(-1, cursor.size - 1)
         this.importReader = reader
         this.importWriter = writer
+        val resolved = cursor.index.coerceIn(-1, cursor.size - 1)
+        publish(Snapshot(index = resolved, size = cursor.size))
         refreshNeighbors()
     }
 
@@ -176,11 +211,18 @@ object EditorSession {
      * neighbours are a database read.
      */
     fun go(index: Int) {
-        if (index !in 0 until size) return
-        this.index = index
+        val s = current
+        if (index !in 0 until s.size) return
         if (cursor == null) {
-            prevId = if (index > 0) ids.getOrNull(index - 1) else null
-            nextId = if (index < size - 1) ids.getOrNull(index + 1) else null
+            publish(
+                s.copy(
+                    index = index,
+                    prevId = if (index > 0) ids.getOrNull(index - 1) else null,
+                    nextId = if (index < s.size - 1) ids.getOrNull(index + 1) else null
+                )
+            )
+        } else {
+            publish(s.copy(index = index))
         }
     }
 
@@ -189,11 +231,8 @@ object EditorSession {
         cursor = null
         cursorCount = null
         cursorIndexOf = null
-        size = 0
-        index = -1
-        prevId = null
-        nextId = null
         importReader = null
         importWriter = null
+        publish(Snapshot())
     }
 }

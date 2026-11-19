@@ -20,13 +20,13 @@ import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewFilters
+import com.mcqapp.domain.labelRes
 import com.mcqapp.ui.Verdict
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
 import com.mcqapp.ui.results.ResultsScreen
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -104,6 +104,9 @@ class ResultsUiTest {
         }
     }
 
+    /** The chip label resolved through the same resource the screen renders. */
+    private fun chipLabel(key: String): String = app.getString(key.labelRes)
+
     private fun spoken(verdict: Verdict): String = app.getString(
         R.string.verdict_spoken,
         app.getString(verdict.labelRes),
@@ -173,16 +176,16 @@ class ResultsUiTest {
         waitForSpoken(Verdict.CORRECT)
 
         compose.onNodeWithTag("results-list").performScrollToNode(
-            hasText(ReviewFilters.CORRECT, substring = false)
+            hasText(chipLabel(ReviewFilters.CORRECT), substring = false)
         )
         listOf(
             ReviewFilters.ALL, ReviewFilters.CORRECT, ReviewFilters.WRONG,
             ReviewFilters.SKIPPED, ReviewFilters.UNGRADED
-        ).forEach { label ->
-            compose.onNodeWithText(label, substring = false).assertIsDisplayed()
+        ).forEach { key ->
+            compose.onNodeWithText(chipLabel(key), substring = false).assertIsDisplayed()
         }
 
-        compose.onNodeWithText(ReviewFilters.CORRECT, substring = false).performClick()
+        compose.onNodeWithText(chipLabel(ReviewFilters.CORRECT), substring = false).performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.CORRECT), substring = false)
                 .fetchSemanticsNodes().isNotEmpty() &&
@@ -197,7 +200,7 @@ class ResultsUiTest {
             .assertIsDisplayed()
 
         // Going back to All restores the other verdict rows.
-        compose.onNodeWithText(ReviewFilters.ALL, substring = false).performClick()
+        compose.onNodeWithText(chipLabel(ReviewFilters.ALL), substring = false).performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.WRONG), substring = false)
                 .fetchSemanticsNodes().isNotEmpty()
@@ -216,8 +219,13 @@ class ResultsUiTest {
         val reports = File(app.cacheDir, "reports")
         check(reports.createNewFile()) { "could not stage the export failure" }
 
-        val delivered = CompletableDeferred<UiMessage>()
-        setContentCapturingMessages { delivered.complete(it) }
+        // The VM now renders on IO and emits a one-shot completion event that
+        // the screen delivers through LocalUiMessageSender in a LaunchedEffect.
+        // Blocking this thread on a Deferred would starve that effect (Main is
+        // the test dispatcher), so capture into an atomic and let waitUntil
+        // pump the composition instead.
+        val delivered = AtomicReference<UiMessage>()
+        setContentCapturingMessages { delivered.set(it) }
 
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(
@@ -230,7 +238,8 @@ class ResultsUiTest {
         compose.onNodeWithText(app.getString(R.string.report_export_csv), substring = false)
             .performClick()
 
-        val message = runBlocking { withTimeout(30_000) { delivered.await() } }
+        compose.waitUntil(30_000) { delivered.get() != null }
+        val message = delivered.get()!!
         assertEquals(app.getString(R.string.report_export_failed), message.text)
     }
 }

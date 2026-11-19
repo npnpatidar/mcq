@@ -2,6 +2,7 @@ package com.mcqapp.ui.study
 
 import android.app.Application
 import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -66,6 +67,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -87,6 +89,7 @@ import com.mcqapp.ui.theme.clockBandColors
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+import java.util.Locale
 
 /**
  * Study mode: one question at a time, show the answer, then grade it. The
@@ -127,6 +130,22 @@ fun StudyScreen(
     }
     LaunchedEffect(state.gradeError) {
         state.gradeError?.let { announcer.announce(it) }
+    }
+    // The verdict card is read visually and through haptics, but neither is a
+    // screen-reader channel. Speak a short localized verdict whenever a new
+    // result lands (Check/reveal, and a changed grade). Keyed on the result
+    // instance so repeating the same card still announces; clearing it on Next
+    // stays silent.
+    val lastResult = state.lastResult
+    // Resolve the verdict string during composition with stringResource, which
+    // is configuration-aware; the effect only speaks the resolved text.
+    val verdictMessage = if (lastResult != null) {
+        stringResource(studyVerdictRes(lastResult.correct))
+    } else {
+        null
+    }
+    LaunchedEffect(lastResult) {
+        verdictMessage?.let { announcer.announce(it) }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -451,7 +470,14 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { showPicker = !showPicker }) {
+                TextButton(
+                    onClick = { showPicker = !showPicker },
+                    // The picker itself is gated on !state.grading; the toggle
+                    // must stand down in that same frame, or a tap can rewrite
+                    // pendingGrade after Next captured it (S4).
+                    enabled = !state.grading,
+                    modifier = Modifier.testTag("study-change-grade")
+                ) {
                     Text(stringResource(R.string.change_grade))
                 }
                 Spacer(Modifier.width(8.dp))
@@ -505,7 +531,9 @@ private fun SimplifiedResultCard(result: com.mcqapp.ui.study.StudyResult) {
             // proposed. Change grade rewrites the proposal, and a line still
             // claiming "marked Again" contradicted the "Next in ..." interval
             // under it and the review that was actually written.
-            val gradeLabel = result.grade.name.lowercase().replaceFirstChar { it.uppercase() }
+            // The enum name is a storage token; the label must come from a
+            // resource so a Hindi learner sees and hears the translated grade.
+            val gradeLabel = stringResource(studyGradeLabelRes(result.grade))
             when {
                 !result.correct && result.grade == ReviewGrade.AGAIN -> Text(
                     stringResource(R.string.incorrect_answer_review_soon),
@@ -570,10 +598,14 @@ private fun StudyStickyHeader(
     onToggleClock: () -> Unit,
     onToggleBookmark: () -> Unit
 ) {
-    // `semantics {}` is not composable, so the accessibility strings come
-    // from Resources (the OverviewSection tooltip pattern); the clock text
-    // itself renders via stringResource inside its Text.
-    val resources = LocalContext.current.resources
+    // `semantics {}` is not composable, so resolve its accessibility strings
+    // during composition with stringResource and capture the plain Strings;
+    // the clock text itself renders via stringResource inside its Text.
+    val clockContentDescription = stringResource(R.string.question_clock)
+    val clockStateDescription = stringResource(
+        if (state.clockRunning) R.string.clock_running else R.string.clock_paused
+    )
+    val clockPausedLabel = stringResource(R.string.clock_paused)
     val haptics = rememberHaptics()
     val currentBookmarked =
         state.question?.id?.let { it in state.bookmarked } == true
@@ -586,21 +618,31 @@ private fun StudyStickyHeader(
     // The tints come from the active theme and are contrast-checked against its
     // surface, so the clock stays legible in light, dark and every palette.
     val clockColors = clockBandColors()
-    val clockColor = if (state.correctnessOnlyGrading) {
-        MaterialTheme.colorScheme.onSurface
-    } else when (
+    val dwellBand = if (state.correctnessOnlyGrading) {
+        // Correctness-only grading records dwell but does not let it decide the
+        // grade, so the clock makes no band claim at all.
+        Study.DwellBand.NEUTRAL
+    } else {
         Study.dwellBand(
             Study.gradedDwellSeconds(liveDwellMillis),
             state.dwellEasySeconds,
             state.dwellHardSeconds
         )
-    ) {
+    }
+    val clockColor = when (dwellBand) {
         // The first second has banked no time, so it makes no colour claim.
         Study.DwellBand.NEUTRAL -> MaterialTheme.colorScheme.onSurface
         Study.DwellBand.EASY -> clockColors.easy
         Study.DwellBand.GOOD -> clockColors.good
         Study.DwellBand.HARD -> clockColors.hard
     }
+    // Colour was the only band signal and the pause control had no verb: give
+    // both a non-colour, localized cue. The visible text still carries the
+    // "Paused" suffix the UI test looks for.
+    val bandLabel = stringResource(studyDwellBandRes(dwellBand))
+    val clockVerb = stringResource(
+        if (state.clockRunning) R.string.r2_study_pause else R.string.r2_study_resume
+    )
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -695,18 +737,25 @@ private fun StudyStickyHeader(
                         .height(48.dp)
                         .testTag("study-question-clock")
                         .semantics {
-                            contentDescription = resources.getString(R.string.question_clock)
-                            stateDescription =
-                                if (state.clockRunning) resources.getString(R.string.clock_running)
-                                else resources.getString(R.string.clock_paused)
+                            contentDescription = clockContentDescription
+                            stateDescription = clockStateDescription + ", $bandLabel"
                         }
                 ) {
                     Icon(Icons.Default.Timer, contentDescription = null, tint = clockColor)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        Dwell.format(liveDwell) +
-                            if (state.clockRunning) ""
-                            else " · ${stringResource(R.string.clock_paused)}",
+                        if (state.clockRunning) {
+                            stringResource(
+                                R.string.r2_study_clock_readout,
+                                clockVerb, Dwell.format(liveDwell), bandLabel
+                            )
+                        } else {
+                            stringResource(
+                                R.string.r2_study_clock_readout_paused,
+                                clockVerb, Dwell.format(liveDwell), bandLabel,
+                                clockPausedLabel
+                            )
+                        },
                         color = clockColor
                     )
                 }
@@ -836,19 +885,18 @@ private fun QuestionCard(
                     multi -> "▢"
                     else -> "○"
                 }
-                // Announced as a checkbox with a state description: the glyph
-                // alone left TalkBack reading only "✓ button".
-                val optionState = when {
-                    revealed && isCorrect -> "Correct answer"
-                    revealed && isSelected -> "Selected, wrong answer"
-                    isSelected -> "Selected"
-                    else -> "Not selected"
-                }
+                // Announced as a checkbox with a localized state description:
+                // the glyph alone left TalkBack reading only "✓ button", and
+                // English literals stayed English under the Hindi locale (S2).
+                val optionState = stringResource(
+                    studyOptionStateRes(revealed, isCorrect, isSelected)
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp)
                         .background(container, RoundedCornerShape(8.dp))
+                        .testTag("study-option-" + option.id)
                         .selectable(
                             selected = isSelected,
                             enabled = !revealed,
@@ -924,29 +972,55 @@ private fun GradeButtons(
         )
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GradeButton("Again", MaterialTheme.colorScheme.error, enabled, previews[ReviewGrade.AGAIN], Modifier.weight(1f)) {
-                onGrade(ReviewGrade.AGAIN)
-            }
-            GradeButton("Hard", MaterialTheme.colorScheme.tertiary, enabled, previews[ReviewGrade.HARD], Modifier.weight(1f)) {
-                onGrade(ReviewGrade.HARD)
-            }
+            GradeButtonFor(
+                ReviewGrade.AGAIN, MaterialTheme.colorScheme.error,
+                enabled, previews[ReviewGrade.AGAIN], Modifier.weight(1f), onGrade
+            )
+            GradeButtonFor(
+                ReviewGrade.HARD, MaterialTheme.colorScheme.tertiary,
+                enabled, previews[ReviewGrade.HARD], Modifier.weight(1f), onGrade
+            )
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GradeButton("Good", MaterialTheme.colorScheme.primary, enabled, previews[ReviewGrade.GOOD], Modifier.weight(1f)) {
-                onGrade(ReviewGrade.GOOD)
-            }
-            GradeButton("Easy", MaterialTheme.colorScheme.secondary, enabled, previews[ReviewGrade.EASY], Modifier.weight(1f)) {
-                onGrade(ReviewGrade.EASY)
-            }
+            GradeButtonFor(
+                ReviewGrade.GOOD, MaterialTheme.colorScheme.primary,
+                enabled, previews[ReviewGrade.GOOD], Modifier.weight(1f), onGrade
+            )
+            GradeButtonFor(
+                ReviewGrade.EASY, MaterialTheme.colorScheme.secondary,
+                enabled, previews[ReviewGrade.EASY], Modifier.weight(1f), onGrade
+            )
         }
     }
 }
 
+/** One grade button: the label comes from a resource, never an English literal. */
+@Composable
+private fun GradeButtonFor(
+    grade: ReviewGrade,
+    color: Color,
+    enabled: Boolean,
+    preview: String?,
+    modifier: Modifier,
+    onGrade: (ReviewGrade) -> Unit
+) {
+    GradeButton(
+        labelRes = studyGradeLabelRes(grade),
+        tag = studyGradeTag(grade),
+        color = color,
+        enabled = enabled,
+        preview = preview,
+        modifier = modifier,
+        onClick = { onGrade(grade) }
+    )
+}
+
 @Composable
 private fun GradeButton(
-    label: String,
-    color: androidx.compose.ui.graphics.Color,
+    @StringRes labelRes: Int,
+    tag: String,
+    color: Color,
     enabled: Boolean,
     preview: String?,
     modifier: Modifier = Modifier,
@@ -966,7 +1040,7 @@ private fun GradeButton(
         // cannot tell "Again" from "Hard" before committing, and after Track C
         // the four intervals are no longer an obvious ordering of the labels.
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(labelRes), style = MaterialTheme.typography.labelLarge)
             if (preview != null) {
                 Text(
                     preview,
@@ -975,7 +1049,7 @@ private fun GradeButton(
                     // Tagged rather than matched on text: the value depends on
                     // the clock and the day boundary, so a text assertion would
                     // only pass at some times of day.
-                    modifier = Modifier.testTag("grade-preview-$label")
+                    modifier = Modifier.testTag("grade-preview-$tag")
                 )
             }
         }
@@ -1021,6 +1095,11 @@ private fun StudySummary(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // The parent Box is bounded, not scrollable. Large font scales or
+            // a short viewport can push the tally and actions off screen (the
+            // longer clock header makes this easy to hit), so let the whole
+            // summary scroll instead of trapping the buttons below the fold.
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1043,12 +1122,21 @@ private fun StudySummary(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
+                // This flips a setting for EVERY paper, not just the one whose
+                // summary is on screen. Say so plainly instead of implying a
+                // paper-local control (H3); the toggle behaviour is unchanged.
                 Button(
                     onClick = onEnableNewCards,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(stringResource(R.string.introduce_new_cards))
+                    Text(stringResource(R.string.r2_study_enable_new_cards_all_papers))
                 }
+                Text(
+                    stringResource(R.string.r2_study_enable_new_cards_all_papers_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
                 Spacer(Modifier.height(8.dp))
             }
             SummaryTimes(state)
@@ -1127,4 +1215,48 @@ private fun SummaryTimes(state: StudyUiState) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center
     )
+}
+
+// --- Pure seams for the round-2 study fixes ---------------------------------
+// These are top-level, non-composable functions so the locale mapping can be
+// tested on the JVM without a Compose harness or Android resources.
+
+/** The grade's label is copy, so it resolves from a resource, not `enum.name`. */
+@StringRes
+internal fun studyGradeLabelRes(grade: ReviewGrade): Int = when (grade) {
+    ReviewGrade.AGAIN -> R.string.grade_again
+    ReviewGrade.HARD -> R.string.grade_hard
+    ReviewGrade.GOOD -> R.string.grade_good
+    ReviewGrade.EASY -> R.string.grade_easy
+}
+
+/** Stable English test-tag suffix; UI tests pin "Again"/"Hard"/"Good"/"Easy". */
+internal fun studyGradeTag(grade: ReviewGrade): String =
+    grade.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase(Locale.ROOT) }
+
+/** TalkBack state of one option row, every branch localized. */
+@StringRes
+internal fun studyOptionStateRes(
+    revealed: Boolean,
+    isCorrect: Boolean,
+    isSelected: Boolean
+): Int = when {
+    revealed && isCorrect -> R.string.r2_study_option_correct
+    revealed && isSelected -> R.string.r2_study_option_selected_wrong
+    isSelected -> R.string.r2_study_option_selected
+    else -> R.string.r2_study_option_not_selected
+}
+
+/** Short, localized verdict spoken when a result card lands. */
+@StringRes
+internal fun studyVerdictRes(correct: Boolean): Int =
+    if (correct) R.string.r2_study_verdict_correct else R.string.r2_study_verdict_incorrect
+
+/** Non-colour dwell cue for the question clock. */
+@StringRes
+internal fun studyDwellBandRes(band: Study.DwellBand): Int = when (band) {
+    Study.DwellBand.NEUTRAL -> R.string.r2_study_band_neutral
+    Study.DwellBand.EASY -> R.string.r2_study_band_easy
+    Study.DwellBand.GOOD -> R.string.r2_study_band_good
+    Study.DwellBand.HARD -> R.string.r2_study_band_hard
 }

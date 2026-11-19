@@ -4,6 +4,8 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.mcqapp.data.SafeZip
 import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+import com.mcqapp.data.io.FALLBACK_CLOZE_EXPLANATION
+import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.LegacyParser
@@ -71,7 +73,12 @@ object AnkiPackageReader {
     fun read(
         bytes: ByteArray,
         nowMillis: Long = System.currentTimeMillis(),
-        parameters: List<Double>? = null
+        parameters: List<Double>? = null,
+        // The learner's configured lapse count at which a card is a leech. A
+        // package stores only `lapses`, so the derived `leech` flag has to use
+        // the same threshold the live scheduler will; when a caller has no
+        // config, Anki's historical default is kept.
+        leechThreshold: Int = AnkiScheduling.LEECH_THRESHOLD
     ): AnkiReadResult {
         val entries = unzip(bytes)
         val collectionName = entries.keys.firstOrNull { it in COLLECTION_NAMES }
@@ -93,7 +100,7 @@ object AnkiPackageReader {
             file.writeBytes(collectionBytes)
             val db = SQLiteDatabase.openOrCreateDatabase(file, null)
             try {
-                readCollection(db, media, nowMillis, parameters)
+                readCollection(db, media, nowMillis, parameters, leechThreshold)
             } finally {
                 db.close()
             }
@@ -123,7 +130,8 @@ object AnkiPackageReader {
         db: SQLiteDatabase,
         media: MediaIndex,
         nowMillis: Long,
-        parameters: List<Double>?
+        parameters: List<Double>?,
+        leechThreshold: Int
     ): AnkiReadResult {
         val col = readColMeta(db)
         val ver = col.version
@@ -173,7 +181,8 @@ object AnkiPackageReader {
                         crtSeconds = col.crtSeconds,
                         lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
                         nowMillis = nowMillis,
-                        parameters = parameters
+                        parameters = parameters,
+                        leechThreshold = leechThreshold
                     )
                     if (state == null) unscheduled++ else scheduling[parsed.question.id] = state
                 }
@@ -191,7 +200,7 @@ object AnkiPackageReader {
             passages.getOrPut(pid) {
                 PassageDto(
                     id = pid,
-                    title = payload.passageTitle.orEmpty().ifBlank { "Passage" },
+                    title = payload.passageTitle.orEmpty().ifBlank { FALLBACK_PASSAGE_TITLE },
                     elements = payload.passageElements,
                     image = payload.passageImage
                 )
@@ -261,7 +270,9 @@ object AnkiPackageReader {
         sink: StreamSink,
         batchSize: Int = LegacyParser.IMPORT_BATCH_SIZE,
         nowMillis: Long = System.currentTimeMillis(),
-        parameters: List<Double>? = null
+        parameters: List<Double>? = null,
+        // See read(): the configured leech threshold, defaulting to Anki's 8.
+        leechThreshold: Int = AnkiScheduling.LEECH_THRESHOLD
     ): AnkiStreamTail {
         require(batchSize > 0) { "batchSize must be positive" }
         val work = AnkiImportWork()
@@ -284,7 +295,7 @@ object AnkiPackageReader {
             }
             try {
                 return streamCollection(
-                    db, work.mediaIndex(), sink, batchSize, nowMillis, parameters
+                    db, work.mediaIndex(), sink, batchSize, nowMillis, parameters, leechThreshold
                 )
             } catch (e: AnkiPackageException) {
                 throw e
@@ -306,7 +317,8 @@ object AnkiPackageReader {
         sink: StreamSink,
         batchSize: Int,
         nowMillis: Long,
-        parameters: List<Double>?
+        parameters: List<Double>?,
+        leechThreshold: Int
     ): AnkiStreamTail {
         val col = readColMeta(db)
         Logger.i("IMPORT", "Streaming Anki collection, schema version ${col.version}")
@@ -361,7 +373,7 @@ object AnkiPackageReader {
                 sink.onCategory(CategoryDto(id = categoryId, title = FALLBACK_CATEGORY_TITLE))
                 val counts = streamDeck(
                     db, notetypes, media, col, revlog, passages, rootDeck?.id, categoryId,
-                    sink, batchSize, nowMillis, parameters, IntArray(1)
+                    sink, batchSize, nowMillis, parameters, leechThreshold, IntArray(1)
                 )
                 noteCount += counts.total
                 recallCount += counts.recall
@@ -372,7 +384,7 @@ object AnkiPackageReader {
                     sink.onCategory(node.dto)
                     val counts = streamDeck(
                         db, notetypes, media, col, revlog, passages, node.deck?.id, node.dto.id,
-                        sink, batchSize, nowMillis, parameters, IntArray(1)
+                        sink, batchSize, nowMillis, parameters, leechThreshold, IntArray(1)
                     )
                     noteCount += counts.total
                     recallCount += counts.recall
@@ -391,7 +403,7 @@ object AnkiPackageReader {
                     sink.onCategory(CategoryDto(id = rootCategoryId, title = FALLBACK_CATEGORY_TITLE))
                     val counts = streamDeck(
                         db, notetypes, media, col, revlog, passages, rootDeck.id, rootCategoryId,
-                        sink, batchSize, nowMillis, parameters, IntArray(1)
+                        sink, batchSize, nowMillis, parameters, leechThreshold, IntArray(1)
                     )
                     noteCount += counts.total
                     recallCount += counts.recall
@@ -432,6 +444,7 @@ object AnkiPackageReader {
         batchSize: Int,
         nowMillis: Long,
         parameters: List<Double>?,
+        leechThreshold: Int,
         dropped: IntArray
     ): DeckCounts {
         if (deckId == null) return DeckCounts(0, 0, 0)
@@ -473,7 +486,8 @@ object AnkiPackageReader {
                             crtSeconds = col.crtSeconds,
                             lastReviewedAtMillis = lastReviews[card.id] ?: 0L,
                             nowMillis = nowMillis,
-                            parameters = parameters
+                            parameters = parameters,
+                            leechThreshold = leechThreshold
                         )?.let { schedules[parsed.question.id] = it }
                     }
                     batch += parsed.question
@@ -500,7 +514,7 @@ object AnkiPackageReader {
         if (payload.passageId != passageId) return
         passages[passageId] = PassageDto(
             id = passageId,
-            title = payload.passageTitle.orEmpty().ifBlank { "Passage" },
+            title = payload.passageTitle.orEmpty().ifBlank { FALLBACK_PASSAGE_TITLE },
             elements = payload.passageElements,
             image = payload.passageImage
         )
@@ -1204,7 +1218,7 @@ object AnkiPackageReader {
             text = text.ifBlank { CLOZE_BLANK },
             options = listOf(OptionDto("o0", answer)),
             correctOptionIds = listOf("o0"),
-            explanation = "Cloze card from Anki.",
+            explanation = FALLBACK_CLOZE_EXPLANATION,
             tags = note.tags + "anki-cloze"
         )
     }

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Round-2 library fixes. Names and specifiers are mirrored in values-hi. -->
+
+    <!-- Export-format dialog (the format rows themselves are owned by ExportFormat). -->
+    <string name="r2_lib_export_format_title">Export format</string>
+    <plurals name="r2_lib_export_selection_title">
+        <item quantity="one">Export selection (%1$d category)</item>
+        <item quantity="other">Export selection (%1$d categories)</item>
+    </plurals>
+
+    <!-- A backup picked from Import cannot be added as a question bank. -->
+    <string name="r2_lib_backup_not_bank">This is a library backup, not a question bank. Restore it from Settings → Restore backup.</string>
+
+    <!-- Failed deletes report the item instead of silently dropping the row. -->
+    <string name="r2_lib_delete_failed">Couldn\'t delete %1$s. Please try again.</string>
+    <string name="r2_lib_delete_generic_failed">Couldn\'t complete the delete. Please try again.</string>
+    <string name="r2_lib_blueprint_save_failed">Couldn\'t save the test plan. Please try again.</string>
+    <string name="r2_lib_blueprint_delete_failed">Couldn\'t delete the test plan. Please try again.</string>
+
+    <!-- Distinct composition-preview fill labels. -->
+    <string name="r2_lib_fill_authored_hard">authored hard</string>
+    <string name="r2_lib_fill_authored_medium">authored medium</string>
+    <string name="r2_lib_fill_blueprint">test plan</string>
+    <string name="r2_lib_fill_blueprint_fill">plan filler</string>
+
+    <!-- Paper-card summary line. -->
+    <plurals name="r2_lib_questions_count">
+        <item quantity="one">%1$d question</item>
+        <item quantity="other">%1$d questions</item>
+    </plurals>
+    <string name="r2_lib_minutes">%1$d min</string>
+    <string name="r2_lib_negative">-%1$s neg</string>
+
+    <!-- Accessibility labels for rows that were previously unlabelled. -->
+    <string name="r2_lib_select_category">Select category %1$s</string>
+    <string name="r2_lib_select_no_parent">No parent (top level)</string>
+    <string name="r2_lib_select_parent">Make %1$s the parent</string>
+    <string name="r2_lib_open_category">Open category %1$s</string>
+    <string name="r2_lib_decrease_parts">Decrease parts for %1$s</string>
+    <string name="r2_lib_increase_parts">Increase parts for %1$s</string>
+</resources>

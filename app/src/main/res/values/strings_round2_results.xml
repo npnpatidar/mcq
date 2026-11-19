@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 results/history fixes. Additive names only; the base strings are
+  never overridden. Every name is prefixed r2_res_ and mirrored in values-hi.
+-->
+<resources>
+    <!-- R2: review-chip labels. These mirror the ReviewFilters storage keys. -->
+    <string name="r2_res_filter_all">All</string>
+    <string name="r2_res_filter_correct">Correct</string>
+    <string name="r2_res_filter_wrong">Wrong</string>
+    <string name="r2_res_filter_skipped">Skipped</string>
+    <string name="r2_res_filter_ungraded">Ungraded</string>
+    <string name="r2_res_filter_slow">Slow</string>
+    <string name="r2_res_filter_saved">Saved</string>
+
+    <!-- R2: %1$s is the localized chip label, never a raw storage key. -->
+    <string name="r2_res_no_filter_questions">No %1$s questions</string>
+
+    <!-- R4: honest copy for a relaunch from a report action. -->
+    <string name="r2_res_relaunch_fresh_note">Starts a fresh run with this scope.</string>
+
+    <!-- R8: radio-row spoken state for the format dialog. -->
+    <string name="r2_res_format_selected">Selected</string>
+    <string name="r2_res_format_not_selected">Not selected</string>
+
+    <!-- R5: spoken alternatives for history row and trend semantics. -->
+    <string name="r2_res_open_attempt">Open attempt</string>
+    <string name="r2_res_delta_improved">Improved by %1$s points</string>
+    <string name="r2_res_delta_declined">Declined by %1$s points</string>
+    <string name="r2_res_delta_unchanged">No change</string>
+    <string name="r2_res_mastery_progress">Mastery %1$s</string>
+
+    <!-- R6: history top-list load failure. -->
+    <string name="r2_res_history_stats_failed">Could not load question statistics.</string>
+
+    <!--
+      R3 shared API: the eight ExportFormat titles and descriptions. The old
+      English literals stay in ExportFormat for storage/compatibility; these
+      are the localized display strings resolved at each call site.
+    -->
+    <string name="r2_res_export_json_inline_title">JSON (images inline)</string>
+    <string name="r2_res_export_json_inline_description">Single .json file, images embedded as data URIs. Re-importable.</string>
+    <string name="r2_res_export_zip_title">ZIP (JSON + images)</string>
+    <string name="r2_res_export_zip_description">.zip with paper.json plus an images/ folder the JSON refers to.</string>
+    <string name="r2_res_export_html_title">Web page (answers shown)</string>
+    <string name="r2_res_export_html_description">Single .html file, correct answers visible. Opens in any browser.</string>
+    <string name="r2_res_export_html_quiz_title">Web page (quiz mode)</string>
+    <string name="r2_res_export_html_quiz_description">Answers hidden; tap Show answer to reveal. Self-contained.</string>
+    <string name="r2_res_export_pdf_title">PDF (answers inline)</string>
+    <string name="r2_res_export_pdf_description">.pdf with correct answers under each question.</string>
+    <string name="r2_res_export_pdf_answer_key_title">PDF (answer key at end)</string>
+    <string name="r2_res_export_pdf_answer_key_description">.pdf for self-testing: questions first, all answers at the end.</string>
+    <string name="r2_res_export_apkg_title">Anki deck (.apkg)</string>
+    <string name="r2_res_export_apkg_description">Importable with Anki. Each question becomes a flashcard in one deck.</string>
+    <string name="r2_res_export_docx_title">Word document (.docx)</string>
+    <string name="r2_res_export_docx_description">Opens in Word. Headings carry the category tree; answers and explanations inline. Re-importable.</string>
+</resources>

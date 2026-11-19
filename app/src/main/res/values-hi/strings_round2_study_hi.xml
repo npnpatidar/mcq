@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Round-2 study-session copy — Hindi. Names match values/strings_round2_study.xml
+  exactly; no string carries a format argument in either locale.
+-->
+<resources>
+    <!-- उत्तर खुलने पर विकल्प पंक्ति की टॉकबैक स्थिति। -->
+    <string name="r2_study_option_correct">सही उत्तर</string>
+    <string name="r2_study_option_selected_wrong">चुना गया, गलत उत्तर</string>
+    <string name="r2_study_option_selected">चुना गया</string>
+    <string name="r2_study_option_not_selected">नहीं चुना गया</string>
+
+    <!-- जाँच/उत्तर खुलने पर परिणाम कार्ड के साथ बोला जाने वाला संक्षिप्त निर्णय। -->
+    <string name="r2_study_verdict_correct">सही</string>
+    <string name="r2_study_verdict_incorrect">गलत</string>
+
+    <!-- खाली सत्र का नए-कार्ड नियंत्रण हर प्रश्नपत्र का सेटिंग बदलता है। -->
+    <string name="r2_study_enable_new_cards_all_papers">सभी प्रश्नपत्रों में नए कार्ड पेश करें</string>
+    <string name="r2_study_enable_new_cards_all_papers_note">यह सेटिंग हर प्रश्नपत्र पर लागू होती है, केवल इस पर नहीं।</string>
+
+    <!-- घड़ी का स्पष्ट क्रिया-शब्द और रंग से अलग समय-संकेत। -->
+    <string name="r2_study_pause">रोकें</string>
+    <string name="r2_study_resume">फिर चलाएँ</string>
+    <!-- घड़ी बटन का एक ही स्थानीयकृत पाठ; रुके हुए रूप में मौजूदा "रुका हुआ" जुड़ता है। -->
+    <string name="r2_study_clock_readout">%1$s • %2$s • %3$s</string>
+    <string name="r2_study_clock_readout_paused">%1$s • %2$s • %3$s • %4$s</string>
+    <string name="r2_study_band_neutral">तटस्थ</string>
+    <string name="r2_study_band_easy">आसान</string>
+    <string name="r2_study_band_good">अच्छा</string>
+    <string name="r2_study_band_hard">कठिन</string>
+</resources>

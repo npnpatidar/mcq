@@ -1036,7 +1036,12 @@ class BackupRestorer(private val db: AppDatabase) {
         backup: McqBackupFormat.Backup,
         updateAnswersOnDuplicate: Boolean = false,
         applySettings: suspend (McqBackupFormat.SettingsFile) -> Unit = {},
-        applyInProgress: suspend (String?) -> Unit = {}
+        applyInProgress: suspend (String?) -> Unit = {},
+        // Renders the generic partial-restore copy. The throwable detail is
+        // already on Logger; only the stable RestorePartial flags reach here.
+        // A UI caller can pass a localized resolver; the default is a
+        // detail-free generic sentence.
+        renderPartialNote: (List<RestorePartial>) -> String = { RestorePartialCopy.fallback(it) }
     ): String {
         val content = backup.content
         // A paper's standalone questions (the bank wire format keeps a
@@ -1075,18 +1080,24 @@ class BackupRestorer(private val db: AppDatabase) {
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
         // as a failed restore — it is reported as a partial one.
-        val partial = mutableListOf<String>()
+        val partial = mutableListOf<RestorePartial>()
         try {
             applySettings(backup.settings)
         } catch (e: Exception) {
-            Logger.e("BACKUP", "Settings restore failed", e)
-            partial.add("settings were not restored (${e.message ?: "error"})")
+            partial.add(
+                RestorePartialCopy.flagged(RestorePartial.SETTINGS, e) {
+                    Logger.e("BACKUP", "Settings restore failed", it)
+                }
+            )
         }
         try {
             applyInProgress(backup.study.inProgressTest)
         } catch (e: Exception) {
-            Logger.e("BACKUP", "Resume-snapshot restore failed", e)
-            partial.add("the in-progress test was not restored (${e.message ?: "error"})")
+            partial.add(
+                RestorePartialCopy.flagged(RestorePartial.IN_PROGRESS, e) {
+                    Logger.e("BACKUP", "Resume-snapshot restore failed", it)
+                }
+            )
         }
         val attemptNote = if (content.attempts.isNotEmpty()) {
             ", ${content.attempts.size} attempts"
@@ -1100,11 +1111,7 @@ class BackupRestorer(private val db: AppDatabase) {
         } else {
             ""
         }
-        val partialNote = if (partial.isEmpty()) {
-            ""
-        } else {
-            " The library itself came back; " + partial.joinToString(" and ") + "."
-        }
+        val partialNote = if (partial.isEmpty()) "" else " " + renderPartialNote(partial)
         return "Restored ${content.papers.size} papers, $questionCount questions" +
             "$attemptNote, ${backup.study.cardState.size} schedules, " +
             "${backup.study.reviewLog.size} reviews." + newerAppNote + partialNote
@@ -1133,7 +1140,9 @@ class BackupRestorer(private val db: AppDatabase) {
         input: InputStream,
         updateAnswersOnDuplicate: Boolean = false,
         applySettings: suspend (McqBackupFormat.SettingsFile) -> Unit = {},
-        applyInProgress: suspend (String?) -> Unit = {}
+        applyInProgress: suspend (String?) -> Unit = {},
+        // Same detail-free partial copy as restore(); see its parameter note.
+        renderPartialNote: (List<RestorePartial>) -> String = { RestorePartialCopy.fallback(it) }
     ): String {
         var settings = McqBackupFormat.SettingsFile()
         var inProgress: String? = null
@@ -1234,18 +1243,24 @@ class BackupRestorer(private val db: AppDatabase) {
         // The database restore above is atomic and has committed by now;
         // a failure in the caller-owned preference stores must not read
         // as a failed restore — it is reported as a partial one.
-        val partial = mutableListOf<String>()
+        val partial = mutableListOf<RestorePartial>()
         try {
             applySettings(settings)
         } catch (e: Exception) {
-            Logger.e("BACKUP", "Settings restore failed", e)
-            partial.add("settings were not restored (${e.message ?: "error"})")
+            partial.add(
+                RestorePartialCopy.flagged(RestorePartial.SETTINGS, e) {
+                    Logger.e("BACKUP", "Settings restore failed", it)
+                }
+            )
         }
         try {
             applyInProgress(inProgress)
         } catch (e: Exception) {
-            Logger.e("BACKUP", "Resume-snapshot restore failed", e)
-            partial.add("the in-progress test was not restored (${e.message ?: "error"})")
+            partial.add(
+                RestorePartialCopy.flagged(RestorePartial.IN_PROGRESS, e) {
+                    Logger.e("BACKUP", "Resume-snapshot restore failed", it)
+                }
+            )
         }
         val attemptNote = if (manifest.attempts > 0) ", ${manifest.attempts} attempts" else ""
         val newerAppNote = if (manifest.dbVersion > db.openHelper.readableDatabase.version) {
@@ -1255,11 +1270,7 @@ class BackupRestorer(private val db: AppDatabase) {
         } else {
             ""
         }
-        val partialNote = if (partial.isEmpty()) {
-            ""
-        } else {
-            " The library itself came back; " + partial.joinToString(" and ") + "."
-        }
+        val partialNote = if (partial.isEmpty()) "" else " " + renderPartialNote(partial)
         return "Restored ${manifest.papers} papers, ${manifest.questions} questions" +
             "$attemptNote, $schedules schedules, $reviews reviews." + newerAppNote + partialNote
     }

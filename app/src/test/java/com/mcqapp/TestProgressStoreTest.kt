@@ -273,19 +273,29 @@ class TestProgressStoreTest {
         val saveJob = launch {
             saveOrThrow(store, header(index = 1), listOf(TestAnswer("q1", selection = setOf("q1-b"), dwellSeconds = 2)))
         }
+        // Wait for save #1 to enter its header write. The suspension before it
+        // is a Room query, whose callback arrives from another thread on a
+        // loaded CI runner; yielding alone (~a microsecond per turn) can lose
+        // that race, so give the event loop a real millisecond to receive it —
+        // the same wait the sibling tests in this file use.
         var parked = false
         repeat(128) {
             if (slot.started.count { it == "held" } == 1) {
                 parked = true
                 return@repeat
             }
-            yield()
+            delay(1)
         }
         assertTrue("save #1 must park inside its header write", parked)
 
         val clearJob = launch { store.clear() }
         // Fair chance for a (wrongly) unlocked clear to run while #1 is held.
-        repeat(128) { yield() }
+        // A real millisecond per turn, so the mutant is caught on a loaded
+        // runner too rather than only on an idle one.
+        repeat(128) {
+            yield()
+            delay(1)
+        }
 
         assertEquals("the slot still holds save #0's header", header(index = 0).toJson(), slot.loadTestProgress())
         val rowsWhileHeld = db.testProgressDao().getForPaper("p1").map { it.questionId }

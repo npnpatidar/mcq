@@ -45,6 +45,11 @@ fun BackupDataSection(
 ) {
     var showAllPapers by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
+    // SE2: onClick is not a composable scope, so resolve these here. The old
+    // code shipped hardcoded English messages and chooser title.
+    val exportLogsTitle = stringResource(R.string.export_logs)
+    val noLogFileMessage = stringResource(R.string.r2_backup_no_log_file)
+    val noShareAppMessage = stringResource(R.string.r2_backup_no_share_app)
 
     CollapsibleSettingsSection(
         titleRes = R.string.settings_section_backup_data,
@@ -64,6 +69,13 @@ fun BackupDataSection(
         Text(
             stringResource(R.string.export_all_help),
             style = MaterialTheme.typography.bodySmall
+        )
+        // H2: a single-paper export carries content only; say so here so the
+        // full-backup choice and the per-paper choice are not confused.
+        Text(
+            stringResource(R.string.r2_backup_paper_export_content_only),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
         Button(
@@ -116,7 +128,7 @@ fun BackupDataSection(
                 // (consolidated_bugs.md H9).
                 val path = com.mcqapp.util.Logger.logFilePath()
                 if (path == null) {
-                    onExportLogsError(R.string.export_logs, "No log file exists yet.")
+                    onExportLogsError(R.string.export_logs, noLogFileMessage)
                     return@Button
                 }
                 val file = java.io.File(path)
@@ -132,16 +144,23 @@ fun BackupDataSection(
                 }
                 try {
                     context.startActivity(
-                        android.content.Intent.createChooser(intent, "Export Logs")
+                        android.content.Intent.createChooser(intent, exportLogsTitle)
                     )
                 } catch (e: ActivityNotFoundException) {
-                    onExportLogsError(R.string.export_logs, "No app can handle this share.")
+                    onExportLogsError(R.string.export_logs, noShareAppMessage)
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(stringResource(R.string.export_logs))
         }
+        // H4: a log can carry paper titles and stack traces. Warn before the
+        // share sheet opens so the learner can check what they are sending.
+        Text(
+            stringResource(R.string.r2_backup_export_logs_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         Spacer(Modifier.height(12.dp))
         Row(

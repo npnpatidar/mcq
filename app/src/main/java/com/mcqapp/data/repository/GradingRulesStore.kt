@@ -200,32 +200,14 @@ internal open class GradingRulesStore(
      * review still resolves the pair that actually graded it.
      */
     private suspend fun ensureVersionLocked(): Int {
-        if (settings.gradingRulesVersionNow() < SettingsStore.GRADING_RULES_VERSION) {
-            // Keep the pair this rule is about to retire: it cannot be
-            // reinterpreted, but it should not vanish without a trace.
-            settings.retainRetiredCuts()
-            // schedulerConfigNow() ignores the stale pair and returns 6/60.
-            val config = settings.schedulerConfigNow()
-            val id = nextVersionId()
-            settings.writeCuts(
-                config.fastSeconds,
-                config.slowSeconds,
-                id,
-                config.correctnessOnlyGrading
-            )
-            insert(
-                id,
-                config.fastSeconds,
-                config.slowSeconds,
-                GradingReason.PRIOR,
-                config.correctnessOnlyGrading
-            )
-            return id
-        }
-        // The id and the pair it names come from one snapshot: reading the
-        // version key and the cuts separately let a restore land between them
-        // and pair the pre-restore id with the post-restore pair, which minted
-        // a `prior` row and restarted the very epoch this guard preserves.
+        // One snapshot decides. Reading the rule gate separately from the pair
+        // let a restore land between the two reads: the gate said "stale", the
+        // pair said "restored", and the store minted a fresh id for a key it
+        // would otherwise have reused — restarting the very epoch this guard
+        // exists to preserve. A zero id from the same snapshot means exactly
+        // the cases that need a new `prior` row: nothing stored yet, or a pair
+        // saved under the retired reading-allowance rule, which
+        // `schedulerConfigNow()` already replaces with the shipped pair.
         val config = settings.schedulerConfigNow()
         if (config.gradingVersion > 0) {
             val stored = config.gradingVersion
@@ -252,6 +234,10 @@ internal open class GradingRulesStore(
             val usableStart = row.effectiveFrom > 0L &&
                 row.effectiveFrom <= System.currentTimeMillis()
             if (samePair && usableStart) return stored
+        } else {
+            // Keep the pair this rule is about to retire: it cannot be
+            // reinterpreted, but it should not vanish without a trace.
+            settings.retainRetiredCuts()
         }
         val id = nextVersionId()
         settings.writeCuts(

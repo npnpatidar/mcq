@@ -21,14 +21,12 @@ import org.junit.Test
 /**
  * The selector-level half of the six behaviours recorded in `blueprint.md` §8.
  *
- * Each bug test asserts the **correct** behaviour and is `@Ignore`d while the
- * bug is open, so the suite stays green without ever asserting a bug. When a
- * fix lands, delete its `@Ignore` in the same commit: a passing test is the
- * proof the behaviour changed, and a still-failing one means the fix was
- * partial.
+ * All six bugs are fixed: each bug test now asserts the **correct** behaviour
+ * and runs unconditionally — none is `@Ignore`d. A regression that reopens a
+ * bug fails here directly, so there is no ignore-and-delete step left to do.
  *
- * The `…Guard` tests are deliberately **not** ignored. They pin behaviour that
- * is already correct, so a fix cannot over-correct: a global bound must not
+ * The `…Guard` tests remain alongside them. They pin behaviour that was
+ * already correct, so a fix cannot over-correct: a global bound must not
  * refuse runs that legitimately overshoot, and a seed-bound preview must still
  * agree when both sides use the same seed.
  *

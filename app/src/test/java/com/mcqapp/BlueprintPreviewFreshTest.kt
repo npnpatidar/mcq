@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import androidx.test.core.app.ApplicationProvider
+import androidx.lifecycle.ViewModelStore
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.AttemptMetadata
 import com.mcqapp.domain.BlueprintSection
@@ -25,6 +26,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Ignore
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -51,15 +53,39 @@ class BlueprintPreviewFreshTest {
     private lateinit var app: McqApplication
     private lateinit var repository: McqRepository
 
+    /**
+     * One preview ViewModel per test, cleared in [tearDown].
+     *
+     * The preview is a ViewModel call, but this class only needs its suspend
+     * `previewSelection`. Constructing one per preview leaked a `viewModelScope`
+     * — three collectors that keep re-reading DataStore — for every assertion
+     * that previewed; enough of them in one worker wedged the class at a
+     * different test each run. JUnit makes a fresh instance per method, so a
+     * store per instance bounds it to one.
+     */
+    private lateinit var libraryStore: ViewModelStore
+    private lateinit var library: LibraryViewModel
+
+    /** Names a wedge instead of letting the worker sit until the task timeout. */
+    @get:Rule
+    val watchdog = HangWatchdogRule(seconds = 120)
+
     @Before
     fun setUp() = runBlocking {
         app = ApplicationProvider.getApplicationContext()
         repository = app.repository
         PAPERS.forEach { repository.deletePaper(it) }
+        libraryStore = ViewModelStore()
+        library = LibraryViewModel(app)
+        libraryStore.put("library", library)
     }
 
     @After
     fun tearDown() = runBlocking {
+        // Cancel the preview collectors before the data they read changes; a
+        // live collector would otherwise race the delete below and the next
+        // test's setup.
+        libraryStore.clear()
         PAPERS.forEach { repository.deletePaper(it) }
     }
 
@@ -164,7 +190,7 @@ class BlueprintPreviewFreshTest {
         paper: Paper,
         blueprintId: Long,
         count: Int
-    ): SelectionPreview = LibraryViewModel(app).previewSelection(
+    ): SelectionPreview = library.previewSelection(
         paper = paper,
         categoryIds = emptyList(),
         type = TestType.BLUEPRINT,

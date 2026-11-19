@@ -297,11 +297,10 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.61` is the
-  published release and `0.0.62` is the release being cut by the round-2 review
-  fix branch. Room schema remains 28. Round-2 review reports are in
-  `review-reports-2/` (PR #94); the fix work is PR #95, with the High findings in
-  the first commit and the remaining Medium/Low findings in the follow-up.
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.62` is the
+  published release (the whole round-2 review pass: all 85 findings closed).
+  Room schema remains 28. Round-2 review reports are in `review-reports-2/`
+  (PR #94, merged); the fix work is PR #95 (merged); both branches are deleted.
 - `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
   class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`,
   `SignalQueryTest`). Cause (proven by a CI `jstack` sentinel): a DataStore write

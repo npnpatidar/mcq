@@ -571,7 +571,12 @@ class StudyAndSelectionUiTest {
         // Tap the option Row by its stable tag, not by its "Alpha" text: the
         // text lives in a child of the selectable Row and can resolve to a
         // different/overlapping node, so the click never reached the selector.
-        compose.onNodeWithTag("study-option-ui-stop-q1-a").performClick()
+        // Scroll it into view first: the clock and dwell cues push the first
+        // option low enough that its centre can sit outside the window, and a
+        // touch outside the window is dropped without an error.
+        compose.onNodeWithTag("study-option-ui-stop-q1-a")
+            .performScrollTo()
+            .performClick()
         // The tap dispatches to the option Row's selectable action, which flips
         // ViewModel state and recomposes. performClick can return before that
         // state has settled, and Check then grades an empty selection as Again

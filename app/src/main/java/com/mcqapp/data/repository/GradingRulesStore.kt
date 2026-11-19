@@ -50,7 +50,22 @@ internal open class GradingRulesStore(
     private val settings: SettingsStore
 ) {
 
-    private val mutex = Mutex()
+    /**
+     * One lock for every store, not one per instance.
+     *
+     * A version decision is a read-modify-write: [ensureVersionLocked] reads
+     * the stored pair and id, then writes a new row and the id in a second
+     * edit. Two stores — in production a repository's own plus any rebuild or
+     * collector that was handed another one, and in tests every class that
+     * touches the process-wide DataStore — could otherwise both read the
+     * pre-restore snapshot and then write different ids, the later write
+     * silently replacing the id the earlier one just resolved. Sharing the
+     * lock keeps the snapshot and the write one unit, so the last writer
+     * always decided against what the previous writer left behind.
+     */
+    private companion object {
+        val mutex = Mutex()
+    }
 
     /**
      * The current grading version, seeding a `prior` row on a store that has

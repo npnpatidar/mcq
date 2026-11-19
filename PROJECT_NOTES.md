@@ -308,12 +308,16 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   genuinely hung class must still fail rather than sit. Do not raise the timeout
   to get past a stall — that hides the leak.
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
-  `test-results`, `lint-report`, `ui-test-results`. After every push, download both
-  APKs and keep them under these exact names:
+  `lint-report`, `ui-test-results`, and the unit-test results as a 4-way
+  matrix `test-results-shard-0..3` (`apk-build/test-shards.sh` partitions the
+  363 classes; a Robolectric lost-wakeup wedge in one shard reports alone and
+  dumps its thread stacks instead of holding the branch). After every push,
+  download both APKs and keep them under these exact names:
 
 ```bash
 gh run download <run-id> --name app-debug   -D /sdcard/Download   # -> app-debug.apk
 gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-release.apk
+# unit-test results: repeat --name test-results-shard-0 .. -3
 ```
 
 - `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the

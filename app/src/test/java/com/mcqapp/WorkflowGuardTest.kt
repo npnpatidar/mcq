@@ -120,12 +120,22 @@ class WorkflowGuardTest {
                 Regex("""(?m)^[ \t]*if-no-files-found: error[ \t]*$""").containsMatchIn(step)
             )
         }
-        for (name in listOf("app-debug", "app-release", "test-results", "lint-report", "ui-test-results")) {
+        // The `test-results` upload is a single step in the 4-way unit-test
+        // matrix: one YAML step, four artifacts when expanded.
+        for (name in listOf(
+            "app-debug", "app-release", "lint-report", "ui-test-results"
+        )) {
             assertTrue(
                 "build.yml: artifact '${name}' is missing",
                 Regex("""(?m)^[ \t]*name: ${name}[ \t]*$""").containsMatchIn(build)
             )
         }
+        assertTrue(
+            "build.yml: the sharded unit-test results upload is missing",
+            Regex(
+                """(?m)^[ \t]*name: test-results-shard-\$\{\{ matrix\.shard \}\}[ \t]*$"""
+            ).containsMatchIn(build)
+        )
     }
 
     /**

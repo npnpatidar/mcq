@@ -301,6 +301,12 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   fix branch. Room schema remains 28. Round-2 review reports are in
   `review-reports-2/` (PR #94); the fix work is PR #95, with the High findings in
   the first commit and the remaining Medium/Low findings in the follow-up.
+- `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
+  class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`). A moving
+  stall point is state accumulating across Robolectric classes, not one bad
+  test, so `forkEvery = 40` recycles the JVM; keep the timeout as well, since a
+  genuinely hung class must still fail rather than sit. Do not raise the timeout
+  to get past a stall — that hides the leak.
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
   `test-results`, `lint-report`, `ui-test-results`. After every push, download both
   APKs and keep them under these exact names:

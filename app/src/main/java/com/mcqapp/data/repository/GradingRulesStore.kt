@@ -234,10 +234,11 @@ internal open class GradingRulesStore(
             val usableStart = row.effectiveFrom > 0L &&
                 row.effectiveFrom <= System.currentTimeMillis()
             if (samePair && usableStart) return stored
+        } else {
+            // Keep the pair this rule is about to retire: it cannot be
+            // reinterpreted, but it should not vanish without a trace.
+            settings.retainRetiredCuts()
         }
-        // Keep the pair this rule is about to retire: it cannot be
-        // reinterpreted, but it should not vanish without a trace.
-        settings.retainRetiredCuts()
         val id = nextVersionId()
         settings.writeCuts(
             config.fastSeconds,

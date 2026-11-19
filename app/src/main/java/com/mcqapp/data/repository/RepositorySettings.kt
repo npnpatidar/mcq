@@ -711,10 +711,6 @@ internal class SettingsStore(
     internal suspend fun gradingVersionOrNull(): Int? =
         context.dataStore.data.map { it[ladderVersionKey] }.first()
 
-    /** Which build of the cut rule the stored pair was saved under (v28). */
-    internal suspend fun gradingRulesVersionNow(): Int =
-        context.dataStore.data.map { it[gradingRulesVersionKey] ?: 0 }.first()
-
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
      * left alone: they are the learner's own history, and Settings offers a

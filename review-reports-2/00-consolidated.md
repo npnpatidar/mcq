@@ -6,6 +6,14 @@
 **Reports:** `01-library-navigation.md` … `13-hidden-security-perf.md`.
 **Raw findings:** 85 — 6 High (5 distinct), 33 Medium, 44 Low, 2 informational. Cross-cutting reports deliberately re-state area findings to identify root causes, so the deduplicated total is lower (~65 distinct issues).
 
+> **Outcome (2026-11-19): closed.** Every finding in this set — including the
+> High items, the ~65 deduplicated issues and every open §6 decision — was
+> fixed or applied by PR #95 (`feature/round2-high-fixes`), verified by four
+> area reviewers plus an integration reviewer and green CI (357 classes /
+> 2,728 tests), and shipped as release **0.0.62**. Read the area reports as
+> the *evidence* for those fixes, not as live defects: none of the findings
+> below exist in 0.0.62.
+
 ---
 
 ## 1. Priority fixes (High)

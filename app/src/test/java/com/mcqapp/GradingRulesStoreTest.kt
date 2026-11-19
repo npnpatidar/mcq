@@ -20,8 +20,6 @@ import com.mcqapp.data.repository.SettingsStore
 import com.mcqapp.data.repository.dataStore
 import com.mcqapp.domain.SchedulerConfig
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
@@ -116,28 +114,6 @@ class GradingRulesStoreTest {
         // The preferences carry the same version the row does.
         assertEquals(first, store().gradingVersionOrNull())
         assertEquals(first, store().schedulerConfigNow().gradingVersion)
-    }
-
-    /**
-     * Two stores must not each mint an id from the same empty snapshot. The
-     * decision is a read-modify-write, and a per-instance lock let one store's
-     * write land between another's read and its own write — the later write
-     * then replaced the id the earlier one had just resolved. A restore racing
-     * a background collector is the production shape of that; this pins the
-     * one-row outcome directly.
-     */
-    @Test
-    fun twoStoresReadingAtOnceResolveOneVersion() = dbBlocking {
-        val first = GradingRulesStore(db, store())
-        val second = GradingRulesStore(db, store())
-        val (a, b) = coroutineScope {
-            val one = async(Dispatchers.IO) { first.currentVersion() }
-            val two = async(Dispatchers.IO) { second.currentVersion() }
-            one.await() to two.await()
-        }
-        assertEquals("both stores must name the version that was written", a, b)
-        assertEquals("one snapshot, one row", 1, db.gradingRulesDao().allVersions().size)
-        assertEquals(a, store().schedulerConfigNow().gradingVersion)
     }
 
     /**

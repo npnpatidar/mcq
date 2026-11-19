@@ -23,6 +23,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -36,6 +37,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SignalQueryTest {
+
+    /**
+     * A wedge in this class wedged a whole CI shard: the task-level timeout
+     * killed the worker with no clue. This rule dumps every thread's stacks
+     * and halts the shard at 120 s instead — the failing frame is named.
+     */
+    @get:Rule
+    val watchdog = HangWatchdogRule(seconds = 120)
 
     private lateinit var db: AppDatabase
     private lateinit var repository: McqRepository

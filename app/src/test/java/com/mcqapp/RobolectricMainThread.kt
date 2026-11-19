@@ -63,6 +63,16 @@ internal fun <T> runOffMainWhilePumping(
         shadowOf(Looper.getMainLooper()).idle()
         if (outcome.get() != null) break
         if (System.nanoTime() >= deadline) {
+            // Name the block before abandoning it: the Gradle task timeout
+            // only kills the worker later, and a lost-wakeup wedge otherwise
+            // leaves no clue. Every thread's frame is printed so the next
+            // run's log shows exactly what the abandoned work is parked on
+            // (and what, if anything, holds the DataStore actor).
+            System.err.println("PUMP-DEADLINE-DUMP after ${timeoutMs}ms for $condition")
+            for ((thread, frames) in Thread.getAllStackTraces()) {
+                System.err.println("  ${thread.name} ${thread.state}")
+                frames.take(24).forEach { f -> System.err.println("      at $f") }
+            }
             throw AssertionError(
                 "timed out after ${timeoutMs}ms waiting for $condition " +
                     "(work left running; it is never cancelled)"

@@ -62,9 +62,11 @@ class WrapperValidationTest {
             "the build workflow must validate the wrapper jar",
             usesWrapperValidation(build)
         )
+        // build, release-build, ui-test, and the 4-way unit-test matrix — the
+        // matrix is one YAML job with one `needs:` line, so the count stays 4.
         assertEquals(
-            "every gradle-running job (build, release-build, ui-test) must wait for validation",
-            3,
+            "every gradle-running job must wait for validation",
+            4,
             build.split("needs: wrapper-validation").size - 1
         )
     }

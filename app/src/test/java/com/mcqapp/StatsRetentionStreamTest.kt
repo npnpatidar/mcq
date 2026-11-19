@@ -30,7 +30,6 @@ import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.StatsAggregator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -87,10 +86,13 @@ class StatsRetentionStreamTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         // The DataStore is process-wide: start every test from a blank slate so
         // a grading pair or rule written by a neighbour cannot steer this one.
+        // No withTimeout around the edit: cancelling a DataStore write mid-flight
+        // poisons the process-wide store (see SettingsResetRule). The pump's own
+        // deadline is the bound.
         runOffMainWhilePumping(
             condition = "StatsRetentionStreamTest.setUp DataStore clear"
         ) {
-            withContext(Dispatchers.IO) { withTimeout(30_000) { context.dataStore.edit { it.clear() } } }
+            withContext(Dispatchers.IO) { context.dataStore.edit { it.clear() } }
         }
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries().build()
@@ -103,14 +105,14 @@ class StatsRetentionStreamTest {
         db.close()
         // This class writes real preference keys (the old-rule upgrade fixture),
         // so it must restore the process-wide store like GradingRulesStoreTest.
+        // No withTimeout around the edit: cancelling a DataStore write mid-flight
+        // poisons the process-wide store (see SettingsResetRule).
         runOffMainWhilePumping(
             condition = "StatsRetentionStreamTest.tearDown DataStore clear"
         ) {
             withContext(Dispatchers.IO) {
-                withTimeout(30_000) {
-                    ApplicationProvider.getApplicationContext<Context>()
-                        .dataStore.edit { it.clear() }
-                }
+                ApplicationProvider.getApplicationContext<Context>()
+                    .dataStore.edit { it.clear() }
             }
         }
     }

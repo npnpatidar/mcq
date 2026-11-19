@@ -302,11 +302,17 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   `review-reports-2/` (PR #94); the fix work is PR #95, with the High findings in
   the first commit and the remaining Medium/Low findings in the follow-up.
 - `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
-  class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`). A moving
-  stall point is state accumulating across Robolectric classes, not one bad
-  test, so `forkEvery = 40` recycles the JVM; keep the timeout as well, since a
-  genuinely hung class must still fail rather than sit. Do not raise the timeout
-  to get past a stall — that hides the leak.
+  class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`,
+  `SignalQueryTest`). Cause (proven by a CI `jstack` sentinel): a DataStore write
+  cancelled mid-flight — `withTimeout` around `dataStore.edit`, on a loaded
+  runner — poisons the process-wide write actor (`updateData` runs the caller's
+  transform under the caller's own context inside that one loop), so every later
+  DataStore call parks forever with the whole JVM otherwise idle. **Never cancel
+  a DataStore write**: bound the *wait* instead (`runOffMainWhilePumping` never
+  cancels or interrupts its block). `DataStoreWriteCancellationGuardTest` pins
+  this; the suite runs as a 4-way shard matrix, and the JVM is recycled every 40
+  classes. Do not raise the task timeout to get past a stall — that hides the
+  poison.
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
   `lint-report`, `ui-test-results`, and the unit-test results as a 4-way
   matrix `test-results-shard-0..3` (`apk-build/test-shards.sh` partitions the

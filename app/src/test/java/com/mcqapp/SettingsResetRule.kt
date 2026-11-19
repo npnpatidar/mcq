@@ -8,7 +8,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.mcqapp.data.repository.dataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.rules.ExternalResource
 
 /**
@@ -52,29 +51,45 @@ class SettingsResetRule : ExternalResource() {
 
     companion object {
         /**
-         * DataStore serialises every read and write through one process-wide
-         * actor, and a full CI run leaves many ViewModel collectors attached to
-         * it. On a loaded runner a six-key edit can take well over 30 s, so the
-         * bound is generous — but still below every enclosing watchdog (the
-         * tightest is 90 s), so a real deadlock is reported instead of hanging.
+         * How long the *wait* for the clear may take (the pump's deadline in
+         * [clearGradingKeys]); the DataStore edit itself is deliberately NOT
+         * cancellable — see [clearGradingKeysSuspend].
          */
         internal const val CLEAR_DEADLINE_MS = 60_000L
 
+        /**
+         * Clears the process-wide grading keys without ever cancelling the
+         * DataStore edit.
+         *
+         * Cancellation must never reach a DataStore write: `updateData` wraps
+         * the caller's own coroutine context into the actor message and runs
+         * the transform under it inside the single serialized write actor
+         * (androidx datastore-core `DataStoreImpl.updateData`), so a caller
+         * cancelled mid-edit — a `withTimeout` whose deadline fires while the
+         * runner is loaded — delivers its `CancellationException` inside that
+         * one loop. The actor then stops consuming, and every later DataStore
+         * call in the process parks forever: all worker threads idle, the
+         * test thread stuck in `runBlocking`. That is the exact shape of the
+         * wedges this suite has hit (jstack: `Fsrs7SelectionTest.setUp`
+         * inside `dataStore.edit`, whole JVM otherwise parked).
+         *
+         * The bound lives in the caller instead: [runOffMainWhilePumping]
+         * abandons the wait at its deadline without cancelling the edit, so a
+         * real hang is still reported, just never poisoned.
+         */
         suspend fun clearGradingKeysSuspend(
             context: Context = ApplicationProvider.getApplicationContext()
         ) {
             // Bounded and off the paused Robolectric main thread so DataStore
             // I/O can complete without stalling unrelated background work.
             withContext(Dispatchers.IO) {
-                withTimeout(CLEAR_DEADLINE_MS) {
-                    context.dataStore.edit { prefs ->
-                        prefs.remove(booleanPreferencesKey("correctness_only"))
-                        prefs.remove(intPreferencesKey("grading_rules_version"))
-                        prefs.remove(intPreferencesKey("ladder_version"))
-                        prefs.remove(booleanPreferencesKey("install_first_start_new"))
-                        prefs.remove(booleanPreferencesKey("haptics_enabled"))
-                        prefs.remove(intPreferencesKey("last_test_length"))
-                    }
+                context.dataStore.edit { prefs ->
+                    prefs.remove(booleanPreferencesKey("correctness_only"))
+                    prefs.remove(intPreferencesKey("grading_rules_version"))
+                    prefs.remove(intPreferencesKey("ladder_version"))
+                    prefs.remove(booleanPreferencesKey("install_first_start_new"))
+                    prefs.remove(booleanPreferencesKey("haptics_enabled"))
+                    prefs.remove(intPreferencesKey("last_test_length"))
                 }
             }
         }

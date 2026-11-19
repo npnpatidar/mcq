@@ -258,7 +258,8 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
-  matches nothing. Full local pass ≈236 classes after the round-2 fix batch. The
+  matches nothing. Full local pass ≈237 classes after the round-2 fix batch (the
+  guard classes are pure JVM too). The
   `:app:testPureJvm` Gradle task now codifies this selection rule so it no longer
   depends on a shell recipe.
 - Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.

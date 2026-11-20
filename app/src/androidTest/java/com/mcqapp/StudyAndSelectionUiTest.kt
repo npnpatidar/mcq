@@ -392,17 +392,11 @@ class StudyAndSelectionUiTest {
             timeBounds.bottom <= minutesBounds.top + 0.5f &&
                 timeBounds.top < minutesBounds.top
         )
-        // The clock column is clickable, so Compose expands its touch target
-        // automatically and its own height says nothing about the layout. The
-        // stats row is not clickable: its height is the real one, and it
-        // measures 48 dp — two labelMedium lines (36 dp) padded to the target by
-        // minimumInteractiveComponentSize. Assert it as a floor, because the
-        // left column could legitimately make the row taller at a large font
-        // scale.
-        compose.onNodeWithTag("study-stats", useUnmergedTree = true)
-            .assertHeightIsAtLeast(48.dp)
-        // The clock column keeps its own 48 dp check as well: the target is on
-        // the clickable node, and both clock lines live inside it.
+        // The stats row stays compact on purpose: two 16 sp lines, about 36 dp,
+        // so the question keeps the reclaimed height. The layout must not be
+        // padded out to the 48 dp accessibility minimum. Compose expands the
+        // clickable clock node's touch target on its own, and that node's bounds
+        // are what the next assertion checks.
         compose.onNodeWithTag("study-question-clock", useUnmergedTree = true)
             .assertHeightIsAtLeast(48.dp)
     }

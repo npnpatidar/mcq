@@ -342,17 +342,20 @@ class StudyAndSelectionUiTest {
         }
 
         // One verb and a matching suffix on either state. Applied to both reads
-        // so the initial and post-tap lines answer to the same contract.
+        // so the initial and post-tap lines answer to the same contract. The
+        // paused label embeds the pause verb ("Paused" contains "Pause"), so
+        // strip it before deciding which verb the line actually offers.
         fun assertSelfConsistent(text: String, where: String) {
-            val showsPause = text.contains(pauseVerb)
-            val showsResume = text.contains(resumeVerb)
+            val withoutPaused = text.replace(pausedLabel, "").trim()
+            val hasResume = withoutPaused.contains(resumeVerb)
+            val hasPause = withoutPaused.contains(pauseVerb)
             assertTrue(
                 "$where shows neither or both Pause/Resume verbs: $text",
-                (showsPause || showsResume) && !(showsPause && showsResume)
+                hasResume != hasPause
             )
             assertTrue(
                 "$where Paused suffix does not match its verb: $text",
-                text.contains(pausedLabel) == showsResume
+                text.contains(pausedLabel) == hasResume
             )
         }
 

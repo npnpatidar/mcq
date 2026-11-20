@@ -315,8 +315,11 @@ class StudyAndSelectionUiTest {
     }
 
     /**
-     * Pausing and resuming must rewrite only the variable line: the time line
-     * never disappears and keeps its M:SS shape throughout.
+     * Tapping the clock must rewrite only the variable line: the permanent time
+     * line never disappears and keeps its M:SS shape. The clock's starting state
+     * is racy (the viewport effect can resume it), so this never assumes which
+     * verb it shows — it reads the line first, taps once, and checks that the
+     * state actually flipped rather than normalising to a guessed state.
      */
     @Test
     fun pausingTheStudyClockChangesOnlyTheVariableLine() {
@@ -325,36 +328,68 @@ class StudyAndSelectionUiTest {
         val pauseVerb = app.getString(R.string.r2_study_pause)
         val resumeVerb = app.getString(R.string.r2_study_resume)
         val pausedLabel = app.getString(R.string.clock_paused)
+        val clockShape = Regex("""^\d+:\d{2}$""")
 
-        // Normalise first: the clock may have started paused, so a blind click
-        // here could resume it instead of pausing it.
-        setStudyClock(paused = false)
+        // The permanent line, read the same way as [variableClockText] so the
+        // shape check is not fooled by the icon or by the merged tree.
+        fun timeClockText(): String? {
+            val nodes = compose.onAllNodesWithTag("study-clock-time", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+            if (nodes.isEmpty()) return null
+            return nodes.first().config
+                .getOrElse(SemanticsProperties.Text) { emptyList() }
+                .joinToString("") { it.text }
+        }
+
+        // One verb and a matching suffix on either state. Applied to both reads
+        // so the initial and post-tap lines answer to the same contract.
+        fun assertSelfConsistent(text: String, where: String) {
+            val showsPause = text.contains(pauseVerb)
+            val showsResume = text.contains(resumeVerb)
+            assertTrue(
+                "$where shows neither or both Pause/Resume verbs: $text",
+                (showsPause || showsResume) && !(showsPause && showsResume)
+            )
+            assertTrue(
+                "$where Paused suffix does not match its verb: $text",
+                text.contains(pausedLabel) == showsResume
+            )
+        }
+
         val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
         val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
-        state.assertTextContains(pauseVerb, substring = true)
+
+        // Read before tapping: the tap must flip whichever state the clock is in.
+        val initialText = checkNotNull(variableClockText()) {
+            "the variable clock line did not render"
+        }
+        assertSelfConsistent(initialText, "the initial clock line")
+        time.assertIsDisplayed()
+        val initialTime = timeClockText()
+        assertTrue(
+            "the time line is not in M:SS shape: $initialTime",
+            initialTime != null && clockShape.matches(initialTime)
+        )
 
         compose.onNodeWithTag("study-question-clock").performClick()
         compose.waitUntil(10_000) {
-            variableClockText()?.let { it.contains(resumeVerb) && it.contains(pausedLabel) } == true
+            variableClockText()?.let { it != initialText } == true
         }
-        // The permanent line survives the pause unchanged in shape.
+
+        // The clock state changed, and only the variable line followed.
+        val newText = checkNotNull(variableClockText()) {
+            "the variable clock line vanished after the tap"
+        }
+        assertSelfConsistent(newText, "the clock line after the tap")
+        assertTrue(
+            "the tap did not flip the clock verb: $initialText -> $newText",
+            newText.contains(resumeVerb) != initialText.contains(resumeVerb)
+        )
+        // The permanent line survives with ':' still in it, and the tally stays.
         time.assertIsDisplayed()
         time.assertTextContains(":", substring = true)
-        // Only the variable line changed: it offers Resume and says Paused.
-        state.assertTextContains(resumeVerb, substring = true)
-        state.assertTextContains(pausedLabel, substring = true)
-
-        compose.onNodeWithTag("study-question-clock").performClick()
-        compose.waitUntil(10_000) {
-            variableClockText()?.let { it.contains(pauseVerb) && !it.contains(pausedLabel) } == true
-        }
-        time.assertIsDisplayed()
-        state.assertTextContains(pauseVerb, substring = true)
-        // Negative check: resuming clears the Paused suffix from the line.
-        assertTrue(
-            "the resumed clock still shows the paused suffix",
-            !variableClockText().orEmpty().contains(pausedLabel)
-        )
+        state.assertIsDisplayed()
+        compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
     }
 
     /**

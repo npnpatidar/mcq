@@ -21,9 +21,10 @@
     <!-- घड़ी का स्पष्ट क्रिया-शब्द और रंग से अलग समय-संकेत। -->
     <string name="r2_study_pause">रोकें</string>
     <string name="r2_study_resume">फिर चलाएँ</string>
-    <!-- घड़ी बटन का एक ही स्थानीयकृत पाठ; रुके हुए रूप में मौजूदा "रुका हुआ" जुड़ता है। -->
-    <string name="r2_study_clock_readout">%1$s • %2$s • %3$s</string>
-    <string name="r2_study_clock_readout_paused">%1$s • %2$s • %3$s • %4$s</string>
+    <!-- घड़ी की बदलती पंक्ति: क्रिया-शब्द और समय-बैंड, रुकने पर मौजूदा "रुका हुआ" जुड़ता है।
+         लाइव समय ऊपर अपनी स्थायी पंक्ति में दिखता है, यहाँ उसका स्थान नहीं है। -->
+    <string name="r2_study_clock_state">%1$s • %2$s</string>
+    <string name="r2_study_clock_state_paused">%1$s • %2$s • %3$s</string>
     <string name="r2_study_band_neutral">तटस्थ</string>
     <string name="r2_study_band_easy">आसान</string>
     <string name="r2_study_band_good">अच्छा</string>

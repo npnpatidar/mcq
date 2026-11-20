@@ -20,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -79,6 +81,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -905,7 +908,9 @@ fun BrowseScreen(
                 onDismissRequest = { showExportDialog = false },
                 title = { Text(pluralStringResource(R.plurals.export_n_selected, exportIds.size, exportIds.size)) },
                 text = {
-                    Column {
+                    // All formats must be reachable on a phone: an unscrollable
+                    // column leaves the lower ones off-screen and untappable.
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                         if (isSharing) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -918,7 +923,9 @@ fun BrowseScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .testTag("export-format-${format.name}")
                                     .clickable { exportFormat = format }
+                                    .semantics { selected = exportFormat == format }
                                     .padding(vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {

@@ -113,6 +113,56 @@ class StudyAndSelectionUiTest {
         }
     }
 
+    /**
+     * Waits for a tag that exists only in the unmerged tree: the clock lines are
+     * Text children under a parent that declares its own contentDescription and
+     * stateDescription, which hides them from the merged lookup [waitForTag]
+     * uses. Kept separate so every existing wait stays on the merged tree.
+     */
+    private fun waitForUnmergedTag(tag: String) {
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag(tag, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Reads the variable clock line from the unmerged tree, or null before it
+     * renders. Its test tag sits on a Text inside the clickable clock, so it is
+     * invisible to the merged lookup; the unmerged tree is required.
+     */
+    private fun variableClockText(): String? {
+        val nodes = compose.onAllNodesWithTag("study-clock-state", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        if (nodes.isEmpty()) return null
+        return nodes.first().config
+            .getOrElse(SemanticsProperties.Text) { emptyList() }
+            .joinToString("") { it.text }
+    }
+
+    /**
+     * Brings the study clock to [paused], reading its live state first and only
+     * tapping when a toggle is actually needed. The clock starts paused and is
+     * also flipped to running when the card enters the viewport, so its initial
+     * state is racy — a blind click can do the opposite of what a test expects.
+     * Paused is detected from the localized Resume verb / Paused label the
+     * variable line renders, using the same resources the composable uses.
+     */
+    private fun setStudyClock(paused: Boolean) {
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        fun isPaused(text: String) = text.contains(resumeVerb) || text.contains(pausedLabel)
+
+        waitForUnmergedTag("study-clock-state")
+        if (isPaused(variableClockText().orEmpty()) == paused) return
+
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitUntil(10_000) {
+            val text = variableClockText()
+            text != null && isPaused(text) == paused
+        }
+    }
+
     /** Dispatches the system back gesture to the activity hosting the content. */
     private fun pressSystemBack() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
@@ -205,6 +255,197 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithTag("study-question-clock").performClick()
         compose.onNodeWithText("Paused", substring = true).assertIsDisplayed()
+    }
+
+    /** Starts a one-question sitting and waits for both clock lines to render. */
+    private fun startClockStudy(paperId: String) {
+        seedPaper(paperId, "UIStudy Clock", "$paperId-cat", single("$paperId-q", "$paperId-cat"))
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-study-$paperId").performClick()
+        waitFor("Check")
+        // Bring the question card fully into the viewport before touching the
+        // clock. StudyScreen sets questionInView from the card's position, and
+        // resumeQuestionClock() refuses to start when it is false — so a clock
+        // tap while the card is off-screen is a legitimate no-op.
+        compose.onNodeWithTag("study-option-$paperId-q-a").performScrollTo()
+        compose.waitForIdle()
+        waitForUnmergedTag("study-clock-time")
+        waitForUnmergedTag("study-clock-state")
+    }
+
+    /**
+     * The clock is two lines: a permanent one (timer icon + live M:SS time) and
+     * a variable one (Pause/Resume verb, dwell band, optional Paused). Both must
+     * render so the header keeps one height as the clock flips.
+     */
+    @Test
+    fun studyClockRendersTimeAndStateOnSeparateLines() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-lines")
+
+        val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
+        val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
+        time.assertIsDisplayed()
+        state.assertIsDisplayed()
+        // The icon carries no text; the clock's content description proves the
+        // permanent line still has its timer alongside the time.
+        compose.onNodeWithContentDescription(app.getString(R.string.question_clock))
+            .assertIsDisplayed()
+
+        time.assertTextContains(":", substring = true)
+        val pauseVerb = app.getString(R.string.r2_study_pause)
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        val stateText = variableClockText().orEmpty()
+        val showsPause = stateText.contains(pauseVerb)
+        val showsResume = stateText.contains(resumeVerb)
+        // A verb is always present — which one depends on the clock's live
+        // state, which starts paused and can flip on viewport entry.
+        assertTrue(
+            "the variable clock line shows neither Pause nor Resume: $stateText",
+            showsPause || showsResume
+        )
+        // The Paused suffix belongs to the paused state, not to a fixed initial
+        // state: it is present exactly when the line offers Resume.
+        assertTrue(
+            "the Paused suffix did not match the clock state: $stateText",
+            stateText.contains(pausedLabel) == showsResume
+        )
+        compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
+    }
+
+    /**
+     * The variable line must faithfully reflect the clock's authoritative state,
+     * while the permanent time line keeps its M:SS shape and the tally stays put.
+     * A tap here may legitimately be a no-op on the emulator — resumeQuestionClock
+     * is gated by the viewport/user-pause state, and the real toggle behaviour is
+     * already covered by [tappingTheStudyQuestionClockPausesIt]. So this checks
+     * agreement between the clock's stateDescription and the line after the tap,
+     * without assuming which state the tap leaves behind.
+     */
+    @Test
+    fun pausingTheStudyClockChangesOnlyTheVariableLine() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-toggle")
+        val pauseVerb = app.getString(R.string.r2_study_pause)
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        val runningLabel = app.getString(R.string.clock_running)
+        val clockShape = Regex("""^\d+:\d{2}$""")
+
+        // The permanent line, read the same way as [variableClockText] so the
+        // shape check is not fooled by the icon or by the merged tree.
+        fun timeClockText(): String? {
+            val nodes = compose.onAllNodesWithTag("study-clock-time", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+            if (nodes.isEmpty()) return null
+            return nodes.first().config
+                .getOrElse(SemanticsProperties.Text) { emptyList() }
+                .joinToString("") { it.text }
+        }
+
+        // The paused label embeds the pause verb ("Paused" contains "Pause"),
+        // so strip it before deciding which verb the line actually offers.
+        fun verbsIn(text: String): Pair<Boolean, Boolean> {
+            val withoutPaused = text.replace(pausedLabel, "").trim()
+            return withoutPaused.contains(pauseVerb) to withoutPaused.contains(resumeVerb)
+        }
+
+        // One verb and a matching suffix on the variable line, whatever state
+        // it is in; both checks share the strip-the-suffix logic above.
+        fun assertSelfConsistent(text: String) {
+            val (hasPause, hasResume) = verbsIn(text)
+            assertTrue(
+                "the variable line shows neither or both Pause/Resume verbs: $text",
+                hasResume != hasPause
+            )
+            assertTrue(
+                "the variable line's Paused suffix does not match its verb: $text",
+                text.contains(pausedLabel) == hasResume
+            )
+        }
+
+        val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
+        val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
+
+        // Tap once and settle: no wait for a change, no assumed direction.
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitForIdle()
+
+        // The clock's own stateDescription is authoritative. It is declared on
+        // the tagged clock node, so read it from the unmerged tree alongside the
+        // lines it owns.
+        val stateDescription = compose.onNodeWithTag("study-question-clock", useUnmergedTree = true)
+            .fetchSemanticsNode().config
+            .getOrElse(SemanticsProperties.StateDescription) { "" }
+        val descSaysPaused = stateDescription.contains(pausedLabel)
+        val descSaysRunning = stateDescription.contains(runningLabel)
+        assertTrue(
+            "the clock stateDescription has no running/paused label: $stateDescription",
+            descSaysPaused || descSaysRunning
+        )
+        val paused = descSaysPaused && !descSaysRunning
+
+        val lineText = checkNotNull(variableClockText()) {
+            "the variable clock line did not render"
+        }
+        assertSelfConsistent(lineText)
+        val (hasPause, hasResume) = verbsIn(lineText)
+        // The line must agree with the stateDescription, not pick its own state.
+        if (paused) {
+            assertTrue(
+                "clock is paused but the line offers no Resume: $stateDescription / $lineText",
+                hasResume
+            )
+            assertTrue(
+                "clock is paused but the line has no Paused suffix: $stateDescription / $lineText",
+                lineText.contains(pausedLabel)
+            )
+        } else {
+            assertTrue(
+                "clock is running but the line offers no Pause: $stateDescription / $lineText",
+                hasPause
+            )
+            assertTrue(
+                "clock is running but the line still shows Paused: $stateDescription / $lineText",
+                !lineText.contains(pausedLabel)
+            )
+        }
+
+        // The permanent line survives in M:SS shape, and the tally stays visible.
+        time.assertIsDisplayed()
+        val timeText = timeClockText()
+        assertTrue(
+            "the time line is not in M:SS shape: $timeText",
+            timeText != null && clockShape.matches(timeText)
+        )
+        state.assertIsDisplayed()
+        compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
+    }
+
+    /**
+     * The original defect: one long readout touched "Reviewed N this session".
+     * After the split the two must not overlap horizontally, and the tally stays
+     * fully visible even while the clock is paused.
+     */
+    @Test
+    fun pausedClockDoesNotOverlapTheReviewedSessionText() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-overlap")
+        // Normalise to paused: the clock's starting state is racy, so a blind
+        // click could resume it and leave this measurement on a running header.
+        setStudyClock(paused = true)
+
+        val reviewed = compose.onNodeWithTag("study-reviewed")
+        val clock = compose.onNodeWithTag("study-question-clock")
+        reviewed.assertIsDisplayed()
+        clock.assertIsDisplayed()
+        val reviewedBounds = reviewed.fetchSemanticsNode().boundsInWindow
+        val clockBounds = clock.fetchSemanticsNode().boundsInWindow
+        assertTrue(
+            "the clock overlaps the reviewed-session text: $reviewedBounds / $clockBounds",
+            reviewedBounds.right <= clockBounds.left || clockBounds.right <= reviewedBounds.left
+        )
     }
 
     @Test

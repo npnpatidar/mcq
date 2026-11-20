@@ -728,35 +728,52 @@ private fun StudyStickyHeader(
                 Text(
                     stringResource(R.string.reviewed_this_session, state.reviewed),
                     style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(
-                    onClick = onToggleClock,
-                    enabled = !state.revealed,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .height(48.dp)
+                        .weight(1f)
+                        .testTag("study-reviewed")
+                )
+                // The clock used to cram verb + time + band (+ Paused) onto one
+                // line and ran into the reviewed tally on a phone. Split it into
+                // a permanent line (icon + live time) and a variable line (verb,
+                // band, optional Paused). Both lines always render, so flipping
+                // the clock never changes the header's height.
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier
+                        .clickable(onClick = onToggleClock, enabled = !state.revealed)
                         .testTag("study-question-clock")
                         .semantics {
                             contentDescription = clockContentDescription
                             stateDescription = clockStateDescription + ", $bandLabel"
                         }
                 ) {
-                    Icon(Icons.Default.Timer, contentDescription = null, tint = clockColor)
-                    Spacer(Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Timer, contentDescription = null, tint = clockColor)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            Dwell.format(liveDwell),
+                            color = clockColor,
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("study-clock-time")
+                        )
+                    }
                     Text(
                         if (state.clockRunning) {
-                            stringResource(
-                                R.string.r2_study_clock_readout,
-                                clockVerb, Dwell.format(liveDwell), bandLabel
-                            )
+                            stringResource(R.string.r2_study_clock_state, clockVerb, bandLabel)
                         } else {
                             stringResource(
-                                R.string.r2_study_clock_readout_paused,
-                                clockVerb, Dwell.format(liveDwell), bandLabel,
-                                clockPausedLabel
+                                R.string.r2_study_clock_state_paused,
+                                clockVerb, bandLabel, clockPausedLabel
                             )
                         },
-                        color = clockColor
+                        color = clockColor,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("study-clock-state")
                     )
                 }
             }

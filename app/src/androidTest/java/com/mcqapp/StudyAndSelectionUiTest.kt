@@ -126,6 +126,43 @@ class StudyAndSelectionUiTest {
         }
     }
 
+    /**
+     * Reads the variable clock line from the unmerged tree, or null before it
+     * renders. Its test tag sits on a Text inside the clickable clock, so it is
+     * invisible to the merged lookup; the unmerged tree is required.
+     */
+    private fun variableClockText(): String? {
+        val nodes = compose.onAllNodesWithTag("study-clock-state", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        if (nodes.isEmpty()) return null
+        return nodes.first().config
+            .getOrElse(SemanticsProperties.Text) { emptyList() }
+            .joinToString("") { it.text }
+    }
+
+    /**
+     * Brings the study clock to [paused], reading its live state first and only
+     * tapping when a toggle is actually needed. The clock starts paused and is
+     * also flipped to running when the card enters the viewport, so its initial
+     * state is racy — a blind click can do the opposite of what a test expects.
+     * Paused is detected from the localized Resume verb / Paused label the
+     * variable line renders, using the same resources the composable uses.
+     */
+    private fun setStudyClock(paused: Boolean) {
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        fun isPaused(text: String) = text.contains(resumeVerb) || text.contains(pausedLabel)
+
+        waitForUnmergedTag("study-clock-state")
+        if (isPaused(variableClockText().orEmpty()) == paused) return
+
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitUntil(10_000) {
+            val text = variableClockText()
+            text != null && isPaused(text) == paused
+        }
+    }
+
     /** Dispatches the system back gesture to the activity hosting the content. */
     private fun pressSystemBack() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
@@ -250,11 +287,23 @@ class StudyAndSelectionUiTest {
             .assertIsDisplayed()
 
         time.assertTextContains(":", substring = true)
-        state.assertTextContains(app.getString(R.string.r2_study_pause), substring = true)
+        val pauseVerb = app.getString(R.string.r2_study_pause)
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        val stateText = variableClockText().orEmpty()
+        val showsPause = stateText.contains(pauseVerb)
+        val showsResume = stateText.contains(resumeVerb)
+        // A verb is always present — which one depends on the clock's live
+        // state, which starts paused and can flip on viewport entry.
         assertTrue(
-            "the running clock already shows the paused suffix",
-            compose.onAllNodesWithText(app.getString(R.string.clock_paused), substring = true)
-                .fetchSemanticsNodes().isEmpty()
+            "the variable clock line shows neither Pause nor Resume: $stateText",
+            showsPause || showsResume
+        )
+        // The Paused suffix belongs to the paused state, not to a fixed initial
+        // state: it is present exactly when the line offers Resume.
+        assertTrue(
+            "the Paused suffix did not match the clock state: $stateText",
+            stateText.contains(pausedLabel) == showsResume
         )
         compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
     }
@@ -271,14 +320,16 @@ class StudyAndSelectionUiTest {
         val resumeVerb = app.getString(R.string.r2_study_resume)
         val pausedLabel = app.getString(R.string.clock_paused)
 
+        // Normalise first: the clock may have started paused, so a blind click
+        // here could resume it instead of pausing it.
+        setStudyClock(paused = false)
         val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
         val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
         state.assertTextContains(pauseVerb, substring = true)
 
         compose.onNodeWithTag("study-question-clock").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText(pausedLabel, substring = true)
-                .fetchSemanticsNodes().isNotEmpty()
+            variableClockText()?.let { it.contains(resumeVerb) && it.contains(pausedLabel) } == true
         }
         // The permanent line survives the pause unchanged in shape.
         time.assertIsDisplayed()
@@ -289,11 +340,15 @@ class StudyAndSelectionUiTest {
 
         compose.onNodeWithTag("study-question-clock").performClick()
         compose.waitUntil(10_000) {
-            compose.onAllNodesWithText(pausedLabel, substring = true)
-                .fetchSemanticsNodes().isEmpty()
+            variableClockText()?.let { it.contains(pauseVerb) && !it.contains(pausedLabel) } == true
         }
         time.assertIsDisplayed()
         state.assertTextContains(pauseVerb, substring = true)
+        // Negative check: resuming clears the Paused suffix from the line.
+        assertTrue(
+            "the resumed clock still shows the paused suffix",
+            !variableClockText().orEmpty().contains(pausedLabel)
+        )
     }
 
     /**
@@ -305,11 +360,9 @@ class StudyAndSelectionUiTest {
     fun pausedClockDoesNotOverlapTheReviewedSessionText() {
         runBlocking { repository.setSimplifiedStudy(true) }
         startClockStudy("ui-clock-overlap")
-        compose.onNodeWithTag("study-question-clock").performClick()
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithText(app.getString(R.string.clock_paused), substring = true)
-                .fetchSemanticsNodes().isNotEmpty()
-        }
+        // Normalise to paused: the clock's starting state is racy, so a blind
+        // click could resume it and leave this measurement on a running header.
+        setStudyClock(paused = true)
 
         val reviewed = compose.onNodeWithTag("study-reviewed")
         val clock = compose.onNodeWithTag("study-question-clock")

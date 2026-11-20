@@ -263,6 +263,12 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
         compose.onNodeWithTag("paper-study-$paperId").performClick()
         waitFor("Check")
+        // Bring the question card fully into the viewport before touching the
+        // clock. StudyScreen sets questionInView from the card's position, and
+        // resumeQuestionClock() refuses to start when it is false — so a clock
+        // tap while the card is off-screen is a legitimate no-op.
+        compose.onNodeWithTag("study-option-$paperId-q-a").performScrollTo()
+        compose.waitForIdle()
         waitForUnmergedTag("study-clock-time")
         waitForUnmergedTag("study-clock-state")
     }

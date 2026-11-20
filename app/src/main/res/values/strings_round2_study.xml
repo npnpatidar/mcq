@@ -22,10 +22,6 @@
     <!-- Clock affordance: an explicit verb and a non-colour dwell cue. -->
     <string name="r2_study_pause">Pause</string>
     <string name="r2_study_resume">Resume</string>
-    <!-- One localized readout for the clock button; the paused form appends
-         the existing "Paused" state so screen readers and the UI test agree. -->
-    <string name="r2_study_clock_readout">%1$s · %2$s · %3$s</string>
-    <string name="r2_study_clock_readout_paused">%1$s · %2$s · %3$s · %4$s</string>
     <!-- The clock's variable line: the action verb and the dwell band, with the
          existing "Paused" state appended when the clock is stopped. The live
          time is rendered on its own permanent line above, so it is not a

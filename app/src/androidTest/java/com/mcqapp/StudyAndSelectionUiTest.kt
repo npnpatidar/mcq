@@ -113,6 +113,19 @@ class StudyAndSelectionUiTest {
         }
     }
 
+    /**
+     * Waits for a tag that exists only in the unmerged tree: the clock lines are
+     * Text children under a parent that declares its own contentDescription and
+     * stateDescription, which hides them from the merged lookup [waitForTag]
+     * uses. Kept separate so every existing wait stays on the merged tree.
+     */
+    private fun waitForUnmergedTag(tag: String) {
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag(tag, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     /** Dispatches the system back gesture to the activity hosting the content. */
     private fun pressSystemBack() {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
@@ -213,8 +226,8 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
         compose.onNodeWithTag("paper-study-$paperId").performClick()
         waitFor("Check")
-        waitForTag("study-clock-time")
-        waitForTag("study-clock-state")
+        waitForUnmergedTag("study-clock-time")
+        waitForUnmergedTag("study-clock-state")
     }
 
     /**

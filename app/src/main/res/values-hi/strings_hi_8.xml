@@ -137,6 +137,7 @@
     <string name="trends">रुझान</string>
     <string name="two_column_layout">दो-स्तंभ लेआउट</string>
     <string name="uncategorized">श्रेणीहीन</string>
+    <string name="undo">पूर्ववत करें</string>
     <string name="ungraded">बिना मूल्यांकन</string>
     <plurals name="ungraded_practice_note">
         <item quantity="one">%1$d प्रश्न का उत्तर-कुंजी नहीं है, इसलिए इसे अंक नहीं दिए जाएँगे। आप अभ्यास के लिए इसका उत्तर दे सकते हैं।</item>

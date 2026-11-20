@@ -20,6 +20,7 @@
     <string name="back_to_library">Back to library</string>
     <string name="back_to_submit">Back to submit</string>
     <string name="bookmark_question">Bookmark question</string>
+    <string name="bookmark_removed_question_kept">Bookmark removed — the question stays in the paper.</string>
     <string name="bookmarks">Bookmarks</string>
     <string name="browse">Browse</string>
     <string name="cancel">Cancel</string>
@@ -262,6 +263,7 @@
     <!-- Spoken verdict on a result card: the word first, then its glyph. -->
     <string name="verdict_spoken">%1$s %2$s</string>
     <string name="uncategorized">Uncategorized</string>
+    <string name="undo">Undo</string>
     <string name="guessing">Guessing</string>
     <string name="guessing_this_is_a_guess">I\'m guessing — grade a right answer as Again.</string>
     <string name="incorrect">Incorrect</string>

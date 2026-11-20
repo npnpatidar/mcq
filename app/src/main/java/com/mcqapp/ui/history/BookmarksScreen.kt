@@ -22,7 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.BookmarkRemove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -96,6 +96,10 @@ fun BookmarksScreen(
     val platformResources = LocalResources.current
     val sendMessage = LocalUiMessageSender.current
     val shareNoAppText = stringResource(R.string.share_no_app)
+    // Resolved in composition: UiMessage.onAction is not composable, and the
+    // snackbar must show the same copy on every row.
+    val bookmarkRemovedText = stringResource(R.string.bookmark_removed_question_kept)
+    val undoLabel = stringResource(R.string.undo)
     // rememberSaveable: the system save dialog recreates the activity, and a
     // plain `remember` came back null so the re-delivered URI was dropped
     // (consolidated_bugs.md F4). Enums are Serializable and save as-is.
@@ -244,8 +248,28 @@ fun BookmarksScreen(
                                 // explanation gave the answer away against
                                 // half a question.
                             }
-                            IconButton(onClick = { viewModel.removeBookmark(question.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_bookmark))
+                            IconButton(
+                                onClick = {
+                                    // The action drops the bookmark, not the
+                                    // question: the owner tapped this trash
+                                    // can expecting a deletion and found the
+                                    // question still in Study. Say so, and
+                                    // offer the way back.
+                                    viewModel.removeBookmark(question.id)
+                                    sendMessage(
+                                        UiMessage(
+                                            text = bookmarkRemovedText,
+                                            tone = UiMessageTone.Info,
+                                            actionLabel = undoLabel,
+                                            onAction = { viewModel.restoreBookmark(question.id) }
+                                        )
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.BookmarkRemove,
+                                    contentDescription = stringResource(R.string.remove_bookmark)
+                                )
                             }
                         }
                     }

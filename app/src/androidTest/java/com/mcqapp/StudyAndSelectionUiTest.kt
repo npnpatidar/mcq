@@ -5,6 +5,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.data.local.CategoryEntity
@@ -28,6 +30,7 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.ui.navigation.McqNavHost
+import kotlin.math.abs
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -312,6 +315,96 @@ class StudyAndSelectionUiTest {
             stateText.contains(pausedLabel) == showsResume
         )
         compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
+    }
+
+    /**
+     * The variable clock line and the session-minutes readout must sit on one
+     * visual line. The header once stacked them — the clock's lines first,
+     * minutes underneath — so "Pause · Neutral · Paused" and "N min" landed on
+     * different baselines even though both describe the same session. The header
+     * now renders two columns of two matching lines: tally over minutes on the
+     * left, live time over verb/band on the right, all in labelMedium. This
+     * measures that pairing. It fails on the stacked layout, where the clock
+     * state sat a whole text line above the minutes and shared no vertical span
+     * with it.
+     */
+    @Test
+    fun variableClockLineSitsOnTheSessionMinutesLine() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-align")
+
+        waitForUnmergedTag("study-session-minutes")
+        waitForUnmergedTag("study-clock-state")
+        compose.waitForIdle()
+
+        val minutesBounds = compose.onNodeWithTag("study-session-minutes", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInWindow
+        val stateBounds = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInWindow
+        val timeBounds = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInWindow
+        val reviewedBounds = compose.onNodeWithTag("study-reviewed", useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInWindow
+
+        // Line 1 as well: the tally and the live time must share a line. The
+        // icon makes the clock's first line 20 dp tall, and the tally reserves
+        // the same height, so neither second line can drift.
+        assertTrue(
+            "the tally and the live time are on different lines: " +
+                "$reviewedBounds / $timeBounds",
+            reviewedBounds.top < timeBounds.bottom && timeBounds.top < reviewedBounds.bottom
+        )
+
+        // Same visual line: the two vertical spans overlap. A stacked layout
+        // leaves them disjoint, because one starts where the other ended.
+        assertTrue(
+            "the clock state and the minutes line are on different lines: " +
+                "$stateBounds / $minutesBounds",
+            stateBounds.top < minutesBounds.bottom && minutesBounds.top < stateBounds.bottom
+        )
+        // Their centre lines must coincide too, not merely touch: the rows are
+        // centre-aligned and use the same typography.
+        val centreGap = abs(stateBounds.center.y - minutesBounds.center.y)
+        val tolerance = maxOf(stateBounds.height, minutesBounds.height) / 2f
+        assertTrue(
+            "the clock state is off the minutes line's centre by ${centreGap}px " +
+                "(tolerance ${tolerance}px): $stateBounds / $minutesBounds",
+            centreGap <= tolerance
+        )
+        // ... and the variable line sits to the minutes line's right, as the
+        // weighted minutes text leaves it the row's remaining space.
+        assertTrue(
+            "the clock state is not to the right of the minutes line: " +
+                "$stateBounds / $minutesBounds",
+            stateBounds.left >= minutesBounds.right
+        )
+        // Negative: alignment must not come from collapsing the header onto one
+        // line. The live time stays on the line above the minutes, so its bottom
+        // edge is at or above the minutes line's top edge — true for the two
+        // clock lines at any font scale, false as soon as the time joins the
+        // minutes line. The 0.5 px epsilon only absorbs float rounding where the
+        // two text bounds can meet exactly (a large font scale makes each line as
+        // tall as its text); a collapsed line would put them a full text height
+        // apart.
+        assertTrue(
+            "the live time must stay on the row above the minutes: " +
+                "$timeBounds / $minutesBounds",
+            timeBounds.bottom <= minutesBounds.top + 0.5f &&
+                timeBounds.top < minutesBounds.top
+        )
+        // The clock column is clickable, so Compose expands its touch target
+        // automatically and its own height says nothing about the layout. The
+        // stats row is not clickable: its height is the real one, and it
+        // measures 48 dp — two labelMedium lines (36 dp) padded to the target by
+        // minimumInteractiveComponentSize. Assert it as a floor, because the
+        // left column could legitimately make the row taller at a large font
+        // scale.
+        compose.onNodeWithTag("study-stats", useUnmergedTree = true)
+            .assertHeightIsAtLeast(48.dp)
+        // The clock column keeps its own 48 dp check as well: the target is on
+        // the clickable node, and both clock lines live inside it.
+        compose.onNodeWithTag("study-question-clock", useUnmergedTree = true)
+            .assertHeightIsAtLeast(48.dp)
     }
 
     /**

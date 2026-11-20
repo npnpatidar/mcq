@@ -207,6 +207,109 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Paused", substring = true).assertIsDisplayed()
     }
 
+    /** Starts a one-question sitting and waits for both clock lines to render. */
+    private fun startClockStudy(paperId: String) {
+        seedPaper(paperId, "UIStudy Clock", "$paperId-cat", single("$paperId-q", "$paperId-cat"))
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-study-$paperId").performClick()
+        waitFor("Check")
+        waitForTag("study-clock-time")
+        waitForTag("study-clock-state")
+    }
+
+    /**
+     * The clock is two lines: a permanent one (timer icon + live M:SS time) and
+     * a variable one (Pause/Resume verb, dwell band, optional Paused). Both must
+     * render so the header keeps one height as the clock flips.
+     */
+    @Test
+    fun studyClockRendersTimeAndStateOnSeparateLines() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-lines")
+
+        val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
+        val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
+        time.assertIsDisplayed()
+        state.assertIsDisplayed()
+        // The icon carries no text; the clock's content description proves the
+        // permanent line still has its timer alongside the time.
+        compose.onNodeWithContentDescription(app.getString(R.string.question_clock))
+            .assertIsDisplayed()
+
+        time.assertTextContains(":", substring = true)
+        state.assertTextContains(app.getString(R.string.r2_study_pause), substring = true)
+        assertTrue(
+            "the running clock already shows the paused suffix",
+            compose.onAllNodesWithText(app.getString(R.string.clock_paused), substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        )
+        compose.onNodeWithTag("study-reviewed").assertIsDisplayed()
+    }
+
+    /**
+     * Pausing and resuming must rewrite only the variable line: the time line
+     * never disappears and keeps its M:SS shape throughout.
+     */
+    @Test
+    fun pausingTheStudyClockChangesOnlyTheVariableLine() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-toggle")
+        val pauseVerb = app.getString(R.string.r2_study_pause)
+        val resumeVerb = app.getString(R.string.r2_study_resume)
+        val pausedLabel = app.getString(R.string.clock_paused)
+
+        val time = compose.onNodeWithTag("study-clock-time", useUnmergedTree = true)
+        val state = compose.onNodeWithTag("study-clock-state", useUnmergedTree = true)
+        state.assertTextContains(pauseVerb, substring = true)
+
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(pausedLabel, substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        // The permanent line survives the pause unchanged in shape.
+        time.assertIsDisplayed()
+        time.assertTextContains(":", substring = true)
+        // Only the variable line changed: it offers Resume and says Paused.
+        state.assertTextContains(resumeVerb, substring = true)
+        state.assertTextContains(pausedLabel, substring = true)
+
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(pausedLabel, substring = true)
+                .fetchSemanticsNodes().isEmpty()
+        }
+        time.assertIsDisplayed()
+        state.assertTextContains(pauseVerb, substring = true)
+    }
+
+    /**
+     * The original defect: one long readout touched "Reviewed N this session".
+     * After the split the two must not overlap horizontally, and the tally stays
+     * fully visible even while the clock is paused.
+     */
+    @Test
+    fun pausedClockDoesNotOverlapTheReviewedSessionText() {
+        runBlocking { repository.setSimplifiedStudy(true) }
+        startClockStudy("ui-clock-overlap")
+        compose.onNodeWithTag("study-question-clock").performClick()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(app.getString(R.string.clock_paused), substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val reviewed = compose.onNodeWithTag("study-reviewed")
+        val clock = compose.onNodeWithTag("study-question-clock")
+        reviewed.assertIsDisplayed()
+        clock.assertIsDisplayed()
+        val reviewedBounds = reviewed.fetchSemanticsNode().boundsInWindow
+        val clockBounds = clock.fetchSemanticsNode().boundsInWindow
+        assertTrue(
+            "the clock overlaps the reviewed-session text: $reviewedBounds / $clockBounds",
+            reviewedBounds.right <= clockBounds.left || clockBounds.right <= reviewedBounds.left
+        )
+    }
+
     @Test
     fun tappingTheTestQuestionClockPausesIt() {
         seedPaper(

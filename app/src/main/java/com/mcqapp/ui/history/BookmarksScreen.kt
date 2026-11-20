@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,8 +52,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -315,7 +319,9 @@ fun BookmarksScreen(
                 )
             },
             text = {
-                Column {
+                // Eight formats with their caveat text overflow a phone screen;
+                // a bounded scrolling column keeps every row selectable.
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     if (isSharing) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -339,6 +345,7 @@ fun BookmarksScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .testTag("export-format-${format.name}")
                                 .clickable(
                                     enabled = !isSharing,
                                     onClickLabel = title,
@@ -346,6 +353,7 @@ fun BookmarksScreen(
                                 ) { viewModel.selectFormat(format) }
                                 .semantics {
                                     contentDescription = title
+                                    selected = isSelected
                                     // Spoken checked state, not just the radio glyph.
                                     stateDescription = platformResources.getString(
                                         if (isSelected) R.string.r2_res_format_selected

@@ -26,6 +26,12 @@
          the existing "Paused" state so screen readers and the UI test agree. -->
     <string name="r2_study_clock_readout">%1$s · %2$s · %3$s</string>
     <string name="r2_study_clock_readout_paused">%1$s · %2$s · %3$s · %4$s</string>
+    <!-- The clock's variable line: the action verb and the dwell band, with the
+         existing "Paused" state appended when the clock is stopped. The live
+         time is rendered on its own permanent line above, so it is not a
+         placeholder here. -->
+    <string name="r2_study_clock_state">%1$s · %2$s</string>
+    <string name="r2_study_clock_state_paused">%1$s · %2$s · %3$s</string>
     <string name="r2_study_band_neutral">Neutral</string>
     <string name="r2_study_band_easy">Easy</string>
     <string name="r2_study_band_good">Good</string>

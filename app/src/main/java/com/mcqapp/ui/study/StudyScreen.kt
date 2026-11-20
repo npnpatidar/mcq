@@ -44,7 +44,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -776,8 +775,14 @@ private fun StudyStickyHeader(
                 }
                 Column(
                     horizontalAlignment = Alignment.End,
+                    // 48 dp is the touch target, enforced explicitly: the
+                    // Material helper is a no-op in this header, which left the
+                    // node at its 36 dp content height. The two lines are
+                    // centred inside the block, so the left column (centred
+                    // against it by the parent Row) keeps both lines aligned.
+                    verticalArrangement = Arrangement.Center,
                     modifier = Modifier
-                        .minimumInteractiveComponentSize()
+                        .heightIn(min = 48.dp)
                         .clickable(onClick = onToggleClock, enabled = !state.revealed)
                         .testTag("study-question-clock")
                         .semantics {

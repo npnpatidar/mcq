@@ -392,11 +392,12 @@ class StudyAndSelectionUiTest {
             timeBounds.bottom <= minutesBounds.top + 0.5f &&
                 timeBounds.top < minutesBounds.top
         )
-        // The stats row stays compact on purpose: two 16 sp lines, about 36 dp,
-        // so the question keeps the reclaimed height. The layout must not be
-        // padded out to the 48 dp accessibility minimum. Compose expands the
-        // clickable clock node's touch target on its own, and that node's bounds
-        // are what the next assertion checks.
+        // The clock block enforces the 48 dp target with heightIn(min = 48.dp);
+        // the Material touch-target helper is a no-op in this header and left
+        // the node at its 36 dp content height. The block centres its two lines
+        // inside those 48 dp, so the block measures 48 dp, the row stays compact,
+        // and the 36 dp left column centres against it to keep both lines
+        // aligned.
         compose.onNodeWithTag("study-question-clock", useUnmergedTree = true)
             .assertHeightIsAtLeast(48.dp)
     }

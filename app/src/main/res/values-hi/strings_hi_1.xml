@@ -70,6 +70,7 @@
     <string name="blueprint_editor_title">ब्लूप्रिंट संपादित करें</string>
     <string name="blueprint_editor_total">कुल: %1$d भाग (%2$s)</string>
     <string name="bookmark_question">प्रश्न को बुकमार्क करें</string>
+    <string name="bookmark_removed_question_kept">बुकमार्क हटाया गया — प्रश्न पेपर में बना रहेगा।</string>
     <string name="bookmarks">बुकमार्क</string>
     <plurals name="bookmarks_count">
         <item quantity="one">%1$d बुकमार्क</item>

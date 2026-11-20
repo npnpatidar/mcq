@@ -105,6 +105,17 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch { repository.deleteBookmark(questionId) }
     }
 
+    /**
+     * Undo for [removeBookmark]: add the bookmark back, but only when it is
+     * gone. The guarded read keeps a double undo — or an undo after the row
+     * was re-bookmarked elsewhere — from toggling a live bookmark off again.
+     */
+    fun restoreBookmark(questionId: String) {
+        viewModelScope.launch {
+            if (!repository.isBookmarked(questionId)) repository.toggleBookmark(questionId)
+        }
+    }
+
     // ----- R8: dialog state owned by the ViewModel, rotation-safe. -----
 
     fun openFormatDialog() {

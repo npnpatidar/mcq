@@ -18,9 +18,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -721,27 +724,65 @@ private fun StudyStickyHeader(
                     Text(stringResource(R.string.done_for_now))
                 }
             }
+            // Stats block: two columns of two matching lines. The left column
+            // carries the session tally over the sitting's minutes; the right
+            // one is the clock, its permanent time over its variable line. Both
+            // sides use labelMedium and identical line heights, so line 1
+            // (tally / time) and line 2 (minutes / verb + band) share a
+            // baseline instead of sitting on different visual lines. The
+            // clickable right column is the 48 dp tap target and holds both of
+            // the clock lines; the left column is centred against it, so the
+            // block stays one 48 dp row rather than two and the question keeps
+            // the reclaimed height. Both lines always render, so flipping the
+            // clock never changes the header's height.
+            val sessionMinutes = (sessionSeconds / 60L).toInt()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // Stable anchor for the layout-height test: this row is not
+                    // clickable, so its height is the real layout rather than
+                    // Compose's automatic touch-target padding.
+                    .testTag("study-stats")
             ) {
-                Text(
-                    stringResource(R.string.reviewed_this_session, state.reviewed),
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("study-reviewed")
-                )
-                // The clock used to cram verb + time + band (+ Paused) onto one
-                // line and ran into the reviewed tally on a phone. Split it into
-                // a permanent line (icon + live time) and a variable line (verb,
-                // band, optional Paused). Both lines always render, so flipping
-                // the clock never changes the header's height.
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.reviewed_this_session, state.reviewed),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // The timer icon makes the clock's first line 20 dp
+                            // tall. Reserve the same height here and centre the
+                            // text in it, or the second lines start 4 dp apart.
+                            .heightIn(min = 20.dp)
+                            .wrapContentHeight(Alignment.CenterVertically)
+                            .testTag("study-reviewed")
+                    )
+                    Text(
+                        pluralStringResource(
+                            R.plurals.session_elapsed_minutes, sessionMinutes, sessionMinutes
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("study-session-minutes")
+                    )
+                }
                 Column(
                     horizontalAlignment = Alignment.End,
+                    // 48 dp is the touch target, enforced explicitly: the
+                    // Material helper is a no-op in this header, which left the
+                    // node at its 36 dp content height. The two lines are
+                    // centred inside the block, so the left column (centred
+                    // against it by the parent Row) keeps both lines aligned.
+                    verticalArrangement = Arrangement.Center,
                     modifier = Modifier
+                        .heightIn(min = 48.dp)
                         .clickable(onClick = onToggleClock, enabled = !state.revealed)
                         .testTag("study-question-clock")
                         .semantics {
@@ -750,12 +791,17 @@ private fun StudyStickyHeader(
                         }
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Timer, contentDescription = null, tint = clockColor)
+                        Icon(
+                            Icons.Default.Timer,
+                            contentDescription = null,
+                            tint = clockColor,
+                            modifier = Modifier.size(20.dp)
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text(
                             Dwell.format(liveDwell),
                             color = clockColor,
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.labelMedium,
                             maxLines = 1,
                             modifier = Modifier.testTag("study-clock-time")
                         )
@@ -770,25 +816,13 @@ private fun StudyStickyHeader(
                             )
                         },
                         color = clockColor,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("study-clock-state")
                     )
                 }
             }
-            // Below the reviewed tally, the sitting's wall-clock length: whole
-            // minutes only, so it updates quietly once a minute rather than
-            // competing with the question clock. Background time is excluded.
-            val sessionMinutes = (sessionSeconds / 60L).toInt()
-            Text(
-                pluralStringResource(
-                    R.plurals.session_elapsed_minutes, sessionMinutes, sessionMinutes
-                ),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("study-session-minutes")
-            )
             if (state.showBreakStrip) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

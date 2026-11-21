@@ -92,4 +92,46 @@ class FollowupImportCompletionTest {
         )
         assertEquals((1..11).toList(), lines.map { it.count })
     }
+
+    /** Every counter non-zero, except the one at [omittingIndex]. */
+    private fun countersAtOne(omittingIndex: Int = -1): ImportReport {
+        fun value(index: Int) = if (index == omittingIndex) 0 else 1
+        return report(
+            newPapers = value(0),
+            updatedPapers = value(1),
+            newQuestions = value(2),
+            updatedQuestions = value(3),
+            duplicateQuestions = value(4),
+            answersRefreshed = value(5),
+            restoredSchedules = value(6),
+            restoredBookmarks = value(7),
+            restoredAttempts = value(8),
+            droppedAnkiStems = value(9),
+            recallConverted = value(10)
+        )
+    }
+
+    /**
+     * The longest report (a restore, every counter non-zero) lists all eleven
+     * kinds once, in the enum's display order. This is the data the completion
+     * dialog sizes itself against, so a missing or reordered kind is a visible
+     * bug before it is a layout bug.
+     */
+    @Test
+    fun allElevenKindsAreListedOnceInDisplayOrder() {
+        assertEquals(
+            ImportReportLineKind.entries,
+            importReportLines(countersAtOne()).map { it.kind }
+        )
+    }
+
+    /** A zero counter is omitted from every position, not just the tail. */
+    @Test
+    fun aZeroCounterIsOmittedAtEveryPosition() {
+        ImportReportLineKind.entries.forEachIndexed { index, omitted ->
+            val lines = importReportLines(countersAtOne(omittingIndex = index))
+            assertEquals("omitting $omitted must leave ten lines", 10, lines.size)
+            assertFalse("$omitted must not be listed", lines.any { it.kind == omitted })
+        }
+    }
 }

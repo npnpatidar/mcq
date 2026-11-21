@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -48,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -587,39 +590,60 @@ fun ImportScreen(
     }
 }
 
+/** Stable test tag for one report line, derived from its kind. */
+internal fun importReportLineTag(kind: ImportReportLineKind): String =
+    "import-report-line-${kind.name.lowercase()}"
+
+/** Tag for the "progress restore was skipped" notice under the counted lines. */
+internal const val IMPORT_REPORT_NOTICE_TAG = "import-report-notice"
+
 /**
  * The completion report, one plural-aware line per non-zero count. Backed by
  * [importReportLines] so what the user reads is the tested enumeration — in
  * particular the restored schedules and paper counts a backup restore earns.
+ *
+ * A restore can carry all eleven lines plus the notice, and Material3 puts this
+ * in AlertDialog's height-constrained text slot: laid out as loose siblings they
+ * drew over each other and over the buttons. The column scrolls and spaces its
+ * lines so any report length stays inside the dialog and remains readable.
  */
 @Composable
 internal fun ImportReportDetails(report: ImportReport) {
-    importReportLines(report).forEach { line ->
-        val resId = when (line.kind) {
-            ImportReportLineKind.NEW_PAPERS -> R.plurals.followup_import_new_papers
-            ImportReportLineKind.UPDATED_PAPERS -> R.plurals.followup_import_updated_papers
-            ImportReportLineKind.NEW_QUESTIONS -> R.plurals.followup_import_new_questions
-            ImportReportLineKind.UPDATED_QUESTIONS -> R.plurals.followup_import_updated_questions
-            ImportReportLineKind.DUPLICATE_QUESTIONS -> R.plurals.followup_import_duplicate_questions
-            ImportReportLineKind.ANSWERS_REFRESHED -> R.plurals.followup_import_answers_refreshed
-            ImportReportLineKind.RESTORED_SCHEDULES -> R.plurals.followup_import_restored_schedules
-            ImportReportLineKind.RESTORED_BOOKMARKS -> R.plurals.followup_import_restored_bookmarks
-            ImportReportLineKind.RESTORED_ATTEMPTS -> R.plurals.followup_import_restored_attempts
-            ImportReportLineKind.DROPPED_ANKI_STEMS -> R.plurals.followup_import_dropped_stems
-            ImportReportLineKind.RECALL_CONVERTED -> R.plurals.followup_import_recall_converted
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        importReportLines(report).forEach { line ->
+            val resId = when (line.kind) {
+                ImportReportLineKind.NEW_PAPERS -> R.plurals.followup_import_new_papers
+                ImportReportLineKind.UPDATED_PAPERS -> R.plurals.followup_import_updated_papers
+                ImportReportLineKind.NEW_QUESTIONS -> R.plurals.followup_import_new_questions
+                ImportReportLineKind.UPDATED_QUESTIONS -> R.plurals.followup_import_updated_questions
+                ImportReportLineKind.DUPLICATE_QUESTIONS -> R.plurals.followup_import_duplicate_questions
+                ImportReportLineKind.ANSWERS_REFRESHED -> R.plurals.followup_import_answers_refreshed
+                ImportReportLineKind.RESTORED_SCHEDULES -> R.plurals.followup_import_restored_schedules
+                ImportReportLineKind.RESTORED_BOOKMARKS -> R.plurals.followup_import_restored_bookmarks
+                ImportReportLineKind.RESTORED_ATTEMPTS -> R.plurals.followup_import_restored_attempts
+                ImportReportLineKind.DROPPED_ANKI_STEMS -> R.plurals.followup_import_dropped_stems
+                ImportReportLineKind.RECALL_CONVERTED -> R.plurals.followup_import_recall_converted
+            }
+            Text(
+                text = pluralStringResource(resId, line.count, line.count),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(importReportLineTag(line.kind))
+            )
         }
-        Text(
-            text = pluralStringResource(resId, line.count, line.count),
-            style = MaterialTheme.typography.bodyMedium
-        )
-    }
-    // I3: a restore that hit its progress budget still imported every
-    // question. Say so plainly instead of implying a complete restore.
-    importReportNotice(report)?.let { notice ->
-        Text(
-            text = stringResource(notice),
-            style = MaterialTheme.typography.bodyMedium
-        )
+        // I3: a restore that hit its progress budget still imported every
+        // question. Say so plainly instead of implying a complete restore.
+        importReportNotice(report)?.let { notice ->
+            Text(
+                text = stringResource(notice),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(IMPORT_REPORT_NOTICE_TAG)
+            )
+        }
     }
 }
 

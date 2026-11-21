@@ -67,6 +67,10 @@ domain-specific.
 
 ## Build and test (Android)
 
+- **Every reported bug gets a regression test in the same change.** A unit test
+  when the defect is logic/data, a UI test when it is layout/interaction. The
+  test must fail on the old behaviour — "fixed and manually checked" is not
+  done. Owner rule.
 - Use the project's own environment script if it has one. It usually exports
   `JAVA_HOME`, `ANDROID_HOME` and any host-specific tool override; see
   `PROJECT_NOTES.md` for this project's script and paths.

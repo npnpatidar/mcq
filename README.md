@@ -28,13 +28,14 @@ or Anki (.apkg).
 3. **Import a bank** — Library drawer → **Import questions** → pick a `.docx` or `.json`
    file. The preview shows New / Changed / Duplicate counts.
 4. **Take a test** — paper card → **Test** (FactCheck icon). The sheet lets you pick
-   Random, Balanced, Mistakes, focus types, a Blueprint, shuffle, time, and length.
+   Random, Balanced, Mistakes, focus types, a Blueprint, time, and length (shuffle
+   is a Settings → Tests toggle).
 5. **Study** — paper card → **Study (N due, N new)**. Answer, reveal, grade Again/Hard/
    Good/Easy. FSRS schedules the next review automatically.
 6. **Review results** — after a test, the Results screen shows score, margin, topics,
    time sinks, and per-question review with explanations.
-7. **Track progress** — **Statistics** (drawer) has seven tabs: Overview, Retention,
-   Workload, Memory, Cards, Guessing, Tests, Progress.
+7. **Track progress** — **Statistics** (drawer) has nine tabs: Overview, Retention,
+   Workload, Sessions, Memory, Cards, Guessing, Tests, Progress.
 8. **Back up** — Settings → **Backup & data** → **Backup (zip)**. The zip restores the
    exact state (papers, schedules, attempts, settings, themes).
 
@@ -52,7 +53,7 @@ or Anki (.apkg).
 8. [Results Screen](#results-screen)
 9. [History Screen](#history-screen)
 10. [Study (Spaced Repetition)](#study-spaced-repetition)
-11. [Statistics (Seven Tabs)](#statistics-seven-tabs)
+11. [Statistics (Nine Tabs)](#statistics-nine-tabs)
 12. [Browse, Search, Editor & Passages](#browse-search-editor--passages)
 13. [Bookmarks](#bookmarks)
 14. [Import: Word Documents (.docx)](#import-word-documents-docx)
@@ -76,13 +77,13 @@ or Anki (.apkg).
 
 | Screen | Route | Purpose |
 |--------|-------|---------|
-| **Library** | `library` | Home. Paper cards with Study, Test, Browse, Manage, Export. Drawer: History, Statistics, Bookmarks, Search, Passages, Settings, per-paper category trees (tri-state checkboxes), test/study by category, Import. FAB: new paper. |
+| **Library** | `library` | Home. Paper cards with Study, Test, Browse, Manage, Export. Drawer: History, Sessions, Statistics, Bookmarks, Search, Passages, Settings, per-paper category trees (tri-state checkboxes), test/study by category, Import. FAB: new paper. |
 | **Test Setup** | `test?...` | Bottom sheet titled **Start a test**. 17 type chips, breadth, scope, pool, length slider/chips (20–150, tens), minutes, fresh-sample note, preview, Start. |
 | **Test Session** | `test?...` | Live sitting. Countdown (if timed), question clock, palette, flag, bookmark, prev/next, Show answer (unless practice/strict), Submit. Auto-submit at zero. Crash resume dialog. |
 | **Results** | `results/{attemptId}` / `review/{attemptId}` | Score ring, accuracy, margin, trend, topics, time, What to do next, per-question review with filters, bookmark toggles. |
 | **History** | `history` | Trends, weakest categories, hardest questions, attempt list (tappable → Results). No attempt delete. |
-| **Statistics** | `stats` | Scope chip (All papers / one paper), range chips (7 d / 30 d / 90 d / 1 y / All). Seven tabs. |
-| **Study** | `study/{paperId}?...` | One card at a time. Classic footer (Show answer → Again/Hard/Good/Easy) or Simplified (Guessing switch → Check → Change grade → Next). A **flashcard** (zero options) always uses Show answer → Again/Hard/Good/Easy in both modes and is self-graded. Clocks, passage header, summary on stop. |
+| **Statistics** | `stats` | Scope chip (All papers / one paper), range chips (7 d / 30 d / 90 d / 1 y / All). Nine tabs. |
+| **Study** | `study/{paperId}?...` | One card at a time. Classic footer (Show answer → Again/Hard/Good/Easy) or Simplified (Guessing switch → Check → Change grade → Next). **Any question without an answer key** — a flashcard (zero options) or a keyless multiple-choice question — uses Show answer → Again/Hard/Good/Easy in both modes and is self-graded (no Check, no verdict tint). Clocks, passage header, summary on stop. |
 | **Browse** | `browse/{paperId}?...` | Question list with search, 4 filter chips (All / No answer key (multiple choice) / No explanation / Uncategorized), category dropdown, selection mode (bulk edit/move/copy/delete/export), reorder arrows, passage headers, Flashcard labels. |
 | **Editor** | `editor?...` | Full question editor: category, passage, BlockListEditor (text/image/table/math), options with checkboxes, marks, difficulty, tags, explanation, validation, Prev/Next over current filter, Save/Delete. |
 | **Passages** | `passages` | List of passages with member counts. Create/Edit/Delete/Move. Tap member → opens in Browse. Delete guarded if members exist. |
@@ -90,18 +91,18 @@ or Anki (.apkg).
 | **Search** | `search` | Query field, 3 scope chips (All / Questions / Options). 300 ms debounce. Results: preview + paper title → tap opens in Browse. |
 | **Settings** | `settings` | Five collapsible sections (all expanded by default): Appearance, Tests, Study/Spaced repetition, Backup & data, About. |
 
-**Drawer order:** History → Statistics → Bookmarks → Search → Passages → Settings →
+**Drawer order:** History → Sessions → Statistics → Bookmarks → Search → Passages → Settings →
 per-paper category trees (expandable, tri-state checkboxes, Study/Test buttons when
 ticked) → Import questions.
 
 **Back behaviour:** Library = exit app; Browse/Editor/Passages/Bookmarks/Search/
-Settings = pop back stack. Editor back **does not** guard unsaved changes (only
-Prev/Next do). Test session back opens the Submit dialog; a second back cancels the
+Settings = pop back stack. Editor back asks before discarding unsaved changes
+(Save / Cancel / Discard), and Prev/Next refuse to leave a dirty, invalid edit. Test session back opens the Submit dialog; a second back cancels the
 dialog.
 
-**Haptics:** Off by default. Settings → Appearance → **Haptic feedback** enables
-Tick (input registered), ToggleOn/ToggleOff (state change), Confirm (correct),
-Reject (wrong). No sound feedback.
+**Haptics:** On by default. Settings → Appearance → **Haptic feedback** turns it
+off; it covers Tick (input registered), ToggleOn/ToggleOff (state change),
+Confirm (correct), Reject (wrong). No sound feedback.
 
 ---
 
@@ -113,18 +114,22 @@ A question has:
 |-------|------|-------|
 | **Text** | String / rich blocks | Legacy `text` field + `elements` (text, image, table, math). `elements` takes precedence. |
 | **Question image** | Optional | Data URI, `http(s)` URL, or `content://`. Legacy scalar field + block images. |
-| **Options** | 2+ | Each has id (a–j), text/blocks, optional image. Legacy scalar `image` field. |
+| **Options** | 0 (flashcard) or 2+ | Each has id (a–j), text/blocks, optional image. Legacy scalar `image` field. Exactly one option is never valid. |
+| **Shape** | Derived | Zero options = a flashcard (front/back, studied only, never sampled into a test). No stored type column. |
 | **Correct option ids** | Set<String> | Empty = no answer key (ungraded). Multiple = multi-correct (exact set equality). |
-| **Marks** | Double (default 1.0) | Weight ≥ 0. Invalid → 1.0. Used in score = Σ(marks for correct) − Σ(marks × penalty for wrong). |
+| **Marks** | Double (default 1.0) | Weight ≥ 0. A blank field means 1.0; a non-blank invalid value blocks Save. Used in score = Σ(marks for correct) − Σ(marks × penalty for wrong). |
 | **Explanation** | String / rich blocks | Legacy `explanation` + `explanationElements`. Shown after reveal. |
 | **Explanation image** | Optional | Data URI / URL. |
-| **Difficulty** | Enum | `easy` / `medium` / `hard` / `very_hard`. Default `medium`. |
+| **Difficulty** | Enum | `easy` / `medium` / `hard`. Default `medium`. |
 | **Tags** | List<String> | Comma-separated on import/export. Searchable. |
 | **Category** | Reference | Owning category (recursive tree). |
 | **Passage** | Optional reference | Shared reading context (see below). |
 
-**Validation (Save & Prev/Next):** non-blank text, ≥ 2 options, no blank option.
-Buttons stay disabled until valid. Invalid marks fall back to 1 (never blocks saving).
+**Validation (Save & Prev/Next):** at least one significant front block of any
+kind (text, image, table or formula) plus a complete shape — a multiple-choice
+question needs ≥ 2 options that each hold content; a flashcard needs zero options
+and a visible back. Buttons stay disabled until valid. A blank marks field means
+1.0; any other invalid marks value blocks Save.
 
 ---
 
@@ -160,10 +165,11 @@ pinned at the end of content.
 | `Random` | Mock | ✅ | Uniform sample of scope; passage blocks move together. |
 | `Balanced` | Mock | ✅ | Allocate slots proportionally per category (largest remainder, min 1), interleave round-robin. |
 | `Blueprint` | Mock | ✅ | Runs a frozen section tree (see [Blueprints](#exam-blueprints)). |
-| `Easiest questions` | Practice | ✅ | Rank by ease score (1−weakness, 1−difficulty, 1−memoryRisk, 1−lapse), exclude leeches/at-risk when ≥ 2N alternatives, take top 2N, shuffle, take N. Fill: authored Medium, then random. |
+| `Coverage` | Practice | ❌ | An equal number from every topic in scope, so small topics are not crowded out; optional `Weight by test exposure` prefers less-tested questions. Practice only: not comparable to Balanced. |
 | `Mistakes` | Practice | ❌ | Previously missed questions in current scope. |
 | `Weakest topics` | Practice | ❌ | Rank categories by composite weakness (0.5·(1−WilsonLower), 0.25·difficulty, 0.15·memoryRisk, 0.10·lapse), take top K (Breadth), allocate proportionally, record targets. |
 | `Toughest questions` | Practice | ❌ | Rank by toughness (0.35·weakness + 0.20·difficulty + 0.20·memoryRisk + 0.15·lapse + 0.10·skip), 40% per-category cap (relaxes if needed), fill: authored Hard, then random. |
+| `Easiest questions` | Practice | ✅ | Rank by ease score (1−weakness, 1−difficulty, 1−memoryRisk, 1−lapse), exclude leeches/at-risk when ≥ 2N alternatives, take top 2N, shuffle, take N. Fill: authored Medium, then random. |
 | `Tricky` | Practice | ❌ | Rank by trickiness (0.40·lapse + 0.25·guessRate + 0.20·skipRate + 0.15·weakness), 40% cap, fill: Toughest, then random. |
 | `At risk` | Practice | ❌ | **Only cards due now** (`dueAt ≤ now`). Sorted by memoryRisk (1−retrievability), then due. Fill: remaining due, then unseen, then random. |
 | `Unseen` | Practice | ❌ | No card / NEW card / stale content hash. Uniform shuffle. Fill: least recently reviewed, then random. |
@@ -202,7 +208,7 @@ the requested length. It is **not** "questions per topic".
 - **Scope label:** `Whole paper` (nothing ticked) or `N categories` (ticked count,
   not expanded). For Blueprint: `Blueprint scope: the run asks only this
   blueprint's sections, whatever categories are ticked.`
-- **Pool line:** `N questions` (scope count), `N mistakes` (Mistakes), `N in pool`
+- **Pool line:** `N questions` (testable multiple-choice count — flashcards are study-only and excluded), `N mistakes` (Mistakes), `N in pool`
   (signal types — the selector's own pool, not the raw scope), or for a
   blueprint the **total terminal supply** (count-independent, so the length can
   grow past the current request).
@@ -425,9 +431,9 @@ every question).
 
 ### Session Banners & "Asked vs Shown"
 1. `Short test · N questions` (< 20).
-2. Type banner: `Mock · <Type> · N` (a blueprint names itself as
-   `Mock · Blueprint · <name> · N`), `Practice · <Type> · N`,
-   `Practice · Mistakes · N`, or `Random · N`.
+2. Type banner: `Mock · Blueprint · <name> · N questions` for a blueprint;
+   `<Type> · N questions` for Balanced or Random (no `Mock` prefix);
+   `Practice · <Type> · N questions` for every other type.
 3. If shown > asked: `80 asked, 84 shown — a passage is kept whole`.
 4. If shown < asked: `80 asked, 76 shown` (clamp/short scope/deleted).
 
@@ -649,7 +655,7 @@ Negative marking > 0, ≥ 2 rows, ≥ 2 passage blocks.
   describes score).
 
 ### 8. Where the Marks Went
-- `Knowledge gap` always; `Rushed`, `Skipped`, `Ungraded`, `Possible guess` only when > 0.
+- Every wrong answer is either `Knowledge gap` or `Rushed`; `Skipped`, `Ungraded` and `Possible guess` are separate counts. Each of the five rows renders only when its count is > 0.
 - `Fewer than 10 timed questions; only absolute rules are applied.`
 
 Thresholds (≥ 10 timed):
@@ -673,7 +679,7 @@ One row per category, accuracy ascending, then asked desc, then title:
 ### 11. Time
 - `04:12 total · median 0:12/question · target 1:00` (target = fixed 60 s/q)
 - `Wrong answers averaged 1:14; correct answers 0:41.`
-- `Time sinks: Q7 2:14, Q12 1:58, Q3 1:40` (up to 3, wrong at `≥ max(15 s, median)`)
+- `Time sinks: Q7 2:14, Q12 1:58, Q3 1:40` (up to 3 slowest timed questions, correct or wrong)
 - `Fewer than 10 timed questions; the pace comparison is a small sample.`
 
 ### 12. What to Do Next
@@ -708,8 +714,8 @@ Empty state: `No <filter.lowercase()> questions` → `No all questions`, `No
 correct questions`, etc.
 
 **Per-question card** (numbered):
-- Container: green correct, red wrong, grey ungraded. **Skipped graded = `Wrong` here.**
-- Status word: `Correct` / `Wrong` / `Not scored` (literal, not resources).
+- Container: green correct, red wrong, grey skipped, tertiary ungraded. A graded question left unanswered keeps the `Skipped` verdict (it is not shown as Wrong).
+- Status word: `Correct` / `Wrong` / `Skipped` / `Not scored`, each from a string resource (localized).
 - Bookmark icon: a11y `Remove bookmark` / `Bookmark question`; tap toggles. Last
   bookmark removed under `Saved` filter → resets to `All`.
 - Tag: `Knowledge gap`, `Rushed`, `Skipped`, `Possible guess`, `Fragile correct`,
@@ -735,12 +741,13 @@ correct questions`, etc.
 - Empty: `No attempts yet`.
 
 ### Trends Section
-One card per `(paper, family, type, requestedCount, exclusionMode)` group,
-excluding legacy. If any trend exists, `Trends` header + cards shown. The
-`Attempts` header always renders before the attempt list, including when every
-attempt is legacy.
-Card: paper title; subtitle `<family>[ · <type>][ · N questions][ · fresh
-sample]`; `${attempts} attempt[s] · best 82%`; right: latest %, arrow + absolute
+One card per `(paper, family, type, requestedCount, exclusionMode, scope,
+variant)` group, excluding legacy. If any trend exists, `Trends` header + cards
+shown. The `Attempts` header always renders before the attempt list, including
+when every attempt is legacy.
+Card: paper title; subtitle `<family>[ · <type>][ · N questions] · <scope>[
+· <variant>]` where scope is `whole paper` / `topics` / `topics: <names>`; `${attempts}
+attempt[s] · best 82%`; right: latest %, arrow + absolute
 change (`▲ 12 pts`, `▼ 8 pts`, `= 0 pts` grey). Delta = `latest − first` (not
 slope, not margin-aware).
 
@@ -777,8 +784,12 @@ questions/panels/blueprints has confirms; history rows do not.)
   cards never seen).
 - **No daily limits** (old caps removed; only on/off switch `Introduce new
   cards`).
-- Ordering: due cards first (by due time), then new cards (by creation order),
-  then tricky/leech drill (cards with `lapses ≥ leechThreshold`, default 8).
+- **Ranking:** learning steps first. Then, with `Memory first` ranking (default):
+  due reviews by **lowest predicted recall** (the due date breaks ties), then new
+  cards in authored order (category sort order, then question sort order). With
+  `Explore new`, a new card is surfaced every 3 reviews ahead of the backlog.
+  The tricky drill is a **separate sitting** filtered to leeches (`lapses ≥
+  leechThreshold`, default 8), not a third phase of the normal pull.
 - **Scope:** whole paper or ticked categories (from Library/drawer).
 - Library labels: `Study (X due, Y new)` / `Study selection (X due, Y new)` /
   `N due · N new · N tricky`.
@@ -792,16 +803,18 @@ questions/panels/blueprints has confirms; history rows do not.)
 - Scope label (paper title or category list).
 - Bookmark toggle.
 - `Done for now` (TextButton) → stops, shows summary.
-- Reviewed tally (e.g. `12 reviewed`).
-- Session clock `m:ss` (wall time, runs while answer/explanation read).
-- Minutes progress (question clock banked so far).
-- Break strip (appears when question clock paused).
+- Reviewed tally: `Reviewed N this session`.
+- Session time in whole minutes: `M minutes elapsed` (wall time, runs while the
+  answer/explanation is read).
+- Break strip (appears at each multiple of 10 reviews, dismissible until the
+  next multiple of ten).
 
 **Question card:** stem, options (radio/checkbox), passage header above if member.
 
-**Classic footer** (default off): `Show answer` → reveals key + explanation,
-then **Again / Hard / Good / Easy** (each shows delay preview: `10m`, `6h`,
-`1d`, `7d` for a new card). No undo after tap.
+**Classic footer** (default off): `Show answer` → reveals the answer/explanation
+(heading **Answer** for a card, **Explanation** otherwise; when there is no answer
+key no option is tinted green or red), then **Again / Hard / Good / Easy** (each
+shows a delay preview: `10m`, `6h`, `1d`, `7d` for a new card). No undo after tap.
 
 **Simplified footer** (default on, `Simplified Anki` switch in Settings):
 - `Guessing` switch (toggles per card; default off).
@@ -818,8 +831,17 @@ then **Again / Hard / Good / Easy** (each shows delay preview: `10m`, `6h`,
   `Grade on correctness only` on, the
   clock is not consulted: a correct answer is always `Good`, so `Easy` and
   `Hard` only appear when the learner edits the grade.
-- Result card shows grade, dwell, `Change grade` (re-opens Again/Hard/Good/Easy
-  with same dwell), `Next` (persists the grade, pulls next card).
+- Result card (auto-graded questions only) shows grade, dwell, `Change grade`
+  (re-opens Again/Hard/Good/Easy with the same dwell), `Next` (persists the
+  grade, pulls the next card).
+
+**Self-graded footer** — any question without an answer key (a flashcard, or a
+keyless multiple-choice question), in **either** mode: `Show answer` → Again /
+Hard / Good / Easy, and one tap stores the grade and advances. There is no
+Guessing switch, no `Check`, no result card and no `Next`, because the app has no
+verdict to give; the review is stored with no correct/wrong/guess provenance and
+statistics treat it as ungraded. The serialised review keeps `wasCorrect` and
+`wasGuess` null and `gradeSource = CHOSEN`.
 
 **Gestures/keys:** No keyboard shortcuts. Back = stop (not exit).
 Scroll/background pauses question clock. Haptics: Tick (reveal/advance/grade),
@@ -834,9 +856,10 @@ Confirm (correct), Reject (wrong).
   banked yet), green below `fastSeconds`, amber through Good, red at or above
   `slowSeconds`. Tints are derived from the active
   theme and contrast-checked against its surface (≥ 4.5:1), so every palette
-  stays legible in light and dark. Under `Grade on correctness only` the clock
-  keeps the neutral tint while still counting and storing the dwell. Study
-  only; the Test countdown is unchanged.
+  stays legible in light and dark. Under `Grade on correctness only`, and for
+  **every self-graded question** (a card or a keyless MCQ), the clock keeps the
+  neutral tint while still counting and storing the dwell — the clock never
+  decided that grade. Study only; the Test countdown is unchanged.
 - **Session clock:** wall time, runs continuously (including answer/explanation).
 
 ### Session Summary
@@ -845,9 +868,9 @@ On stop (Back / Done for now / pull runs dry):
 
 | Line | Computation |
 |------|-------------|
-| `N reviewed • M again • K remembered` | `reviewed` = grades persisted; `again` = Again grades; `remembered = reviewed − again` (Hard counts as remembered). Hard-coded English. |
-| `Recalled P%` | `remembered * 100 / reviewed` (0 when reviewed = 0). |
-| `Questions A:BC • Explanations D:EF • Total G:HI` | `questionSeconds` = banked question-clock segments; `sessionTotalSeconds` = frozen at finish; `explanationSeconds = max(0, sessionTotalSeconds − questionSeconds)`. Formatted `Dwell.format` (`m:ss`). |
+| `N reviewed • M again • K remembered` | Localized resource. `reviewed` = grades persisted; `again` = Again grades; `remembered = reviewed − again` (Hard counts as remembered). |
+| `Recalled P%` | `remembered * 100 / reviewed`. **Omitted** whenever the sitting contains a self-graded review (any card or keyless MCQ): there is no objective correctness to report. |
+| `Questions A:BC • Answers D:EF • Total G:HI` | `questionSeconds` = banked question-clock segments; `sessionTotalSeconds` = frozen at finish; `answersSeconds = max(0, sessionTotalSeconds − questionSeconds)` (time spent reading the answer/explanation). Formatted `Dwell.format` (`m:ss`). |
 | Buttons | `Study again` (re-pulls) / `Done` (leaves). |
 
 **Stopped before any review** (`EmptyReason.StoppedEarly`):
@@ -908,7 +931,8 @@ ten minutes after the last one runs the same two update formulas at a
 *fractional* elapsed time. `elapsedDays` therefore stays fractional and is
 load-bearing; only the resulting interval is rounded to whole days.
 
-**State machine:** NEW → (any grade) → REVIEW; Again on REVIEW → RELEARNING
+**State machine:** NEW + Hard/Good/Easy → REVIEW; NEW + Again → LEARNING
+(a 10 m default delay, capped per study day). Again on REVIEW → RELEARNING
 (a 10 m default delay) → REVIEW with both traces reduced. There is no
 learning-step ladder — a deliberate deviation from Anki, so the study loop has
 one notion of "short interval" instead of two. **Leech** flag when `lapses ≥
@@ -1021,19 +1045,19 @@ untouched.
 | Number | What it means |
 |--------|---------------|
 | `N due` | Cards whose due time has passed (including overdue). |
-| `N new` | Cards never reviewed (no schedule row). |
+| `N new` | Cards the session would serve as new: no schedule row, a still-new row (`reps = 0`, no due date), or a card whose content hash is stale because it was edited. |
 | `N tricky` | Cards flagged as leeches (lapses ≥ 8 by default). |
 | `Reviewed` | Cards you graded in this sitting. |
 | `Again` | How many times you tapped Again (or auto-graded Again). |
 | `Remembered` | `Reviewed − Again` (Hard/Good/Easy all count as remembered). |
-| `Recalled P%` | `Remembered / Reviewed × 100` — your hit rate this sitting. |
+| `Recalled P%` | `Remembered / Reviewed × 100` — your hit rate this sitting. Omitted when any review was self-graded (a card or keyless MCQ). |
 | `Questions A:BC` | Time spent **reading the question** (clock paused on reveal/Check/scroll/background). |
-| `Explanations D:EF` | `Total − Questions` — time spent reading the answer & explanation. |
+| `Answers D:EF` | `Total − Questions` — time spent reading the answer/explanation. |
 | `Total G:HI` | Wall-clock length of the sitting (frozen at finish). |
 
 ---
 
-## Statistics (Seven Tabs)
+## Statistics (Nine Tabs)
 
 **Global controls (top):**
 - **Scope chips:** `All papers` + one per paper (only when > 1 paper). Default
@@ -1048,7 +1072,7 @@ untouched.
 
 | Card | What it shows |
 |------|---------------|
-| **Today** | 6 tiles: Reviews, Correct %, Time studied, Introduced (first-ever reviews today), Due (cards due today), Backlog (overdue). Then `Learning N · Review N · Relearning N`. |
+| **Today** | 6 tiles: Reviews, Recall (share of today's reviews not answered Again — a self-reported grade, not objective accuracy), Time studied, Introduced (first-ever reviews today), Due (cards due today), Backlog (overdue). Then `Learning N · Review N · Relearning N`. |
 | **Overview (KPIs)** | 12 tiles: Retention (first-of-day), Desired retention (setting), Mature retention, Current streak, Reviews in range, Study days, Time studied, Avg answer time, Est. knowledge (Σ retrievability), Avg interval (mean intervalDays > 0), Leeches (error colour if > 0), Longest streak. |
 | **Test result families** | Static legend: Mock, Fresh sample, Practice, Short, Legacy (same labels used on Results/History). |
 | **True retention** | 7-row table (Today / Yesterday / Last 7/30/90/365 / All time) × 3 cols (All / Young / Mature). First-of-day rule, mature = carried interval ≥ 21 d. |
@@ -1081,7 +1105,20 @@ untouched.
 | **Hourly breakdown** | 24 bars + right-axis pass rate line (null hours break line). |
 | **Response time** | Histogram (edges 5/10/20/30/60/120 s, labels `0–5s`…`2m+`), only timed rows. Then `Again 7s · 12×` per grade with timed reviews. Fast failures: `N failures were answered in under 5 seconds — worth a slower look.` Trend line (mean seconds per bucket, duration y-axis). Slowest cards (top 10, mean timed seconds, ≥ 3 timed reviews, tap → card sheet). |
 
-### Tab 4: Memory
+### Tab 4: Sessions
+
+Sitting-level views that the Workload tab does not already show. A sitting is
+split by a 30-minute gap and runs from its first review to its last.
+
+| Card | Chart | Key details |
+|------|-------|-------------|
+| **Sessions per day** | Stacked bars | Sittings started each day; a sitting is split by a 30-minute gap between reviews. |
+| **Session length** | Histogram | How long each sitting ran, from its first review to its last. |
+| **When sessions start** | Bars | Sittings by the hour their first review landed. |
+| **Sessions by weekday** | Bars | Sittings started on each weekday. |
+| **Recall per session** | Line | Share of each sitting answered other than Again, with every sitting weighted equally. |
+
+### Tab 5: Memory
 
 | Card | Chart / Table | Key details |
 |------|---------------|-------------|
@@ -1092,7 +1129,7 @@ untouched.
 | **Intervals** | Histogram (edges 2/4/8/16/32/64/128/256/512, labels `1d`…`17m+`) + right-axis cumulative share (0–100%). Mean/median. |
 | **Memory growth** | Two line charts: Mean stability by review number (1…15, 15+ pools rest) + Mean stability by month (`MMM yy`). All history, not range-filtered. |
 
-### Tab 5: Cards
+### Tab 6: Cards
 
 | Card | What it shows |
 |------|---------------|
@@ -1103,14 +1140,14 @@ untouched.
 | **Not started per paper** | Rows `Title · N unseen of N total`, unseen desc, top 15. |
 | **Leeches** | Ranked list (≤ 15), lapse count desc, same `5× · 3× again · 60% · 12s` summary. Lifetime counts (range ignored). Tap → card sheet. |
 
-### Tab 6: Guessing
+### Tab 7: Guessing
 
 All figures count **only rows carrying v19 flags** (`wasGuess`, `wasCorrect`).
 Rows without flags counted separately in coverage line.
 
 | Card | What it shows |
 |------|---------------|
-| **Guessing at a glance** | 6 KPIs: Guess rate, Guessed right (hit rate), Random chance (weighted mean `1/C(options,correct)`), Lift (hit − chance, signed pts), Raw accuracy ((earned+lucky)/flagged), Graded pass (earned/flagged). Coverage line: `All N in-range reviews carry the guess flag.` or `Counting N of M in-range reviews; older rows predate guess tracking.` |
+| **Guessing at a glance** | 6 KPIs: Guess rate, Guessed right (hit rate), Random chance (weighted mean `1/C(options,correct)`), Lift (hit − chance, signed pts), Raw accuracy ((earned+lucky)/flagged), Graded pass (earned/flagged). Coverage note (only when some rows lack the flag): `N in-range review has no guess flag (an older row or a self-graded card) and is left out of these figures.` (pluralized). |
 | **Outcomes** | 2×2 grid: Earned (knew it) / Lapse (said wrong) / Lucky (guessed right) / Didn't know (guessed wrong). `Raw accuracy minus graded pass is the lucky share: +X pts.` |
 | **Guess rate over time** | 2-line chart (filled guess rate + hit rate) + dashed chance. Same granularity rule. |
 | **By card maturity** | Stacked bars (Guessed / Not guessed) + right-axis hit rate. Bands: Fresh/unknown, Learning, Relearning, Young, Mature. |
@@ -1121,7 +1158,7 @@ Rows without flags counted separately in coverage line.
 | **Fragile topics** | Meter bars by category (fallback paper), top 8, guessed desc, hit rate asc. Row: `N reviews · N guessed · X% hit`. |
 | **Shaky cards** | Ranked list (≤ 10), guessed desc, hit rate asc, recency desc. Guard: ≥ 2 guesses. Row: `N guesses of M reviews · X% hit`. Tap → card sheet. |
 
-### Tab 7: Tests
+### Tab 8: Tests
 
 No range chips. Sections in order:
 
@@ -1136,7 +1173,7 @@ No range chips. Sections in order:
 | **Fixed panels** | Rows `Name · N questions · N runs · latest X% · average Y%` (most recent run first). Only attempts with `variant = panel id`. |
 | **Current scope** | `N questions · N unseen · N leeches · N at risk`. Unseen = no card / NEW / stale hash. At risk = due now, not NEW, stability > 0. |
 
-### Tab 8: Progress
+### Tab 9: Progress
 
 | Card | What it shows |
 |------|---------------|
@@ -1185,9 +1222,9 @@ Modal bottom sheet (Anki's Card Info):
 
 **Empty States:** `Loading…` / `No questions in this paper` / `No questions match this filter`.
 
-**Per-Row Actions (non-selection):** Tap → opens in Browse (deep-link focus); Edit → Editor with Prev/Next queue; Delete (immediate, no confirm); Duplicate.
+**Per-Row Actions (non-selection):** Edit → Editor with Prev/Next queue; Duplicate; Delete → shared confirmation (`Delete N questions?` / `This cannot be undone.`). The row itself is not clickable; a bookmark's row tap is what opens Browse focused.
 
-**Passage Groups:** Header card before first member: title, member count, block arrows, content preview (4 lines), `Show/Hide questions (N)` toggles paged member list (50/page). Subsequent members: `In passage: {title}` label.
+**Passage Groups:** Header card before the first member: title, block arrows, the full passage content and image (no preview clamp, no show/hide control). Subsequent members: `In passage: {title}` label.
 
 ### Editor Screen
 
@@ -1215,7 +1252,7 @@ Modal bottom sheet (Anki's Card Info):
 
 **Card Type:** `Multiple choice` / `Flashcard` chips above Options (default Multiple choice). A flashcard hides the options block, calls the explanation field `Answer`, and shows the front + back in the preview. Switching to Flashcard clears typed options only after a confirmation.
 
-**Validation Warnings:** `No answer is marked correct — this question will not be graded.` (error colour, MCQ only). A multiple-choice question needs ≥2 non-blank options; a flashcard needs a visible answer and zero options; one option is never valid. A blank form blocks Save/Prev/Next.
+**Validation Warnings:** `No answer is marked correct — this question will not be graded.` (error colour, MCQ only). Save needs at least one visible front block; a multiple-choice question needs ≥2 non-blank options; a flashcard needs a visible answer and zero options; exactly one option is never valid. An invalid form blocks Save/Prev/Next.
 
 **Save / Delete Row:** `Save` (enabled when valid & not saving) → saves, pops, `Saved` toast. `Delete` (not new, not from import) → deletes, pops.
 
@@ -1255,7 +1292,7 @@ Modal bottom sheet (Anki's Card Info):
 
 **Results:** Paged (30/page). `Searching…` / `No matches` / `N match(es)` (+ `+` if possibly more). Per hit: preview (2 lines) + paper title (primary). Tap → Browse focused.
 
-**Admission Rules:** `searchableText` for the front (flattens blocks, joins with space, strips markup; tables & formulas included) plus `backTextFolded` for the answer/explanation (indexed at write time and backfilled by schema 29). A hit found only in the back shows a short `Answer: …` snippet and a Flashcard label. Prefilter key = longest alphanumeric run (len ≥ 2) escaped for SQL `LIKE`. Blank query → all questions (UI shows empty until non-blank). Cross-paper via `paperByCategoryId`; deleted papers/categories dropped.
+**Admission Rules:** `searchableText` for the front (flattens blocks, joins with space, strips markup; tables & formulas included) plus `backTextFolded` for the answer/explanation (indexed at write time and backfilled by schema 29). A hit found only in the back shows a short snippet labelled `Answer: …` for a card and `Explanation: …` for a multiple-choice question; every card row also carries its Flashcard label. Prefilter key = longest alphanumeric run (len ≥ 2) escaped for SQL `LIKE`. Blank query → all questions (UI shows empty until non-blank). Cross-paper via `paperByCategoryId`; deleted papers/categories dropped.
 
 ---
 
@@ -1265,12 +1302,12 @@ Modal bottom sheet (Anki's Card Info):
 
 | Marker | Regex | Case | Required | Notes |
 |--------|-------|------|----------|-------|
-| **Question** | `^\d{1,7}\)` | exact | Yes | `1.)` at line start. |
-| **Option** | `^\([a-z]\)` | exact | Yes | `(a)`..`(j)`; must start at `(a)`, consecutive without gaps. |
-| **Answer** | `^Ans\.` | exact | Yes | `Ans. b` or `Ans. b, d` or `Ans. b and d`. |
+| **Question** | `^\d{1,7}\.\)` | exact | Yes | `1.)` at line start (digits, a literal dot, then `)`). |
+| **Option** | `^\([a-z]\)` | exact | Multiple choice only | `(a)`..`(j)`; must start at `(a)`, consecutive without gaps. A flashcard has none. |
+| **Answer** | `^Ans\.` | exact | Multiple choice only | `Ans. b` or `Ans. b, d` or `Ans. b and d`. A flashcard uses `Answer:` instead. |
 | **Explanation** | `^Exp:` | exact | No | `Exp: <text>`. |
 | **Card answer** | `^Answer:` | exact | Flashcard | `Answer: <back>`. Marks a zero-option front/back card and replaces the option/`Ans.` pair. `Ans.` alone does **not** make a card — see [Flashcards](#flashcards). |
-| **Passage** | `^(?i)Passage:` | **case-insensitive** | No | `Passage: <title>`; blank line = end-of-passage reset. |
+| **Passage** | `^(?i)Passage:` | **case-insensitive** | No | `Passage: <title>`; a bare `Passage:` line (no title, no body) ends the passage. |
 
 Markers are line-anchored (`(?m)^`). DOCX writer prefixes such lines with a space
 to escape them.
@@ -1333,20 +1370,22 @@ Rules:
   underline, strike, sub/superscript, highlight, tables, embedded pictures and
   Word equations (see below).
 - **Back is the answer, not a note:** the app stores a card's back in the
-  explanation/answer field. Study shows it under **Answer** (no "Incorrect"
-  unless the card has options), Browse labels the row **Flashcard**, and
+  explanation/answer field. Study shows it under **Answer** with no "Incorrect"
+  (nothing is graded without a key), Browse labels the row **Flashcard**, and
   statistics count it as self-graded.
 - **Empty back is allowed:** a bare `Answer:` line imports the card and raises
-  the advisory warning "No answer yet" (the import still succeeds; Study shows
-  an empty answer). It is not a dropped question. (Question 6 above.)
+  the advisory warning `No answer yet — will show nothing on reveal` (the import
+  still succeeds; the reveal skips the empty answer block). It is not a dropped
+  question. (Question 6 above.)
 - **No options at all:** as soon as a block lists `(a)`, `(b)` … it is a
   multiple-choice question, and it then needs `Ans.`. A card cannot key options.
-- **Escaping marker-shaped lines:** the grammar is line-based, so a line in a
-  front or back that starts with `N.)`, `(a)`–`(z)`, `Ans.`, `Exp:`, `Answer:`
-  or `Passage:` changes how the block is read — a `(a)` line makes it a
-  multiple-choice question, an `N.)` line starts a new question, `Passage:`
-  starts a passage. Start such a line with one space to keep it as text; the
-  app's own DOCX exports do this automatically.
+- **Escaping marker-shaped lines:** the grammar is line-based. In the front, a
+  line starting with `N.)`, `(a)`–`(z)` or `Passage:` changes what the block is
+  (a `(a)` line makes it a multiple-choice question, `Passage:` starts a
+  passage). In the back, `N.)` starts a new question and `Passage:` starts a
+  passage; `Ans.`, `Exp:` and a second `Answer:` line stay part of the back.
+  Start any marker-shaped line with one space to keep it literal — the app's own
+  DOCX exports escape every one of them automatically.
 - **Metadata:** marks, difficulty and tags are not in the visible markers. They
   survive only when re-importing a DOCX the app itself exported (its hidden
   payload); with a hand-written document they take their defaults.
@@ -1364,7 +1403,7 @@ Rules:
 | Math (OMML) | Yes | Converted to MathML (`<math>...</math>`); unsupported → linear text + warning. |
 | Tables | Yes | Word tables → `TableElement`; nested flattened. |
 | Embedded images | Yes | `word/media/` → `data:` URIs. |
-| Remote image URLs | No | Left as `http(s)://` src; warning: `An image that is not embedded … was left out`. |
+| Remote image URLs | No | Import resolves linked pictures through `word/_rels`; a link it cannot read is dropped with `A picture has no readable image reference and was skipped.` or `A picture points at a missing file (<ref>) and was skipped.` On **export**, a non-embedded picture is left out with `An image that is not embedded (e.g. a remote URL) was left out — Word documents carry their pictures as files.` |
 | VML (legacy Word art) | Yes | `urn:schemas-microsoft-com:vml` namespace. |
 | Track Changes | Applied | Deletions applied; insertions unwrapped; warning emitted. |
 | Hyperlinks | Unwrapped | Runs inside hyperlink kept as content. |
@@ -1377,24 +1416,34 @@ App's own DOCX exports embed a **custom document property** (`mcqapp` in
 1. Payload parsed and fingerprint-matched against visible markers (per-question
    canon: stem, options, answer indices, explanation, passage membership).
 2. **If every visible question matches a payload question in order** (subsequence
-   walk; payload-only questions allowed between), payload wins — full fidelity.
+   walk; payload-only questions allowed between), payload wins — full fidelity,
+   with the body's image srcs grafted positionally onto the payload.
 3. **If any mismatch** (edited in Word, Google Docs stripped payload, older
-   version), payload ignored; visible markers used; image srcs grafted
-   positionally.
+   version), payload ignored; the visible markers alone are used. No grafting
+   runs on this path: the visible parse already carries the body's own `data:`
+   image srcs.
 4. Warning: `The document's hidden question data is out of date (the file was edited outside the app), so marks, difficulty and tags were restored from the visible text only.`
 
 ### Every Rejection Message
 
+Question-level messages are all prefixed `Malformed question <N.): `, where
+`<N>.)` is the number marker as written. The rest of each string is:
+
 | Message | Trigger |
 |---------|---------|
-| `missing option (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'.` | No `(a)` marker. |
-| `missing option (a). The first marker found was (x), but options must start at (a).` | First option not `(a)`. |
+| `missing option (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'.` | No `(a)` marker (an `Ans.`-only block lands here — that is not a card). |
+| `missing option (a). The first marker found was (x), but options must start at (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) .. Ans. .. Exp: ..'.` | First option not `(a)`. |
 | `option (x) appears more than once.` | Duplicate option letter. |
 | `option (x) is not supported; use (a) to (j).` | Letter outside a–j. |
 | `option (x) is missing; labels must run (a), (b), (c), (d) … without gaps, but found (abce).` | Gap in sequence. |
-| `missing question stem` / `missing option (x)` / `missing answer` | Required field blank. |
+| `missing question stem, missing option (x), missing answer` (joined as a list) | Required field blank in a multiple-choice block. |
 | `answer names option (x), which this question does not have. It has (a) (b) (c).` | Answer letter not in options. |
 | `answer '...' mixes letters with other text; write several answers as 'Ans. b, d' so each one can be matched to an option.` | Multiple tokens, not all single letters. |
+| `missing question stem. Expected 'N.) front .. Answer: back'.` | A card's `Answer:` line with nothing before it. |
+
+Document-level failures: `No questions found: the document is empty.` and
+`No questions found: expected 'N.)' numbered questions with '(a)..(d)', 'Ans.'
+and 'Exp:' markers, or a card's 'Answer:' back.`
 
 ---
 
@@ -1420,7 +1469,7 @@ schedules. Option ids are assigned `a`, `b`, `c`, … in order.
 ```kotlin
 @Serializable
 data class McqFileDto(
-    // 2 when this build exports; a file without the field reads as 1.
+    // 2 for a whole-bank export (1 for a single-paper envelope); absent reads as 1.
     val version: Int = 1,
     val papers: List<PaperDto> = emptyList(),
     val bookmarks: List<String> = emptyList(),
@@ -1456,7 +1505,7 @@ the streaming importer resolve through one helper, so the two cannot drift apart
 
 | Field | Required | Default |
 |-------|----------|---------|
-| `id` | Yes | ephemeral `paper-import-<base36-ms>` |
+| `id` | No | ephemeral `paper-import-<base36-ms>` when absent |
 | `title` | Yes | — |
 | `description` | No | `""` |
 | `durationMinutes` | No | `0` (untimed) |
@@ -1477,7 +1526,7 @@ the streaming importer resolve through one helper, so the two cannot drift apart
 
 | Field | Required | Default / Notes |
 |-------|----------|-----------------|
-| `id` | Yes | stable SHA-256 of text+options if absent |
+| `id` | No | `q-` + first 12 hex of SHA-256(text + option ids/texts) when absent |
 | `text` | No | `""` (legacy; ignored when `elements` present) |
 | `elements` | No | `[]` (rich content: text/image/table/math) |
 | `image` | No | `null` (legacy scalar) |
@@ -1511,8 +1560,8 @@ Wire format: `{"type": "...", "content": ...}`
 | Field | Notes |
 |-------|-------|
 | `paperId`, `title`, `totalQuestions`, `correctCount`, `wrongCount`, `skippedCount`, `score`, `maxScore`, `durationSeconds`, `finishedAt` (epoch ms) | Core attempt data |
-| `testType?` | `RANDOM` \| `MISTAKES` \| `WEAKEST` \| …; null = legacy |
-| `requestedCount`, `scopeCategoryIds` (CSV), `scopeKey` (`paper:<id>` \| `categories:<csv>`), `samplingVersion`, `seed`, `exclusionMode` (`NONE` \| `RECENT` \| `RECENT_SIMILAR`) | Selection metadata |
+| `testType?` | `RANDOM` \| `MISTAKES` \| `WEAKEST_TOPICS` \| …; null = legacy |
+| `requestedCount`, `scopeCategoryIds` (CSV), `scopeKey` (`paper:<id>`, or the 64-hex SHA-256 of the expanded category ids), `samplingVersion`, `seed`, `exclusionMode` (`NONE` \| `RECENT_3`) | Selection metadata |
 | `targetTopicIds` (CSV), `compositionJson`, `variant?` (panel/blueprint id) | Practice/blueprint data |
 | `negativeMarking?` | Penalty rate applied; null on pre-v24 |
 | `results` | List<AttemptResultDto> |
@@ -1629,10 +1678,10 @@ dropped without warning.
       "testType": "RANDOM",
       "requestedCount": 10,
       "scopeCategoryIds": "cat-kinematics",
-      "scopeKey": "categories:cat-kinematics",
+      "scopeKey": "paper:p-kinematics",
       "samplingVersion": 2,
       "seed": 42,
-      "exclusionMode": "RECENT",
+      "exclusionMode": "RECENT_3",
       "targetTopicIds": "",
       "compositionJson": "",
       "variant": null,
@@ -1692,7 +1741,7 @@ dropped without warning.
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `version` | `1` | File-format version. This build writes `2`; a file without the field reads as `1`. Decides how `scheduling` keys resolve (see above). |
+| `version` | `1` | File-format version. Whole-bank exports (`Export all`, backup `content.json`) write `2`; the single-paper envelope — `JSON_INLINE`, a ZIP's `paper.json` and the DOCX hidden payload — declares `1`. A file without the field reads as `1`. Decides how `scheduling` keys resolve (see above). |
 | `PaperDto.description` | `""` | |
 | `PaperDto.durationMinutes` | `0` | Untimed. |
 | `PaperDto.negativeMarking` | `0.0` | Sanitized ≥ 0. |
@@ -1725,12 +1774,12 @@ but check these**:
 
 | Warning | Condition |
 |---------|-----------|
-| `Blank text` | `elements` empty AND `text` blank |
+| `Blank text` | flattened `text` blank (an image/table/formula-only stem also warns) |
 | `No answer yet` | a flashcard (zero options) whose back has no visible content |
 | `No answer key` | a multiple-choice question with `correctOptionIds.isEmpty()` |
-| `Answer key references missing option: <id>` | `correctOptionIds` contains id not in `options` |
+| `Answer key references missing options: <ids>` | `correctOptionIds` contains ids not in `options` (comma-joined) |
 | `Worth 0 marks` | `marks == 0.0` |
-| `Image is <N> KB` | Data URI payload > `LARGE_IMAGE_CHARS` (≈ 100 KB base64) |
+| `Large images (~<N> KB) — slows import` | summed scalar image payload (question + options + explanation) > `LARGE_IMAGE_CHARS` (256 KB of base64) |
 
 Parser warnings (from `LegacyParser`) split into:
 - **Skipped (red)** — content dropped: malformed questions, missing passages, unreadable images.
@@ -1747,10 +1796,13 @@ texts + passage membership + images as stored):
 | **Changed** | Same `id` exists but `ContentHash.nonHashedFieldsDiffer` (answer key, explanation, marks, difficulty, tags, images) | Will UPDATE; **schedule reset** if content changed |
 | **Duplicate** | Hash matches existing (text+options identical) AND no answer/metadata change | **Skipped** |
 
-**Dedupe rule:** Hash covers stem textContent, all options, explanation, image
-positions. **Tables and MathML invisible to hash** — hash collision triggers full
-`ContentHash.sameQuestionContent` (element-by-element). If content truly matches
-→ duplicate; if only answer/metadata differs → Changed.
+**Dedupe rule:** `ContentHash` covers the stem text, every option's text, every
+option's image src and passage membership. It excludes the answer key, the
+explanation/back, the question image, marks, difficulty and tags — so a corrected
+key or a rewritten explanation is a **Changed** row, not a duplicate. Tables and
+MathML are invisible to the hash; a hash match triggers the full
+`ContentHash.sameQuestionContent` element-by-element comparison. If content truly
+matches → duplicate; if only answer/metadata differs → Changed.
 
 **Same-id remapping:** If a question `id` in the file belongs to a different
 paper in DB, remapped to `"<paperId>-<originalId>"` to avoid FK cascade wipe.
@@ -1783,14 +1835,16 @@ paper in DB, remapped to `"<paperId>-<originalId>"` to avoid FK cascade wipe.
 `LinearProgressIndicator` when truncated, fraction = `importedQuestions /
 totalQuestionCount`.
 
-**Cancel:** `CancellationException` propagates from streaming parse — whole import
-in DB transaction → atomic rollback. User sees `Import cancelled`.
+**Cancel:** `CancellationException` propagates from streaming parse — the whole
+import rolls back in its transaction. No error dialog is shown for a cancellation;
+nothing was imported.
 
 **Failure messages:**
 - `That file is over the 64 MB import limit (at least X MB). Import the bank in parts, or drop the pictures — they are stored inside the file and add about a third to its size.`
-- `Could not parse the file: <exception>`
-- `No papers found`
-- `Not a readable zip file: <reason>`
+- `Couldn’t read that file. Make sure it’s a valid question file and try again.` (JSON/other)
+- `Couldn’t read that Word file. Make sure it’s a valid document and try again.` (DOCX)
+- `No question papers were found in this file.`
+- Exception detail is logged only, never rendered.
 - Anki: `This is a zstd-compressed .colpkg, which needs Anki 2.1.50+ to unpack. Export the deck as .apkg from Anki and import that instead.`
 
 ---
@@ -1804,8 +1858,10 @@ in DB transaction → atomic rollback. User sees `Import cancelled`.
    catches this but only on hash collision.
 3. **DOCX import prefers hidden payload** when fingerprint matches visible text;
    Google Docs strips it → falls back to markers with warning.
-4. **Backup always REPLACE** (wipe + replay), no merge option; schedules only
-   restored if contentHash matches (content unchanged).
+4. **Backup always REPLACE** (wipe + replay), no merge option; restored
+   schedules are kept and their `contentHash` is rewritten to the restored
+   question's hash, so a content change (including a v29 card conversion) does
+   not discard them.
 5. **Anki export uses schema 11 (legacy)** deliberately — no `meta` entry → Anki
    upgrades on import; maximum compatibility.
 6. **Remote image URLs in JSON/DOCX/Anki are kept in markup but CSP blocks
@@ -1819,7 +1875,7 @@ in DB transaction → atomic rollback. User sees `Import cancelled`.
    `AnkiTempFiles`).
 10. **Legacy JSON shapes accepted:** bare array `[{...}]`, object with `papers`,
     object with `questions` (DOCX wrapper). Per-field fallbacks: `question`/`text`,
-    `options`, `answer`/`correct`/`correctIndex`, `explanation`/`explain`/`reason`,
+    `options`, `answer`/`correct`/`correctAnswer`/`correctIndex`, `explanation`/`explain`/`reason`,
     `image`/`imageUrl`, `points`/`weight`, `tags`. Deterministic SHA-256 IDs.
     Option letters by position. Answer resolution chain.
 
@@ -1835,11 +1891,11 @@ questions).
 
 **Navigation:** Prev/Next buttons in app bar. **Never gated on form validity** —
 only blocks if dirty AND invalid. If dirty & valid → auto-saves (`Saved` toast),
-then navigates. Back button **does not** guard unsaved changes (dirty state lost).
+then navigates. Back asks first when the form is dirty or invalid (Save / Cancel / Discard).
 
 ---
 
-## Export Formats (Per Paper, Per Category, Bookmarks)
+## Export Formats (Paper, Category, Bookmarks, Result CSV)
 
 All single-paper exports share the same `PaperStream` walk (database-backed, one
 category at a time). File naming: `baseName(title) + suffix + extension`,
@@ -1863,7 +1919,7 @@ or saving is one tap after picking the format.
 - **MIME:** `application/zip` | **Ext:** `.zip` | **File:** `<base>.zip`
 - **Contains:** `paper.json` (same JSON, image srcs rewritten to relative paths) + `images/img001.png`…
 - **Images:** Data URIs decoded once, spooled to temp (`MediaSpool`), written as `images/imgNNN.<ext>`; remote URLs left untouched in JSON.
-- **Re-importable:** Yes — JSON reader resolves relative `images/...` paths.
+- **Re-importable:** No — export only. Pick a JSON or DOCX export to bring a paper back; a ZIP is classified as DOCX, backup or Anki, and nothing reads `paper.json` + `images/`.
 - **Lost:** Nothing.
 - **Writer:** `ZipPaperWriter.paperToZip()`.
 
@@ -1901,13 +1957,13 @@ or saving is one tap after picking the format.
 - **MIME:** `application/octet-stream` | **Ext:** `.apkg` | **File:** `<base>.apkg`
 - **Contains:** Anki schema-11 package: `collection.anki2` (SQLite), `media` (manifest), `0,1,2...` (media files).
 - **Note type:** Basic (3 fields: **Front**, **Back**, **mcqapp**).
-- **Front:** Passage (if any) + question + options; `Select all that apply.` for multi-correct.
-- **Back:** ✓-marked correct options + explanation.
+- **Front:** Passage (if any) + question + options; `Select all that apply.` for multi-correct. A card's Front is its stem, with no options.
+- **Back:** ✓-marked correct options + explanation for a multiple-choice question. A card's Back is its bare back blocks plus picture — no ✓ marks and no `Explanation:` label.
 - **mcqapp field:** JSON payload `{elements, options, correct, explanation, difficulty, marks, tags, passageId, passageTitle, passageElements, passageImage}` — exact round-trip.
 - **Deck hierarchy:** `Paper::Category::Subcategory` (separator `::`); titles containing `::` rewritten to `: `.
 - **Tags:** `mcqapp mcqapp-difficulty-<label> <user-tags...>` (space-delimited, leading/trailing space).
 - **Scheduling:** If `schedulingFor` provides `CardScheduleDto`, written as Anki `cards` rows (ivl, factor, reps, lapses, due, queue, type); else new cards (`queue=0, due=position`).
-- **Media:** Data URIs → `word/media` entries; manifest maps numeric zip name → original filename (`mcqapp-0.png`); Anki rewrites `<img src="...">` by filename.
+- **Media:** Data URIs → flat numeric zip entries (`0`, `1`, …); the `media` manifest maps each number to its original name (`mcqapp-0.png`); Anki rewrites `<img src="...">` by filename.
 - **GUID:** Stable SHA-1 of `"paperId/questionId"` → base91; re-import updates notes in place.
 - **Schema:** **11** (no `meta` entry → Anki treats as `Legacy1`, upgrades on import).
 - **Writer:** `AnkiPackageWriter.writeTo()` (streaming: temp SQLite → zip in chunks).
@@ -1917,7 +1973,7 @@ or saving is one tap after picking the format.
 - **MIME:** `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 - **Ext:** `.docx` | **File:** `<base>.docx`
 - **Contains:** OOXML: `word/document.xml`, `word/styles.xml`, `word/media/`, `docProps/custom.xml` (hidden payload), `[Content_Types].xml`, `_rels/.rels`.
-- **Structure:** Paper title = Heading 1; categories = Heading (depth+1); questions = marker grammar (`N.)`, `(a)`, `Ans.`, `Exp:`, `Passage:`); a flashcard uses `N.)` front + `Answer:` back with no options.
+- **Structure:** Paper title = Heading 1; top-level categories = Heading 2, nested categories one level deeper per depth; questions = marker grammar (`N.)`, `(a)`, `Ans.`, `Exp:`, `Passage:`); a flashcard uses `N.)` front + `Answer:` back with no options.
 - **Math:** Native OMML (`m:oMath`) — `mathMlToOmml()`.
 - **Images:** `word/media/imageN.<ext>`; relationships in `word/_rels/document.xml.rels`.
 - **Tables:** Word tables (`w:tbl`) with borders, auto-fit.
@@ -1930,6 +1986,10 @@ or saving is one tap after picking the format.
 - **Writer:** `DocxPaperWriter.writeDocx()` (streaming: body → payload → media).
 
 ### 9. CSV Report (Result Screen → Share → CSV)
+
+Items 1–8 are the `ExportFormat` values offered by the format dialog; item 9
+is a separate share from the Results screen, listed here because it exports the
+same kind of data.
 - **Trigger:** Share → "CSV report" from result screen.
 - **Contains:** Header comment block (`# mcq report export`, `# attemptId=...`, `# paper=...`, `# type=...`, `# family=...`, `# exportedAt=...`, `# guessingCorrected=...%`), then RFC 4180 columns: `number,questionId,category,result,dwellSeconds,tags`.
 - **Result values:** `"Correct"`, `"Wrong"`, `"Skipped"`.
@@ -1940,7 +2000,7 @@ or saving is one tap after picking the format.
 
 ### Full Backup (`.zip`)
 
-**File name:** `mcqapp-backup-<timestamp>.zip` (timestamp = `System.currentTimeMillis()`).
+**File name:** `mcqapp-backup.zip` (fixed name for both Save and Share).
 
 **Archive layout (4 entries, written in order):**
 
@@ -1948,7 +2008,7 @@ or saving is one tap after picking the format.
 |-------|---------|----------|
 | `manifest.json` | `Manifest` (format, version, dbVersion, appVersion, exportedAt, counts) | 8 MB |
 | `content.json` | Full `McqFileDto` (all papers, questions, passages, bookmarks, attempts) | Streamed |
-| `study.json` | `StudyFile` (card_state rows **with contentHash**, review_log, paperCreated, panels, blueprints, inProgressTest) | Streamed |
+| `study.json` | `StudyFile` (card_state rows **with contentHash**, review_log, paperCreated, panels, blueprints, ladderVersions, studySessions, inProgressTest) | Streamed |
 | `settings.json` | `SettingsFile` (Map<String, PreferenceEntry<type, value>>) | 8 MB |
 
 **Images:** Stay inline as data URIs in `content.json` (extracting would break content-hash-keyed schedules).
@@ -1958,8 +2018,8 @@ or saving is one tap after picking the format.
 ```json
 {
   "format": "mcqapp-backup",
-  "version": 1,
-  "dbVersion": 42,
+  "version": 2,
+  "dbVersion": 29,
   "appVersion": "1.2.3",
   "exportedAt": 1700000000000,
   "papers": 3,
@@ -1988,22 +2048,34 @@ or saving is one tap after picking the format.
   "blueprints": [
     {"id":1,"paperId":"paper-1","name":"UPSC","createdAt":1700000001000,"sections":[{"categoryId":"cat-1","parts":5,"children":[]}]}
   ],
+  "ladderVersions": [
+    {"id":1,"easySeconds":40,"slowSeconds":90,"effectiveFrom":1700000000000,"reason":"config","correctnessOnly":false}
+  ],
+  "studySessions": [
+    {"id":1,"paperId":"paper-1","startedAt":1700000000000,"endedAt":1700000600000,"activeSeconds":600}
+  ],
   "inProgressTest": "{\"paperId\":\"paper-1\",\"selections\":[\"q-1\"],...}"  // or null
 }
 ```
 
 ### Export Flow (Settings → Backup)
 
-1. `BackupSource.collect(appVersion, inProgressTest)` in **one transaction**:
-   - `Exporter.exportAllDto(withScheduling=false)` → `content.json` (scheduling omitted; rides in `study.json`)
-   - `cardStateDao.getAll()`, `reviewLogDao.getAll()`, `paperDao.getAll()` → `study.json`
-   - Panels & blueprints read (small, not paged)
-   - Manifest counts from same snapshot
-2. `McqBackupFormat.writeTo()` streams each entry to zip:
+1. **Snapshot reads** (short, no transaction held across the write):
+   - app version, every paper row (id, `createdAt`, `sortOrder`), in-progress test
+   - counts in SQL: `countQuestions()`, `attemptDao.countAll()`, `reviewLogDao.countAll()`
+   - `settingsSnapshot()` (grading rules, theme, privacy, locale, haptics)
+2. `McqBackupFormat.writeTo()` streams each entry to the zip:
    - Manifest & settings: held whole (≤ 8 MB), encoded once
    - Content: `Exporter.exportAllTo(writer, withScheduling=false)` streams paper by paper
-   - Study: `writeStudyRows()` emits batches of 2000
-3. Zip bytes → Share sheet (Save / Share).
+     (scheduling is omitted because it rides in `study.json`)
+   - Study: `BackupSource.emitCards/emitReviews` in batches of 2000, plus panels,
+     blueprints, grading versions and study sessions
+3. **Consistency guard:** after the stream, `settingsUnchangedSince(snapshot)` re-reads
+   the grading settings. If a cut save or rule switch landed during a multi-minute
+   write, the settings and study rows describe two different rule sets; the file is
+   deleted and the backup fails with the settings-changed message (log code
+   `BACKUP_RULE_MOVED`) so a retry produces an honest one.
+4. Zip saved through the picker or Share sheet (Save / Share).
 
 ### Restore Flow (Settings → Restore Backup)
 
@@ -2012,10 +2084,10 @@ or saving is one tap after picking the format.
 **Atomicity:** Wipe + restore share **one DB transaction** (`db.withTransaction`). Failure at any point rolls back — library unchanged.
 
 **Steps (streaming):**
-1. `McqBackupFormat.readStreaming()` unzips, validates manifest (`format == "mcqapp-backup"`, `version <= 1`), enforces **content before study** (else `This backup holds its study rows before its content — mcqapp cannot read a backup re-packed in that order.`).
+1. `McqBackupFormat.readStreaming()` unzips, validates manifest (`format == "mcqapp-backup"`, `version <= 2`), enforces **content before study** (else `This backup holds its study rows before its content — mcqapp cannot read a backup re-packed in that order.`).
 2. `wipeAllTables()` — deletes **every user table** (excludes `sqlite_%`, `android_%`, `room_%`); FK CASCADE handles children.
-3. `StreamingImporter.importInTransaction()` → replays `content.json` through importer (same dedupe, same ID remapping).
-4. `cardState` rows upserted in batches of 2000 (with original `contentHash`).
+3. `StreamingImporter.importInTransaction(preserveIds = true)` → replays `content.json` through the importer. Dedupe is the same as a normal import, but ids are kept exactly as the archive carries them because the restored study rows reference them.
+4. `cardState` rows upserted in batches of 2000, then `reconcileRestoredCardHashes()` rewrites each restored `contentHash` to the hash the import just wrote for that question. This is what lets a schedule survive a content change (a v29 one-option→flashcard conversion, or any hash-formula change) instead of being deleted by the stale-content sweep.
 5. `reviewLog` rows inserted in batches of 2000.
 6. `paperCreated` → `paperDao.updateCreatedAt()` + `updateSortOrder()` (sortOrder null on pre-v20 backups → left alone).
 7. Panels & blueprints restored with **original IDs** (attempts reference them by `variant`).
@@ -2026,13 +2098,15 @@ or saving is one tap after picking the format.
 
 | Dialog | Title | Message | Buttons |
 |--------|-------|---------|---------|
-| **Restore confirmation** | (system alert) | `This wipes the current library and every setting, then restores the backup. Continue?` | `Replace everything` / Cancel |
-| **Restore success** | `Import complete` | `Restored X papers, Y questions, Z attempts, N schedules, M reviews.` + newer-app note + partial note | OK |
-| **Restore failure** | `Restore failed` | Exception message | OK |
-| **Backup missing part** | `Not an mcqapp backup` | `This backup is missing <part> — it may be truncated.` | OK |
-| **Wrong format** | `Not an mcqapp backup` | `Not an mcqapp backup (found format 'X').` | OK |
-| **Newer app version** | `Not an mcqapp backup` | `This backup was made by a newer app version (format X vs 1 here). Update the app and try again.` | OK |
-| **Repacked order** | `Not an mcqapp backup` | `This backup holds its study rows before its content — mcqapp cannot read a backup re-packed in that order.` | OK |
+| **Restore confirmation** | `Restore backup` | `This wipes the current library and every setting, then restores the backup. Continue?` | `Replace everything` / Cancel |
+| **Restore success** | `Restore backup` | `Restored X papers, Y questions, Z attempts, N schedules, M reviews.` + newer-app note + partial note | OK |
+| **Restore failure** | `Restore failed` | `Couldn’t restore the backup. Please try again.` — or, past the zip cap, `That backup is too large to restore (over 256 MB). It may be corrupt.` | OK |
+
+The precise cause never reaches the dialog: `Not an mcqapp backup (found
+format 'X').`, `This backup is missing content.json — it may be truncated.`,
+the newer-app note and the repacked-order note are logged only, and the user
+sees the one generic sentence above. Exception detail is deliberately kept out
+of user-facing copy.
 
 ### Merge vs Replace Semantics
 
@@ -2041,13 +2115,16 @@ snapshot**; restoring it must reproduce that exact state.
 
 **What happens to settings/themes/schedules on restore:**
 - **Settings** (`settings.json`): Applied via caller's `applySettings()` — all
-  preferences restored (theme, font scale, scheduling params, privacy, haptics).
-  Failure → `The library itself came back; settings were not restored (<error>)`.
+  preferences restored (theme, language, font scale, scheduling params, privacy,
+  haptics). Failure → `The library itself came back; settings were not restored.`
+  (the same sentence joins both failures with "and"; the detail is log-only).
 - **Themes** (custom): Carried in `SettingsFile` as JSON preference; re-imported with settings.
-- **Schedules** (`card_state`): Restored **verbatim with original `contentHash`** — a
-  card's schedule survives only if its question's content hash matches (content
-  unchanged). If content changed on import, schedule reset (logged:
-  `Content changed for id=..., schedule reset`).
+- **Schedules** (`card_state`): Restored verbatim (ids, FSRS memory, last review),
+  then **hash-reconciled**: each restored row's `contentHash` is rewritten to the
+  hash the content import just wrote for that question. A schedule therefore
+  survives a content change — including the v29 one-option→flashcard conversion —
+  instead of being deleted by the stale-content sweep. A card whose question is
+  absent from the archive is left untouched, never given a null hash.
 - **Review history** (`review_log`): Restored verbatim (ids, timestamps, ratings).
 - **Panels & Blueprints**: Restored with **original IDs** (attempt `variant` references them).
 - **In-progress test**: Resume snapshot restored via `applyInProgress()`.
@@ -2086,7 +2163,20 @@ expanded by default** (`rememberSaveable { mutableStateOf(true) }`). Header row
 
 Read by `McqTheme` in `MainActivity` (whole app, immediately — no restart).
 
-#### 1.2 Color Theme (Picker)
+#### 1.2 Language (Radio Group)
+**Key:** `app_language` | **Default:** `system` | **Tag:** `settings-language`
+
+| Option | Stored value | Meaning |
+|--------|--------------|---------|
+| `System default` | key absent | Follows the device language |
+| `English` | `en` | Forces English for the app only |
+| `Hindi` | `hi` | Forces Hindi for the app only |
+
+Helper line: `System default follows your device language. The other choices change only this app.`
+Changing it recreates the activity (the whole UI re-resolves its strings
+immediately); the setting travels in backups.
+
+#### 1.3 Color Theme (Picker)
 **Key:** `theme_palette` | **Default:** `material` | **Tag:** `theme-picker`
 
 - `ExposedDropdownMenuBox` with read-only `OutlinedTextField`, label `Color theme`, 5-dot swatch strip.
@@ -2119,7 +2209,7 @@ Read by `McqTheme` in `MainActivity` (whole app, immediately — no restart).
 
 **Import rules:** max 64 KB file, max 20 stored themes, same-name (case-insensitive) replaces, successful import selects the theme, no success toast, failure dialogs with exact messages (not a theme file, name 1–40 chars, control chars, 20 max, too large, could not open, hex colour format). JSON shape: `name`, `primary`, `secondary`, `tertiary`, `error`, `light{background,surface,surfaceVariant,onBackground}`, `dark{same}`.
 
-#### 1.3 Text Size (Radio Group)
+#### 1.4 Text Size (Radio Group)
 **Key:** `font_scale` | **Default:** `1.0` (`Default`) | **Snap:** `FontScale.coerce()` to nearest option.
 
 | Option | Value |
@@ -2131,7 +2221,7 @@ Read by `McqTheme` in `MainActivity` (whole app, immediately — no restart).
 
 **Effect:** `McqNavHost` provides `LocalDensity` with `fontScale` at nav root → **every sp-sized text in the app scales immediately**, no restart. Preview line always shown: `Preview: the quick brown fox jumps over 13 lazy dogs.`
 
-#### 1.4 Privacy (Switch)
+#### 1.5 Privacy (Switch)
 **Key:** `load_remote_images` | **Default:** `false` (off) | **Tag:** `setting-load-remote-images`
 
 | Field | Text |
@@ -2141,7 +2231,7 @@ Read by `McqTheme` in `MainActivity` (whole app, immediately — no restart).
 
 **Effect:** `QuestionImage` reads `LocalLoadRemoteImages`. When off, remote `http(s)` images render placeholder `Remote image hidden. Turn on Load remote images in Settings.` Data URIs unaffected. Immediate; open screens recompose.
 
-#### 1.5 Feedback (Switch)
+#### 1.6 Feedback (Switch)
 **Key:** `haptics_enabled` | **Default:** `true` (on) | **Tag:** `setting-haptics`
 
 | Field | Text |
@@ -2180,19 +2270,19 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 
 ### 3. Study / Spaced Repetition
 
-**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Study` label → `Target retention` slider → `Optimize FSRS parameters` block (which opens with the one-shot FSRS-7 notice, when pending) → `Ranking mode` chips → `Introduce new cards` switch → `Minimum easy answer threshold` / `Hard answer threshold` number rows → Response-time footnote → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
+**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Study` label → `Target retention` slider → `Ranking mode` chips → `Introduce new cards` switch → `Grade on correctness only` switch → **when that switch is off**: `Minimum easy answer threshold` / `Hard answer threshold` number rows + response-time footnote (both rows are hidden while correctness-only grading is on) → FSRS-7 notice (when pending) → `Optimize FSRS parameters` block → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
 
 **FSRS-6 → FSRS-7 notice.** An upgraded install whose stored weights were *fitted* (not the shipped FSRS-6 defaults) shows, above the Optimize block, `Fitted FSRS-6 weights could not be converted to FSRS-7: the model changed, not just the number of weights. Scheduling is on the official defaults; press Optimize to refit.` with an `OK` that calls `repository.dismissFsrs7Notice()`. It is raised once by `SettingsStore.ensureFsrs7()` and never resurrects: the flag is cleared, not recomputed.
 
 #### 3.1 Simplified Anki
-**Key:** `simplified_study` | **Default:** **on** (only setting in section defaulting on) | **Tag:** `setting-simplified-anki`
+**Key:** `simplified_study` | **Default:** **on** | **Tag:** `setting-simplified-anki`
 
 | Field | Text |
 |-------|------|
 | Label | `Simplified Anki` |
 | Help | `Grade study cards automatically from your answers instead of picking Again, Hard, Good or Easy after each card.` |
 
-**Effect:** `StudyViewModel.load()` snapshots into `state.simplified` per session. When on, `check()` calls `Study.autoGrade(...)` (exact match + not guessed → `Good`; exact + guessed → `Again`; wrong → `Again`; empty → `Again`). Uses the absolute dwell cuts: `dwell < fastSeconds` → `Easy`; `dwell >= slowSeconds` → `Hard`; else `Good`. Nothing is added for reading time. Scheduler underneath unchanged.
+**Effect:** `StudyViewModel.load()` snapshots into `state.simplified` per session. When on, `check()` calls `Study.autoGrade(...)` (exact match + not guessed → `Good`; exact + guessed → `Again`; wrong → `Again`; empty → `Again`). Uses the absolute dwell cuts: `dwell < fastSeconds` → `Easy`; `dwell >= slowSeconds` → `Hard`; else `Good`. Nothing is added for reading time. Scheduler underneath unchanged. **Exception:** a question with no answer key — a flashcard or a keyless multiple-choice question — stays self-graded even with Simplified on: there is no Check, only Show answer then Again/Hard/Good/Easy.
 
 #### 3.2 Target Retention
 **Key:** `fsrs_desired_retention` | **Default:** `0.9` | **Slider:** 0.75–0.97, 21 steps (0.01 apart). **Commit:** one write on drag end (`onValueChangeFinished`). The percentage is shown above the slider and follows the thumb while dragging. Help: `How reliably you want to recall cards when they come due. Higher asks for shorter intervals and more reviews.` Read per pull/grade ⇒ next review onward; already-scheduled dates untouched.
@@ -2247,7 +2337,7 @@ On: `Study.inferGrade` returns `Good` for every correct, unguessed answer and `A
 #### 3.6 Minimum Easy Answer Threshold
 **Key:** `anki_fast_seconds` | **Default:** `6` s | **Control:** stepper (`−`/`+`) + 88 dp field (decimal keyboard, suffix `s`). **Range:** 2–3599, step 1. **Domain clamp:** `coerceIn(2, 3599)`, which keeps a second of room below the Hard cut and leaves at least one measured second below the Easy cut — at 1 s no dwell would ever be Easy and the contrast could never be computed. Hidden while `Grade on correctness only` is on (the value is kept as the fallback rule).
 
-Absolute: a correct answer faster than this is `Easy`, and nothing is added for reading the question. Times are rounded to the nearest second, and an answer inside the first second is untimed and grades `Good`. A cut pair saved by a pre-v27 build is **retired on upgrade**: the version gate (`grading_rules_version`) is absent, so the first read writes the shipped 6/60 over the stored pair. The old value is kept in two inert settings (`retired_easy_seconds`, `retired_slow_seconds`) for the record — it was tuned against the deleted reading allowance and cannot be reinterpreted under this rule — so a learner who had tuned the cuts still has to re-enter the pair. A `Reset` that runs before the first read also retains the pair.
+Absolute: a correct answer faster than this is `Easy`, and nothing is added for reading the question. Times are rounded to the nearest second, and an answer inside the first second is untimed and grades `Good`. A cut pair saved by a pre-v28 build is **retired on upgrade**: the version gate (`grading_rules_version`) is absent, so the first read writes the shipped 6/60 over the stored pair. The old value is kept in two inert settings (`retired_easy_seconds`, `retired_slow_seconds`) for the record — it was tuned against the deleted reading allowance and cannot be reinterpreted under this rule — so a learner who had tuned the cuts still has to re-enter the pair. A `Reset` that runs before the first read also retains the pair.
 
 #### 3.7 Hard Answer Threshold
 **Key:** `anki_slow_seconds` | **Default:** `60` s | Same stepper/field, range 1–3600. **Cross-field rule:** `value > fastSeconds` (the pair keeps a one-second gap, because equal cuts leave the `Good` band empty). Validation: typing outside range or violating cross-field rule → field error, never commits, both steppers disabled.
@@ -2273,7 +2363,7 @@ Absolute: a correct answer faster than this is `Easy`, and nothing is added for 
 #### 3.9 Reset (Button)
 **Label:** `Reset` (TextButton, right of `Spaced repetition` heading). Asks for confirmation because it resets more than the schedule knobs. `Restore defaults` under Optimize also asks before discarding fitted weights.
 
-Does: `repository.resetSchedulerConfig()` — rewrites **pacing knobs only**: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, target retention, ranking mode, introduce-new-cards. **Deliberately does NOT touch fitted FSRS weights** (`fsrs_parameters`); `Restore defaults` in optimizer block is the only way to drop those. **It also does not touch the grading rule** (`correctness_only`): the rule is the measurement condition, not a pacing knob. A reset that changes the cut pair writes one `manual` grading version. A reset whose pair is already 6/60 changes no version and does not move the calibration epoch — moving a pacing knob cannot end the sample. The exception is the first reset of a pair saved by a pre-v27 build: that pair was retired on upgrade and never graded anything, so its stale id is dropped and the next read mints a fresh `prior` row at that moment; the epoch **does** move, to the point the retired history stopped being measurable.
+Does: `repository.resetSchedulerConfig()` — rewrites **pacing knobs only**: max interval, relearn delay, leech threshold, day-start hour, easy threshold, hard threshold, target retention, ranking mode, introduce-new-cards. **Deliberately does NOT touch fitted FSRS weights** (`fsrs_parameters`); `Restore defaults` in optimizer block is the only way to drop those. **It also does not touch the grading rule** (`correctness_only`): the rule is the measurement condition, not a pacing knob. A reset that changes the cut pair writes one `manual` grading version. A reset whose pair is already 6/60 changes no version and does not move the calibration epoch — moving a pacing knob cannot end the sample. The exception is the first reset of a pair saved by a pre-v28 build: that pair was retired on upgrade and never graded anything, so its stale id is dropped and the next read mints a fresh `prior` row at that moment; the epoch **does** move, to the point the retired history stopped being measurable.
 
 Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob edit and passes a transform to `McqRepository.updateSchedulerConfig`, which reads the stored config, applies the transform and writes it back **under the repository's scheduler write mutex**. The snapshot supplies only the fields without their own path; `fsrsParameters`, `correctnessOnlyGrading` and both cuts are taken from the value read under the mutex. The rule and each cut have their own handlers (`setGradeCorrectnessOnly`, `setFastSeconds`, `setSlowSeconds`), which go through the same read-modify-write, so the rule and the cuts are always read from the store before they are written and a stale composition snapshot cannot write them back. Reset, save and restore are serialised by that mutex, so two of them cannot interleave between their read and their version write.
 
@@ -2281,7 +2371,7 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob ed
 
 ### 4. Backup & Data
 
-**Body order:** Heading `Data` → 5 full-width `Button`s and `Export Logs` (all `enabled = !busy`) interleaved with 3 description lines → Heading `Storage` + `Refresh` → Heading `PDF export` + 2 switches.
+**Body order:** Heading `Data` → 5 full-width `Button`s and `Export Logs` (all `enabled = !busy`) interleaved with 5 description lines → Heading `Storage` + `Refresh` → Heading `PDF export` + 2 switches.
 
 #### 4.1 Buttons
 
@@ -2289,7 +2379,7 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob ed
 |---|-------|---------|--------|------------------------|
 | 1 | `Export all data (JSON)` | `!busy` | `CreateDocument("application/json")`, name `mcq-export.json` → streams `Exporter.exportAllTo` (includes papers, categories, questions, passages, bookmarks, attempts, **and** `scheduling` map) | System save dialog; success **silent** |
 | 2 | `Share all data (JSON)` | `!busy` | Renders JSON to `cacheDir/shared/mcq-export.json`, then `ACTION_SEND` chooser `Share file` | Chooser |
-| 3 | `Backup (zip)` | `!busy` | `CreateDocument("application/zip")`, name `mcqapp-backup.zip` → full zip: `manifest` (dbVersion, appVersion, exportedAt, counts), `content` (bank JSON without scheduling), `study.json` (card states, review log, paper createdAt+sortOrder, in-progress test, panels, blueprints), `settings.json` (all DataStore prefs except `in_progress_test` and `install_first_start_new`) | System save dialog; success **silent** |
+| 3 | `Backup (zip)` | `!busy` | `CreateDocument("application/zip")`, name `mcqapp-backup.zip` → full zip: `manifest` (dbVersion, appVersion, exportedAt, counts), `content` (bank JSON without scheduling), `study.json` (card states, review log, paper createdAt+sortOrder, in-progress test, panels, blueprints, grading versions, study sessions), `settings.json` (all DataStore prefs except `in_progress_test` and `install_first_start_new`) | System save dialog; success **silent** |
 | 4 | `Share backup (zip)` | `!busy` | Same zip to `cacheDir/shared/mcqapp-backup.zip`, then `Share file` chooser | Chooser |
 | 5 | `Restore backup` | `!busy` | `OpenDocument("application/zip", "application/octet-stream")` → **confirmation dialog first** | See below |
 | 6 | `Export Logs` | `!busy` | Shares app's log file via `FileProvider` + `ACTION_SEND` (`text/plain`), chooser title `Export Logs` | See failures |
@@ -2305,24 +2395,30 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob ed
 - Success dialog: title `Restore backup`, body = report string:
   `Restored <N> papers, <M> questions[, <A> attempts], <S> schedules, <R> reviews.`
   Optionally + ` Note: the backup was taken on a newer app (database v<X>, v<Y> here); its study rows may use fields this version ignores.`
-  Optionally + ` The library itself came back; settings were not restored (<msg>) and/or the in-progress test was not restored (<msg>).`
+  Optionally + ` The library itself came back; settings were not restored.` — or
+  `… and the in-progress test was not restored.`, or both joined with `and`
+  (no exception detail; it goes to the log only).
 - Storage report refreshed after success.
-- Failures: over 256 MB cap → `That backup is over the 256 MB restore limit — it may be corrupt.`; else `Restore failed: <exception>`; unreadable → `Restore failed: Could not read the file.`
+- Failures: over the zip cap → `That backup is too large to restore (over 256 MB). It may be corrupt.`; anything else (unreadable file, wrong manifest, missing part, repacked order) → `Couldn’t restore the backup. Please try again.` The specific cause is logged, never shown.
 
-**Export/Backup/Share Failure Bodies** (all in shared `Export failed` dialog — see §4.5):
-- `Could not open file for writing`
-- `Export failed: <exception>`
-- `Backup failed: <exception>`
+**Export/Backup/Share Failure Bodies** (title depends on the operation: `Export failed`, `Backup failed`, `Restore failed`, `Theme import failed`, `Export Logs`):
+- `Couldn’t open that location for writing.`
+- `Couldn’t export your data. Please try again.`
+- `Couldn’t create the backup. Please try again.`
+- `Your study settings changed while the backup was being written, so the saved settings and study history would not match. No file was saved — please try again.`
 - Share: `Could not prepare the file to share.` / `No app can share this file.`
 - Export Logs: `No log file exists yet.` / `No app can handle this share.`
+- No exception text is interpolated anywhere; the detail is log-only.
 
 #### 4.2 Description/Help Lines (Exact, Render Order)
 
 | Position | Text |
 |----------|------|
+| under `Export all data (JSON)` | `Backs up every paper, category, question, passage, bookmark, attempt and card schedule to one JSON file. Re-import it anywhere to restore content and history. Settings and the review log are only in the zip backup.` |
+| under `Export all data (JSON)` | `Single-paper JSON and ZIP exports contain questions only - study progress is not included. Use Full Backup or Export All Data JSON to keep schedules and review history.` |
 | under `Backup (zip)` | `Everything — papers, questions, schedules, review history, attempts, bookmarks and settings — in one readable zip. Restores exactly the state it was taken from.` |
 | under `Restore backup` | `Replaces the whole library and all settings with the backup's contents. Anything added since the backup is gone.` |
-| under `Export all data (JSON)` | `Backs up every paper, category, question, passage, bookmark, attempt and card schedule to one JSON file. Re-import it anywhere to restore content and history. Settings and the review log are only in the zip backup.` |
+| under `Export Logs` | `This file may contain paper titles and error details, including stack traces. Check it before sharing.` |
 
 #### 4.3 Storage
 
@@ -2351,9 +2447,13 @@ Data-flow: `SettingsViewModel.updateSchedulerConfig(config)` sanitises a knob ed
 - `Two-column layout`: read at export time (`LibraryViewModel`, `BookmarksViewModel`, `BrowseViewModel` call `repository.pdfTwoColumn().first()` per export) → applies to **subsequent exports** from any screen.
 - `Refresh answers on re-import`: read at import time (`LibraryViewModel`, `ImportViewModel`, `Importer`, `BackupRestorer`) → affects **future imports/restores only**.
 
-#### 4.5 Failure-Dialog Title Bug
+#### 4.5 Failure Dialogs
 
-**Every failure dialog is titled `Export failed`.** `SettingsScreen` tracks intended title in `exportErrorTitleRes` (assigned in 5 places) but dialog renders `stringResource(R.string.export_failed)` unconditionally. A `Backup failed`, `Restore failed`, `Theme import failed` or `Export Logs` failure appears under the wrong heading. The field is written and never read (dead state).
+Each operation supplies its own title through `SettingsOperationError.titleRes`:
+`Export failed`, `Backup failed`, `Restore failed`, `Theme import failed` or the
+`Export Logs` title. The generic `Export failed` fallback is used only when no
+title was supplied. Messages are the fixed sentences listed in §4.1; exception
+detail is logged, never rendered.
 
 ---
 
@@ -2384,8 +2484,9 @@ Every line, in render order:
   `[unreadable image]`; remote URLs → `[image: <url>]`.
 - **Import size limit:** 64 MB counts base64 payload (~33% overhead). A "small"
   bank with many pictures can trip it.
-- **Large image warning:** `Image is <N> KB` in import preview when data URI >
-  ≈ 100 KB base64.
+- **Large image warning:** `Large images (~<N> KB) — slows import` in the import
+  preview when the summed scalar image payload (question + options + explanation)
+  exceeds `LARGE_IMAGE_CHARS` = 256 KB of base64.
 - **Legacy scalar image fields** (`image` on question/option/explanation) shown
   as read-only rows with Remove button in Editor; no blank image fields
   anywhere.
@@ -2440,7 +2541,8 @@ this theme` (only when selected). Kept in backups (`settings.json`).
   }
 }
 ```
-All hex colours must be 6-digit (`#RRGGBB`).
+All hex colours are six hex digits with an optional leading `#` (`#RRGGBB` or
+`RRGGBB`).
 
 ---
 
@@ -2455,8 +2557,8 @@ learner, so it must not travel in a backup. `restore()` **replaces the whole
 preference set** — a setting changed since the backup does not survive a
 restore — skips both excluded keys, and invalidates the first-start answer
 before it clears anything. The next config read re-probes the restored
-database, which is what stops a pre-v27 backup landing in a formerly-fresh
-install from inheriting that install's correctness-only rule.
+database, which is what stops a backup that predates the marker landing in a
+formerly-fresh install from inheriting that install's correctness-only rule.
 
 ### Room Database (`mcq.db`)
 Tables: papers, categories, questions, options, passages, attempts, attempt
@@ -2472,9 +2574,9 @@ question_stats, etc.
 | **Questions** | `report.questions` | Sum of questions across all papers (category + paper-level). |
 | **Attempts** | `report.attempts` | `attemptDao.countAll()`. |
 | **Bookmarks** | `report.bookmarks` | `bookmarkDao.getAll().size`. |
-| **Per-paper usage** | `report.perPaper` | For each paper: title, question count, **image weight** (sum of base64 char length of all embedded images in that paper's questions, options, explanations, passages). |
+| **Per-paper usage** | `report.perPaper` | For each paper: title, question count, **image weight** (base64 char length of the scalar `image` / `explanationImage` fields and every option's `image` — pictures inside `elements` blocks and passages are not counted). |
 
-Expand toggle at > 5 papers. Footnote: `Image weight counts embedded pictures; large banks shrink automatically at import.`
+Expand toggle at > 10 papers. Footnote: `Image weight counts embedded pictures; large banks shrink automatically at import.`
 
 ---
 

@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -127,9 +128,9 @@ private fun KpiCard(bundle: GuessingData) {
         if (bundle.unflaggedReviews > 0) {
             Spacer(Modifier.height(8.dp))
             Text(
-                stringResource(
-                    R.string.stats_guess_coverage_note,
-                    bundle.reviews,
+                pluralStringResource(
+                    R.plurals.stats_guess_coverage_note,
+                    bundle.unflaggedReviews,
                     bundle.unflaggedReviews
                 ),
                 style = MaterialTheme.typography.labelSmall,

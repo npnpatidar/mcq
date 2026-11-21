@@ -772,7 +772,10 @@
     <string name="stats_guess_lift">Lift over chance</string>
     <string name="stats_guess_raw_accuracy">Raw accuracy</string>
     <string name="stats_guess_graded_pass">Graded pass</string>
-    <string name="stats_guess_coverage_note">Counting %1$d in-range reviews; %2$d older or self-graded rows carry no guess flag.</string>
+    <plurals name="stats_guess_coverage_note">
+        <item quantity="one">%1$d in-range review has no guess flag (an older row or a self-graded card) and is left out of these figures.</item>
+        <item quantity="other">%1$d in-range reviews have no guess flag (older rows or self-graded cards) and are left out of these figures.</item>
+    </plurals>
     <string name="stats_guess_outcomes">Outcomes</string>
     <string name="stats_guess_outcomes_help">Declared guess and correctness. Lucky is right by chance; earned is right by knowledge.</string>
     <string name="stats_guess_earned">Earned (knew it)</string>

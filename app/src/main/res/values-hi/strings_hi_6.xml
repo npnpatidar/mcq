@@ -28,7 +28,10 @@
     <string name="stats_guess_cost_detail">%1$d रिव्यू; अच्छा देने पर औसत %2$s रहता, कार्ड ने %3$s रखा।</string>
     <string name="stats_guess_cost_help">अनुमान से सही रिव्यू पर अच्छा ग्रेड देने पर जो अंतराल मिलता, घटाएँ कि कार्ड ने वास्तव में कितना रखा।</string>
     <string name="stats_guess_cost_none">अभी कोई अनुमान-सही रिव्यू दोबारा चलाया नहीं जा सका।</string>
-    <string name="stats_guess_coverage_note">%1$d रिव्यू गिने गए; %2$d पुरानी या स्व-ग्रेड की गई पंक्तियों में अनुमान चिह्न नहीं है।</string>
+    <plurals name="stats_guess_coverage_note">
+        <item quantity="one">%1$d रिव्यू में अनुमान चिह्न नहीं है (पुरानी पंक्ति या स्व-ग्रेड किया गया कार्ड) और वह इन आँकड़ों से बाहर है।</item>
+        <item quantity="other">%1$d रिव्यू में अनुमान चिह्न नहीं हैं (पुरानी पंक्तियाँ या स्व-ग्रेड किए गए कार्ड) और वे इन आँकड़ों से बाहर हैं।</item>
+    </plurals>
     <string name="stats_guess_didnt_know">पता नहीं था (गलत अनुमान)</string>
     <string name="stats_guess_dwell">कार्ड पर बिताया समय</string>
     <string name="stats_guess_dwell_earned">अर्जित: %1$s · %2$d समय सहित</string>

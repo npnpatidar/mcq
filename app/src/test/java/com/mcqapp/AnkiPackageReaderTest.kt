@@ -12,6 +12,7 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.util.InlineHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -345,7 +346,14 @@ class AnkiPackageReaderTest {
 
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
-        assertEquals("Capital of\nFrance?", question.text)
+        // The card front keeps its inline markup: the stored element is what the
+        // renderer formats, so the raw string carries <b>, and the rendered
+        // text is the prompt the learner reads.
+        val front = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.TextElement>()
+            .single()
+        assertTrue("inline markup must survive storage: ${front.text}", "<b>Capital</b>" in front.text)
+        assertEquals("Capital of\nFrance?", InlineHtml.parse(front.text).text)
         // Nothing distinguishes an answer line from the rest of the back: the
         // whole field is the flashcard's answer.
         assertEquals(emptyList<OptionDto>(), question.options)

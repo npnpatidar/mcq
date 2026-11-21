@@ -30,6 +30,7 @@
     <string name="test_setup_minutes_label">%1$d मिनट</string>
     <string name="test_setup_no_blueprints">अभी कोई ब्लूप्रिंट नहीं है। नीचे “नया…” से एक बनाएँ।</string>
     <string name="test_setup_no_mistakes">इस दायरे में कोई गलती नहीं है।</string>
+    <string name="test_setup_scope_flashcards_only">यहाँ कोई बहुविकल्पीय प्रश्न नहीं हैं — फ़्लैशकार्ड केवल अध्ययन के लिए हैं</string>
     <string name="test_setup_no_panels">अभी कोई पैनल नहीं है। कोई दूसरा प्रकार चुनें, फिर उसके चुने गए प्रश्नों को पैनल के रूप में सहेजें।</string>
     <string name="test_setup_no_tags">इस दायरे में कोई टैग नहीं है</string>
     <string name="test_setup_panel_delete">पैनल हटाएँ</string>

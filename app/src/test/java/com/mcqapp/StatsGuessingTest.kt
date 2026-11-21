@@ -8,7 +8,6 @@ import com.mcqapp.domain.stats.GuessBand
 import com.mcqapp.domain.stats.ReplayReview
 import com.mcqapp.domain.stats.StatsAggregator
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,7 +76,7 @@ class StatsGuessingTest {
     )
 
     @Test
-    fun flaggedReviewsSplitIntoTheFourOutcomesWhileUnflaggedOnesAreOnlyCounted() {
+    fun flaggedReviewsSplitIntoTheFourOutcomesWhileUnflaggedRowsAreLeftOut() {
         val data = build(
             listOf(
                 review("q1", now - 50 * minute, guess = false, correct = true),
@@ -85,12 +84,15 @@ class StatsGuessingTest {
                 review("q3", now - 30 * minute, guess = true, correct = true),
                 review("q4", now - 20 * minute, guess = true, correct = false),
                 review("q5", now - 10 * minute, guess = false, correct = false),
-                // A row written before v19: no flag at all.
+                // A self-graded card review (or a row written before v19):
+                // no flag at all.
                 review("q6", now, guess = null, correct = null)
             )
         )
 
-        assertEquals(6, data.allReviews)
+        // The unflagged row is not in the denominator either: counting it made
+        // a card-heavy log look permanently incomplete.
+        assertEquals(5, data.allReviews)
         assertEquals(5, data.reviews)
         assertEquals(2, data.earned)
         assertEquals(1, data.lucky)
@@ -101,7 +103,6 @@ class StatsGuessingTest {
         assertEquals(0.5, data.hitRate!!, 1e-9)
         assertEquals(0.6, data.rawAccuracy!!, 1e-9)
         assertEquals(0.4, data.gradedPassRate!!, 1e-9)
-        assertFalse("one row carries no flag", data.isComplete)
         assertTrue(data.hasData)
     }
 

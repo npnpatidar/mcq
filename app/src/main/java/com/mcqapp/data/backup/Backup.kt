@@ -1068,6 +1068,12 @@ class BackupRestorer(private val db: AppDatabase) {
                 .import(content)
             db.cardStateDao().upsertAll(backup.study.cardState.map { it.toEntity() })
             db.reviewLogDao().insertAll(backup.study.reviewLog.map { it.toEntity() })
+            // The content import may have rewritten a question's hash (a
+            // one-option question becomes a flashcard, or an older hash
+            // formula changed). The study rows arrive verbatim, so reconcile
+            // them before the transaction commits or the next study pull's
+            // stale sweep deletes the schedule.
+            reconcileRestoredCardHashes()
             for (paper in backup.study.paperCreated) {
                 db.paperDao().updateCreatedAt(paper.id, paper.createdAt)
                 // Missing on pre-v20 backups: leave the importer's order.
@@ -1225,6 +1231,11 @@ class BackupRestorer(private val db: AppDatabase) {
             )
             flushCards()
             flushLogs()
+            // Both sides were replayed from this one archive, so the
+            // question's freshly written hash is the truth for its restored
+            // card. Reconcile inside the transaction: the study pull treats a
+            // mismatch as edited content and deletes the schedule.
+            reconcileRestoredCardHashes()
             read
         }
         // The heap after a restore reads as a gate on this path: a streamed
@@ -1273,6 +1284,32 @@ class BackupRestorer(private val db: AppDatabase) {
         val partialNote = if (partial.isEmpty()) "" else " " + renderPartialNote(partial)
         return "Restored ${manifest.papers} papers, ${manifest.questions} questions" +
             "$attemptNote, $schedules schedules, $reviews reviews." + newerAppNote + partialNote
+    }
+
+    /**
+     * Makes every restored schedule carry its question's current hash.
+     *
+     * A backup taken before database v29 stores a one-option question and the
+     * old option-inclusive hash; the content import converts that question to a
+     * flashcard and writes the prompt-only hash. The `card_state` rows are
+     * replayed verbatim (that is what preserves their ids and FSRS memory), so
+     * without this write the study pull's stale-content sweep sees a mismatch
+     * and deletes a schedule the learner earned. The same reconciliation also
+     * repairs a backup written before any other hash-formula change.
+     *
+     * The database was wiped and both sides came from the same archive, so the
+     * question's hash — just written by the import — is authoritative. Rows are
+     * matched by question id; a card whose question is not in the archive is
+     * left untouched rather than given a null hash.
+     */
+    private fun reconcileRestoredCardHashes() {
+        db.openHelper.writableDatabase.execSQL(
+            "UPDATE card_state SET contentHash = " +
+                "(SELECT questions.contentHash FROM questions " +
+                "WHERE questions.id = card_state.questionId) " +
+                "WHERE EXISTS (SELECT 1 FROM questions " +
+                "WHERE questions.id = card_state.questionId)"
+        )
     }
 
     /**

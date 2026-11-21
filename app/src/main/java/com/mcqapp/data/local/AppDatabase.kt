@@ -7,10 +7,15 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.mcqapp.data.io.ContentHash
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.TagNormalizer
+import com.mcqapp.domain.backFromSingleOption
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.textContent
+import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -37,7 +42,7 @@ import kotlinx.coroutines.withContext
         GradingVersionEntity::class,
         StudySessionEntity::class
     ],
-    version = 28,
+    version = 29,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -121,7 +126,7 @@ abstract class AppDatabase : RoomDatabase() {
     }
 
     /**
-     * The app's single definition of a new install (v28): this database has
+     * The app's single definition of a new install (v29): this database has
      * never held a paper or a review row.
      *
      * The first-launch grading-rule seed asks this instead of probing for the
@@ -1022,6 +1027,218 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Flashcards and back search (v29).
+         *
+         * The back has always been `explanation` + `explanationImage`; a card
+         * with no options is a flashcard, so nothing new stores it. This step
+         * adds the two columns search needs — the back flattened at write time
+         * ([QuestionEntity.backText]) and its folded twin — because matching
+         * the elements JSON on every keystroke is exactly what `searchText`
+         * was introduced to stop.
+         *
+         * It also normalises the one shape that is not a valid card: a
+         * question with exactly one option. One option cannot be a
+         * multiple-choice question and is the answer a card lost its other
+         * options to, so it becomes a flashcard through the same rule the
+         * importers and the editor use ([backFromSingleOption]): the option's
+         * content becomes the answer, the existing explanation follows it, and
+         * Anki's cloze placeholder is replaced rather than kept as noise.
+         *
+         * The schedule survives the conversion. `card_state.contentHash` is
+         * the identity the learner last studied, compared with
+         * [com.mcqapp.data.io.ContentHash] on every read; the option no longer
+         * contributes to that identity, so the hash is recomputed with no
+         * options and written to the question *and* to every card row for it.
+         * Without the second write the next review would read the old hash as
+         * "content edited" and drop a schedule the learner earned.
+         */
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `questions` ADD COLUMN `backText` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `questions` ADD COLUMN `backTextFolded` " +
+                        "TEXT NOT NULL DEFAULT ''"
+                )
+                backfillBackText(db)
+                convertSingleOptionQuestions(db)
+            }
+        }
+
+        /** Rows filled per back-text backfill round trip. */
+        private const val BACK_TEXT_BATCH = 2000
+
+        /**
+         * Fills the back-search columns from the explanation JSON already on
+         * disk. Keyset-paged by rowid like [backfillSearchText] — stable
+         * because the update never changes the key — so peak memory is one
+         * batch, not a whole 250k-question bank. Multiple-choice rows get a
+         * back too: their explanation is visible after answering and is
+         * searched from now on.
+         */
+        private fun backfillBackText(db: SupportSQLiteDatabase) {
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            val update = db.compileStatement(
+                "UPDATE questions SET backText = ?, backTextFolded = ? WHERE rowid = ?"
+            )
+            try {
+                var last = -1L
+                while (true) {
+                    val batch = ArrayList<Pair<Long, String>>(BACK_TEXT_BATCH)
+                    db.query(
+                        "SELECT rowid, explanation FROM questions " +
+                            "WHERE rowid > ? ORDER BY rowid LIMIT $BACK_TEXT_BATCH",
+                        arrayOf(last)
+                    ).use { c ->
+                        while (c.moveToNext()) {
+                            batch += c.getLong(0) to
+                                c.getString(1).parseContentElements(json).searchableText
+                        }
+                    }
+                    if (batch.isEmpty()) break
+                    for ((rowid, text) in batch) {
+                        update.clearBindings()
+                        update.bindString(1, text)
+                        update.bindString(2, text.lowercase())
+                        update.bindLong(3, rowid)
+                        update.executeUpdateDelete()
+                        last = rowid
+                    }
+                }
+            } finally {
+                update.close()
+            }
+        }
+
+        /**
+         * Rewrites every question that has exactly one option as a flashcard,
+         * in one transaction: the merged back, the dropped option and its key,
+         * the recomputed identity and the matching card rows land together or
+         * not at all.
+         *
+         * The ids are collected before anything is written, so no cursor is
+         * open over a table being changed. Questions with zero options are
+         * already flashcards and only keep the back text the backfill wrote;
+         * questions with two or more options are valid and untouched.
+         */
+        private fun convertSingleOptionQuestions(db: SupportSQLiteDatabase) {
+            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            val questionIds = ArrayList<String>()
+            db.query(
+                "SELECT questionId FROM options GROUP BY questionId HAVING COUNT(*) = 1"
+            ).use { c -> while (c.moveToNext()) questionIds += c.getString(0) }
+            if (questionIds.isEmpty()) return
+
+            val updateQuestion = db.compileStatement(
+                "UPDATE questions SET `explanation` = ?, `explanationImage` = ?, " +
+                    "`contentHash` = ?, `backText` = ?, `backTextFolded` = ? " +
+                    "WHERE rowid = ?"
+            )
+            val updateSchedule = db.compileStatement(
+                "UPDATE card_state SET `contentHash` = ? WHERE `questionId` = ?"
+            )
+            val deleteKey = db.compileStatement(
+                "DELETE FROM correct_answers WHERE `questionId` = ?"
+            )
+            val deleteOption = db.compileStatement(
+                "DELETE FROM options WHERE `questionId` = ?"
+            )
+            db.beginTransaction()
+            try {
+                for (questionId in questionIds) {
+                    var rowid = -1L
+                    var stemText = ""
+                    var passageId: String? = null
+                    var explanation: List<ContentElement> = emptyList()
+                    var explanationImage: String? = null
+                    db.query(
+                        "SELECT rowid, text, passageId, explanation, explanationImage " +
+                            "FROM questions WHERE id = ?",
+                        arrayOf(questionId)
+                    ).use { c ->
+                        if (c.moveToNext()) {
+                            rowid = c.getLong(0)
+                            stemText = c.getString(1).parseContentElements(json).textContent
+                            passageId = if (c.isNull(2)) null else c.getString(2)
+                            explanation = c.getString(3).parseContentElements(json)
+                            explanationImage = if (c.isNull(4)) null else c.getString(4)
+                        }
+                    }
+                    // An option whose question is already gone cannot be
+                    // rewritten into one.
+                    if (rowid < 0) continue
+
+                    var optionElements: List<ContentElement> = emptyList()
+                    var optionImage: String? = null
+                    db.query(
+                        "SELECT text, image FROM options WHERE questionId = ?",
+                        arrayOf(questionId)
+                    ).use { c ->
+                        if (c.moveToNext()) {
+                            optionElements = c.getString(0).parseContentElements(json)
+                            optionImage = if (c.isNull(1)) null else c.getString(1)
+                        }
+                    }
+
+                    val back = backFromSingleOption(
+                        optionElements = optionElements,
+                        optionText = optionElements.textContent,
+                        explanationElements = explanation,
+                        explanationImage = explanationImage
+                    )
+                    // An option's picture lives in its scalar column in this
+                    // schema; a file-shaped row may instead carry it as a
+                    // trailing image element, which the merged blocks already
+                    // hold. Only a picture the blocks do not show becomes the
+                    // explanation scalar, so nothing renders twice.
+                    val backImage = explanationImage ?: optionImage?.takeUnless { src ->
+                        back.any { it is ContentElement.ImageElement && it.src == src }
+                    }
+                    val backText = back.searchableText
+                    // A flashcard's identity is its stem, exactly as
+                    // ContentHash hashes an optionless question.
+                    val hash = ContentHash.of(stemText, emptyList(), emptyList(), passageId)
+
+                    updateQuestion.clearBindings()
+                    updateQuestion.bindString(1, back.toContentJson(json))
+                    if (backImage == null) {
+                        updateQuestion.bindNull(2)
+                    } else {
+                        updateQuestion.bindString(2, backImage)
+                    }
+                    updateQuestion.bindString(3, hash)
+                    updateQuestion.bindString(4, backText)
+                    updateQuestion.bindString(5, backText.lowercase())
+                    updateQuestion.bindLong(6, rowid)
+                    updateQuestion.executeUpdateDelete()
+
+                    deleteKey.clearBindings()
+                    deleteKey.bindString(1, questionId)
+                    deleteKey.executeUpdateDelete()
+
+                    deleteOption.clearBindings()
+                    deleteOption.bindString(1, questionId)
+                    deleteOption.executeUpdateDelete()
+
+                    // Every paper's card for this question learned the old
+                    // identity. Re-hash them all so the schedule is kept.
+                    updateSchedule.clearBindings()
+                    updateSchedule.bindString(1, hash)
+                    updateSchedule.bindString(2, questionId)
+                    updateSchedule.executeUpdateDelete()
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+                updateQuestion.close()
+                updateSchedule.close()
+                deleteKey.close()
+                deleteOption.close()
+            }
+        }
+
+        /**
          * Whether this file has a table called [name].
          *
          * It exists because 27->28 must run on a pre-merge branch v27 that has
@@ -1258,7 +1475,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                     MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
+                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

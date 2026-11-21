@@ -46,7 +46,12 @@ class UpdateAnswersOnDuplicateTest {
         db.close()
     }
 
-    private fun file(questionId: String, correct: List<String>, image: String? = null) = McqFileDto(
+    private fun file(
+        questionId: String,
+        correct: List<String>,
+        image: String? = null,
+        explanation: String = ""
+    ) = McqFileDto(
         version = 1,
         papers = listOf(
             PaperDto(
@@ -63,7 +68,8 @@ class UpdateAnswersOnDuplicateTest {
                                     OptionDto(id = "a", text = "3"),
                                     OptionDto(id = "b", text = "4")
                                 ),
-                                correctOptionIds = correct
+                                correctOptionIds = correct,
+                                explanation = explanation
                             )
                         )
                     )
@@ -142,6 +148,27 @@ class UpdateAnswersOnDuplicateTest {
                 + db.questionDao().search("alpha", "alpha", 10, 0).map { it.id },
             db.questionDao().search("alpha", "alpha", 10, 0).any { it.id == "q1" }
         )
+    }
+
+    /**
+     * The same refresh writes `explanation`, so the back-search twins have to
+     * move with it. Leaving them behind made a corrected answer visible but
+     * unfindable: `backText` kept the old sentence forever.
+     */
+    @Test
+    fun theDuplicateRefreshPathRewritesTheBackSearchText() = kotlinx.coroutines.runBlocking {
+        Importer(db).import(file("q1", listOf("b"), explanation = "First answer."))
+        val report = Importer(db, updateAnswersOnDuplicate = true)
+            .import(file("q2", listOf("a"), explanation = "Second answer."))
+
+        assertEquals("the refresh path must have run", 1, report.answersRefreshed)
+        val q1 = db.questionDao().getById("q1")!!
+        assertEquals("Second answer.", q1.explanation)
+        assertEquals("Second answer.", q1.backText)
+        assertEquals("second answer.", q1.backTextFolded)
+        // The stem column is the question's own text and must not move.
+        assertEquals("2 + 2?", q1.searchText)
+        assertEquals("2 + 2?", q1.searchTextFolded)
     }
 
     @Test

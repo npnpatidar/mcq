@@ -526,6 +526,12 @@ fun LibraryScreen(
             loadScopedMistakeCount = { scopeIds ->
                 viewModel.repository.getScopedMistakeCount(request.paper.id, scopeIds)
             },
+            loadTestableCount = { scopeIds ->
+                viewModel.testableCountForScope(request.paper.id, scopeIds)
+            },
+            loadTestableCategoryCounts = {
+                viewModel.testableCategoryCounts(request.paper.id)
+            },
             loadMinBlockSize = { type, scopeIds ->
                 when (type) {
                     TestType.MISTAKES ->

@@ -15,6 +15,7 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.backFromSingleOption
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
@@ -29,6 +30,7 @@ import java.io.InputStream
 data class AnkiReadResult(
     val file: McqFileDto,
     val noteCount: Int,
+    /** Notes/cards that import as flashcards (zero options, or one normalised choice). */
     val recallCount: Int,
     val deckCount: Int,
     /**
@@ -59,8 +61,8 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  *
  * Questions come from a note's structured payload field when present (an exact
  * round trip of our own exports). Otherwise the readable back field is parsed
- * for `✓`/`✗` markers, and a note with no markers becomes a single-option
- * recall question.
+ * for `✓`/`✗` markers, and a note with no markers becomes a zero-option
+ * flashcard whose front is the note's front and whose back is the note's back.
  */
 object AnkiPackageReader {
 
@@ -884,7 +886,12 @@ object AnkiPackageReader {
 
     // ---- note -> question ----
 
-    /** A question plus whether it had to be reduced to a single option. */
+    /**
+     * A question plus whether it will be imported as a flashcard. The
+     * importers normalise any question with at most one option into a
+     * zero-option card, so the count follows that shape rather than the raw
+     * option list: a single marker (`(a)` with no second choice) is a card too.
+     */
     private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
 
     /**
@@ -982,8 +989,9 @@ object AnkiPackageReader {
                 tags = (payload.tags + note.tags).distinct(),
                 passageId = payload.passageId
             ),
-            // Nothing to choose between, so this counts as a recall question.
-            isRecall = payload.options.isEmpty())
+            // Nothing to choose between (or a single option the importer will
+            // normalise into the answer), so this counts as a flashcard.
+            isRecall = payload.options.size <= 1)
         }
 
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))
@@ -1023,7 +1031,9 @@ object AnkiPackageReader {
                     difficulty = difficulty,
                     tags = note.tags
                 ),
-                isRecall = false
+                // At most one option is normalised into a flashcard by the
+                // importer, so the report must count it as one here.
+                isRecall = options.size <= 1
             )
         }
 
@@ -1042,22 +1052,25 @@ object AnkiPackageReader {
                     difficulty = difficulty,
                     tags = note.tags
                 ),
-                isRecall = false
+                isRecall = options.size <= 1
             )
         }
 
-        // A foreign note with no options: keep the content as a single-option
-        // recall question rather than dropping it.
-        val answer = fieldToText(backHtml, media)
+        // A foreign note with no options and no markers is a flashcard: the
+        // front is the prompt and the whole back field is the answer. Built
+        // from elements (not fieldToText, which flattens a table and keeps
+        // only the first picture): a back can hold prose, a table and several
+        // pictures, and all of it belongs on the back.
+        val backElements = htmlToElements(backHtml, media)
         return ParsedQuestion(
             QuestionDto(
                 id = questionId,
                 text = front.first,
                 image = front.second,
-                options = listOf(
-                    OptionDto("o0", text = answer.first.ifBlank { front.first }, image = answer.second)
-                ),
-                correctOptionIds = listOf("o0"),
+                options = emptyList(),
+                correctOptionIds = emptyList(),
+                explanation = backElements.textContent,
+                explanationElements = backElements,
                 difficulty = difficulty,
                 tags = note.tags
             ),
@@ -1191,15 +1204,21 @@ object AnkiPackageReader {
     }
 
     /**
-     * Splits a cloze note into one question per card. Anki generates a card per
-     * deletion and sets that deletion's ord in the field it blanks, so the
-     * hidden text is the answer.
+     * Splits a cloze note into one flashcard per card. Anki generates a card
+     * per deletion and sets that deletion's ord in the field it blanks, so the
+     * hidden text is the answer — a cloze card has nothing to choose between,
+     * which makes it a zero-option flashcard with the deletion as its back.
      *
      * `ord` is Anki's cloze number − 1, not a position: a note numbered
      * `{{c1::…}}` / `{{c3::…}}` with ord 2 must resolve to c3, so the deletion
      * is chosen by parsed number. The stem hides the deletions of the current
      * number (Anki's `[...]`) and reveals the others, so it never carries the
      * answer nor the raw `{{cN::…}}` markup.
+     *
+     * The placeholder explanation the earlier rebuild wrote is replaced by the
+     * deletion through the shared [backFromSingleOption] rule, never appended
+     * after it. The question id keeps its `-ord` suffix, so the card's own
+     * schedule is still keyed by the instance that produced it.
      */
     private fun clozeQuestion(note: AnkiNote, frontHtml: String, ord: Int, media: MediaIndex): QuestionDto? {
         val deletions = CLOZE_PATTERN.findAll(frontHtml)
@@ -1211,14 +1230,22 @@ object AnkiPackageReader {
         val target = deletions.firstOrNull { it.number == ord + 1 } ?: deletions.getOrNull(ord)
         if (target == null) return null
         val text = fieldToText(clozeStem(frontHtml, deletions, target.number), media).first
-        val answer = AnkiHtml.toPlainText(target.match.groupValues[2])
+        val answerHtml = target.match.groupValues[2]
+        val answerElements = htmlToElements(answerHtml, media)
+        val back = backFromSingleOption(
+            optionElements = answerElements,
+            optionText = AnkiHtml.toPlainText(answerHtml),
+            explanationElements = listOf(ContentElement.TextElement(FALLBACK_CLOZE_EXPLANATION)),
+            explanationImage = null
+        )
         val questionId = "anki-${note.guid.ifBlank { note.id }}-$ord"
         return QuestionDto(
             id = questionId,
             text = text.ifBlank { CLOZE_BLANK },
-            options = listOf(OptionDto("o0", answer)),
-            correctOptionIds = listOf("o0"),
-            explanation = FALLBACK_CLOZE_EXPLANATION,
+            options = emptyList(),
+            correctOptionIds = emptyList(),
+            explanation = back.textContent,
+            explanationElements = back,
             tags = note.tags + "anki-cloze"
         )
     }

@@ -32,7 +32,8 @@ class TestSetupTest {
         exclusionMode: ExclusionMode = ExclusionMode.NONE,
         minBlockSize: Int = 1,
         variant: String? = null,
-        blueprint: PlanBlueprint? = null
+        blueprint: PlanBlueprint? = null,
+        scopeIsFlashcardsOnly: Boolean = false
     ) = TestSetup(
         paperId = "p1",
         categoryIds = categoryIds,
@@ -48,7 +49,8 @@ class TestSetupTest {
         exclusionMode = exclusionMode,
         variant = variant,
         minBlockSize = minBlockSize,
-        blueprint = blueprint
+        blueprint = blueprint,
+        scopeIsFlashcardsOnly = scopeIsFlashcardsOnly
     )
 
     @Test
@@ -371,5 +373,71 @@ class TestSetupTest {
     fun aNonCustomSetupIgnoresAnUnsetVariant() {
         val random = setup(type = TestType.RANDOM, available = 1000)
         assertNull(random.plan().variant)
+    }
+
+    @Test
+    fun aFlashcardsOnlyScopeSaysStudyOnlyInsteadOfEmpty() {
+        // The scope has content, but all of it is study-only: the sheet must
+        // not call a non-empty scope empty.
+        val flashcardsOnly = setup(
+            requested = 20,
+            available = 0,
+            scopeIsFlashcardsOnly = true
+        )
+        assertFalse(flashcardsOnly.startable())
+        assertEquals(TestPlan.NO_MULTIPLE_CHOICE_MESSAGE, flashcardsOnly.message())
+        assertEquals(0, flashcardsOnly.resolvedCount())
+        // A truly empty scope keeps the old message.
+        val empty = setup(available = 0)
+        assertEquals(TestPlan.EMPTY_SCOPE_MESSAGE, empty.message())
+    }
+
+    @Test
+    fun aPanelThatLostMembersToFlashcardsReportsAskedAndRan() {
+        // The frozen panel holds 5 ids; one is a flashcard and one was
+        // deleted, so a test can serve 3. The sheet says both numbers instead
+        // of silently running fewer.
+        val mixed = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 5,
+            available = 3,
+            variant = "1"
+        )
+        assertTrue(mixed.startable())
+        assertEquals(3, mixed.resolvedCount())
+        assertTrue(mixed.showsAskedRun())
+
+        // Every member is testable: nothing shrank, so there is no line.
+        val whole = setup(
+            type = TestType.FIXED_PANEL,
+            requested = 5,
+            available = 5,
+            variant = "1"
+        )
+        assertEquals(5, whole.resolvedCount())
+        assertFalse(whole.showsAskedRun())
+    }
+
+    @Test
+    fun aBlueprintWithFlashcardsReportsAskedAndRan() {
+        val blueprint = PlanBlueprint(
+            label = "UPSC",
+            sections = listOf(
+                BlueprintSection("c-polity", "Polity", 1, scopeCategoryIds = listOf("c-polity"))
+            )
+        )
+        // 100 asked over a 99-question testable supply (the raw pool had 100,
+        // but one is a flashcard): the run clamps to 99 and says both.
+        val clamped = setup(
+            type = TestType.BLUEPRINT,
+            requested = 100,
+            available = 99,
+            categoryIds = listOf("c-polity"),
+            variant = "1",
+            blueprint = blueprint
+        )
+        assertTrue(clamped.startable())
+        assertEquals(99, clamped.resolvedCount())
+        assertTrue(clamped.showsAskedRun())
     }
 }

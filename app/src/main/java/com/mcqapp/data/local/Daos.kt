@@ -441,7 +441,9 @@ interface QuestionDao {
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
             "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions " +
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
             "ORDER BY categories.sortOrder, categories.title, " +
@@ -470,10 +472,16 @@ interface QuestionDao {
      * the top on every page of a category a million rows deep;
      * `Int.MIN_VALUE`/`Long.MIN_VALUE` is below every stored value, so the
      * same statement serves the first page.
+     *
+     * **This is the test path only.** A flashcard (a question with no
+     * options) is study-only, so it must never enter a test order; the
+     * `EXISTS` keeps it out here rather than in the sampler. Study reads its
+     * own pools and is unaffected.
      */
     @Query(
         "SELECT id, passageId, sortOrder, rowid AS rowId FROM questions " +
             "WHERE categoryId = :categoryId " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
             "AND (sortOrder > :afterSortOrder " +
             "  OR (sortOrder = :afterSortOrder AND rowid > :afterRowId)) " +
             "ORDER BY sortOrder, rowid LIMIT :limit"
@@ -496,6 +504,9 @@ interface QuestionDao {
      * The identity columns a signal calculation needs for one scope: id,
      * category, category title, content hash and the authored difficulty. No
      * stem, options or explanation, so a large scope stays a light scan.
+     *
+     * Flashcards are study-only, so a question with no options is left out:
+     * a signal selector is a test path and must never rank one.
      */
     @Query(
         "SELECT q.id AS questionId, q.passageId AS passageId, " +
@@ -503,18 +514,20 @@ interface QuestionDao {
             "c.title AS categoryTitle, q.contentHash AS contentHash, " +
             "q.difficulty AS difficulty FROM questions q " +
             "INNER JOIN categories c ON c.id = q.categoryId " +
-            "WHERE q.categoryId IN (:categoryIds)"
+            "WHERE q.categoryId IN (:categoryIds) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id)"
     )
     suspend fun getSignalRowsByCategories(categoryIds: List<String>): List<QuestionSignalRow>
 
-    /** [getSignalRowsByCategories] for a whole paper. */
+    /** [getSignalRowsByCategories] for a whole paper; flashcards are excluded the same way. */
     @Query(
         "SELECT q.id AS questionId, q.passageId AS passageId, " +
             "q.categoryId AS categoryId, " +
             "c.title AS categoryTitle, q.contentHash AS contentHash, " +
             "q.difficulty AS difficulty FROM questions q " +
             "INNER JOIN categories c ON c.id = q.categoryId " +
-            "WHERE c.paperId = :paperId"
+            "WHERE c.paperId = :paperId " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id)"
     )
     suspend fun getSignalRowsForPaper(paperId: String): List<QuestionSignalRow>
 
@@ -564,11 +577,57 @@ interface QuestionDao {
     suspend fun countForCategories(paperId: String, categoryIds: List<String>): Int
 
     /**
+     * How many of the paper's questions a **test** can serve: a flashcard (a
+     * question with no options) is study-only, so it is excluded here. This is
+     * the setup sheet's pool and the sampler's supply, never the library
+     * badge, which keeps the raw [countForPaper] figure.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id)"
+    )
+    suspend fun countTestableForPaper(paperId: String): Int
+
+    /**
+     * [countTestableForPaper] over an explicit category selection. The paper is
+     * pinned by id, so a stale id from another paper cannot inflate the count.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND questions.categoryId IN (:categoryIds) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id)"
+    )
+    suspend fun countTestableForCategories(paperId: String, categoryIds: List<String>): Int
+
+    /**
+     * Per-category **testable** counts for one paper: the same row type
+     * [categoryCountsForPaper] returns, but flashcards are left out. The
+     * blueprint section pools read this so every shown pool is a supply a test
+     * can actually draw from.
+     */
+    @Query(
+        "SELECT questions.categoryId AS categoryId, COUNT(*) AS cnt FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE categories.paperId = :paperId " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
+            "GROUP BY questions.categoryId"
+    )
+    suspend fun categoryTestableCountsForPaper(paperId: String): List<CategoryCountEntity>
+
+    /**
      * The smallest passage block of a whole paper, plus whether any standalone
      * question exists. A standalone question is a block of one, so a non-zero
      * [MinBlockRow.standalone] makes the answer 1; otherwise it is the
      * smallest per-passage member count (or null when the paper has no
      * passages). The setup sheet's sampler pre-check reads this (section 9.6).
+     *
+     * Flashcards are study-only: they are not block members for a test, so a
+     * passage that holds only flashcards contributes no block, and a passage
+     * of two multiple-choice questions and one flashcard is a block of two.
      */
     @Query(
         "SELECT (SELECT MIN(cnt) FROM (" +
@@ -576,24 +635,28 @@ interface QuestionDao {
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
             "AND questions.passageId IS NOT NULL " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
             "GROUP BY questions.passageId)) AS minPassage, " +
             "(SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
-            "AND questions.passageId IS NULL) AS standalone"
+            "AND questions.passageId IS NULL " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id)) AS standalone"
     )
     suspend fun minBlockRowForPaper(paperId: String): MinBlockRow
 
-    /** [minBlockRowForPaper] over an explicit category selection. */
+    /** [minBlockRowForPaper] over an explicit category selection; flashcards are excluded. */
     @Query(
         "SELECT (SELECT MIN(cnt) FROM (" +
             "SELECT COUNT(*) AS cnt FROM questions " +
             "WHERE questions.categoryId IN (:categoryIds) " +
             "AND questions.passageId IS NOT NULL " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
             "GROUP BY questions.passageId)) AS minPassage, " +
             "(SELECT COUNT(*) FROM questions " +
             "WHERE questions.categoryId IN (:categoryIds) " +
-            "AND questions.passageId IS NULL) AS standalone"
+            "AND questions.passageId IS NULL " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id)) AS standalone"
     )
     suspend fun minBlockRowForCategories(categoryIds: List<String>): MinBlockRow
 
@@ -601,19 +664,25 @@ interface QuestionDao {
      * How many of the paper's questions have no answer key — excluded from
      * scoring entirely. One aggregate query, so the submit summary of a
      * million-question paper does not count a million ids in Kotlin.
+     *
+     * A flashcard has no answer key by design and is never tested, so it must
+     * not trip the blocking "no answer key" dialog: only multiple-choice
+     * questions are counted.
      */
     @Query(
         "SELECT COUNT(*) FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
             "AND NOT EXISTS (SELECT 1 FROM correct_answers ca " +
             "WHERE ca.questionId = questions.id)"
     )
     suspend fun countUngradedForPaper(paperId: String): Int
 
-    /** [countUngradedForPaper] over an explicit category selection. */
+    /** [countUngradedForPaper] over an explicit category selection; flashcards are excluded. */
     @Query(
         "SELECT COUNT(*) FROM questions WHERE categoryId IN (:categoryIds) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id) " +
             "AND NOT EXISTS (SELECT 1 FROM correct_answers ca " +
             "WHERE ca.questionId = questions.id)"
     )
@@ -717,7 +786,9 @@ interface QuestionDao {
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
             "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions " +
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.categoryId IN (:categoryIds) " +
             "ORDER BY categories.sortOrder, categories.title, " +
@@ -747,7 +818,13 @@ interface QuestionDao {
      *   UI promises ("Search text, tags, options"). A question is also found
      *   through its passage's own folded text (the same
      *   `passages.searchTextFolded` the search queries match on), as a
-     *   subquery rather than a list of matching passage ids.
+     *   subquery rather than a list of matching passage ids, and through its
+     *   `backTextFolded` — the back, which is a card's answer just as much as
+     *   an MCQ's explanation, so the list finds a card by what it teaches.
+     * - `noAnswer` means "multiple choice with no answer key": a flashcard is
+     *   a zero-option question and legitimately has no key, so the `EXISTS
+     *   options` arm keeps cards out of that list instead of filling it with
+     *   every card in the paper.
      * - `noExplanation` tests the *serialized* explanation against the shapes
      *   the app writes: the editor stores `[]` for an unanswered explanation
      *   and both importers store `[{"type":"text","content":""}]` when the
@@ -768,17 +845,21 @@ interface QuestionDao {
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
             "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions " +
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
             "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
-            "AND (:noAnswer = 0 OR NOT EXISTS " +
-            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noAnswer = 0 OR (NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id))) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
             "OR TRIM(questions.explanation) IN " +
             "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
@@ -809,11 +890,13 @@ interface QuestionDao {
      *
      * The remaining [QuestionRef] fields are selected as constants, so the
      * result type stays the one the reorder math already takes while the
-     * columns themselves are never read.
+     * columns themselves are never read. `optionCount = 0` is one of those
+     * constants: this projection is reorder math, not a row, so nothing renders
+     * its Flashcard label from here.
      */
     @Query(
         "SELECT id, categoryId, passageId, '' AS contentHash, '' AS text, " +
-            "'' AS explanation, 0 AS answerKeyCount FROM questions " +
+            "'' AS explanation, 0 AS answerKeyCount, 0 AS optionCount FROM questions " +
             "WHERE categoryId = :categoryId ORDER BY sortOrder, rowid"
     )
     suspend fun getRefsByCategoryOrdered(categoryId: String): List<QuestionRef>
@@ -869,7 +952,9 @@ interface QuestionDao {
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
             "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions " +
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.passageId = :passageId " +
             "ORDER BY categories.sortOrder, categories.title, " +
@@ -885,7 +970,9 @@ interface QuestionDao {
         "SELECT questions.id, questions.categoryId, questions.passageId, " +
             "questions.contentHash, questions.searchText AS text, questions.explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions " +
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions " +
             "INNER JOIN categories ON questions.categoryId = categories.id " +
             "WHERE questions.passageId = :passageId " +
             "ORDER BY categories.sortOrder, categories.title, " +
@@ -913,12 +1000,14 @@ interface QuestionDao {
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
             "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
-            "AND (:noAnswer = 0 OR NOT EXISTS " +
-            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noAnswer = 0 OR (NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id))) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
             "OR TRIM(questions.explanation) IN " +
             "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
@@ -949,12 +1038,14 @@ interface QuestionDao {
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
             "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
-            "AND (:noAnswer = 0 OR NOT EXISTS " +
-            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noAnswer = 0 OR (NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id))) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
             "OR TRIM(questions.explanation) IN " +
             "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
@@ -989,12 +1080,14 @@ interface QuestionDao {
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
             "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
-            "AND (:noAnswer = 0 OR NOT EXISTS " +
-            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noAnswer = 0 OR (NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id))) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
             "OR TRIM(questions.explanation) IN " +
             "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
@@ -1028,12 +1121,14 @@ interface QuestionDao {
             "WHERE categories.paperId = :paperId " +
             "AND (:query = '' OR questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id " +
             "AND o.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\') " +
             "OR questions.passageId IN (SELECT id FROM passages " +
             "WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\')) " +
-            "AND (:noAnswer = 0 OR NOT EXISTS " +
-            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id)) " +
+            "AND (:noAnswer = 0 OR (NOT EXISTS " +
+            "(SELECT 1 FROM correct_answers ca WHERE ca.questionId = questions.id) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = questions.id))) " +
             "AND (:noExplanation = 0 OR questions.explanation IS NULL " +
             "OR TRIM(questions.explanation) IN " +
             "('', '[]', '[{\"type\":\"text\",\"content\":\"\"}]')) " +
@@ -1058,14 +1153,18 @@ interface QuestionDao {
     @Query(
         "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions WHERE id IN (:ids)"
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions WHERE id IN (:ids)"
     )
     suspend fun getRefsByIds(ids: List<String>): List<QuestionRef>
 
     @Query(
         "SELECT id, categoryId, passageId, contentHash, searchText AS text, explanation, " +
             "(SELECT COUNT(*) FROM correct_answers ca WHERE ca.questionId = questions.id) " +
-            "AS answerKeyCount FROM questions WHERE id = :id"
+            "AS answerKeyCount, " +
+            "(SELECT COUNT(*) FROM options o WHERE o.questionId = questions.id) AS optionCount " +
+            "FROM questions WHERE id = :id"
     )
     suspend fun getRefById(id: String): QuestionRef?
 
@@ -1256,13 +1355,23 @@ interface QuestionDao {
 
     /** Everything the content hash deliberately ignores. */
     @Query(
-        "UPDATE questions SET explanation = :explanation, marks = :marks, " +
+        "UPDATE questions SET explanation = :explanation, backText = :backText, " +
+            "backTextFolded = :backTextFolded, marks = :marks, " +
             "difficulty = :difficulty, tags = :tags, tagsFolded = :tagsFolded, " +
             "image = :image, explanationImage = :explanationImage WHERE id = :id"
     )
     suspend fun updateNonHashedFields(
         id: String,
         explanation: String,
+        /**
+         * The refreshed back's [com.mcqapp.domain.searchableText] and its
+         * Kotlin-folded twin, derived from the very explanation elements bound
+         * above. The refresh rewrites `explanation`, so leaving these behind
+         * kept stale answer text searchable — a corrected back was rendered
+         * but never found.
+         */
+        backText: String,
+        backTextFolded: String,
         marks: Double,
         difficulty: String,
         tags: String,
@@ -1422,13 +1531,21 @@ interface QuestionDao {
      * and the in-memory filter: a question whose only match is in its passage's
      * text must not be dropped by the prefilter here while the filter accepts it
      * elsewhere.
+     *
+     * `backTextFolded` is the back (a card's answer, an MCQ's explanation). A
+     * card's answer is searchable in scope QUESTION/ALL but never in OPTIONS,
+     * so only this query and [searchIncludingOptions] read it — the prefilter
+     * must not veto a back-only hit that [com.mcqapp.domain.QuestionSearch.filter]
+     * accepts, and must not feed OPTIONS candidates the filter would reject.
      */
     @Query(
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
             "WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
             "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
@@ -1445,8 +1562,10 @@ interface QuestionDao {
         "SELECT q.* FROM (SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions LEFT JOIN options " +
             "ON options.questionId = questions.id WHERE questions.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :query || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR questions.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "OR questions.tagsFolded LIKE '%' || :fragment || '%' ESCAPE '\\' OR options.searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
+            "OR questions.backTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\' " +
             "UNION SELECT questions.*, questions.rowid FROM questions WHERE passageId IN " +
             "(SELECT id FROM passages WHERE searchTextFolded LIKE '%' || :query || '%' ESCAPE '\\' " +
             "OR searchTextFolded LIKE '%' || :fragment || '%' ESCAPE '\\')) q " +
@@ -1465,6 +1584,11 @@ interface QuestionDao {
      * rejects — a common word matching many stems but no option parsed the
      * whole candidate set to end at "no matches" (consolidated_bugs.md B2).
      * The filter remains the authority; this only bounds its input.
+     *
+     * Deliberately no `backTextFolded` branch: OPTIONS is options-only, so a
+     * back-only hit is not a hit here at all. Adding it would overfetch every
+     * row whose explanation matches and then drop it in the filter, which is
+     * the exact widening B2 removed.
      */
     @Query(
         "SELECT DISTINCT questions.*, questions.rowid AS qrowid FROM questions " +
@@ -2384,6 +2508,9 @@ interface QuestionTagDao {
     /**
      * The distinct tags of the scope, most used first. `MIN(tag)` keeps a
      * deterministic spelling when questions disagree only on case.
+     *
+     * Test path: a flashcard is study-only, so its tags do not make a Tag test
+     * offer a pool the selector cannot serve.
      */
     @Query(
         "SELECT MIN(qt.tag) AS tag, qt.tagFolded AS tagFolded, COUNT(*) AS count " +
@@ -2392,6 +2519,7 @@ interface QuestionTagDao {
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE c.paperId = :paperId " +
             "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id) " +
             "GROUP BY qt.tagFolded ORDER BY count DESC, tagFolded"
     )
     suspend fun tagCounts(
@@ -2400,13 +2528,14 @@ interface QuestionTagDao {
         categoryIds: List<String>
     ): List<TagCount>
 
-    /** The ids of the scope's questions carrying exactly [tagFolded]. */
+    /** The ids of the scope's multiple-choice questions carrying exactly [tagFolded]. */
     @Query(
         "SELECT q.id FROM question_tags qt " +
             "INNER JOIN questions q ON q.id = qt.questionId " +
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE qt.tagFolded = :tagFolded AND c.paperId = :paperId " +
             "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id) " +
             "ORDER BY q.sortOrder, q.rowid"
     )
     suspend fun questionIdsForTag(
@@ -2418,7 +2547,8 @@ interface QuestionTagDao {
 
     /**
      * The scope's bookmarked questions, most recently bookmarked first — the
-     * Bookmarked test's pool (phase 3).
+     * Bookmarked test's pool (phase 3). A bookmarked flashcard is study-only
+     * and is left out, so the pool is one a test can run.
      */
     @Query(
         "SELECT q.id FROM bookmarks b " +
@@ -2426,6 +2556,7 @@ interface QuestionTagDao {
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE c.paperId = :paperId " +
             "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id) " +
             "ORDER BY b.createdAt DESC, q.rowid"
     )
     suspend fun bookmarkedIdsInScope(
@@ -2433,6 +2564,45 @@ interface QuestionTagDao {
         scopeAll: Int,
         categoryIds: List<String>
     ): List<String>
+
+    /**
+     * How many bookmarks the scope still resolves to, flashcards **included** —
+     * the raw size of the Bookmarked pool before [bookmarkedIdsInScope] drops
+     * the study-only ones. Copy only: the setup sheet uses it to tell an empty
+     * pool from one whose bookmarks are all flashcards, both of which test
+     * zero questions.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM bookmarks b " +
+            "INNER JOIN questions q ON q.id = b.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds))"
+    )
+    suspend fun bookmarkedCountInScope(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>
+    ): Int
+
+    /**
+     * How many questions carry exactly [tagFolded], flashcards **included** —
+     * the raw size of the Tag pool before [questionIdsForTag] drops the
+     * study-only ones. Copy only, like [bookmarkedCountInScope].
+     */
+    @Query(
+        "SELECT COUNT(*) FROM question_tags qt " +
+            "INNER JOIN questions q ON q.id = qt.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE qt.tagFolded = :tagFolded AND c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds))"
+    )
+    suspend fun questionCountForTag(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>,
+        tagFolded: String
+    ): Int
 
     /**
      * Every timed sample of the scope, one row per graded answer, for the
@@ -2544,12 +2714,17 @@ interface AttemptDao {
      * every paper — purely to group and size them in Kotlin. This returns at
      * most one row per paper (the bank has ~1000), on the hot path that
      * recomputes the badges after every finished test.
+     *
+     * A flashcard is study-only: a question converted from multiple choice
+     * keeps its old result rows, but it is not a test pool, so it is not
+     * counted. The setup sheet's whole-paper Mistakes pool reads this count.
      */
     @Query(
         "SELECT attempts.paperId AS paperId, COUNT(*) AS count " +
             "FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
             "WHERE r.isCorrect = 0 " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = r.questionId) " +
             "AND r.id = (SELECT r2.id FROM question_results r2 " +
             "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
             "WHERE r2.questionId = r.questionId " +
@@ -2564,11 +2739,16 @@ interface AttemptDao {
      * same standing rule, scoped to the paper in SQL instead of filtering the
      * whole bank's standings in memory. Bounded by how much of this paper was
      * actually missed.
+     *
+     * A question converted to a flashcard keeps its old result rows, so the
+     * option predicate is what keeps it out of the Mistakes order; study and
+     * the mistake badge read other paths.
      */
     @Query(
         "SELECT r.questionId AS questionId FROM question_results r " +
             "INNER JOIN attempts ON r.attemptId = attempts.id " +
             "WHERE attempts.paperId = :paperId AND r.isCorrect = 0 " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = r.questionId) " +
             "AND r.id = (SELECT r2.id FROM question_results r2 " +
             "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
             "WHERE r2.questionId = r.questionId " +
@@ -2585,6 +2765,10 @@ interface AttemptDao {
      * question ids only, so intersecting it with category ids in Kotlin would
      * drop every mistake. [ChunkedQueries] calls this per bind-safe chunk and
      * sorts the concatenation by `finishedAt DESC, rowId DESC`.
+     *
+     * Flashcards are excluded on the same option predicate as the paper-wide
+     * read: a converted question's old wrong results must not serve it as a
+     * mistake.
      */
     @Query(
         "SELECT r.questionId AS questionId, attempts.finishedAt AS finishedAt, " +
@@ -2593,6 +2777,7 @@ interface AttemptDao {
             "INNER JOIN questions q ON q.id = r.questionId " +
             "WHERE attempts.paperId = :paperId AND q.categoryId IN (:scopeIds) " +
             "AND r.isCorrect = 0 " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id) " +
             "AND r.id = (SELECT r2.id FROM question_results r2 " +
             "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
             "WHERE r2.questionId = r.questionId " +
@@ -2609,6 +2794,7 @@ interface AttemptDao {
      * Counts the mistakes inside a scoped selection. Uses the same standing
      * rule (latest graded, answered row per question) but restricts to the
      * given category ids. [ChunkedQueries] sums it over bind-safe chunks.
+     * Flashcards are excluded like the paper-wide count.
      */
     @Query(
         "SELECT COUNT(DISTINCT r.questionId) FROM question_results r " +
@@ -2616,6 +2802,7 @@ interface AttemptDao {
             "INNER JOIN questions q ON q.id = r.questionId " +
             "WHERE attempts.paperId = :paperId AND q.categoryId IN (:scopeIds) " +
             "AND r.isCorrect = 0 " +
+            "AND EXISTS (SELECT 1 FROM options o WHERE o.questionId = q.id) " +
             "AND r.id = (SELECT r2.id FROM question_results r2 " +
             "INNER JOIN attempts a2 ON a2.id = r2.attemptId " +
             "WHERE r2.questionId = r.questionId " +
@@ -3487,7 +3674,19 @@ data class QuestionRef(
      */
     val text: String = "",
     val explanation: String = "",
-    val answerKeyCount: Int = 0
+    val answerKeyCount: Int = 0,
+    /**
+     * How many options the question has. Zero means a flashcard — a card has
+     * no options by definition ([com.mcqapp.domain.isFlashcard]) — which is
+     * what a list row's Flashcard label reads. A keyless multiple-choice
+     * question also has `answerKeyCount == 0`, so the key count alone cannot
+     * tell the two apart.
+     *
+     * Room requires the field on every projection, so each ref query selects
+     * it (the reorder-only one as the constant 0, since nothing renders it
+     * there); Browse gets its label from the full [Question] it loads per row.
+     */
+    val optionCount: Int = 0
 )
 
 /**

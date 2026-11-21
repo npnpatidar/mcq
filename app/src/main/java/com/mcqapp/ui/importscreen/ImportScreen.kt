@@ -58,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.data.io.ImportReport
+import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.domain.hasVisibleContent
@@ -98,14 +99,22 @@ fun ImportScreen(
 
     // Memoized: these re-ran over all rows on every recomposition (frames
     // dropped while scrolling big previews).
-    val newQuestions = remember(state.questions, state.duplicateIds, state.changedIds) {
-        state.questions.filter { it.id !in state.duplicateIds && it.id !in state.changedIds }
+    //
+    // The rows shown are the rows the importer will write. A one-option question
+    // is already a flashcard by then — its only option became the back — so the
+    // preview computes that same shape before it decides the badge or renders
+    // anything; the raw DTO showed an option row and no FLASHCARD badge for a
+    // row that imports as a card. Ids are untouched, so a checkpoint
+    // (changed/duplicate) row classifies exactly as before.
+    val previewQuestions = remember(state.questions) { previewQuestionsOf(state.questions) }
+    val newQuestions = remember(previewQuestions, state.duplicateIds, state.changedIds) {
+        previewQuestions.filter { it.id !in state.duplicateIds && it.id !in state.changedIds }
     }
-    val changedQuestions = remember(state.questions, state.changedIds) {
-        state.questions.filter { it.id in state.changedIds }
+    val changedQuestions = remember(previewQuestions, state.changedIds) {
+        previewQuestions.filter { it.id in state.changedIds }
     }
-    val dupQuestions = remember(state.questions, state.duplicateIds) {
-        state.questions.filter { it.id in state.duplicateIds }
+    val dupQuestions = remember(previewQuestions, state.duplicateIds) {
+        previewQuestions.filter { it.id in state.duplicateIds }
     }
     // The button's gate is pure so it can be pinned by a JVM test: a backup is
     // imported whole even when its previewed paper shows nothing new.
@@ -152,7 +161,11 @@ fun ImportScreen(
         com.mcqapp.ui.editor.EditorSession.start(
             ids = order.map { it.id },
             index = order.indexOfFirst { it.id == question.id },
-            reader = { id -> viewModel.state.value.questions.find { it.id == id } },
+            // The editor shows the shape the import writes, like the row it was
+            // opened from: a one-option question is a card, not a choice.
+            reader = { id ->
+                viewModel.state.value.questions.find { it.id == id }?.normalizedFlashcard()
+            },
             writer = { dto -> viewModel.updateQuestionFromImport(dto) }
         )
         viewModel.markEditing(question.id)
@@ -498,7 +511,7 @@ fun ImportScreen(
                     PreviewQuestionCard(
                         question = question,
                         dimmed = false,
-                        badge = null,
+                        badges = previewBadges(question),
                         onDelete = { viewModel.deleteQuestion(question.id) },
                         onEdit = { editQuestion(question) }
                     )
@@ -518,7 +531,7 @@ fun ImportScreen(
                         PreviewQuestionCard(
                             question = question,
                             dimmed = false,
-                            badge = "CHANGED",
+                            badges = previewBadges(question, R.string.r2_import_badge_changed),
                             onDelete = { viewModel.deleteQuestion(question.id) },
                             onEdit = { editQuestion(question) }
                         )
@@ -543,7 +556,7 @@ fun ImportScreen(
                         PreviewQuestionCard(
                             question = question,
                             dimmed = true,
-                            badge = "DUPLICATE",
+                            badges = previewBadges(question, R.string.r2_import_badge_duplicate),
                             onDelete = { viewModel.deleteQuestion(question.id) },
                             onEdit = { editQuestion(question) }
                         )
@@ -649,11 +662,47 @@ internal fun ImportReportDetails(report: ImportReport) {
     }
 }
 
+/**
+ * The preview's rows, in the shape the importer will store them: the one shared
+ * conversion (`normalizedFlashcard`) that the importers, the content hash and
+ * [com.mcqapp.domain.ImportWarnings] already apply. A one-option question is a
+ * flashcard whose option became the back, so the preview must not draw it as a
+ * multiple-choice row with an option and no FLASHCARD badge — that row would
+ * contradict what actually gets imported.
+ *
+ * Ids are preserved, which is what keeps the changed/duplicate classification
+ * (id-keyed, computed from the normalised hash) working unchanged.
+ */
+internal fun previewQuestionsOf(
+    questions: List<com.mcqapp.data.io.QuestionDto>
+): List<com.mcqapp.data.io.QuestionDto> = questions.map { it.normalizedFlashcard() }
+
+/**
+ * The badges a preview row shows, as string resources in display order.
+ *
+ * FLASHCARD is a property of the question (zero options), not a state of the
+ * import, so it is not one slot competing with CHANGED/DUPLICATE: a card can be
+ * either, and hiding the type would leave the row with no explanation for its
+ * empty option list. Both are therefore shown, the type first — CHANGED does
+ * not win, because the reader needs to see that the row is a card before
+ * judging what updating it will do.
+ *
+ * `internal` so the order is pinned by a real unit test, not only by a source
+ * shape guard.
+ */
+internal fun previewBadges(
+    question: com.mcqapp.data.io.QuestionDto,
+    @androidx.annotation.StringRes vararg status: Int
+): List<Int> = buildList {
+    if (question.options.isEmpty()) add(R.string.r2_import_badge_flashcard)
+    addAll(status.toList())
+}
+
 @Composable
 private fun PreviewQuestionCard(
     question: com.mcqapp.data.io.QuestionDto,
     dimmed: Boolean,
-    badge: String?,
+    badges: List<Int>,
     onDelete: () -> Unit,
     onEdit: () -> Unit
 ) {
@@ -674,13 +723,15 @@ private fun PreviewQuestionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                if (badge != null) {
-                    Text(
-                        badge,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
+                if (badges.isNotEmpty()) {
+                    badges.forEach { badge ->
+                        Text(
+                            stringResource(badge),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.remove_question))
@@ -719,17 +770,24 @@ private fun PreviewQuestionCard(
                 question.explanationElements.hasVisibleContent ||
                 !question.explanationImage.isNullOrBlank()
             if (explanationVisible) {
+                // The row is the shape the import writes, so a card's back is
+                // called an Answer here just as Study and Browse do.
+                val isCard = question.options.isEmpty()
                 Text(
                     // A back that is only a picture, a table or a formula has
                     // no flattened text to append, so the heading falls back
                     // to the plain label.
                     if (question.explanation.isNotBlank()) {
                         stringResource(
-                            R.string.import_explanation_label,
+                            if (isCard) R.string.r2_import_answer_label
+                            else R.string.import_explanation_label,
                             displayTitle(question.explanation)
                         )
                     } else {
-                        stringResource(R.string.explanation)
+                        stringResource(
+                            if (isCard) R.string.r2_study_answer_heading
+                            else R.string.explanation
+                        )
                     },
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(top = 2.dp)

@@ -261,6 +261,52 @@ class AnkiHtmlTest {
     }
 
     @Test
+    fun aCardsBackIsItsAnswerWithNoExplanationLabel() {
+        val card = com.mcqapp.domain.Question(
+            id = "q1",
+            categoryId = "",
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Capital of France?")),
+            options = emptyList(),
+            correctOptionIds = emptySet(),
+            // A card's back is its answer followed by any explanation it
+            // already had; both are one field to Anki.
+            explanationElements = listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Paris."),
+                com.mcqapp.domain.ContentElement.TextElement("It is the capital.")
+            )
+        )
+        val back = AnkiPackageWriter.backFieldForTest(card)
+        assertFalse("a card's back gets no explanation label: $back", back.contains("Explanation:"))
+        assertEquals(
+            "the answer leads and the blocks stay apart: $back",
+            "Paris.${AnkiPackageWriter.BR}It is the capital.",
+            back
+        )
+    }
+
+    @Test
+    fun aCardsEmptyBackStaysEmpty() {
+        fun card(elements: List<com.mcqapp.domain.ContentElement>) = com.mcqapp.domain.Question(
+            id = "q1",
+            categoryId = "",
+            elements = listOf(com.mcqapp.domain.ContentElement.TextElement("Front?")),
+            options = emptyList(),
+            correctOptionIds = emptySet(),
+            explanationElements = elements
+        )
+        assertEquals("no explanation means an empty back", "", AnkiPackageWriter.backFieldForTest(card(emptyList())))
+        // The DTO mapper stores a blank placeholder for an absent
+        // explanation; it must not become a label-only back either.
+        assertEquals(
+            "a blank block is not a back",
+            "",
+            AnkiPackageWriter.backFieldForTest(
+                card(listOf(com.mcqapp.domain.ContentElement.TextElement("")))
+            )
+        )
+    }
+
+    @Test
     fun richTextKeepsFormattingDropsCentering() {
         assertEquals(
             "H<sub>2</sub>O <strong>x</strong>",

@@ -1122,7 +1122,25 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
         return TestSelector.preview(
             effectivePlan, pool, breadth, customPool, medianDwellSeconds, exposure
-        )
+        ).let { preview ->
+            // The Bookmarked and Tag reads are testable-only (they are test
+            // pools), so an empty custom pool cannot tell an empty scope from
+            // one whose questions are all flashcards. Read the raw size for
+            // that copy decision only, and only where the testable pool is
+            // empty — the one case the distinction matters.
+            val rawPool = when {
+                customPool.isNotEmpty() -> preview.rawPool
+                type == TestType.BOOKMARKED ->
+                    repository.bookmarkedCountInScope(paper.id, categoryIds)
+                type == TestType.TAG -> variant?.let {
+                    repository.questionCountForTagInScope(
+                        paper.id, categoryIds, com.mcqapp.domain.TagNormalizer.fold(it)
+                    )
+                } ?: 0
+                else -> preview.rawPool
+            }
+            preview.copy(rawPool = rawPool)
+        }
     }
 
     /** The scope's distinct tags for the phase-3 Tag picker. */
@@ -1130,6 +1148,21 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         paperId: String,
         categoryIds: List<String>
     ) = repository.tagCountsForScope(paperId, categoryIds)
+
+    /**
+     * The scope's testable (multiple-choice) question count: the setup sheet's
+     * pool. Empty [scopeIds] is the whole paper. A flashcard is study-only, so
+     * it is never counted here — the library card keeps the raw total.
+     */
+    suspend fun testableCountForScope(paperId: String, scopeIds: List<String>): Int =
+        repository.countTestableForCategories(paperId, scopeIds)
+
+    /**
+     * The paper's per-category testable counts: the blueprint editor's preview
+     * pools, so a card-heavy section never shows a quota the run cannot fill.
+     */
+    suspend fun testableCategoryCounts(paperId: String): Map<String, Int> =
+        repository.testableCategoryCountsForPaper(paperId)
 
     /** The paper's fixed panels, for the phase-3 panel picker. */
     suspend fun panelsForPaper(paperId: String) = repository.panelsForPaper(paperId)

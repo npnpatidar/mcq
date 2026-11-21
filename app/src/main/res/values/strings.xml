@@ -509,6 +509,7 @@
     </plurals>
     <string name="test_setup_fresh_note">Skips questions asked in your last three comparable tests of this length, when enough others remain.</string>
     <string name="test_setup_no_mistakes">No mistakes in this scope.</string>
+    <string name="test_setup_scope_flashcards_only">No multiple-choice questions here — flashcards are study-only</string>
     <string name="test_setup_start">Start %1$d-question test · %2$d min</string>
     <string name="test_setup_start_untimed">Start %1$d-question test · untimed</string>
     <plurals name="test_banner_random">
@@ -648,7 +649,7 @@
     <string name="learning_step">Learning step</string>
     <string name="session_accuracy">Recalled %1$d%% of them</string>
     <string name="session_stopped_early">Stopped before reviewing a card.</string>
-    <string name="session_time_split">Questions %1$s • Explanations %2$s • Total %3$s</string>
+    <string name="session_time_split">Questions %1$s • Answers %2$s • Total %3$s</string>
     <string name="new_cards_are_switched_off">New cards are switched off, so nothing new is being introduced.</string>
     <string name="introduce_new_cards">Introduce new cards</string>
     <plurals name="study_scope_many">
@@ -769,8 +770,7 @@
     <string name="stats_guess_lift">Lift over chance</string>
     <string name="stats_guess_raw_accuracy">Raw accuracy</string>
     <string name="stats_guess_graded_pass">Graded pass</string>
-    <string name="stats_guess_coverage_complete">All %1$d in-range reviews carry the guess flag.</string>
-    <string name="stats_guess_coverage">Counting %1$d of %2$d in-range reviews; older rows predate guess tracking.</string>
+    <string name="stats_guess_coverage_note">Counting %1$d in-range reviews; older rows and self-graded cards carry no guess flag.</string>
     <string name="stats_guess_outcomes">Outcomes</string>
     <string name="stats_guess_outcomes_help">Declared guess and correctness. Lucky is right by chance; earned is right by knowledge.</string>
     <string name="stats_guess_earned">Earned (knew it)</string>
@@ -826,7 +826,7 @@
     <string name="period_last_90_days">Last 90 days</string>
     <string name="period_last_365_days">Last 365 days</string>
     <string name="period_all_time">All time</string>
-    <string name="stats_correct">Correct</string>
+    <string name="stats_recall">Recall</string>
     <string name="stats_reviews">Reviews</string>
     <string name="stats_time_studied">Time studied</string>
     <string name="stats_introduced">Introduced</string>
@@ -1259,7 +1259,7 @@
 
     <!-- Accessibility: WebViews and canvas charts cannot be read by TalkBack on their own. -->
     <string name="a11y_formula_editor_value">Formula editor. Current formula: %1$s</string>
-    <string name="a11y_rich_content">Rendered question content with formulas</string>
+    <string name="a11y_rich_content">Rendered content with formulas</string>
     <string name="a11y_chart_bar">Bar chart</string>
     <string name="a11y_chart_line">Line chart</string>
     <string name="a11y_chart_calendar">Review calendar</string>

@@ -35,7 +35,9 @@ class StatsAggregatorTest {
         stabilityAfter: Double? = 5.0,
         intervalBeforeDays: Int? = null,
         intervalDaysAfter: Int? = null,
-        predictedRetention: Double? = null
+        predictedRetention: Double? = null,
+        wasGuess: Boolean? = null,
+        wasCorrect: Boolean? = null
     ) = ReplayReview(
         paperId = paperId,
         questionId = questionId,
@@ -47,7 +49,9 @@ class StatsAggregatorTest {
         difficultyAfter = 5.0,
         intervalDaysAfter = intervalDaysAfter,
         predictedRetention = predictedRetention,
-        intervalBeforeDays = intervalBeforeDays
+        intervalBeforeDays = intervalBeforeDays,
+        wasGuess = wasGuess,
+        wasCorrect = wasCorrect
     )
 
     private fun card(
@@ -592,10 +596,10 @@ class StatsAggregatorTest {
     @Test
     fun responseTimeHistogramsAndFastFailDetection() {
         val reviews = listOf(
-            review("q1", rating = 1, reviewedAt = now - hour, elapsedSeconds = 2),
-            review("q1", rating = 1, reviewedAt = now - 50 * 60_000L, elapsedSeconds = 2),
-            review("q2", rating = 3, reviewedAt = now - 40 * 60_000L, elapsedSeconds = 7),
-            review("q3", rating = 3, reviewedAt = now - 30 * 60_000L, elapsedSeconds = 90)
+            review("q1", rating = 1, reviewedAt = now - hour, elapsedSeconds = 2, wasCorrect = false),
+            review("q1", rating = 1, reviewedAt = now - 50 * 60_000L, elapsedSeconds = 2, wasCorrect = false),
+            review("q2", rating = 3, reviewedAt = now - 40 * 60_000L, elapsedSeconds = 7, wasCorrect = true),
+            review("q3", rating = 3, reviewedAt = now - 30 * 60_000L, elapsedSeconds = 90, wasCorrect = true)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         val rt = bundle.responseTime
@@ -629,16 +633,59 @@ class StatsAggregatorTest {
     @Test
     fun hourlyBucketsUseWallClockHours() {
         val reviews = listOf(
-            review("q1", rating = 3, reviewedAt = now - hour),      // 11:00 UTC
-            review("q2", rating = 1, reviewedAt = now - hour - 1),  // 10:59 UTC
-            review("q3", rating = 3, reviewedAt = now - 3 * hour)   // 09:00 UTC
+            review("q1", rating = 3, reviewedAt = now - hour, wasCorrect = true),      // 11:00 UTC
+            review("q2", rating = 1, reviewedAt = now - hour - 1, wasCorrect = false), // 10:59 UTC
+            review("q3", rating = 3, reviewedAt = now - 3 * hour, wasCorrect = true)   // 09:00 UTC
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(1, bundle.hourly[11].reviews)
         assertEquals(1, bundle.hourly[10].reviews)
         assertEquals(0.0, bundle.hourly[10].passRate!!, 1e-9)
+        assertEquals(1.0, bundle.hourly[11].passRate!!, 1e-9)
         assertEquals(1, bundle.hourly[9].reviews)
         assertEquals(24, bundle.hourly.size)
+    }
+
+    @Test
+    fun hourlyPassRateIgnoresRowsWithoutAnObjectiveOutcome() {
+        // A self-graded card review records no objective outcome: its Again is
+        // a rating, not a wrong answer, so it must neither lower the hour's
+        // pass rate nor count as a fast fail. Volume, time and the grade mix
+        // still count it — those are rating-based by design.
+        val reviews = listOf(
+            review(
+                "card", rating = 1, reviewedAt = now - hour, elapsedSeconds = 2,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30
+            ),
+            review(
+                "wrong", rating = 1, reviewedAt = now - 30 * 60_000L, elapsedSeconds = 2,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30,
+                wasCorrect = false
+            ),
+            review(
+                "right", rating = 3, reviewedAt = now - 15 * 60_000L, elapsedSeconds = 2,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30,
+                wasCorrect = true
+            )
+        )
+        val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
+        // The bars are volume: every review, the card included.
+        assertEquals(3, bundle.hourly[11].reviews)
+        // The line is the objective pass rate over the two judged rows only.
+        assertEquals(0.5, bundle.hourly[11].passRate!!, 1e-9)
+        // One judged Again under five seconds; the card's Again is not one.
+        assertEquals(1, bundle.responseTime.fastFails)
+        // Rating-based surfaces keep the card's row.
+        assertEquals(3, bundle.today.reviews)
+        assertEquals(2, bundle.today.againCount)
+        assertEquals(
+            2,
+            StatsAggregator.buildWorkload(input(reviews), null, StatsAggregator.Range.D7)
+                .ratingTrend.last().again
+        )
+        val today = bundle.retentionTable.first { it.label == "today" }
+        assertEquals(3, today.allReviews)
+        assertEquals(1, today.allPasses)
     }
 
     @Test

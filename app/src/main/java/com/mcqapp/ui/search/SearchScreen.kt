@@ -44,6 +44,7 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.mcqapp.domain.previewText
+import com.mcqapp.domain.isFlashcard
 import com.mcqapp.R
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingErrorRow
@@ -56,6 +57,9 @@ fun SearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val debouncing by viewModel.debouncing.collectAsStateWithLifecycle()
+    // The query the visible rows were actually produced for. The snippet below
+    // explains a row's match, so it must use this, not the live text field.
+    val committedQuery by viewModel.committedQuery.collectAsStateWithLifecycle()
     val hits = viewModel.pagingData.collectAsLazyPagingItems()
 
     Scaffold(
@@ -211,11 +215,44 @@ fun SearchScreen(
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    hit.paperTitle,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                // A hit whose only match is in the back must say
+                                // so, or the row looks like a false positive:
+                                // the snippet is the back text around the match,
+                                // never the whole back. The label is type-aware —
+                                // a card's back is its Answer, an MCQ's is its
+                                // Explanation — and it reads the committed query,
+                                // not `state.query`: the rows are the debounced
+                                // request's, and the field may already hold the
+                                // next one.
+                                com.mcqapp.domain.QuestionSearch
+                                    .backSnippet(hit.question, committedQuery)
+                                    ?.let { snippet ->
+                                        Text(
+                                            stringResource(
+                                                backSnippetLabelRes(hit.question.isFlashcard),
+                                                snippet
+                                            ),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (hit.question.isFlashcard) {
+                                        Text(
+                                            stringResource(R.string.r2_flashcard_label),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        )
+                                    }
+                                    Text(
+                                        hit.paperTitle,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
@@ -244,6 +281,21 @@ fun SearchScreen(
         }
     }
 }
+
+/**
+ * The label a back-only result row puts in front of its snippet, chosen by the
+ * type of the question that matched: a flashcard's back is its **Answer**, a
+ * multiple-choice question's back is its **Explanation**. The rest of the app
+ * makes the same distinction (Study's revealed card, Browse's back heading), so
+ * an MCQ explanation hit must not be announced as an answer.
+ *
+ * `internal` and type-only so the rule is unit-testable; the caller already
+ * knows the card type ([com.mcqapp.domain.isFlashcard]) from the hit it holds.
+ */
+@androidx.annotation.StringRes
+internal fun backSnippetLabelRes(isFlashcard: Boolean): Int =
+    if (isFlashcard) R.string.r2_browse_answer_snippet
+    else R.string.r2_browse_explanation_snippet
 
 /**
  * Whether a Paging load state can still have a next page. The count label

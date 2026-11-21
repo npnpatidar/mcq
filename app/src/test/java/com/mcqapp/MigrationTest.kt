@@ -6,6 +6,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import com.mcqapp.data.io.ContentHash
+import com.mcqapp.data.io.FALLBACK_CLOZE_EXPLANATION
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.BlueprintEntity
 import com.mcqapp.data.local.BlueprintSectionEntity
@@ -13,6 +15,8 @@ import com.mcqapp.data.local.PanelEntity
 import com.mcqapp.data.local.PanelQuestionEntity
 import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -41,6 +45,9 @@ class MigrationTest {
 
     private lateinit var context: Context
     private lateinit var dbFile: android.database.sqlite.SQLiteDatabase
+
+    /** Element JSON for the fixtures, the same parser the app uses. */
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     /** v6 schema: everything except card_state. */
     private val v6Schema = listOf(
@@ -208,7 +215,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_24_25,
         AppDatabase.MIGRATION_25_26,
         AppDatabase.MIGRATION_26_27,
-        AppDatabase.MIGRATION_27_28
+        AppDatabase.MIGRATION_27_28,
+        AppDatabase.MIGRATION_28_29
     )
 
     private fun openMigrated(): AppDatabase =
@@ -765,6 +773,13 @@ class MigrationTest {
                 "VALUES ('q1','o1',?,NULL,0)",
             arrayOf(optionText)
         )
+        // A second option keeps this a multiple-choice row: 28->29 turns a
+        // one-option question into a flashcard and drops the option, and this
+        // test is about the flattened option column, not that conversion.
+        dbFile.execSQL(
+            "INSERT INTO options (questionId,id,text,image,sortOrder) " +
+                "VALUES ('q1','o2','m/s',NULL,1)"
+        )
         dbFile.close()
 
         val db = openMigrated()
@@ -774,7 +789,10 @@ class MigrationTest {
                 // Markup dropped, the formula kept as typed, elements joined
                 // by a single space — exactly what the in-memory filter sees.
                 assertEquals("Net external force v=u", question.searchText)
-                assertEquals("m/s 2", db.optionDao().getByQuestion("q1").single().searchText)
+                assertEquals(
+                    "m/s 2",
+                    db.optionDao().getByQuestion("q1").single { it.id == "o1" }.searchText
+                )
             }
         } finally {
             db.close()
@@ -847,6 +865,12 @@ class MigrationTest {
                 "INSERT INTO options (questionId,id,text,image,searchText,sortOrder) " +
                     "VALUES ('q1','o1','CAFÉ option',NULL,'CAFÉ option',0)"
             )
+            // A second option keeps this a multiple-choice row: 28->29 turns a
+            // one-option question into a flashcard and drops the option.
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,image,searchText,sortOrder) " +
+                    "VALUES ('q1','o2','other',NULL,'other',1)"
+            )
             raw.version = 17
         }
     }
@@ -874,7 +898,7 @@ class MigrationTest {
                 assertEquals("café tag", question.tagsFolded)
                 assertEquals(
                     "café option",
-                    db.optionDao().getByQuestion("q1").single().searchTextFolded
+                    db.optionDao().getByQuestion("q1").single { it.id == "o1" }.searchTextFolded
                 )
             } finally {
                 db.close()
@@ -1080,18 +1104,18 @@ class MigrationTest {
     }
 
     @Test
-    fun `a fresh install lands on version 28 with no ladder tables`() {
+    fun `a fresh install lands on version 29 with no ladder tables`() {
         // The complement of the chain tests: a new install never runs a
-        // migration, so it proves the generated 28.json is what the entities
-        // create — the FSRS-7 columns and grading_versions, with both ladder
-        // tables absent.
+        // migration, so it proves the generated 29.json is what the entities
+        // create — the FSRS-7 columns, grading_versions and the flashcard back
+        // columns, with both ladder tables absent.
         context.deleteDatabase("fresh-create.db")
         val fresh = AppDatabase.builder(context, "fresh-create.db")
             .allowMainThreadQueries()
             .build()
         try {
             val raw = fresh.openHelper.writableDatabase
-            assertEquals(28, raw.version)
+            assertEquals(29, raw.version)
             val tables = raw.query(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).use { cursor ->
@@ -1101,6 +1125,14 @@ class MigrationTest {
             assertTrue(
                 "ladder tables still created: $tables",
                 "ladder_versions" !in tables && "ladder_blocks" !in tables
+            )
+            val questionColumns = raw.query("PRAGMA table_info(`questions`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                buildList { while (cursor.moveToNext()) add(cursor.getString(nameIndex)) }
+            }
+            assertTrue(
+                "the back search columns are missing: $questionColumns",
+                "backText" in questionColumns && "backTextFolded" in questionColumns
             )
         } finally {
             fresh.close()
@@ -1779,6 +1811,346 @@ class MigrationTest {
                     BlueprintEntity(paperId = "p1", name = "State PSC", createdAt = 300L)
                 )
                 assertEquals("State PSC", db.blueprintDao().getById(id)?.name)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    /**
+     * Builds a genuine v28 file by replaying the production 21→28 chain, then
+     * seeds the shapes the 28→29 step must tell apart:
+     *
+     * - `q1`: a multiple-choice card with an explanation, a schedule and an
+     *   old hash — it must keep all three and only gain a searchable back;
+     * - `q2`: the invalid shape — one option, its key, a populated FSRS card
+     *   row in two papers and a review — it becomes a flashcard, and both
+     *   cards must keep their intervals;
+     * - `q3`: a one-option card whose explanation is Anki's cloze placeholder;
+     * - `q4`: an already-valid flashcard with a back and its own schedule;
+     * - `q5`: a one-option card whose answer carries a scalar picture and
+     *   whose explanation is empty — the picture becomes the back image;
+     * - `q6`: a one-option card whose explanation already shows that same
+     *   picture as an image block — no second copy is added.
+     */
+    private fun createV28WithCards() {
+        createV21WithTaggedQuestion()
+        val config = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name("migration-test.db")
+            .callback(object : SupportSQLiteOpenHelper.Callback(21) {
+                override fun onCreate(db: SupportSQLiteDatabase) = Unit
+                override fun onUpgrade(db: SupportSQLiteDatabase, old: Int, new: Int) = Unit
+            })
+            .build()
+        FrameworkSQLiteOpenHelperFactory().create(config).use { helper ->
+            val raw = helper.writableDatabase
+            AppDatabase.MIGRATION_21_22.migrate(raw)
+            AppDatabase.MIGRATION_22_23.migrate(raw)
+            AppDatabase.MIGRATION_23_24.migrate(raw)
+            AppDatabase.MIGRATION_24_25.migrate(raw)
+            AppDatabase.MIGRATION_25_26.migrate(raw)
+            AppDatabase.MIGRATION_26_27.migrate(raw)
+            AppDatabase.MIGRATION_27_28.migrate(raw)
+
+            // (a) The seeded q1 becomes a multiple-choice question with an
+            // explanation whose markup the back column must flatten away.
+            raw.execSQL(
+                "UPDATE questions SET explanation = ?, contentHash = 'mcq-hash' " +
+                    "WHERE id = 'q1'",
+                arrayOf(
+                    listOf(ContentElement.TextElement("Because <b>force</b> acts"))
+                        .toContentJson(json)
+                )
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q1','q1-a','wrong','wrong','wrong',NULL,0), " +
+                    "('q1','q1-b','right','right','right',NULL,1)"
+            )
+            raw.execSQL(
+                "INSERT INTO correct_answers (questionId,optionId) VALUES ('q1','q1-b')"
+            )
+            raw.execSQL(
+                "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt,reps," +
+                    "lapses,leech,lastReviewedAt,contentHash,difficulty,stability," +
+                    "stabilityFast,cardState,reviewCount) VALUES " +
+                    "('p1','q1',2.5,4,4444,2,0,0,4000,'mcq-hash',5.5,12.0,9.0,'REVIEW',2)"
+            )
+            raw.execSQL(
+                "INSERT INTO review_log (paperId,questionId,rating,reviewedAt,elapsedSeconds) " +
+                    "VALUES ('p1','q1',3,4000,10)"
+            )
+
+            // (b) A one-option question: the answer, its key, two cards (one
+            // in another paper) and a review.
+            raw.execSQL(
+                "INSERT INTO papers (id,title,description,durationMinutes," +
+                    "negativeMarking,createdAt,sortOrder) VALUES " +
+                    "('p2','Paper 2','',0,0.0,1000,0)"
+            )
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q2','c1','One option stem','One option stem','one option stem',NULL," +
+                    "'',NULL,'medium',1.0,'','',1,'old-q2-hash')"
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q2','q2-a','Option answer','Option answer','option answer',NULL,0)"
+            )
+            raw.execSQL(
+                "INSERT INTO correct_answers (questionId,optionId) VALUES ('q2','q2-a')"
+            )
+            for (paperId in listOf("p1", "p2")) {
+                raw.execSQL(
+                    "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt," +
+                        "reps,lapses,leech,lastReviewedAt,contentHash,difficulty,stability," +
+                        "stabilityFast,cardState,reviewCount) VALUES " +
+                        "('$paperId','q2',2.5,7,7777,3,1,0,5000,'old-q2-hash',6.0,21.0," +
+                        "13.0,'REVIEW',3)"
+                )
+            }
+            raw.execSQL(
+                "INSERT INTO review_log (paperId,questionId,rating,reviewedAt,elapsedSeconds) " +
+                    "VALUES ('p1','q2',3,5000,12)"
+            )
+
+            // (c) The cloze shape: the placeholder must be replaced, not kept.
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q3','c1','Cloze stem','Cloze stem','cloze stem',NULL," +
+                    "?,NULL,'medium',1.0,'','',2,'cloze-hash')",
+                arrayOf(
+                    listOf(ContentElement.TextElement(FALLBACK_CLOZE_EXPLANATION))
+                        .toContentJson(json)
+                )
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q3','q3-a','Cloze answer','Cloze answer','cloze answer',NULL,0)"
+            )
+
+            // (d) An already-valid flashcard with a back and a schedule.
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q4','c1','Flash front','Flash front','flash front',NULL," +
+                    "?,NULL,'medium',1.0,'','',3,'keep-q4-hash')",
+                arrayOf(
+                    listOf(ContentElement.TextElement("Already the back")).toContentJson(json)
+                )
+            )
+            raw.execSQL(
+                "INSERT INTO card_state (paperId,questionId,ease,intervalDays,dueAt,reps," +
+                    "lapses,leech,lastReviewedAt,contentHash,difficulty,stability," +
+                    "stabilityFast,cardState,reviewCount) VALUES " +
+                    "('p1','q4',2.5,10,10444,4,0,0,10000,'keep-q4-hash',4.0,30.0," +
+                    "20.0,'REVIEW',4)"
+            )
+
+            // (e) The answer is a picture with no explanation: the scalar
+            // becomes the card's explanation image.
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q5','c1','Image answer card','Image answer card','image answer card'," +
+                    "NULL,'',NULL,'medium',1.0,'','',4,'img-q5-hash')"
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q5','q5-a','Answer text','Answer text','answer text'," +
+                    "'answer.png',0)"
+            )
+
+            // (f) The same picture is already an explanation block, so the
+            // scalar must not add a second copy of it.
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q6','c1','Picture already shown','Picture already shown'," +
+                    "'picture already shown',NULL,?,NULL,'medium',1.0,'','',5," +
+                    "'img-q6-hash')",
+                arrayOf(
+                    listOf(
+                        ContentElement.TextElement("The source"),
+                        ContentElement.ImageElement("answer.png")
+                    ).toContentJson(json)
+                )
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q6','q6-a','Answer text','Answer text','answer text'," +
+                    "'answer.png',0)"
+            )
+            raw.version = 28
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 converts a one-option question into a flashcard`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                // Opening ran 28->29; Room's identity check proves the schema.
+                val stored = db.questionDao().getById("q2")!!
+                assertTrue("the option must be gone", db.optionDao().getByQuestion("q2").isEmpty())
+                assertTrue(
+                    "the answer key must be gone",
+                    db.correctAnswerDao().getCorrectIds("q2").isEmpty()
+                )
+
+                // The option became the back, and the back is searchable.
+                val back = stored.explanation.parseContentElements(json)
+                assertEquals("Option answer", back.textContent)
+                assertEquals("Option answer", stored.backText)
+                assertEquals("option answer", stored.backTextFolded)
+                // searchText stays the stem: it is the list row's preview.
+                assertEquals("One option stem", stored.searchText)
+
+                // The identity is the optionless shape, and every card row
+                // carries it — otherwise the next read would reset the card.
+                val expected = ContentHash.of("One option stem", emptyList(), emptyList(), null)
+                assertEquals(expected, stored.contentHash)
+                assertEquals(expected, db.cardStateDao().get("p1", "q2")!!.contentHash)
+                assertEquals(expected, db.cardStateDao().get("p2", "q2")!!.contentHash)
+
+                // The schedule and the review history survive the rewrite.
+                val card = db.cardStateDao().get("p1", "q2")!!
+                assertEquals(7, card.intervalDays)
+                assertEquals(7777L, card.dueAt)
+                assertEquals(3, card.reps)
+                assertEquals(1, card.lapses)
+                assertEquals(21.0, card.stability, 0.0)
+                assertEquals(13.0, card.stabilityFast, 0.0)
+                assertEquals(com.mcqapp.domain.CardStateKind.REVIEW, card.cardState)
+                assertEquals(3, card.reviewCount)
+                assertEquals(5000L, card.lastReviewedAt)
+                assertEquals(1, db.reviewLogDao().historyForQuestion("q2").size)
+                assertEquals(5000L, db.reviewLogDao().historyForQuestion("q2").single().reviewedAt)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 replaces a cloze placeholder with the answer`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                val stored = db.questionDao().getById("q3")!!
+                assertTrue(db.optionDao().getByQuestion("q3").isEmpty())
+                // The placeholder is not part of the answer: the back is the
+                // option alone.
+                assertEquals("Cloze answer", stored.explanation.parseContentElements(json).textContent)
+                assertFalse(
+                    "the cloze placeholder must not survive: ${stored.explanation}",
+                    stored.explanation.contains(FALLBACK_CLOZE_EXPLANATION)
+                )
+                assertEquals("Cloze answer", stored.backText)
+                assertEquals("cloze answer", stored.backTextFolded)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 fills back text without touching a valid card`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                // A multiple-choice question keeps its options, key, identity
+                // and schedule; only the back becomes searchable.
+                val mcq = db.questionDao().getById("q1")!!
+                assertEquals(2, db.optionDao().getByQuestion("q1").size)
+                assertEquals(listOf("q1-b"), db.correctAnswerDao().getCorrectIds("q1"))
+                assertEquals("mcq-hash", mcq.contentHash)
+                // Flattened: markup is gone, as the in-memory filter sees it.
+                assertEquals("Because force acts", mcq.backText)
+                assertEquals("because force acts", mcq.backTextFolded)
+                val mcqCard = db.cardStateDao().get("p1", "q1")!!
+                assertEquals("mcq-hash", mcqCard.contentHash)
+                assertEquals(4, mcqCard.intervalDays)
+                assertEquals(4444L, mcqCard.dueAt)
+
+                // A zero-option question is already a flashcard: its back is
+                // filled and its identity and schedule are untouched.
+                val card = db.questionDao().getById("q4")!!
+                assertEquals("keep-q4-hash", card.contentHash)
+                assertEquals("Already the back", card.backText)
+                assertEquals("already the back", card.backTextFolded)
+                val schedule = db.cardStateDao().get("p1", "q4")!!
+                assertEquals("keep-q4-hash", schedule.contentHash)
+                assertEquals(10444L, schedule.dueAt)
+                assertEquals(10, schedule.intervalDays)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 carries an option image into the explanation image`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                val stored = db.questionDao().getById("q5")!!
+                assertTrue("the option must be gone", db.optionDao().getByQuestion("q5").isEmpty())
+
+                // The answer's scalar picture becomes the back's picture...
+                assertEquals("answer.png", stored.explanationImage)
+                // ...and the merged blocks hold the answer text alone: the
+                // picture is not repeated as an element.
+                val back = stored.explanation.parseContentElements(json)
+                assertEquals("Answer text", back.textContent)
+                assertTrue(
+                    "the merged back repeats the image: ${stored.explanation}",
+                    back.none { it is ContentElement.ImageElement }
+                )
+                assertEquals("Answer text", stored.backText)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 does not duplicate an image the back already shows`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                val stored = db.questionDao().getById("q6")!!
+                assertTrue("the option must be gone", db.optionDao().getByQuestion("q6").isEmpty())
+
+                // The blocks already show the picture, so no scalar is added
+                // and exactly one copy survives.
+                assertNull(stored.explanationImage)
+                val images = stored.explanation.parseContentElements(json)
+                    .filterIsInstance<ContentElement.ImageElement>()
+                assertEquals(
+                    "the picture must appear exactly once: ${stored.explanation}",
+                    listOf("answer.png"),
+                    images.map { it.src }
+                )
+                // The answer still leads the back.
+                assertEquals("Answer text The source", stored.backText)
             } finally {
                 db.close()
             }

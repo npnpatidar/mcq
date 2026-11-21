@@ -149,8 +149,7 @@ object Calibration {
         LABEL_GUESS,
         LABEL_SKIPPED,
         NEW_EITHER_ROW,
-        NO_FORECAST,
-        NO_OUTCOME
+        NO_FORECAST
     }
 
     data class ExclusionCount(val reason: Exclusion, val count: Int)
@@ -567,7 +566,14 @@ object Calibration {
         }
 
         byCard.values.forEach { rows ->
-            val ordered = rows.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            // A row with no objective outcome cannot ever be one: a self-graded
+            // card review records `wasCorrect = null`, and so does every row
+            // from before v19. Drop those rows before pairing, so one sitting
+            // between a label and its real outcome cannot take that outcome's
+            // slot and turn the pair into "no outcome"; the label simply pairs
+            // with the next review that does carry one.
+            val ordered = rows.filter { it.wasCorrect != null }
+                .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             for (index in ordered.indices) {
                 val label = ordered[index]
                 // Pre-epoch labels are dropped before any counter sees them:
@@ -606,9 +612,9 @@ object Calibration {
                     drop(Exclusion.NO_FORECAST); continue
                 }
                 val predicted = outcome.predictedRecall
-                val correct = outcome.wasCorrect ?: run {
-                    drop(Exclusion.NO_OUTCOME); continue
-                }
+                // Every surviving outcome row carries the flag (the pair list
+                // above filtered the rest), so this is never a missing value.
+                val correct = outcome.wasCorrect == true
                 pairs += Sample(
                     paperId = label.paperId,
                     questionId = label.questionId,

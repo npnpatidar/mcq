@@ -14,7 +14,9 @@ import kotlinx.serialization.json.Json
  * (ImportViewModel) and the actual import (Importer) must agree on what
  * counts as a duplicate, so they share this hash: question text + option
  * texts + option images + passage id. Correct answers / explanations do not
- * affect it.
+ * affect it. A flashcard's identity is its prompt too — one prompt = one
+ * answer, so a changed back is the *same* question with answer content that
+ * [nonHashedFieldsDiffer] (and [CardContent]) compares, not a second card.
  *
  * [passageId] deliberately changed the signature (v9): a question that moved
  * between passages must read as edited content to the study layer, which
@@ -73,6 +75,18 @@ object ContentHash {
     private fun storedText(elements: List<ContentElement>, flat: String): String =
         elements.ifEmpty { listOf(ContentElement.TextElement(flat)) }.textContent
 
+    /**
+     * A flashcard's back as the answer comparison sees it: the structured
+     * explanation blocks, with the flat text field standing in when a file
+     * carries only that. Blank shapes are normalized (`[]` and one empty text
+     * block are the same back), mirroring [CardContent].
+     */
+    private fun backElements(elements: List<ContentElement>, flat: String): List<ContentElement> =
+        elements.ifEmpty { listOf(ContentElement.TextElement(flat)) }.orBlankElement()
+
+    private fun List<ContentElement>.orBlankElement(): List<ContentElement> =
+        ifEmpty { listOf(ContentElement.TextElement("")) }
+
     fun of(dto: QuestionDto): String =
         of(
             storedText(dto.elements, dto.text),
@@ -129,7 +143,7 @@ object ContentHash {
         if (storedElements != incomingElements) return false
         if (stored.image != dto.image) return false
         if (storedOptions.size != dto.options.size) return false
-        return storedOptions.zip(dto.options).all { (option, incoming) ->
+        val optionsMatch = storedOptions.zip(dto.options).all { (option, incoming) ->
             val storedOptionElements = option.text.parseContentElements(json)
             val incomingOptionElements = incoming.elements.ifEmpty {
                 listOf(ContentElement.TextElement(incoming.text))
@@ -139,6 +153,11 @@ object ContentHash {
                 storedOptionElements.filterNot { it is ContentElement.ImageElement } ==
                     incomingOptionElements.filterNot { it is ContentElement.ImageElement }
         }
+        // The back is deliberately absent: one prompt = one answer. A
+        // flashcard re-imported with a different back is the same question;
+        // the caller compares that answer content through
+        // [nonHashedFieldsDiffer] and refreshes it in place.
+        return optionsMatch
     }
 
     /**
@@ -157,7 +176,7 @@ object ContentHash {
         if (aElements != bElements) return false
         if (a.image != b.image) return false
         if (a.options.size != b.options.size) return false
-        return a.options.zip(b.options).all { (first, second) ->
+        val optionsMatch = a.options.zip(b.options).all { (first, second) ->
             val firstElements = first.elements.ifEmpty {
                 listOf(ContentElement.TextElement(first.text))
             }
@@ -169,6 +188,9 @@ object ContentHash {
                 firstElements.filterNot { it is ContentElement.ImageElement } ==
                     secondElements.filterNot { it is ContentElement.ImageElement }
         }
+        // Same prompt is the same question even when the back differs: the
+        // changed answer is refreshed in place, never inserted as a twin.
+        return optionsMatch
     }
 
     /**
@@ -183,7 +205,10 @@ object ContentHash {
      * bytes reads as a permanent difference for any oversized picture.
      *
      * The stored explanation is elements JSON while the DTO carries plain text
-     * (or elements), so both are compared as their text content.
+     * (or elements), so both are compared as their text content. For a
+     * flashcard the explanation *is* the back, so it is additionally compared
+     * as structured blocks: a table, formula or picture-only back change is an
+     * answer update even though its flattened text is unchanged.
      */
     fun nonHashedFieldsDiffer(
         stored: QuestionEntity,
@@ -216,12 +241,18 @@ object ContentHash {
         dto: QuestionDto,
         correctKeyDiffers: () -> Boolean
     ): Boolean {
-        val storedExplanation = stored.explanation.parseContentElements(json).textContent
-        val dtoExplanation = dto.explanationElements.ifEmpty {
+        val storedExplanationElements = stored.explanation.parseContentElements(json)
+        val dtoExplanationElements = dto.explanationElements.ifEmpty {
             listOf(ContentElement.TextElement(dto.explanation))
-        }.textContent
+        }
+        val storedExplanation = storedExplanationElements.textContent
+        val dtoExplanation = dtoExplanationElements.textContent
+        val flashcardBackDiffers = dto.options.isEmpty() &&
+            backElements(storedExplanationElements, "") !=
+            backElements(dto.explanationElements, dto.explanation)
         return stored.image != dto.image ||
             storedExplanation != dtoExplanation ||
+            flashcardBackDiffers ||
             stored.explanationImage != dto.explanationImage ||
             stored.marks != dto.marks ||
             // The same difficulty can be spelled differently: a bookmark or

@@ -136,6 +136,8 @@ internal class StreamingImportSession(
     private var restoredAttempts = 0
     private var restoredSchedules = 0
     private var questionsSeen = 0
+    /** One-option DTOs normalised into cards, for the completion report. */
+    private var recallConverted = 0
 
     private var paperOpen = false
     private var paperIndex = 0
@@ -352,6 +354,7 @@ internal class StreamingImportSession(
         restoredBookmarks = restoredBookmarks,
         restoredAttempts = restoredAttempts,
         restoredSchedules = restoredSchedules,
+        recallConverted = recallConverted,
         progressRestoreSkipped = scheduleBudget.exhausted
     )
 
@@ -521,11 +524,18 @@ internal class StreamingImportSession(
         } else {
             questions
         }
-        if (applied.isEmpty()) return
+        // The one-option rule, before hashing and writing: a single option is
+        // a flashcard's answer, not a choice (see `normalizedFlashcard`). It
+        // runs after preview edits, so an edit that leaves one option is
+        // normalised too, and it covers the Anki and backup streaming paths,
+        // which never pass through the whole-file parser.
+        val normalized = applied.map { it.normalizedFlashcard() }
+        if (normalized.isEmpty()) return
+        recallConverted += applied.count { it.convertsToFlashcard() }
         // A question of this paper was seen, whether it is written or turns out
         // to be a duplicate: the whole-file importer's skip needs at least one.
         sawAnyQuestion = true
-        val scaled = applied.map { it.withDownscaledImages() }
+        val scaled = normalized.map { it.withDownscaledImages() }
         // Members follow their passage's remap: a question row must point at
         // the passage row this import writes (consolidated_bugs.md A3). The
         // hash follows the written shape, because that is what the study
@@ -541,7 +551,7 @@ internal class StreamingImportSession(
         val candidates = candidates(matchIds, matchedIds)
         val dbHashes = matchIds.mapTo(HashSet()) { it.contentHash }
 
-        val ids = applied.map { it.id }
+        val ids = normalized.map { it.id }
         val idEntities = db.questionDao().getByIdsChunked(ids).associateBy { it.id }
         val idCorrect = db.correctAnswerDao().getForQuestionsChunked(ids)
             .groupBy({ it.questionId }, { it.optionId })
@@ -550,7 +560,7 @@ internal class StreamingImportSession(
         val batchWritten = HashMap<String, MutableList<QuestionDto>>()
         val writtenById = HashMap<String, QuestionEntity>()
 
-        applied.forEachIndexed { index, dto ->
+        normalized.forEachIndexed { index, dto ->
             val scaledQuestion = effective[index]
             val contentHash = hashes[index]
             // Record the passage before any duplicate/refresh decision: the
@@ -600,6 +610,11 @@ internal class StreamingImportSession(
                     db.questionDao().updateNonHashedFields(
                         id = sameContentId,
                         explanation = scaledQuestion.storedExplanationJson(json),
+                        // Same blocks as the explanation above: the folded
+                        // search twins follow the refreshed back, not the row
+                        // the refresh replaces.
+                        backText = scaledQuestion.storedBackSearchText(),
+                        backTextFolded = scaledQuestion.storedBackSearchText().lowercase(),
                         marks = dto.marks,
                         difficulty = dto.difficulty,
                         // One CSV folded in Kotlin for both binds: SQL lower()

@@ -13,6 +13,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
+import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CancellationException
@@ -21,6 +22,31 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/**
+ * What kind of study card a question is.
+ *
+ * A flashcard has no options: its stem is the front and its explanation is the
+ * back. A multiple-choice question keeps today's shape (at least two options
+ * and an answer key). The type is derived from the loaded question — see
+ * [cardTypeOf] — and then belongs to the form, because a user can switch it.
+ */
+enum class EditorCardType {
+    MULTIPLE_CHOICE,
+    FLASHCARD
+}
+
+/**
+ * The card type a loaded question has: no options means a flashcard.
+ *
+ * Exactly one option is deliberately neither shape. That combination is
+ * normalised to a flashcard on import and by the database migration, so it
+ * cannot reach the editor from stored data; a form that ends up with one
+ * option anyway stays a question and stays unsavable until it is fixed
+ * ([EditorUiState.canSave]).
+ */
+internal fun cardTypeOf(optionCount: Int): EditorCardType =
+    if (optionCount == 0) EditorCardType.FLASHCARD else EditorCardType.MULTIPLE_CHOICE
 
 /** Block kinds the editor can append to an element list. */
 enum class EditorBlockType {
@@ -148,6 +174,12 @@ data class EditorUiState(
     val marks: String = "1",
     val tags: String = "",
     val options: List<OptionEditorState> = emptyList(),
+    /**
+     * Whether this question is a multiple-choice question or a flashcard.
+     * Loaded from the question ([cardTypeOf]) and reset with it on Prev/Next,
+     * so one card's type can never leak onto the next.
+     */
+    val cardType: EditorCardType = EditorCardType.MULTIPLE_CHOICE,
     val categories: List<CategoryNode> = emptyList(),
     /** Passages of this paper for the assign picker; empty when none exist. */
     val passages: List<com.mcqapp.domain.Passage> = emptyList(),
@@ -213,11 +245,30 @@ data class EditorUiState(
     /** A nonblank marks field must hold a valid number (M-08). */
     val marksValid: Boolean get() = com.mcqapp.domain.Marks.isValid(marks)
 
+    /** The front — the question itself — has something a learner can see. */
+    val hasFrontContent: Boolean
+        get() = elements.any { it.isSignificant() } || image.isNotBlank()
+
+    /**
+     * A flashcard's back carries something the learner can read. The back *is*
+     * the card's answer, so a blank back has nothing to reveal: the same rule
+     * Study uses to decide whether a card can be answered
+     * ([hasVisibleContent] plus the scalar back image).
+     */
+    val hasSaveableBack: Boolean
+        get() = explanationElements.hasVisibleContent || explanationImage.isNotBlank()
+
+    /** True when at least one option holds typed content or an image. */
+    val hasTypedOptions: Boolean get() = options.any { it.hasContent }
+
     /**
      * A question saves when it holds at least one significant block of any
-     * kind and every one of at least two options holds content. Plain text
-     * is no longer required: an image-only or formula-only question is
-     * valid.
+     * kind and its shape is complete. Plain text is no longer required: an
+     * image-only or formula-only question is valid.
+     *
+     * A multiple-choice question needs at least two options that each hold
+     * content. A flashcard needs **no** options and a visible back. Exactly one
+     * option is invalid in both modes: one option is an answer, not a choice.
      *
      * This is a property of the state object so screens derive it from the
      * *collected* state. Reading it through the ViewModel instead
@@ -226,15 +277,10 @@ data class EditorUiState(
      * still loading and never again — the Save button never enabled.
      */
     val canSave: Boolean
-        get() = marksValid &&
-            (elements.any { it.isSignificant() } || image.isNotBlank()) &&
-            options.size >= 2 &&
-            options.all { o ->
-                // A legacy image-only option loads as one empty text element
-                // plus the scalar image; the image is its content
-                // (consolidated_bugs.md J8).
-                o.elements.any { it.isSignificant() } || o.image.isNotBlank()
-            }
+        get() = marksValid && hasFrontContent && when (cardType) {
+            EditorCardType.FLASHCARD -> options.isEmpty() && hasSaveableBack
+            EditorCardType.MULTIPLE_CHOICE -> options.size >= 2 && options.all { it.hasContent }
+        }
 }
 
 data class OptionEditorState(
@@ -246,6 +292,13 @@ data class OptionEditorState(
     val isCorrect: Boolean = false
 ) {
     val text: String get() = elements.textContent
+
+    /**
+     * The option carries something a learner can read. A legacy image-only
+     * option loads as one empty text element plus the scalar image; the image
+     * is its content (consolidated_bugs.md J8).
+     */
+    val hasContent: Boolean get() = elements.any { it.isSignificant() } || image.isNotBlank()
 }
 
 /** Replaces the table at [index], or returns [elements] unchanged. */
@@ -383,6 +436,12 @@ internal fun applyMathTarget(s: EditorUiState, target: MathTarget, mml: String):
  * carries it: raw element text, normalized image fields (buildDto trims and
  * blanks them), the persisted marks value (blank means 1), and the tags the
  * save writes.
+ *
+ * The card type is deliberately absent: it is implied by the option list (no
+ * options = flashcard), and every switch that changes the type changes that
+ * list too — clearing the options, or seeding the two blanks a question needs.
+ * Carrying the enum as well would make a form look edited when nothing the
+ * save writes had changed.
  */
 internal fun editorSnapshot(s: EditorUiState): String {
     val sb = StringBuilder()
@@ -455,10 +514,16 @@ internal fun editorSnapshot(s: EditorUiState): String {
  * compares it to the raw stored one, so saving such a row *does* delete
  * `card_state`. Fingerprinting the load baseline raw makes the disclosure warn
  * about exactly that reset; trimming both sides would hide it.
+ *
+ * A flashcard's back is its answer, so for a zero-option question the back
+ * (blocks and scalar image) is part of the fingerprint — the same scoping
+ * [CardContent] applies. Without it, editing the answer a learner studies read
+ * as an explanation-only edit and never warned about the schedule reset.
  */
 internal fun editorCardFingerprint(s: EditorUiState, rawImages: Boolean = false): String {
     fun image(value: String): String? =
         if (rawImages) value else value.trim().ifBlank { null }
+    val isCard = s.options.isEmpty()
     return CardContent.of(
         Question(
             id = s.questionId,
@@ -469,9 +534,42 @@ internal fun editorCardFingerprint(s: EditorUiState, rawImages: Boolean = false)
                 QuestionOption(o.id, o.elements, image(o.image))
             },
             correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toSet(),
-            passageId = s.passageId?.takeIf { it.isNotBlank() }
+            passageId = s.passageId?.takeIf { it.isNotBlank() },
+            explanationElements = if (isCard) s.explanationElements else emptyList(),
+            explanationImage = if (isCard) image(s.explanationImage) else null
         )
     )
+}
+
+/**
+ * Which string resource explains a disabled Save, or null when nothing needs
+ * saying. Pure and resource-id-based so the truth table (a card needs a back,
+ * a question needs two options) is testable without Compose; the screen only
+ * resolves the id. The marks and per-field cases have their own field-level
+ * errors, so they return null here.
+ */
+internal fun saveBlockedHintRes(s: EditorUiState): Int? = when {
+    s.loading || s.busy || !s.marksValid -> null
+    !s.hasFrontContent -> R.string.save_blocked_no_content
+    s.cardType == EditorCardType.FLASHCARD ->
+        if (s.hasSaveableBack) null else R.string.r2_editor_save_blocked_flashcard_back
+    s.options.size < 2 -> R.string.save_blocked_two_options
+    s.options.any { !it.hasContent } -> R.string.save_blocked_empty_option
+    else -> null
+}
+
+/**
+ * The label the editor gives a question's scalar back image.
+ *
+ * On a flashcard that picture is the answer, not an explanation, and Study and
+ * Browse already resolve the same pair ([R.string.r2_study_answer_image] /
+ * [R.string.explanation_image]); the editor used to say "Explanation image" for
+ * both, which misnamed the card's answer. Pure, so the pairing is testable
+ * without Compose.
+ */
+internal fun explanationImageLabelRes(type: EditorCardType): Int = when (type) {
+    EditorCardType.FLASHCARD -> R.string.r2_study_answer_image
+    EditorCardType.MULTIPLE_CHOICE -> R.string.explanation_image
 }
 
 /**
@@ -615,6 +713,9 @@ class EditorViewModel(
                             isCorrect = o.id in pendingEdit.correctOptionIds
                         )
                     },
+                    // No options means the imported draft is a flashcard; its
+                    // explanation is the back.
+                    cardType = cardTypeOf(pendingEdit.options.size),
                     categories = emptyList(),
                     categoryId = "",
                     // Passage membership is part of the imported content; an
@@ -665,6 +766,7 @@ class EditorViewModel(
                                 isCorrect = o.id in question.correctOptionIds
                             )
                         },
+                        cardType = cardTypeOf(question.options.size),
                         categories = categories,
                         categoryId = question.categoryId,
                         passages = repository.getPassagesForPaper(paperId),
@@ -702,7 +804,8 @@ class EditorViewModel(
                         elements = listOf(ContentElement.TextElement("")),
                         blockIds = freshBlockIds(1)
                     )
-                )
+                ),
+                cardType = EditorCardType.MULTIPLE_CHOICE
             )
             snapshotClean()
             val readyMsg = if (_state.value.isNew) "new question" else "editing $questionId"
@@ -937,6 +1040,44 @@ class EditorViewModel(
     fun removeExplanationTableColumn(index: Int, col: Int) =
         updateExplanationTable(index) { it.withColumnRemoved(col) }
 
+    // ---- card type ----
+
+    /**
+     * Switches the question between a multiple-choice question and a
+     * flashcard.
+     *
+     * A flashcard holds no options, so switching to one clears them; the screen
+     * asks first when they hold typed content, because that content is lost.
+     * Switching back seeds the two blank options the save gate requires — a
+     * "question" with no options could never be saved. They are seeded without
+     * a pre-ticked answer: on a converted card the user never saw a key, so
+     * silently marking A correct (and letting a second tick create a
+     * multi-answer key) would be wrong. The no-correct-answer warning points at
+     * what is still missing.
+     */
+    fun setCardType(type: EditorCardType) = updateState { s ->
+        if (s.cardType == type) return@updateState s
+        when (type) {
+            EditorCardType.FLASHCARD ->
+                s.copy(cardType = type, options = emptyList())
+            EditorCardType.MULTIPLE_CHOICE -> s.copy(
+                cardType = type,
+                options = listOf(
+                    OptionEditorState(
+                        id = "a",
+                        elements = listOf(ContentElement.TextElement("")),
+                        blockIds = freshBlockIds(1)
+                    ),
+                    OptionEditorState(
+                        id = "b",
+                        elements = listOf(ContentElement.TextElement("")),
+                        blockIds = freshBlockIds(1)
+                    )
+                )
+            )
+        }
+    }
+
     // ---- options ----
 
     fun updateOptionImage(optionId: String, value: String) = updateState {
@@ -1167,14 +1308,26 @@ class EditorViewModel(
     private fun buildDto(): QuestionDto? {
         val s = _state.value
         if (!canProceed()) return null
-        val edited = s.options.map { QuestionOption(it.id, it.elements, it.image.trim().ifBlank { null }) }
+        // A flashcard persists as zero options and an empty answer key; its
+        // back (the explanation) is the answer. canSave already guarantees the
+        // list is empty, so this is the shape guarantee, not a repair.
+        val isCard = s.cardType == EditorCardType.FLASHCARD
+        val edited = if (isCard) {
+            emptyList()
+        } else {
+            s.options.map { QuestionOption(it.id, it.elements, it.image.trim().ifBlank { null }) }
+        }
         return QuestionDto(
             id = s.questionId.ifBlank { "q-" + System.currentTimeMillis().toString(36) },
             text = s.elements.textContent,
             elements = s.elements,
             image = s.image.trim().ifBlank { null },
             options = edited.map { com.mcqapp.data.io.OptionDto(it.id, it.text, it.elements, it.image) },
-            correctOptionIds = s.options.filter { it.isCorrect }.map { it.id }.toList(),
+            correctOptionIds = if (isCard) {
+                emptyList()
+            } else {
+                s.options.filter { it.isCorrect }.map { it.id }
+            },
             explanation = s.explanationElements.textContent,
             explanationElements = s.explanationElements,
             explanationImage = s.explanationImage.trim().ifBlank { null },
@@ -1378,6 +1531,10 @@ class EditorViewModel(
                             isCorrect = o.id in next.correctOptionIds
                         )
                     },
+                    // The type belongs to the loaded question, like its
+                    // passage: a card must never make the next question look
+                    // like a card too.
+                    cardType = cardTypeOf(next.options.size),
                     // The membership belongs to the loaded question; keeping
                     // the previous one silently reassigned on save.
                     passageId = next.passageId,
@@ -1460,6 +1617,9 @@ class EditorViewModel(
                                     isCorrect = o.id in next.correctOptionIds
                                 )
                             },
+                            // Same rule as the import branch: the type is part
+                            // of the question, not of the editor session.
+                            cardType = cardTypeOf(next.options.size),
                             // Same two fields as the import branch: an
                             // existing question is never "new", and its
                             // passage membership is its own.

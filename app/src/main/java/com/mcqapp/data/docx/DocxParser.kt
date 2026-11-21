@@ -103,8 +103,8 @@ fun parseDocx(bytes: ByteArray): DocxParseResult {
  * body was edited and the payload is stale.
  *
  * Matching is a subsequence walk: payload questions the writer left out of
- * the visible body (one with no options cannot be carried by the markers)
- * may sit between matches — never the other way round.
+ * the visible body (one with no stem cannot be carried by the markers) may
+ * sit between matches — never the other way round.
  *
  * When the payload is fresh it also carries the images: the writer strips
  * data-URI srcs from the payload (they would double the file), so srcs are
@@ -231,7 +231,13 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
     val text = StringBuilder()
     fun flushText() {
         if (text.isNotEmpty()) {
-            parts.add("t:" + normalizeStem(text.toString()))
+            // A whitespace-only run is no content: the visible parse leaves the
+            // newline between a table and the paragraph after it as its own
+            // text element, and the canon must not count that as a part the
+            // payload does not have — an untouched card whose back mixes a
+            // table with a formula read as edited because of it.
+            val normalized = normalizeStem(text.toString())
+            if (normalized.isNotEmpty()) parts.add("t:$normalized")
             text.clear()
         }
     }
@@ -551,7 +557,7 @@ private fun parseSectionedDocx(lines: List<DocxLine>, warnings: List<String>): D
                 "No questions found: the document is empty."
             } else {
                 "No questions found: expected 'N.)' numbered questions with " +
-                    "'(a)..(d)', 'Ans.' and 'Exp:' markers."
+                    "'(a)..(d)', 'Ans.' and 'Exp:' markers, or a card's 'Answer:' back."
             }
         )
     }
@@ -663,6 +669,27 @@ private const val OPTION_MARKER = "\\(([a-z])\\)"
 private const val ANSWER_MARKER = "Ans."
 private const val EXPLANATION_MARKER = "Exp:"
 
+/**
+ * The label a flashcard's back carries: a card has no options, so what
+ * follows is the answer itself, not a note about an option. The app stores a
+ * card's back in the explanation field, so reading this marker fills
+ * `explanation_elements` — the one place a card's back lives.
+ */
+private const val CARD_BACK_MARKER = "Answer:"
+
+/**
+ * The first marker that ends a card's stem, whichever answer label the author
+ * (or the writer) used. `Ans.` is accepted so a hand-written card that keys
+ * its back the old way still imports; the export writes `Answer:`.
+ *
+ * `Exp:` is deliberately *not* one of them: a block with no options and only
+ * an explanation is a multiple-choice question whose options were forgotten,
+ * and it is refused loudly rather than guessed into a card.
+ */
+private val cardBackSplit = Regex(
+    "(?m)^(?:${Regex.escape(ANSWER_MARKER)}|${Regex.escape(CARD_BACK_MARKER)})"
+)
+
 /** `Passage:` is the one case-insensitive marker: authors need not match its casing. */
 private const val PASSAGE_MARKER = "(?i:Passage:)"
 
@@ -685,11 +712,13 @@ private val optionMarker = Regex("(?m)^$OPTION_MARKER")
 /**
  * A line the parser would read as a marker: `N.)`, `(x)` (any letter — an
  * out-of-range one is refused, so it must not survive at a line start),
- * `Ans.`, `Exp:` or `Passage:`. The DOCX writer prefixes such a line with one
- * space so a marker-shaped line in a stem, option or explanation stays text.
+ * `Ans.`, `Exp:`, `Answer:` or `Passage:`. The DOCX writer prefixes such a
+ * line with one space so a marker-shaped line in a stem, option or back
+ * stays text.
  */
 internal val docxLineStartMarker = Regex(
-    "^(?:$QUESTION_MARKER|$OPTION_MARKER|$ANSWER_MARKER|$EXPLANATION_MARKER|$PASSAGE_MARKER)"
+    "^(?:$QUESTION_MARKER|$OPTION_MARKER|$ANSWER_MARKER|$EXPLANATION_MARKER|" +
+        "$CARD_BACK_MARKER|$PASSAGE_MARKER)"
 )
 
 /** Separators between several answers: a comma, an "and", an ampersand. */
@@ -776,7 +805,7 @@ private fun extractQuestions(
         if (cleaned.isBlank()) throw IllegalArgumentException("No questions found: the document is empty.")
         throw IllegalArgumentException(
             "No questions found: expected 'N.)' numbered questions with " +
-                "'(a)..(d)', 'Ans.' and 'Exp:' markers."
+                "'(a)..(d)', 'Ans.' and 'Exp:' markers, or a card's 'Answer:' back."
         )
     }
     // Which passage each question belongs to: the last `Passage:` marker at or
@@ -835,12 +864,7 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
     // way — any question with two (a) markers was refused before — and the
     // statements stay in the stem, where they read naturally.
     val markers = optionMarker.findAll(optionText).toList()
-    if (markers.isEmpty()) {
-        fail(
-            "missing option (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) " +
-                ".. Ans. .. Exp: ..'."
-        )
-    }
+    if (markers.isEmpty()) return extractCard(num, block, passageId)
     val firstOption = markers.indexOfLast { it.groupValues[1] == "a" }
     if (firstOption < 0) {
         fail(
@@ -953,6 +977,48 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
         answer = answer,
         explanationHtml = explanation,
         correctIds = correctIds,
+        passageId = passageId
+    )
+}
+
+/**
+ * A `N.)` block with no option markers is a flashcard: the stem is the front,
+ * the back is everything after the answer marker. The back rides in
+ * `explanation_elements` (through [RawQuestion.explanationHtml]) because that
+ * is where the app keeps a card's back — the same field the hidden payload
+ * fingerprints, so an untouched export stays fresh and an edited one still
+ * comes back as a card with its answer intact.
+ *
+ * The writer labels the back `Answer:`; `Ans.` is accepted too so a
+ * hand-written card keys its back however it likes. A block with no answer
+ * marker at all is still refused: that is a multiple-choice question whose
+ * options were forgotten, and guessing the omission would hide the author's
+ * mistake.
+ */
+private fun extractCard(num: String, block: String, passageId: String): RawQuestion {
+    val marker = cardBackSplit.find(block)
+    if (marker == null) {
+        throw IllegalArgumentException(
+            "Malformed question $num: no options and no answer. Expected either " +
+                "options '(a) .. (b) .. Ans. .. Exp: ..' or a card's " +
+                "'N.) front .. Answer: back'."
+        )
+    }
+    val stem = block.substring(0, marker.range.first).trim()
+    val back = block.substring(marker.range.last + 1).trim()
+    if (stem.isBlank()) {
+        throw IllegalArgumentException(
+            "Malformed question $num: missing question stem. Expected " +
+                "'N.) front .. Answer: back'."
+        )
+    }
+    return RawQuestion(
+        num = num,
+        stemHtml = stem,
+        options = emptyMap(),
+        answer = "",
+        explanationHtml = back,
+        correctIds = emptyList(),
         passageId = passageId
     )
 }

@@ -11,4 +11,14 @@
     <string name="r2_import_fallback_category">Category</string>
     <string name="r2_import_fallback_passage">Passage</string>
     <string name="r2_import_fallback_cloze_explanation">Cloze card from Anki.</string>
+
+    <!-- Import preview badges. A zero-option question is a flashcard; CHANGED
+         and DUPLICATE describe how the row meets the existing bank. A card can
+         be either, so a row may show two. -->
+    <string name="r2_import_badge_flashcard">FLASHCARD</string>
+    <string name="r2_import_badge_changed">CHANGED</string>
+    <string name="r2_import_badge_duplicate">DUPLICATE</string>
+    <!-- A card's back in the preview is its answer, not an explanation
+         (mirrors the editor, Study and Browse). %1$s is the back text. -->
+    <string name="r2_import_answer_label">Answer: %1$s</string>
 </resources>

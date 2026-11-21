@@ -82,4 +82,43 @@ class PdfAnswerKeyTest {
         assertNull(answerKeyEntry(QuestionDto(id = "q1", options = options), 3))
         assertNull(answerKeyEntry(QuestionDto(id = "q2"), 4))
     }
+
+    /**
+     * A zero-option question is a flashcard: its back is the answer, so the
+     * key prints it instead of the `—` placeholder that stood where a card's
+     * answer belongs.
+     */
+    @Test
+    fun aCardPrintsItsAnswerInsteadOfThePlaceholder() {
+        val card = QuestionDto(
+            id = "q1",
+            options = emptyList(),
+            explanationElements = listOf(ContentElement.TextElement("Paris, the capital."))
+        )
+        assertEquals("Q7. Paris, the capital.", answerKeyEntry(card, 7))
+    }
+
+    /** A card whose back is only the legacy text field is still a card. */
+    @Test
+    fun aLegacyTextCardAlsoPrintsItsAnswer() {
+        val card = QuestionDto(id = "q1", options = emptyList(), explanation = "Paris.")
+        assertEquals("Q7. Paris.", answerKeyEntry(card, 7))
+    }
+
+    /**
+     * A picture cannot ride the entry line: the line carries the explicit
+     * `(card)` marker and the picture prints under it (the key renders the
+     * back's images), so the card is never dropped or shown as `—`.
+     */
+    @Test
+    fun aPictureOnlyCardKeepsAnExplicitMarker() {
+        val card = QuestionDto(id = "q1", options = emptyList(), explanationImage = "mcq-0.png")
+        assertEquals("Q7. (card)", answerKeyEntry(card, 7))
+    }
+
+    /** A card with no back at all has nothing to key. */
+    @Test
+    fun aCardWithNoBackIsNotListed() {
+        assertNull(answerKeyEntry(QuestionDto(id = "q1", options = emptyList()), 3))
+    }
 }

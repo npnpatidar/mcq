@@ -94,7 +94,7 @@ private fun TodayCard(bundle: OverviewData) {
             listOf(
                 KpiItem(R.string.stats_reviews, today.reviews.toString()),
                 KpiItem(
-                    R.string.stats_correct,
+                    R.string.stats_recall,
                     today.correctPct?.let { formatPct(it) } ?: "—"
                 ),
                 KpiItem(

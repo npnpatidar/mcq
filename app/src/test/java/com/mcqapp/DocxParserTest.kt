@@ -368,6 +368,44 @@ class DocxParserTest {
         assertEquals(listOf("d"), q.correctIds)
     }
 
+    /**
+     * A `N.)` block with no option markers is a flashcard: the stem is the
+     * front and everything after the answer marker is the back, carried in
+     * the explanation field (the app's one home for a card's back). The
+     * writer labels the back `Answer:`; `Ans.` is accepted too, so a
+     * hand-written card keys its back however it likes.
+     */
+    @Test
+    fun aBlockWithoutOptionsIsACard() {
+        val questions = splitDocxMarkersForTest(
+            "1.) Capital of France?\nAnswer: Paris.\n2.) Largest planet?\nAns. Jupiter"
+        )
+        assertEquals(2, questions.size)
+        assertTrue(questions[0].options.isEmpty())
+        assertEquals("Capital of France?", questions[0].stemHtml)
+        assertEquals("Paris.", questions[0].explanationHtml)
+        // The back is not an option key, so no answer id is invented.
+        assertEquals("", questions[0].answer)
+        assertTrue(questions[1].options.isEmpty())
+        assertEquals("Jupiter", questions[1].explanationHtml)
+    }
+
+    /**
+     * A block with no options *and* no answer marker is still refused: that
+     * is a multiple-choice question whose options were forgotten, and
+     * guessing the omission would hide the author's mistake.
+     */
+    @Test
+    fun aBlockWithoutOptionsOrAnswerStillFailsLoudly() {
+        try {
+            splitDocxMarkersForTest("1.) Stem only")
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("1.)"))
+            assertTrue(e.message!!.contains("answer"))
+        }
+    }
+
     @Test
     fun noMarkersFailsLoudly() {
         try {

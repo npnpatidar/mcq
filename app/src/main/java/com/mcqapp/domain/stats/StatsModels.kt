@@ -246,7 +246,16 @@ data class AnswerButtonsData(
 }
 
 /** Reviews and pass rate for one hour of the wall clock, Anki's Hourly Breakdown. */
-data class HourlyStat(val hour: Int, val reviews: Int, val passRate: Double?)
+data class HourlyStat(
+    val hour: Int,
+    /** The hour's review volume, every row counted. */
+    val reviews: Int,
+    /**
+     * Share of the hour's rows that recorded an objective outcome and passed.
+     * Null when none did: a self-graded card review has no outcome.
+     */
+    val passRate: Double?
+)
 
 /** Answer speed analysis: distributions, per-grade averages, outliers. */
 data class ResponseTimeData(
@@ -258,7 +267,7 @@ data class ResponseTimeData(
     val trend: List<SeriesPoint>,
     /** Cards with the slowest mean answer time (minimum three timed reviews). */
     val slowest: List<WeakCard>,
-    /** Again grades answered in under five seconds: impulsive failures. */
+    /** Again grades with a recorded objective outcome answered in under five seconds. */
     val fastFails: Int
 ) {
     data class GradeStat(val grade: ReviewGrade, val reviews: Int, val avgSeconds: Double?)
@@ -454,9 +463,11 @@ data class ShakyCard(
 }
 
 /**
- * The guessing dashboard's payload. Only reviews that carry the flag are
- * classified; [allReviews] says how much of the in-range history that leaves
- * out, so the screen can state it rather than silently shrink the sample.
+ * The guessing dashboard's payload. Only reviews that carry both flags are
+ * counted anywhere: a self-graded card review records no objective outcome, and
+ * pre-v19 history records neither flag, and the two cannot be told apart.
+ * [allReviews] is that same counted set, so an unflagged row is never treated
+ * as history the figures are missing.
  *
  * The four outcomes are the 2×2 of declared guess × correctness: [earned]
  * (knew it), [lucky] (guessed right), [lapse] (knew it was wrong / didn't know
@@ -500,16 +511,16 @@ data class GuessingData(
     val lift: Double? get() = hitRate?.let { hit -> chanceBaseline?.let { hit - it } }
 
     val hasData: Boolean get() = reviews > 0
-
-    /** False when some in-range history predates the v19 flag columns. */
-    val isComplete: Boolean get() = allReviews == reviews
 }
 
 /** The "Today" strip, Anki-style: one answering of a card is one review. */
 data class TodayStats(
     val reviews: Int,
     val againCount: Int,
-    /** Share of today's reviews not answered Again; null with no reviews. */
+    /**
+     * Share of today's reviews not answered Again: the grade the learner gave,
+     * not an objective mark. Labelled "Recall" so it is not read as accuracy.
+     */
     val correctPct: Double?,
     val timeSeconds: Long,
     val learning: Int,

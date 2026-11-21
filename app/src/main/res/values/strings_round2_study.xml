@@ -15,6 +15,11 @@
     <string name="r2_study_verdict_correct">Correct</string>
     <string name="r2_study_verdict_incorrect">Incorrect</string>
 
+    <!-- Heading above a flashcard's revealed back (a card has an answer, not an
+         explanation) and the content description of its answer image. -->
+    <string name="r2_study_answer_heading">Answer</string>
+    <string name="r2_study_answer_image">Answer image</string>
+
     <!-- The empty-session new-cards control flips a setting for every paper. -->
     <string name="r2_study_enable_new_cards_all_papers">Introduce new cards in all papers</string>
     <string name="r2_study_enable_new_cards_all_papers_note">This setting applies to every paper, not just this one.</string>

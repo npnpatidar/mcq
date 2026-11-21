@@ -232,16 +232,73 @@ class AnkiPackageReaderTest {
     }
 
     @Test
-    fun aNoteWithNoMarkersBecomesASingleOptionRecallQuestion() {
+    fun aNoteWithASingleChoiceCountsAsAFlashcard() {
+        // One option cannot be a multiple-choice card: the importer normalises
+        // it into a flashcard, so the report's "imported as flashcards" count
+        // must include it even though the reader keeps the option for conversion.
+        val marker = AnkiPackageReader.read(
+            legacyPackage(notes = listOf("Front: 2 + 2?${us}&#10003; 4" to 1L))
+        )
+        val marked = marker.file.papers.single().let(::allQuestions).single()
+        assertEquals(1, marked.options.size)
+        assertEquals(listOf("o0"), marked.correctOptionIds)
+        assertEquals(1, marker.recallCount)
+
+        val foreign = AnkiPackageReader.read(
+            legacyPackage(
+                notes = listOf(
+                    "Capital of France?<p>(a) Paris</p>${us}" +
+                        "<p>Answer: (a)</p><p>Exp: it is the capital</p>" to 1L
+                )
+            )
+        )
+        val oneChoice = foreign.file.papers.single().let(::allQuestions).single()
+        assertEquals(1, oneChoice.options.size)
+        assertEquals(1, foreign.recallCount)
+    }
+
+    @Test
+    fun aNoteWithNoMarkersBecomesAZeroOptionFlashcard() {
         val apkg = legacyPackage(notes = listOf("Capital of France?${us}Paris${us}" to 1L))
 
         val result = AnkiPackageReader.read(apkg)
         val question = result.file.papers.single().let(::allQuestions).single()
 
         assertEquals("Capital of France?", question.text)
-        assertEquals(listOf("Paris"), question.options.map { it.text })
-        assertEquals(listOf("o0"), question.correctOptionIds)
+        assertEquals(emptyList<OptionDto>(), question.options)
+        assertEquals(emptyList<String>(), question.correctOptionIds)
+        assertEquals(listOf(com.mcqapp.domain.ContentElement.TextElement("Paris")), question.explanationElements)
+        assertEquals("Paris", question.explanation)
         assertEquals(1, result.recallCount)
+    }
+
+    @Test
+    fun aForeignBackKeepsItsTableAndEveryPictureAsTheFlashcardsAnswer() {
+        // fieldToText would flatten the table to nothing and keep only the
+        // first <img>; the back has to be built from elements instead.
+        val back = "<p>Both are light sensors.</p>" +
+            "<table border=\"1\"><tr><td>Rod</td><td>Dim light</td></tr></table>" +
+            "<img src=\"0\"><img src=\"1\">"
+        val apkg = legacyPackage(
+            notes = listOf("Which cells see?${us}$back${us}" to 1L),
+            media = mapOf("0" to "a.png", "1" to "b.png"),
+            mediaBytes = mapOf("0" to pngBytes, "1" to pngBytes)
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(emptyList<OptionDto>(), question.options)
+        assertEquals(emptyList<String>(), question.correctOptionIds)
+        val table = question.explanationElements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.TableElement>()
+            .single()
+        assertEquals(listOf(listOf("Rod", "Dim light")), table.rows)
+        val images = question.explanationElements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+        assertEquals(2, images.size)
+        assertTrue("both pictures are inlined", images.all { it.src.startsWith("data:image/png;base64,") })
+        assertNull("the pictures live in the elements, not a scalar", question.explanationImage)
+        assertEquals("Both are light sensors.", question.explanation)
     }
 
     @Test
@@ -253,9 +310,14 @@ class AnkiPackageReaderTest {
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals("Capital of\nFrance?", question.text)
-        // With nothing to say which line is the answer, the whole answer is kept
-        // as one option rather than guessing.
-        assertEquals(listOf("Paris\nMarseille"), question.options.map { it.text })
+        // Nothing distinguishes an answer line from the rest of the back: the
+        // whole field is the flashcard's answer.
+        assertEquals(emptyList<OptionDto>(), question.options)
+        assertEquals("Paris\nMarseille", question.explanation)
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Paris\nMarseille")),
+            question.explanationElements
+        )
     }
 
     @Test
@@ -543,7 +605,8 @@ class AnkiPackageReaderTest {
         val result = AnkiPackageReader.read(apkg)
 
         val questions = result.file.papers.single().let(::allQuestions)
-        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertEquals(listOf("France", "Paris"), questions.map { it.explanation })
+        assertTrue(questions.all { it.options.isEmpty() })
         assertTrue(questions.all { "anki-cloze" in it.tags })
         // The dyn deck is skipped; the normal and the empty deck stay.
         assertEquals(2, result.deckCount)
@@ -578,11 +641,12 @@ class AnkiPackageReaderTest {
 
         val result = AnkiPackageReader.read(zipOf("collection.anki21" to bytesOf(db)))
 
-        // Cloze: each card's deletion is the answer, not a single-option recall
+        // Cloze: each card's deletion is the back, not a single-option choice
         // of the raw stem (which is what a notetype read as `isCloze = false`
         // produced).
         val questions = result.file.papers.single().let(::allQuestions)
-        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertEquals(listOf("France", "Paris"), questions.map { it.explanation })
+        assertTrue(questions.all { it.options.isEmpty() })
         assertTrue(questions.all { "anki-cloze" in it.tags })
         // The filtered deck is skipped; the normal and the empty-kind deck stay.
         assertEquals(2, result.deckCount)
@@ -603,7 +667,18 @@ class AnkiPackageReaderTest {
         val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
 
         assertEquals(2, questions.size)
-        assertEquals(listOf("France", "Paris"), questions.map { it.options.single().text })
+        assertEquals(listOf("France", "Paris"), questions.map { it.explanation })
+        assertTrue(questions.all { it.options.isEmpty() })
+        // One card per deletion keeps its own `-ord` id, which is what its
+        // schedule is keyed by.
+        assertEquals(listOf("0", "1"), questions.map { it.id.substringAfterLast('-') })
+        // The placeholder is replaced by the deletion, never appended after it.
+        assertTrue(questions.all { q ->
+            q.explanationElements.none {
+                it is com.mcqapp.domain.ContentElement.TextElement &&
+                    it.text.contains("Cloze card from Anki")
+            }
+        })
         // The stem hides the card's own cloze and reveals the other one, so it
         // carries neither the answer nor the raw `{{cN::…}}` markup.
         assertEquals(
@@ -629,7 +704,8 @@ class AnkiPackageReaderTest {
         val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
 
         assertEquals(1, questions.size)
-        assertEquals("three", questions.single().options.single().text)
+        assertEquals("three", questions.single().explanation)
+        assertEquals(emptyList<OptionDto>(), questions.single().options)
         assertEquals("one then [...]", questions.single().text)
         assertTrue("raw cloze markup survived", "{{c" !in questions.single().text)
     }

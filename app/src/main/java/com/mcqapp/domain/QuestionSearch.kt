@@ -1,11 +1,15 @@
 package com.mcqapp.domain
 
 /**
- * In-list question search across a question's whole visible content, its tags
- * and its options. Tables and formulas are searchable; inline markup is not.
- * Case-insensitive substring match; blank queries return everything.
+ * In-list question search across a question's whole visible content, its tags,
+ * its options and its back. Tables and formulas are searchable; inline markup is
+ * not. Case-insensitive substring match; blank queries return everything.
  * (The DAO-level global search stays for cross-paper use; Browse filters
  * its already-loaded paper list so results compose with its chips.)
+ *
+ * The back is the explanation for a multiple-choice question and the answer for
+ * a flashcard. It is searchable in the ALL and QUESTIONS scopes only: the
+ * OPTIONS scope promises option texts, and a card's answer is not an option.
  */
 object QuestionSearch {
 
@@ -78,13 +82,62 @@ object QuestionSearch {
             val inPassage = question.passageId
                 ?.let { passageBodies[it] }
                 ?.lowercase()?.contains(q) == true
+            // The back — a card's answer, an MCQ's explanation — is part of
+            // what the learner reads, so ALL and QUESTIONS match it. It is NOT
+            // an option, so the OPTIONS scope must not widen to it. The SQL
+            // prefilter reads questions.backTextFolded for exactly these two
+            // scopes; if this branch were missing, the prefilter's back-only
+            // candidate would be dropped here and the hit would vanish.
+            val inBack = question.explanationElements.searchableText.lowercase().contains(q)
             when (scope) {
-                Scope.QUESTION -> inQuestion || inPassage
+                Scope.QUESTION -> inQuestion || inPassage || inBack
                 Scope.OPTIONS -> inOptions
-                Scope.ALL -> inQuestion || inOptions || inPassage
+                Scope.ALL -> inQuestion || inOptions || inPassage || inBack
             }
         }
     }
+
+    /**
+     * The short "Answer: …" snippet a result row shows when [query] matched
+     * this question's BACK and nowhere in what the row already previews, so a
+     * back-only hit explains itself instead of looking like a false match.
+     *
+     * Null when the query is blank, does not occur in the back, or also occurs
+     * in the stem, tags or an option — those rows already show why they
+     * matched. The passage body is not checked here (the caller does not hand
+     * it over); a member that also matches its passage may therefore carry a
+     * snippet, which is harmless — the answer really does contain the query.
+     *
+     * Only a window around the match is returned, never the whole back: a back
+     * can hold an inline image or a table, which the row must not try to render.
+     */
+    fun backSnippet(
+        question: Question,
+        query: String,
+        maxChars: Int = BACK_SNIPPET_CHARS
+    ): String? {
+        val q = query.trim().lowercase()
+        if (q.isBlank()) return null
+        val back = question.explanationElements.searchableText
+        if (back.isBlank()) return null
+        // Collapse the flattened back to one line first, then match, so a
+        // multi-line back cannot split the matched phrase.
+        val flat = WHITESPACE_RUN.replace(back, " ").trim()
+        val at = flat.lowercase().indexOf(q)
+        if (at < 0) return null
+        if (question.elements.searchableText.lowercase().contains(q)) return null
+        if (question.tags.any { it.lowercase().contains(q) }) return null
+        if (question.options.any { it.elements.searchableText.lowercase().contains(q) }) return null
+        val start = maxOf(0, at - maxChars / 3)
+        val end = minOf(flat.length, start + maxChars)
+        val body = flat.substring(start, end).trim()
+        return (if (start > 0) ELLIPSIS else "") + body + (if (end < flat.length) ELLIPSIS else "")
+    }
+
+    /** A back snippet's length; long enough to read, short enough for a row. */
+    private const val BACK_SNIPPET_CHARS = 60
+    private const val ELLIPSIS = "…"
+    private val WHITESPACE_RUN = Regex("\\s+")
 
     /**
      * The "Uncategorized" filter: imports always assign a category, so

@@ -66,6 +66,7 @@ import androidx.paging.compose.itemKey
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.export.PaperExporter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.isFlashcard
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -236,6 +237,17 @@ fun BookmarksScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                // A card's type, shown as text: its front is
+                                // the question and it has no options, which the
+                                // label explains. The back stays hidden — this
+                                // list is a reading list of fronts.
+                                if (question.isFlashcard) {
+                                    Text(
+                                        stringResource(R.string.r2_flashcard_label),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
                                 ContentElements(
                                     question.elements,
                                     textStyle = MaterialTheme.typography.bodyMedium,

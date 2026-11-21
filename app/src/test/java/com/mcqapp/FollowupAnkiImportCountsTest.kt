@@ -8,10 +8,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * An Anki conversion can drop a blank-stem card instance or turn a note with no choices
- * into a recall card. The counts are produced by the reader and carried on the
- * report; the completion dialog enumerates them rather than hiding them in a
- * log line.
+ * An Anki conversion can drop a blank-stem card instance or turn a note with no
+ * choices (or a single-option question) into a flashcard. The counts are
+ * produced by the reader and carried on the report; the completion dialog
+ * enumerates them rather than hiding them in a log line.
  */
 class FollowupAnkiImportCountsTest {
 

@@ -20,6 +20,7 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.data.io.SharedPrefsImportRunJournal
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.io.interruptedImportNotice
@@ -602,8 +603,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 val questions = _state.value.questions
                 var matchedCount = 0
                 val (dups, changed) = withContext(Dispatchers.Default) {
+                    // Hash the flashcard shape the importer will write: a
+                    // one-option question becomes a zero-option card before
+                    // the import, so hashing its raw options here would
+                    // predict a duplicate the importer never sees (and miss
+                    // one it does).
                     val hashed = questions.map { q ->
-                        q to com.mcqapp.data.io.ContentHash.of(q)
+                        val normalized = q.normalizedFlashcard()
+                        normalized to com.mcqapp.data.io.ContentHash.of(normalized)
                     }
                     // Probe only the preview's ids and hashes, chunked, instead
                     // of snapshotting every id and hash in the database: a large

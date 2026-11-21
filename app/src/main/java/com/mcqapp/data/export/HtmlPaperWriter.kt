@@ -143,7 +143,7 @@ object HtmlPaperWriter {
             question.explanation.isNotBlank() ||
             question.explanationImage != null
         ) {
-            out.append("<p class=\"expl\">Explanation: ")
+            out.append("<p class=\"expl\">").append(backLabel(question))
                 .append(explanationHtml(question)).append("</p>\n")
         }
         out.append("</div>\n</div>\n")
@@ -172,11 +172,19 @@ object HtmlPaperWriter {
             question.explanation.isNotBlank() ||
             question.explanationImage != null
         ) {
-            out.append("<p class=\"expl\">Explanation: ")
+            out.append("<p class=\"expl\">").append(backLabel(question))
                 .append(explanationHtml(question)).append("</p>\n")
         }
         out.append("</div>\n")
     }
+
+    /**
+     * What the back block is called: a question's back is a note about its
+     * options ("Explanation"); a flashcard has no options and its back *is*
+     * the answer, so it is labelled "Answer" on both pages.
+     */
+    private fun backLabel(question: QuestionDto): String =
+        if (question.options.isEmpty()) "Answer: " else "Explanation: "
 
     private fun explanationHtml(question: QuestionDto): String =
         if (question.explanationElements.isNotEmpty()) {

@@ -16,8 +16,10 @@ import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.backFromSingleOption
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
+import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
@@ -81,7 +83,7 @@ data class ImportReport(
     val restoredSchedules: Int = 0,
     /** Anki card instances whose whole stem was empty (no text, no image) and were dropped. */
     val droppedAnkiStems: Int = 0,
-    /** Anki notes with no choices, kept as single-option recall cards. */
+    /** Anki notes (and other one-option questions) imported as flashcards. */
     val recallConverted: Int = 0,
     /**
      * The streamed restore hit its explicit memory budget: the questions were
@@ -129,7 +131,19 @@ class Importer(
         file: McqFileDto,
         scheduling: Map<String, CardScheduleDto> = emptyMap()
     ): ImportReport {
-        importedFile = file
+        // One option is not a question with a choice: it is a flashcard whose
+        // answer was written as the only option (an older backup, a legacy
+        // JSON bank, a one-choice question). Normalise before anything is
+        // hashed or written, so the hash, the duplicate checks, the rows and
+        // the restored schedules all describe the flashcard this import
+        // actually stores. Restores come through here too, which is why the
+        // rule cannot live in a parser.
+        val source = file.withNormalizedFlashcards()
+        // Counted before the import so the completion report can say how many
+        // answers arrived as a single option and became cards, the same way a
+        // streamed import counts them per batch.
+        val convertedToFlashcards = file.countFlashcardConversions()
+        importedFile = source
         // Per-import state: a reused Importer must not carry the previous
         // file's collision candidates into this one.
         storedCandidates = null
@@ -140,10 +154,10 @@ class Importer(
         importProgressLogs = 0
         // A file this app exported carries its own review progress; an explicit
         // map (the Anki path) still wins.
-        val restoreScheduling = scheduling.ifEmpty { file.scheduling }
+        val restoreScheduling = scheduling.ifEmpty { source.scheduling }
         // currentTimeMillis (not elapsedRealtime): JVM-testable, and this is log timing only.
         val started = System.currentTimeMillis()
-        Logger.i("IMPORT", "Starting import of ${file.papers.size} papers")
+        Logger.i("IMPORT", "Starting import of ${source.papers.size} papers")
         var newPapers = 0
         var updatedPapers = 0
         var newQuestions = 0
@@ -170,7 +184,7 @@ class Importer(
             // deep copy held a second full bank (every DTO, every base64
             // image) on top of the parsed one, which is what pushed a 100k
             // bank over the heap; one paper at a time keeps the peak flat.
-            for (paperDto in file.papers) {
+            for (paperDto in source.papers) {
                 val scaledPaper = paperDto.withDownscaledImages()
                 // Paper identity: match by id first, then by title — the title
                 // is the destination the user picks in the import preview
@@ -375,7 +389,7 @@ class Importer(
                         .mapNotNull { it.passageId }
                         .distinct()
                     for (passageId in categoryPassageIds) {
-                        val passageDto = file.passages.firstOrNull { it.id == passageId }
+                        val passageDto = source.passages.firstOrNull { it.id == passageId }
                             ?: continue
                         // A passage id owned by a DIFFERENT paper must never be
                         // reused: REPLACE would move the row, and the stray-fold
@@ -503,6 +517,11 @@ class Importer(
                                     db.questionDao().updateNonHashedFields(
                                         id = sameContentId,
                                         explanation = scaledQuestion.storedExplanationJson(json),
+                                        // Derived from the same blocks written above,
+                                        // so answer search never keeps the old text.
+                                        backText = scaledQuestion.storedBackSearchText(),
+                                        backTextFolded =
+                                            scaledQuestion.storedBackSearchText().lowercase(),
                                         marks = questionDto.marks,
                                         difficulty = questionDto.difficulty,
                                         // One CSV folded in Kotlin for both binds:
@@ -662,7 +681,7 @@ class Importer(
                                 restoreScheduling,
                                 paperDto.id,
                                 questionDto.id,
-                                file.version
+                                source.version
                             )
                         }
                         schedule?.let { schedule ->
@@ -746,7 +765,7 @@ class Importer(
             // Backup payload: bookmarks restore by id (harmless if the
             // question doesn't exist — BookmarksScreen skips missing rows);
             // attempts restore with fresh ids, results remapped onto them.
-            for (questionId in file.bookmarks) {
+            for (questionId in source.bookmarks) {
                 if (questionId.isNotBlank() && !db.bookmarkDao().isBookmarked(questionId)) {
                     db.bookmarkDao().add(com.mcqapp.data.local.BookmarkEntity(questionId))
                     restoredBookmarks++
@@ -755,7 +774,7 @@ class Importer(
             // Same backup re-imported twice must not double history.
             val knownAttempts = db.attemptDao().getAllAttempts()
                 .map { Triple(it.paperId, it.finishedAt, it.score) }.toHashSet()
-            for (attempt in file.attempts) {
+            for (attempt in source.attempts) {
                 if (!knownAttempts.add(Triple(attempt.paperId, attempt.finishedAt, attempt.score))) {
                     continue
                 }
@@ -826,7 +845,8 @@ class Importer(
             answersRefreshed = answersRefreshed,
             restoredBookmarks = restoredBookmarks,
             restoredAttempts = restoredAttempts,
-            restoredSchedules = restoredSchedules
+            restoredSchedules = restoredSchedules,
+            recallConverted = convertedToFlashcards
         )
     }
 
@@ -1014,6 +1034,91 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
 }
 
 /**
+ * The one-option rule applied to every incoming DTO from every path (JSON,
+ * `.apkg`, backup restore).
+ *
+ * A single option is not a choice: it is the answer of a flashcard, written in
+ * the only shape a legacy file had. Converting it here — before hashing,
+ * duplicate detection, row building or schedule restore — keeps every one of
+ * those describing the card that is actually stored. The rule itself is
+ * [backFromSingleOption], shared with the database migration and the editor, so
+ * a cloze placeholder is replaced rather than appended and an existing
+ * explanation follows the answer.
+ *
+ * A zero-option DTO passes through untouched: it is already a flashcard. A
+ * two-or-more-option DTO is a multiple-choice card and also passes through.
+ */
+internal fun QuestionDto.normalizedFlashcard(): QuestionDto {
+    if (!convertsToFlashcard()) return this
+    val answer = options.single()
+    // A DTO may carry its explanation as flat text only; treat that exactly as
+    // the writer would (one text block), or the merge would read it as absent
+    // and drop it.
+    val explanationBlocks = explanationElements.ifEmpty {
+        if (explanation.isBlank()) emptyList() else listOf(ContentElement.TextElement(explanation))
+    }
+    val back = backFromSingleOption(
+        optionElements = answer.elements,
+        optionText = answer.text,
+        explanationElements = explanationBlocks,
+        explanationImage = explanationImage
+    )
+    return copy(
+        // An id the file did not author was derived from text + options. The
+        // option is gone now, so re-derive the prompt-only identity here: a
+        // re-import of the same prompt with a corrected answer must match the
+        // stored card and update it, not arrive as a second row. A file's own
+        // id is content and never changes.
+        id = generatedIdForNormalisedShape(),
+        options = emptyList(),
+        // A flashcard has no answer key: the option *is* the answer.
+        correctOptionIds = emptyList(),
+        explanation = back.textContent,
+        explanationElements = back,
+        // The answer's own picture becomes the back's scalar image when the
+        // card had none; the elements keep any picture they already carry.
+        explanationImage = explanationImage ?: answer.image
+    )
+}
+
+/** One option and no choice: exactly the shape the importers turn into a card. */
+internal fun QuestionDto.convertsToFlashcard(): Boolean = options.size == 1
+
+/**
+ * The prompt-only id for a normalised card, when [this] carried a generated
+ * (or blank) one; otherwise the existing id.
+ *
+ * [LegacyParser.stableQuestionId] minted the one-option id with the option in
+ * it, so a later re-import of the same prompt with another answer would mint a
+ * different id and duplicate the card. The prompt text is derived the way the
+ * writer sees it (elements, flat text as the fallback), so both imports land on
+ * the same value.
+ */
+private fun QuestionDto.generatedIdForNormalisedShape(): String {
+    if (!id.isBlank() && !LegacyParser.isGeneratedQuestionId(id)) return id
+    val promptText = elements.ifEmpty { listOf(ContentElement.TextElement(text)) }.textContent
+    return LegacyParser.stableQuestionId(promptText, emptyList())
+}
+
+/** [normalizedFlashcard] over a whole file, so every write path sees one shape. */
+internal fun McqFileDto.withNormalizedFlashcards(): McqFileDto = copy(
+    papers = papers.map { it.withNormalizedFlashcards() }
+)
+
+/** How many questions this file has that normalisation turns into cards. */
+internal fun McqFileDto.countFlashcardConversions(): Int = papers.sumOf { paper ->
+    paper.questions.count { it.convertsToFlashcard() } +
+        paper.categories.sumOf { category -> category.questions.count { it.convertsToFlashcard() } }
+}
+
+internal fun PaperDto.withNormalizedFlashcards(): PaperDto = copy(
+    questions = questions.map { it.normalizedFlashcard() },
+    categories = categories.map { category ->
+        category.copy(questions = category.questions.map { it.normalizedFlashcard() })
+    }
+)
+
+/**
  * Deep-copies the file with every question image downscaled — the single
  * scaler, also what the import path calls (it takes the papers back out and
  * zips them against the originals). Pure DTO work: no database calls, safe to
@@ -1098,6 +1203,12 @@ internal fun QuestionDto.toQuestionEntity(
     json: Json
 ): QuestionEntity {
     val elements = elements.ifEmpty { listOf(ContentElement.TextElement(text)) }
+    // A flashcard's back is its explanation: the same blocks are the searchable
+    // back and a card that will show nothing on reveal. Written for every
+    // question (an MCQ's explanation is searchable there too), from the scaled
+    // twin, so search and the stored row agree.
+    val backElements = explanationElements.ifEmpty { listOf(ContentElement.TextElement(explanation)) }
+    val backSearchText = backElements.searchableText
     return QuestionEntity(
         id = id,
         categoryId = categoryId,
@@ -1106,8 +1217,10 @@ internal fun QuestionDto.toQuestionEntity(
         searchText = elements.searchableText,
         searchTextFolded = elements.searchableText.lowercase(),
         image = image,
-        explanation = storedExplanationJson(json),
+        explanation = backElements.toContentJson(json),
         explanationImage = explanationImage,
+        backText = backSearchText,
+        backTextFolded = backSearchText.lowercase(),
         difficulty = difficulty,
         marks = marks,
         tags = tags.joinToString(","),
@@ -1120,6 +1233,15 @@ internal fun QuestionDto.toQuestionEntity(
 /** The explanation column of a scaled question, derived the way `text` is. */
 internal fun QuestionDto.storedExplanationJson(json: Json): String =
     explanationElements.ifEmpty { listOf(ContentElement.TextElement(explanation)) }.toContentJson(json)
+
+/**
+ * The back's searchable text, from the same blocks [storedExplanationJson]
+ * writes. The duplicate-refresh path rewrites the explanation in place, so its
+ * `backText`/`backTextFolded` twins must be recomputed from those blocks in the
+ * same write; never from the old row or a flattened field.
+ */
+internal fun QuestionDto.storedBackSearchText(): String =
+    explanationElements.ifEmpty { listOf(ContentElement.TextElement(explanation)) }.searchableText
 
 /** The option rows a scaled question is stored as, in file order. */
 internal fun QuestionDto.toOptionEntities(json: Json): List<OptionEntity> =

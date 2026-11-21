@@ -85,6 +85,7 @@ import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.Scoring
+import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
@@ -974,7 +975,13 @@ private fun QuestionCard(
                     }
                 }
             }
-            if (revealed && question.explanation.isNotBlank()) {
+            if (
+                revealed &&
+                (
+                    question.explanationElements.hasVisibleContent ||
+                    !question.explanationImage.isNullOrBlank()
+                )
+            ) {
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.explanation), style = MaterialTheme.typography.labelMedium)
                 ContentElements(question.explanationElements, textStyle = MaterialTheme.typography.bodyLarge)

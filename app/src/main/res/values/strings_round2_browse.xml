@@ -14,7 +14,9 @@
 
     <!-- Browse filter chips -->
     <string name="r2_browse_filter_all">All</string>
-    <string name="r2_browse_filter_no_answer">No answer</string>
+    <!-- "No answer" meant "no answer key"; a flashcard has none by design, so
+         the chip names the shape it is really about and excludes cards. -->
+    <string name="r2_browse_filter_no_answer">No answer key (multiple choice)</string>
     <string name="r2_browse_filter_no_explanation">No explanation</string>
 
     <!-- Search -->
@@ -23,6 +25,12 @@
     <string name="r2_browse_scope_questions">Questions</string>
     <string name="r2_browse_scope_options">Options</string>
     <string name="r2_browse_open_question">Open question</string>
+    <!-- A result whose only match is in the back shows this short snippet, so
+         the row explains why it matched. The label follows the app's split: a
+         card's back is its Answer, a multiple-choice question's is its
+         Explanation. %1$s is the snippet. -->
+    <string name="r2_browse_answer_snippet">Answer: %1$s</string>
+    <string name="r2_browse_explanation_snippet">Explanation: %1$s</string>
 
     <!-- Cross-paper move: collision disclosure (warning + honest toast) -->
     <string name="r2_browse_move_collision_warning">If the destination paper already has a card for a question, that card and its own review history are kept, and the source paper\'s history for that question is discarded.</string>

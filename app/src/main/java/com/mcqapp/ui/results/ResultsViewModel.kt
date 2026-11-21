@@ -22,6 +22,7 @@ import com.mcqapp.data.local.ResultAggregates
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.ResultPageKey
 import com.mcqapp.domain.Attempt
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.ReviewFilters
 import com.mcqapp.domain.TestReport
@@ -172,6 +173,29 @@ class ResultsViewModel(
                 val report = attempt?.let {
                     val rows = repository.getReportRows(attemptId)
                     val paper = repository.getPaper(it.paperId)
+                    // The report's denominator is the testable population: a
+                    // flashcard is study-only, so counting it would promise a
+                    // coverage, confidence and longer-mock target a run can
+                    // never reach. An unresolvable ticked scope keeps the
+                    // report's raw fallback rather than reading the whole
+                    // paper as this attempt's scope.
+                    val ticked = it.scopeCategoryIds
+                        .split(",")
+                        .filter { id -> id.isNotBlank() }
+                    val scopeIds = CategorySelection.orderedIds(
+                        paper?.categories.orEmpty(),
+                        ticked
+                    )
+                    val testableScopeSize = when {
+                        paper == null -> null
+                        ticked.isNotEmpty() && scopeIds.isEmpty() -> null
+                        else -> repository.countTestableForCategories(it.paperId, scopeIds)
+                    }
+                    val testableCounts = if (paper == null) {
+                        emptyMap()
+                    } else {
+                        repository.testableCategoryCountsForPaper(it.paperId)
+                    }
                     TestReportBuilder.build(
                         TestReportInput(
                             attempt = it,
@@ -183,7 +207,9 @@ class ResultsViewModel(
                                 .filter { id -> id.isNotBlank() },
                             evidence = repository.getReportEvidence(it, rows, paper),
                             practiceHistory = repository.getPracticeHistory(it),
-                            discrimination = repository.getItemDiscrimination(it)
+                            discrimination = repository.getItemDiscrimination(it),
+                            testableScopeSize = testableScopeSize,
+                            testableCategoryCounts = testableCounts
                         )
                     )
                 }

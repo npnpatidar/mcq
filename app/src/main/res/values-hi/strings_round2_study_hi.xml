@@ -14,6 +14,11 @@
     <string name="r2_study_verdict_correct">सही</string>
     <string name="r2_study_verdict_incorrect">गलत</string>
 
+    <!-- फ़्लैशकार्ड का उत्तर खुलने पर उसके ऊपर की पंक्ति (कार्ड में स्पष्टीकरण नहीं,
+         उत्तर होता है) और उसके उत्तर-चित्र का वर्णन। -->
+    <string name="r2_study_answer_heading">उत्तर</string>
+    <string name="r2_study_answer_image">उत्तर का चित्र</string>
+
     <!-- खाली सत्र का नए-कार्ड नियंत्रण हर प्रश्नपत्र का सेटिंग बदलता है। -->
     <string name="r2_study_enable_new_cards_all_papers">सभी प्रश्नपत्रों में नए कार्ड पेश करें</string>
     <string name="r2_study_enable_new_cards_all_papers_note">यह सेटिंग हर प्रश्नपत्र पर लागू होती है, केवल इस पर नहीं।</string>

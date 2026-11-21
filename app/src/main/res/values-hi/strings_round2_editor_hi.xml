@@ -8,4 +8,17 @@
     <!-- Passage member list load failure, with a retry action. -->
     <string name="r2_editor_members_load_error">इस पैसेज के प्रश्न लोड नहीं हो सके।</string>
     <string name="r2_editor_retry">फिर से कोशिश करें</string>
+
+    <!-- Card type and the flashcard switch confirmation. -->
+    <string name="r2_editor_card_type">कार्ड का प्रकार</string>
+    <string name="r2_editor_card_type_multiple_choice">बहुविकल्पीय</string>
+    <string name="r2_editor_card_type_flashcard">फ़्लैशकार्ड</string>
+    <!-- The compact type label on a list row. -->
+    <string name="r2_flashcard_label">फ़्लैशकार्ड</string>
+    <string name="r2_editor_flashcard_back">उत्तर</string>
+    <string name="r2_editor_switch_to_flashcard_title">फ़्लैशकार्ड में बदलें?</string>
+    <string name="r2_editor_switch_to_flashcard_message">विकल्प हटा दिए जाएँगे। उत्तर में जो लिखेंगे वही कार्ड का उत्तर बनेगा।</string>
+    <string name="r2_editor_switch_confirm">बदलें</string>
+    <!-- A flashcard is saved only once its back holds an answer. -->
+    <string name="r2_editor_save_blocked_flashcard_back">इस फ़्लैशकार्ड को सहेजने के लिए उत्तर जोड़ें।</string>
 </resources>

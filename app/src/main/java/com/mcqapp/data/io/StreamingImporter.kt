@@ -62,7 +62,12 @@ class StreamingImporter(
      * bank (no review progress) should not pay that. A file the preview
      * reported as carrying scheduling sets it.
      */
-    private val captureSchedules: Boolean = false
+    private val captureSchedules: Boolean = false,
+    /**
+     * Keep every question id exactly as the source carries it. Backup restore
+     * sets this: the archive's study rows reference those ids.
+     */
+    private val preserveIds: Boolean = false
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -109,7 +114,8 @@ class StreamingImporter(
         onProgress: ((Int) -> Unit)?
     ): ImportReport {
         val session = StreamingImportSession(
-            db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress, captureSchedules
+            db, json, updateAnswersOnDuplicate, batchSize, overrides, onProgress, captureSchedules,
+            preserveIds = preserveIds
         )
         val queue = ArrayBlockingQueue<StreamEvent>(16)
         val tailRef = AtomicReference<LegacyParser.StreamedFile>()

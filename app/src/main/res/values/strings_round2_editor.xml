@@ -11,4 +11,23 @@
          to load, together with a retry action. -->
     <string name="r2_editor_members_load_error">Couldn\'t load the questions in this passage.</string>
     <string name="r2_editor_retry">Retry</string>
+
+    <!-- Card type: a question with options, or a flashcard whose back is its
+         answer. Switching a question with typed options to a flashcard clears
+         them, so it asks first. -->
+    <string name="r2_editor_card_type">Card type</string>
+    <string name="r2_editor_card_type_multiple_choice">Multiple choice</string>
+    <string name="r2_editor_card_type_flashcard">Flashcard</string>
+    <!-- The compact type label on a list row (Browse, Search, Bookmarks, a
+         passage's member list). Same word as the card type, kept as its own key
+         so a translator can shorten it for a row if a language needs that. -->
+    <string name="r2_flashcard_label">Flashcard</string>
+    <!-- Same wording as Study and Browse: the owner's copy is "Answer" for a
+         card's back in every locale (the Hindi value was already Answer). -->
+    <string name="r2_editor_flashcard_back">Answer</string>
+    <string name="r2_editor_switch_to_flashcard_title">Switch to a flashcard?</string>
+    <string name="r2_editor_switch_to_flashcard_message">The options will be cleared. What you write in the back becomes the card\'s answer.</string>
+    <string name="r2_editor_switch_confirm">Switch</string>
+    <!-- A flashcard is saved only once its back holds an answer. -->
+    <string name="r2_editor_save_blocked_flashcard_back">Add the answer to save this flashcard.</string>
 </resources>

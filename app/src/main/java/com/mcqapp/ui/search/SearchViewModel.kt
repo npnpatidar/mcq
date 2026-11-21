@@ -14,15 +14,17 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -67,10 +69,16 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     // results for 300 ms while the pending debounce kept running
     // (consolidated_bugs.md B3). With the request as the unit, a scope change
     // and a keystroke both restart the same window and commit together.
-    private val committed: Flow<SearchRequest> = _state
+    //
+    // Shared, not cold: the result flow, the pending cue and the row snippet
+    // all have to agree on which request is committed. A cold flow would give
+    // each collector its own debounce timer, so for a few milliseconds the
+    // rows and the snippet could be describing two different queries.
+    private val committed: SharedFlow<SearchRequest> = _state
         .map { SearchRequest(it.query.trim(), it.scope) }
         .distinctUntilChanged()
         .debounce(SEARCH_DEBOUNCE_MS)
+        .shareIn(viewModelScope, SharingStarted.Eagerly, replay = 1)
 
     private val currentRequest: Flow<SearchRequest> = _state
         .map { SearchRequest(it.query.trim(), it.scope) }
@@ -78,6 +86,16 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     val debouncing: StateFlow<Boolean> = combine(currentRequest, committed) { current, request ->
         isSearchPending(current, request)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
+     * The query the visible hits were produced for: the committed (debounced)
+     * one, never the live text field. A row's "Answer: …" snippet must explain
+     * *its own* match — with the raw field, rows from the previous 300 ms
+     * window could show a snippet for text typed after they loaded.
+     */
+    val committedQuery: StateFlow<String> = committed
+        .map { it.query }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * B4 — the custom search paging source is not invalidated by Room, so a

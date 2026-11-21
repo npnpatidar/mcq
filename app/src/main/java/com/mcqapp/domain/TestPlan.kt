@@ -227,6 +227,14 @@ data class TestPlan(
         val PRESETS: List<Int> = listOf(20, 50, 80, 100, 120, 150)
 
         const val EMPTY_SCOPE_MESSAGE: String = "This scope has no questions."
+
+        /**
+         * The scope holds questions, but every one of them is a flashcard.
+         * Flashcards are studied, never tested, so the setup sheet says this
+         * instead of claiming the scope is empty.
+         */
+        const val NO_MULTIPLE_CHOICE_MESSAGE: String =
+            "No multiple-choice questions here — flashcards are study-only"
         const val NO_TYPE_MESSAGE: String = "This test has no type; start a new test."
         const val OLD_VERSION_MESSAGE: String =
             "This test was saved by an older version; start a new test."

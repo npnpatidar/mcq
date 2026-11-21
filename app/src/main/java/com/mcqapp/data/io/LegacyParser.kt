@@ -1348,7 +1348,18 @@ object LegacyParser {
         }
     }
 
-    private fun stableQuestionId(text: String, options: List<OptionDto>): String {
+    /**
+     * A deterministic id for a question the file left id-less. It is derived
+     * from the prompt only — text and options — for every card kind: one
+     * prompt = one answer, so a flashcard re-imported with an edited back
+     * must keep its id and be refreshed in place, never minted as a twin.
+     *
+     * Internal because the import normaliser re-derives the id after it turns
+     * a one-option question into a zero-option card: the parser minted that id
+     * with the option in it, and keeping it would make the same prompt under a
+     * new answer a second row instead of an update.
+     */
+    internal fun stableQuestionId(text: String, options: List<OptionDto>): String {
         val raw = text + "|" + options.joinToString(",") { it.id + "=" + it.text }
         val bytes = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
         return "q-" + bytes.joinToString("") { "%02x".format(it) }.take(12)

@@ -1,6 +1,7 @@
 package com.mcqapp.domain
 
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.normalizedFlashcard
 
 /**
  * Advisory import validation: flags questions that import cleanly but will
@@ -25,18 +26,24 @@ object ImportWarnings {
         if (q.text.isBlank()) {
             add(Warning(q.id, label, "Blank text — imports with empty text"))
         }
-        if (q.options.isEmpty()) {
-            add(Warning(q.id, label, "No options — cannot be answered"))
-        } else if (q.options.size == 1) {
-            add(Warning(q.id, label, "Only one option"))
-        }
-        if (q.correctOptionIds.isEmpty()) {
-            add(Warning(q.id, label, "No answer key — will be ungraded, never scored"))
+        // A one-option question is converted to a flashcard before it is
+        // written, so every question is judged in the shape the import stores:
+        // options present means a multiple-choice card, options absent means
+        // the back is what the learner will see on reveal.
+        val stored = q.normalizedFlashcard()
+        if (stored.options.isEmpty()) {
+            if (!stored.hasBack()) {
+                add(Warning(q.id, label, "No answer yet — will show nothing on reveal"))
+            }
         } else {
-            val optionIds = q.options.map { it.id }.toSet()
-            val dangling = q.correctOptionIds.filter { it !in optionIds }
-            if (dangling.isNotEmpty()) {
-                add(Warning(q.id, label, "Answer key references missing options: ${dangling.joinToString(",")}"))
+            if (stored.correctOptionIds.isEmpty()) {
+                add(Warning(q.id, label, "No answer key — will be ungraded, never scored"))
+            } else {
+                val optionIds = stored.options.map { it.id }.toSet()
+                val dangling = stored.correctOptionIds.filter { it !in optionIds }
+                if (dangling.isNotEmpty()) {
+                    add(Warning(q.id, label, "Answer key references missing options: ${dangling.joinToString(",")}"))
+                }
             }
         }
         if (q.marks == 0.0) {
@@ -49,6 +56,15 @@ object ImportWarnings {
             add(Warning(q.id, label, "Large images (~${imageChars / 1024} KB) — slows import"))
         }
     }
+
+    /**
+     * Whether a flashcard will show anything on reveal: a picture, a table, a
+     * formula or real prose. A blank text run is not a back.
+     */
+    private fun QuestionDto.hasBack(): Boolean =
+        !explanationImage.isNullOrBlank() ||
+            explanationElements.hasVisibleContent ||
+            explanation.isNotBlank()
 }
 
 /**

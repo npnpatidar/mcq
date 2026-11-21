@@ -132,18 +132,6 @@ class DocxRoundTripTest {
     private fun allQuestions(paper: PaperDto): List<com.mcqapp.data.io.QuestionDto> =
         paper.categories.flatMap { it.questions }
 
-    /**
-     * Questions the visible format can carry: the marker grammar demands
-     * options and a stem, so the sample's deliberate option-less edge case
-     * is written out by the exporter (with a warning) rather than emitted
-     * as a question the importer would refuse the whole document over.
-     */
-    private fun carryable(paper: PaperDto): List<com.mcqapp.data.io.QuestionDto> =
-        allQuestions(paper).filter { q ->
-            q.options.isNotEmpty() &&
-                (q.elements.isNotEmpty() || q.text.isNotBlank() || q.image != null)
-        }
-
     private fun shapes(paper: PaperDto): List<QuestionShape> =
         allQuestions(paper).map { it.shape() }
 
@@ -502,10 +490,55 @@ class DocxRoundTripTest {
             "the fallback must say why: ${parsed.warnings}",
             parsed.warnings.any { it.contains("hidden question data") }
         )
-        // Marker path: the metadata the markers cannot carry is gone, and
-        // the option-less edge case is written out of the visible body.
-        assertEquals(allQuestions(samplePaper).size - 1, allQuestions(after).size)
+        // Marker path: the metadata the markers cannot carry is gone — but
+        // every question is still there: the sample's zero-option card
+        // round-trips through the `Answer:` marker instead of being dropped
+        // from the visible body.
+        assertEquals(allQuestions(samplePaper).size, allQuestions(after).size)
         assertEquals(1.0, allQuestions(after)[0].marks, 0.0)
+    }
+
+    /**
+     * Editing a card's front in Word must not lose the card. The payload goes
+     * stale, the visible markers take over, and `N.) front / Answer: back`
+     * reads back as a zero-option question with its answer. A card used to be
+     * dropped from the visible body, so an edited paper silently lost it.
+     */
+    @Test
+    fun anEditedDocumentKeepsItsCard() {
+        val card = com.mcqapp.data.io.QuestionDto(
+            id = "q-card",
+            text = "Capital of France?",
+            options = emptyList(),
+            explanationElements = listOf(ContentElement.TextElement("Paris.")),
+            // Marker-invisible, so losing it proves the payload was refused
+            // and the card came back from the visible text alone.
+            marks = 2.0
+        )
+        val paper = PaperDto(
+            id = "p-card",
+            title = "Cards",
+            categories = listOf(
+                com.mcqapp.data.io.CategoryDto(
+                    id = "c1",
+                    title = "Deck",
+                    questions = listOf(card)
+                )
+            )
+        )
+        val tampered = rezip(docxOf(paper), "word/document.xml") { xml ->
+            xml.replace("Capital of France?", "Capital of Italy?")
+        }
+        val parsed = parseDocx(tampered)
+        assertTrue(
+            "the fallback must say why: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        val after = allQuestions(LegacyParser.parse(parsed.json).papers.single()).single()
+        assertTrue("the edited front must survive: ${after.text}", after.text.contains("Capital of Italy?"))
+        assertTrue("the card must stay a card", after.options.isEmpty())
+        assertEquals("the card's answer must survive", "Paris.", after.explanation)
+        assertEquals("metadata the markers cannot carry is gone", 1.0, after.marks, 0.0)
     }
 
     /**

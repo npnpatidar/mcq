@@ -417,15 +417,139 @@ class DocxPaperWriterTest {
         assertTrue(xml.contains(">Ans. a<"))
     }
 
+    /**
+     * A zero-option question is a flashcard, not an artifact the document
+     * cannot carry: it is written as `N.) front` plus `Answer: back`. It used
+     * to be left out of the body entirely, so a card in a teacher's paper
+     * silently vanished from the export.
+     */
     @Test
-    fun questionWithoutOptionsIsLeftOut() {
+    fun writesTheCard() {
         val q = QuestionDto(id = "q", text = "no options", options = emptyList())
-        val xml = documentXml(
-            docxOf(
-                PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
+        val bytes = docxOf(
+            PaperDto(id = "p", title = "T", categories = listOf(CategoryDto("c", "C", questions = listOf(q))))
+        )
+        val texts = paragraphTexts(documentXml(bytes))
+        assertTrue("the card must be written: $texts", texts.any { it == "1.) no options" })
+        assertTrue(
+            "an empty back still gets its Answer: line, or the block has no " +
+                "marker at all and the parser refuses it: $texts",
+            texts.any { it.trim().startsWith("Answer:") }
+        )
+        // A card has no options to list and no option to key: neither marker
+        // may appear, and in particular no empty `Ans.` line.
+        assertTrue("no option markers for a card: $texts", texts.none { it.trim().startsWith("(a)") })
+        assertTrue("no Ans. line for a card: $texts", texts.none { it.trim().startsWith("Ans.") })
+
+        // And the visible grammar reads it back as a zero-option question
+        // instead of refusing the whole document.
+        val after = LegacyParser.parse(parseDocx(bytes).json).papers[0].categories[0].questions.single()
+        assertEquals(emptyList<OptionDto>(), after.options)
+        assertEquals("no options", after.text)
+    }
+
+    /** The back is written under `Answer:`, and it is the explanation field. */
+    @Test
+    fun aCardsBackIsLabelledAnswer() {
+        val q = QuestionDto(
+            id = "q",
+            text = "Capital of France?",
+            options = emptyList(),
+            explanation = "Paris."
+        )
+        val texts = paragraphTexts(
+            documentXml(
+                docxOf(
+                    PaperDto(
+                        id = "p",
+                        title = "T",
+                        categories = listOf(CategoryDto("c", "C", questions = listOf(q)))
+                    )
+                )
             )
         )
-        assertTrue(!xml.contains("no options"))
+        assertTrue("the front must be written: $texts", texts.contains("1.) Capital of France?"))
+        assertTrue("the back must be labelled Answer: $texts", texts.contains("Answer: Paris."))
+        assertTrue("an explanation label would misname a card: $texts", texts.none { it.trim().startsWith("Exp:") })
+    }
+
+    /**
+     * An all-flashcard document imports: without the card grammar every
+     * question in it would be refused and the file reported as having no
+     * questions at all.
+     */
+    @Test
+    fun anAllCardDocumentImports() {
+        fun card(id: String, front: String, back: String) =
+            QuestionDto(id = id, text = front, options = emptyList(), explanation = back)
+        val paper = PaperDto(
+            id = "p",
+            title = "Cards",
+            categories = listOf(
+                CategoryDto(
+                    "c",
+                    "Deck",
+                    questions = listOf(card("q1", "Front one?", "Back one."), card("q2", "Front two?", "Back two."))
+                )
+            )
+        )
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue("our own card export must import cleanly: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val questions = LegacyParser.parse(parsed.json).papers.single().categories.single().questions
+        assertEquals(listOf("q1", "q2"), questions.map { it.id })
+        assertEquals(listOf("Back one.", "Back two."), questions.map { it.explanation })
+        assertTrue("both must stay cards", questions.all { it.options.isEmpty() })
+    }
+
+    /**
+     * A card's back carries every block kind the format supports, and the
+     * hidden payload still describes them, so an untouched export returns
+     * the table, formula and picture exactly; the picture's bytes are grafted
+     * back from `word/media` because the payload stores only the position.
+     */
+    @Test
+    fun aCardsBackWithATableMathsAndAPictureRoundTrips() {
+        val src = pngDataUri()
+        val q = QuestionDto(
+            id = "q",
+            text = "What does the diagram show?",
+            options = emptyList(),
+            explanationElements = listOf(
+                ContentElement.TextElement("The water cycle:"),
+                ContentElement.TableElement(listOf(listOf("Step", "Name"), listOf("1", "Rain"))),
+                ContentElement.MathElement("<math><mi>v</mi><mo>=</mo><mi>u</mi></math>"),
+                ContentElement.ImageElement(src)
+            )
+        )
+        val paper = PaperDto(
+            id = "p",
+            title = "T",
+            categories = listOf(CategoryDto("c", "C", questions = listOf(q)))
+        )
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue("the untouched card export must stay fresh: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val after = LegacyParser.parse(parsed.json).papers.single().categories.single().questions.single()
+
+        assertTrue("the card must stay a card", after.options.isEmpty())
+        assertEquals(
+            listOf(listOf("Step", "Name"), listOf("1", "Rain")),
+            after.explanationElements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        assertTrue(
+            "the formula must ride the back",
+            after.explanationElements.any {
+                it is ContentElement.MathElement && it.mathml.contains("<mi>v</mi>")
+            }
+        )
+        assertEquals(
+            "the picture's bytes must be grafted back",
+            src,
+            after.explanationElements.filterIsInstance<ContentElement.ImageElement>().single().src
+        )
+        assertTrue(
+            "the caption must ride the back",
+            after.explanation.startsWith("The water cycle:")
+        )
     }
 
     @Test

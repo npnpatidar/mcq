@@ -172,6 +172,38 @@ class ExportWritersTest {
         }
     }
 
+    /**
+     * A zero-option question is a flashcard: its back is the answer, so both
+     * pages label it "Answer" rather than "Explanation". Options would be a
+     * misnomer twice over — the card has none, and the back is not a note
+     * about one.
+     */
+    @Test
+    fun aCardsBackIsLabelledAnswerOnBothPages() {
+        val card = QuestionDto(
+            id = "q1",
+            text = "Capital of France?",
+            options = emptyList(),
+            explanation = "Paris."
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Cards",
+            categories = listOf(CategoryDto(id = "c1", title = "Deck", questions = listOf(card)))
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue(
+                "quiz=$quiz must label a card's back Answer: $html",
+                html.contains("<p class=\"expl\">Answer: Paris.</p>")
+            )
+            assertFalse(
+                "quiz=$quiz must not call a card's back an explanation: $html",
+                html.contains("Explanation:")
+            )
+        }
+    }
+
     @Test
     fun exportFileNamesAreDistinctPerFormat() {
         assertEquals(

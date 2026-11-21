@@ -5,6 +5,7 @@ import com.mcqapp.data.export.optionLetter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.buildJsonObject
@@ -364,6 +365,12 @@ object AnkiPackageWriter {
     }
 
     private fun buildBack(question: Question, media: AnkiMediaPool): String {
+        // A flashcard has no options: its back is simply its answer — the
+        // explanation field the app keeps it in. There is no option to mark
+        // and nothing for an "Explanation:" label to explain, so the back is
+        // written bare, and a card whose back is empty stays empty rather
+        // than becoming a label with nothing after it.
+        if (question.options.isEmpty()) return cardBack(question, media)
         val sb = StringBuilder()
         question.options.forEachIndexed { i, option ->
             if (option.id !in question.correctOptionIds) return@forEachIndexed
@@ -377,6 +384,32 @@ object AnkiPackageWriter {
                 .append(media.elementsToHtml(question.explanationElements, question.explanationImage))
         }
         return sb.toString().trim()
+    }
+
+    /**
+     * A card's back as the one field Anki shows: its blocks, one line each,
+     * then its picture. Blank blocks are dropped so the mapper's
+     * `TextElement("")` placeholder for an absent explanation cannot turn
+     * into a stray empty line, and no label is added — the back is the
+     * answer, not a note about one.
+     */
+    private fun cardBack(question: Question, media: AnkiMediaPool): String {
+        val blocks = question.explanationElements.filterNot {
+            it is ContentElement.TextElement && it.text.isBlank()
+        }
+        val parts = blocks.map { media.elementsToHtml(listOf(it)) } +
+            listOfNotNull(question.explanationImage?.let { media.elementsToHtml(emptyList(), it) })
+        return parts.filter { it.isNotBlank() }.joinToString(LINE_BREAK).trim()
+    }
+
+    /** Visible for tests: one question's back field, without a SQLite package. */
+    internal fun backFieldForTest(question: Question): String {
+        val media = AnkiMediaPool()
+        try {
+            return buildBack(question, media)
+        } finally {
+            media.close()
+        }
     }
 
     /** Anki stores tags space-delimited with a leading and trailing space. */

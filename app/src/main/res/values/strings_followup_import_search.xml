@@ -40,12 +40,12 @@
     </plurals>
     <!-- Anki deck conversion counts, shown in the import report. -->
     <plurals name="followup_import_dropped_stems">
-        <item quantity="one">• %1$d card dropped — its stem had no text or picture</item>
-        <item quantity="other">• %1$d cards dropped — their stems had no text or picture</item>
+        <item quantity="one">• %1$d card dropped — it had no text, picture or answer</item>
+        <item quantity="other">• %1$d cards dropped — they had no text, picture or answer</item>
     </plurals>
     <plurals name="followup_import_recall_converted">
-        <item quantity="one">• %1$d note converted to a recall card</item>
-        <item quantity="other">• %1$d notes converted to recall cards</item>
+        <item quantity="one">• %1$d card imported</item>
+        <item quantity="other">• %1$d cards imported</item>
     </plurals>
 
     <!-- Search: a blank query gets a prompt instead of a silent empty list. -->

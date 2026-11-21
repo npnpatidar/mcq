@@ -2,7 +2,6 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -91,7 +90,7 @@ internal class InstallFreshness private constructor(
             return false
         }
         var answer = probed
-        context.dataStore.edit { prefs ->
+        context.editPreferences { prefs ->
             val winner = prefs[MARKER_KEY]
             if (winner != null) {
                 answer = winner
@@ -113,7 +112,7 @@ internal class InstallFreshness private constructor(
         if (fixedAnswer != null) return
         mutex.withLock {
             decision = null
-            context.dataStore.edit { it.remove(MARKER_KEY) }
+            context.editPreferences { it.remove(MARKER_KEY) }
         }
     }
 

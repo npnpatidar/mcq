@@ -12,7 +12,8 @@
 
     <!-- Browse filter chips -->
     <string name="r2_browse_filter_all">सभी</string>
-    <string name="r2_browse_filter_no_answer">कोई उत्तर नहीं</string>
+    <!-- "उत्तर कुंजी" (answer key) and the shape the chip filters for. -->
+    <string name="r2_browse_filter_no_answer">उत्तर कुंजी नहीं (बहुविकल्पीय)</string>
     <string name="r2_browse_filter_no_explanation">कोई स्पष्टीकरण नहीं</string>
 
     <!-- Search -->
@@ -21,6 +22,10 @@
     <string name="r2_browse_scope_questions">प्रश्न</string>
     <string name="r2_browse_scope_options">विकल्प</string>
     <string name="r2_browse_open_question">प्रश्न खोलें</string>
+    <!-- A result that matched only in the back shows a short snippet: an Answer
+         for a card, an Explanation for a multiple-choice question. -->
+    <string name="r2_browse_answer_snippet">उत्तर: %1$s</string>
+    <string name="r2_browse_explanation_snippet">स्पष्टीकरण: %1$s</string>
 
     <!-- Cross-paper move: collision disclosure (warning + honest toast) -->
     <string name="r2_browse_move_collision_warning">यदि गंतव्य पेपर में पहले से उस प्रश्न का कार्ड मौजूद है, तो वही कार्ड और उसका अपना अध्ययन इतिहास बना रहता है, और स्रोत पेपर का उस प्रश्न का इतिहास हटा दिया जाता है।</string>

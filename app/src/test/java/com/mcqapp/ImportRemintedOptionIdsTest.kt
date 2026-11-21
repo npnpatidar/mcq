@@ -12,6 +12,8 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import kotlinx.coroutines.runBlocking
@@ -57,7 +59,8 @@ class ImportRemintedOptionIdsTest {
         optionIds: List<String>,
         correct: List<String>,
         optionTexts: List<String> = listOf("3", "4"),
-        extraOnFirstOption: List<ContentElement> = emptyList()
+        extraOnFirstOption: List<ContentElement> = emptyList(),
+        explanation: String = ""
     ): McqFileDto {
         val options = optionIds.mapIndexed { index, id ->
             // Options must carry their text as an element: OptionListJson writes
@@ -84,7 +87,8 @@ class ImportRemintedOptionIdsTest {
                                     id = questionId,
                                     text = "2 + 2?",
                                     options = options,
-                                    correctOptionIds = correct
+                                    correctOptionIds = correct,
+                                    explanation = explanation
                                 )
                             )
                         )
@@ -136,6 +140,30 @@ class ImportRemintedOptionIdsTest {
             "the refreshed key must resolve against the stored option rows",
             correct.all { it in storedOptionIds("q1") }
         )
+    }
+
+    @Test
+    fun streamingRefreshAlsoRewritesTheBackSearchText() = runBlocking {
+        Importer(db).import(file("q1", listOf("a", "b"), listOf("b"), explanation = "First answer."))
+        val report = StreamingImporter(db, updateAnswersOnDuplicate = true, batchSize = 1)
+            .import(
+                source(
+                    file("q2", listOf("o0", "o1"), listOf("o0"), explanation = "Second answer.")
+                )
+            )
+
+        assertEquals(1, report.answersRefreshed)
+        val q1 = db.questionDao().getById("q1")!!
+        // `explanation` is the stored element JSON; its decoded text is the
+        // sentence the learner sees.
+        assertEquals(
+            "Second answer.",
+            q1.explanation.parseContentElements(json).textContent
+        )
+        assertEquals("Second answer.", q1.backText)
+        assertEquals("second answer.", q1.backTextFolded)
+        // The stem column belongs to the question text and is not rewritten.
+        assertEquals("2 + 2?", q1.searchText)
     }
 
     @Test

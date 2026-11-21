@@ -85,6 +85,57 @@ internal val BlueprintPartsSaver = Saver<Map<String, Int>, String>(
 internal fun blueprintDismissAllowed(saving: Boolean): Boolean = !saving
 
 /**
+ * [nodes] with every node's count replaced by its **testable** count (its own
+ * multiple-choice questions), recursively. The editor's pools roll up
+ * `totalQuestionCount`, so this makes that roll-up the supply a test can
+ * actually draw: a flashcard is study-only and never fills a quota.
+ *
+ * A category absent from [testableCounts] reads as zero, like an unsigned
+ * section; it never falls back to the raw count.
+ */
+internal fun testableCategoryTree(
+    nodes: List<CategoryNode>,
+    testableCounts: Map<String, Int>
+): List<CategoryNode> = nodes.map { node ->
+    node.copy(
+        questionCount = testableCounts[node.id] ?: 0,
+        children = testableCategoryTree(node.children, testableCounts)
+    )
+}
+
+/**
+ * The editor's draft preview tree for [parts] over [categories]: each included
+ * node's parts and the pool it can draw from (its whole subtree when no child
+ * is included, else the included children's sum). Pure, so the pool and the
+ * quota it produces can be tested without Compose.
+ */
+internal fun blueprintPreviewViews(
+    categories: List<CategoryNode>,
+    parts: Map<String, Int>
+): List<BlueprintSectionView> {
+    fun viewOf(node: CategoryNode): BlueprintSectionView {
+        val childViews = node.children
+            .filter { (parts[it.id] ?: 0) > 0 }
+            .map { viewOf(it) }
+        return BlueprintSectionView(
+            categoryId = node.id,
+            title = node.title,
+            parts = parts[node.id] ?: 0,
+            pool = if (childViews.isEmpty()) {
+                node.totalQuestionCount
+            } else {
+                childViews.sumOf { it.pool }
+            },
+            available = true,
+            children = childViews
+        )
+    }
+    return categories
+        .filter { (parts[it.id] ?: 0) > 0 }
+        .map { viewOf(it) }
+}
+
+/**
  * The blueprint tree editor (plan §9.1): a name plus, for every paper
  * category, a parts stepper in the paper's own tree shape. Parts are relative
  * weights inside each sibling group; the editor shows the local share, the
@@ -111,6 +162,14 @@ internal fun BlueprintEditorSheet(
     editingId: Long? = blueprint?.id,
     /** The stored sections, as views: empty for a new blueprint. */
     initialSections: List<BlueprintSectionView> = emptyList(),
+    /**
+     * The paper's per-category **testable** (multiple-choice) counts. The
+     * preview pools and the quotas they produce are built from these, never
+     * from the raw [Paper.totalQuestions]: a flashcard is study-only, so a
+     * card-heavy section must not promise a quota the run cannot fill. Empty
+     * while the read is in flight, which reads as zero for every category.
+     */
+    testableCounts: Map<String, Int> = emptyMap(),
     /** The length the setup sheet currently asks for; quotas are read at it. */
     requestedCount: Int,
     /**
@@ -158,28 +217,14 @@ internal fun BlueprintEditorSheet(
 
     // The quota shown per row is the one Start will allocate, not a rounded
     // share: BlueprintQuotas uses recursive floors, remainders, pool caps and
-    // the min-one steal, which can differ from round(share × length).
-    val previewViews = remember(parts, paper.categories) {
-        fun viewOf(node: CategoryNode): BlueprintSectionView {
-            val childViews = node.children
-                .filter { (parts[it.id] ?: 0) > 0 }
-                .map { viewOf(it) }
-            return BlueprintSectionView(
-                categoryId = node.id,
-                title = node.title,
-                parts = parts[node.id] ?: 0,
-                pool = if (childViews.isEmpty()) {
-                    node.totalQuestionCount
-                } else {
-                    childViews.sumOf { it.pool }
-                },
-                available = true,
-                children = childViews
-            )
-        }
-        paper.categories
-            .filter { (parts[it.id] ?: 0) > 0 }
-            .map { viewOf(it) }
+    // the min-one steal, which can differ from round(share × length). The
+    // pools are testable-only, so a card-heavy section shows the supply the
+    // run will actually use.
+    val testableTree = remember(paper.categories, testableCounts) {
+        testableCategoryTree(paper.categories, testableCounts)
+    }
+    val previewViews = remember(parts, testableTree) {
+        blueprintPreviewViews(testableTree, parts)
     }
     val previewQuotas = remember(previewViews, requestedCount) {
         BlueprintQuotas.allocate(previewViews, requestedCount)

@@ -13,8 +13,8 @@
         <item quantity="other">• %1$d नए प्रश्न जोड़े गए</item>
     </plurals>
     <plurals name="followup_import_recall_converted">
-        <item quantity="one">• %1$d नोट को रिकॉल कार्ड में बदला गया</item>
-        <item quantity="other">• %1$d नोटों को रिकॉल कार्ड में बदला गया</item>
+        <item quantity="one">• %1$d कार्ड आयात किया गया</item>
+        <item quantity="other">• %1$d कार्ड आयात किए गए</item>
     </plurals>
     <plurals name="followup_import_restored_attempts">
         <item quantity="one">• %1$d टेस्ट प्रयास बहाल किया गया</item>
@@ -111,6 +111,8 @@
     <string name="likely_to_be_forgotten_soon">जल्द भुलाने की संभावना</string>
     <string name="load_remote_images">दूरस्थ चित्र लोड करें</string>
     <string name="load_sample_paper">नमूना पेपर लोड करें</string>
+    <string name="reload_sample_paper">नमूना पेपर फिर से लोड करें</string>
+    <string name="library_more_actions">और विकल्प</string>
     <string name="loading">लोड हो रहा है…</string>
     <string name="manage">प्रबंधित करें</string>
     <string name="marked_x">%1$s माना गया।</string>

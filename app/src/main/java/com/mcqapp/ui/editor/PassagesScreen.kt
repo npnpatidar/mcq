@@ -601,8 +601,22 @@ fun PassagesScreen(
                                         member.text,
                                         style = MaterialTheme.typography.bodySmall,
                                         maxLines = 2,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
+                                    // A zero-option question is a flashcard; the
+                                    // ref's answer-key count cannot say so (a
+                                    // keyless MCQ has none either), hence the
+                                    // option count. Rendered text, not a
+                                    // description only.
+                                    if (member.optionCount == 0) {
+                                        Text(
+                                            stringResource(R.string.r2_flashcard_label),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.padding(start = 8.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

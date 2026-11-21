@@ -7,6 +7,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
@@ -122,6 +125,20 @@ fun QuestionEditorScreen(
     // leave unsaved edits one Back tap from being discarded (round-2 E2).
     var showLeaveDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
+    // Switching a question with typed options to a flashcard clears them, so
+    // the screen asks first. Kept saveable like the other dialogs: a rotation
+    // must not turn the open question into an unanswered one.
+    var showCardTypeDialog by rememberSaveable { mutableStateOf(false) }
+    // Typed options are content the user would lose, so that switch is the only
+    // one that asks; clearing an empty option list changes nothing they wrote.
+    val requestCardType: (EditorCardType) -> Unit = { type ->
+        when {
+            type == state.cardType -> Unit
+            type == EditorCardType.FLASHCARD && state.hasTypedOptions ->
+                showCardTypeDialog = true
+            else -> viewModel.setCardType(type)
+        }
+    }
     val requestLeave: () -> Unit = {
         when {
             state.busy -> Unit
@@ -348,61 +365,112 @@ fun QuestionEditorScreen(
             Spacer(Modifier.height(8.dp))
             Text(stringResource(R.string.preview), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                ContentElements(state.elements, modifier = Modifier.padding(12.dp))
+            // The preview shows the card as the learner studies it. A
+            // flashcard has two sides, so its back (the explanation) is
+            // previewed under a divider instead of being invisible until study
+            // time.
+            Card(modifier = Modifier.fillMaxWidth().testTag("editor-preview")) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    ContentElements(state.elements)
+                    if (state.cardType == EditorCardType.FLASHCARD) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text(
+                            stringResource(R.string.r2_editor_flashcard_back),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        ContentElements(state.explanationElements)
+                        if (state.explanationImage.isNotBlank()) {
+                            QuestionImage(src = state.explanationImage)
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(16.dp))
-            Text(stringResource(R.string.options), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            // A flashcard and a question are two shapes of the same row: the
+            // type is picked here, above the options it governs.
             Text(
-                stringResource(R.string.tick_the_correct_answer_s),
-                style = MaterialTheme.typography.labelSmall
+                stringResource(R.string.r2_editor_card_type),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(4.dp))
-
-            state.options.forEachIndexed { optionPosition, option ->
-                OptionEditorRow(
-                    option = option,
-                    position = optionPosition,
-                    owner = "${state.questionId}|${option.id}",
-                    onAddBlock = { viewModel.addOptionBlock(option.id, it) },
-                    onUpdateBlock = { index, element ->
-                        viewModel.updateOptionBlock(option.id, index, element)
-                    },
-                    onUpdateMath = { blockId, mml ->
-                        viewModel.updateMathOption(option.id, blockId, mml)
-                    },
-                    onRemoveBlock = { viewModel.removeOptionBlock(option.id, it) },
-                    onMoveBlockUp = { viewModel.moveOptionBlockUp(option.id, it) },
-                    onMoveBlockDown = { viewModel.moveOptionBlockDown(option.id, it) },
-                    onPickBlockImage = { blockId ->
-                        pickBlockImage(ImageTarget.Option(option.id, blockId))
-                    },
-                    onImageChange = { viewModel.updateOptionImage(option.id, it) },
-                    onToggleCorrect = { viewModel.toggleCorrect(option.id) },
-                    onMoveUp = { viewModel.moveOptionUp(option.id) },
-                    onMoveDown = { viewModel.moveOptionDown(option.id) },
-                    onRemove = { viewModel.removeOption(option.id) },
-                    canRemove = state.options.size > 2,
-                    canMoveUp = optionPosition > 0,
-                    canMoveDown = optionPosition < state.options.lastIndex,
-                    onUpdateCell = { index, row, col, value ->
-                        viewModel.updateOptionTableCell(option.id, index, row, col, value)
-                    },
-                    onAddRow = { viewModel.addOptionTableRow(option.id, it) },
-                    onRemoveRow = { index, row ->
-                        viewModel.removeOptionTableRow(option.id, index, row)
-                    },
-                    onAddColumn = { viewModel.addOptionTableColumn(option.id, it) },
-                    onRemoveColumn = { index, col ->
-                        viewModel.removeOptionTableColumn(option.id, index, col)
-                    }
+            // A FlowRow, not a Row: at the largest font scale (1.3) the two
+            // labels no longer fit side by side, and a Row would clip the
+            // second chip. Wrapping keeps both reachable and keeps the type
+            // picker's order (question, then card).
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = state.cardType == EditorCardType.MULTIPLE_CHOICE,
+                    onClick = { requestCardType(EditorCardType.MULTIPLE_CHOICE) },
+                    label = { Text(stringResource(R.string.r2_editor_card_type_multiple_choice)) },
+                    modifier = Modifier.testTag("card-type-multiple-choice")
                 )
-                Spacer(Modifier.height(8.dp))
+                FilterChip(
+                    selected = state.cardType == EditorCardType.FLASHCARD,
+                    onClick = { requestCardType(EditorCardType.FLASHCARD) },
+                    label = { Text(stringResource(R.string.r2_editor_card_type_flashcard)) },
+                    modifier = Modifier.testTag("card-type-flashcard")
+                )
             }
 
-            OutlinedButton(onClick = viewModel::addOption) {
-                Text(stringResource(R.string.add_option))
+            // A flashcard has no options, no answer key and so neither the
+            // "tick the correct answer" prompt nor the missing-key warning.
+            if (state.cardType == EditorCardType.MULTIPLE_CHOICE) {
+                Spacer(Modifier.height(16.dp))
+                Text(stringResource(R.string.options), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    stringResource(R.string.tick_the_correct_answer_s),
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Spacer(Modifier.height(4.dp))
+
+                state.options.forEachIndexed { optionPosition, option ->
+                    OptionEditorRow(
+                        option = option,
+                        position = optionPosition,
+                        owner = "${state.questionId}|${option.id}",
+                        onAddBlock = { viewModel.addOptionBlock(option.id, it) },
+                        onUpdateBlock = { index, element ->
+                            viewModel.updateOptionBlock(option.id, index, element)
+                        },
+                        onUpdateMath = { blockId, mml ->
+                            viewModel.updateMathOption(option.id, blockId, mml)
+                        },
+                        onRemoveBlock = { viewModel.removeOptionBlock(option.id, it) },
+                        onMoveBlockUp = { viewModel.moveOptionBlockUp(option.id, it) },
+                        onMoveBlockDown = { viewModel.moveOptionBlockDown(option.id, it) },
+                        onPickBlockImage = { blockId ->
+                            pickBlockImage(ImageTarget.Option(option.id, blockId))
+                        },
+                        onImageChange = { viewModel.updateOptionImage(option.id, it) },
+                        onToggleCorrect = { viewModel.toggleCorrect(option.id) },
+                        onMoveUp = { viewModel.moveOptionUp(option.id) },
+                        onMoveDown = { viewModel.moveOptionDown(option.id) },
+                        onRemove = { viewModel.removeOption(option.id) },
+                        canRemove = state.options.size > 2,
+                        canMoveUp = optionPosition > 0,
+                        canMoveDown = optionPosition < state.options.lastIndex,
+                        onUpdateCell = { index, row, col, value ->
+                            viewModel.updateOptionTableCell(option.id, index, row, col, value)
+                        },
+                        onAddRow = { viewModel.addOptionTableRow(option.id, it) },
+                        onRemoveRow = { index, row ->
+                            viewModel.removeOptionTableRow(option.id, index, row)
+                        },
+                        onAddColumn = { viewModel.addOptionTableColumn(option.id, it) },
+                        onRemoveColumn = { index, col ->
+                            viewModel.removeOptionTableColumn(option.id, index, col)
+                        }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                OutlinedButton(onClick = viewModel::addOption) {
+                    Text(stringResource(R.string.add_option))
+                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -425,7 +493,19 @@ fun QuestionEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            Text(stringResource(R.string.explanation), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            // A flashcard's explanation *is* the card's back, so the section is
+            // named for what the learner will actually see.
+            Text(
+                stringResource(
+                    if (state.cardType == EditorCardType.FLASHCARD) {
+                        R.string.r2_editor_flashcard_back
+                    } else {
+                        R.string.explanation
+                    }
+                ),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(Modifier.height(4.dp))
             // Explanation tables are editable too, on the same grid the
             // question body uses (question_editor_audit.md L-01).
@@ -450,7 +530,9 @@ fun QuestionEditorScreen(
             if (state.explanationImage.isNotBlank()) {
                 LegacyImageRow(
                     image = state.explanationImage,
-                    label = stringResource(R.string.explanation_image),
+                    // A card's picture is its answer; Study and Browse already
+                    // call it that, so the editor must not say "Explanation".
+                    label = stringResource(explanationImageLabelRes(state.cardType)),
                     onRemove = { viewModel.updateExplanationImage("") }
                 )
             }
@@ -469,7 +551,7 @@ fun QuestionEditorScreen(
                 com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
             }
             if (tagLabels.isNotEmpty()) {
-                androidx.compose.foundation.layout.FlowRow(
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -532,8 +614,12 @@ fun QuestionEditorScreen(
                 )
             }
             // The import path flags exactly this state in its warnings; the
-            // editor used to save it silently (consolidated_bugs.md J9).
-            if (state.options.isNotEmpty() && state.options.none { it.isCorrect }) {
+            // editor used to save it silently (consolidated_bugs.md J9). A
+            // flashcard has no answer key to be missing.
+            if (state.cardType == EditorCardType.MULTIPLE_CHOICE &&
+                state.options.isNotEmpty() &&
+                state.options.none { it.isCorrect }
+            ) {
                 Text(
                     stringResource(R.string.no_correct_answer_warning),
                     style = MaterialTheme.typography.bodySmall,
@@ -543,16 +629,8 @@ fun QuestionEditorScreen(
             // A disabled Save says what is missing, instead of leaving the
             // learner to guess (question_editor_audit.md M-12). The marks and
             // empty-option cases have their own field-level errors.
-            val saveBlockedHint: String? = when {
-                state.loading || state.busy || !state.marksValid -> null
-                state.options.size < 2 -> stringResource(R.string.save_blocked_two_options)
-                state.options.any { o ->
-                    o.elements.none { it.isSignificant() } && o.image.isBlank()
-                } -> stringResource(R.string.save_blocked_empty_option)
-                state.elements.none { it.isSignificant() } && state.image.isBlank() ->
-                    stringResource(R.string.save_blocked_no_content)
-                else -> null
-            }
+            val blockedHintRes = saveBlockedHintRes(state)
+            val saveBlockedHint = blockedHintRes?.let { stringResource(it) }
             // An in-flight operation used to look like an unresponsive
             // screen: Back and the action buttons simply did nothing.
             val operationLabel = when (state.operation) {
@@ -656,6 +734,29 @@ fun QuestionEditorScreen(
                     }) {
                         Text(stringResource(R.string.discard))
                     }
+                }
+            }
+        )
+    }
+
+    if (showCardTypeDialog) {
+        // Clearing typed options is destructive and irreversible (no undo in
+        // the editor), so the switch is confirmed first.
+        AlertDialog(
+            onDismissRequest = { showCardTypeDialog = false },
+            title = { Text(stringResource(R.string.r2_editor_switch_to_flashcard_title)) },
+            text = { Text(stringResource(R.string.r2_editor_switch_to_flashcard_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCardTypeDialog = false
+                    viewModel.setCardType(EditorCardType.FLASHCARD)
+                }) {
+                    Text(stringResource(R.string.r2_editor_switch_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCardTypeDialog = false }) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )

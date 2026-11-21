@@ -15,6 +15,8 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.backFromSingleOption
+import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
@@ -29,6 +31,7 @@ import java.io.InputStream
 data class AnkiReadResult(
     val file: McqFileDto,
     val noteCount: Int,
+    /** Notes/cards that import as flashcards (zero options, or one normalised choice). */
     val recallCount: Int,
     val deckCount: Int,
     /**
@@ -37,7 +40,7 @@ data class AnkiReadResult(
      * a package carries no schedule, such as a shared deck of new cards.
      */
     val scheduling: Map<String, com.mcqapp.data.io.CardScheduleDto> = emptyMap(),
-    /** Card instances whose entire stem was empty (no text, no image) and were dropped. */
+    /** Card instances dropped for a blank stem or a blank answer, for the import report. */
     val droppedStems: Int = 0
 )
 
@@ -59,8 +62,8 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  *
  * Questions come from a note's structured payload field when present (an exact
  * round trip of our own exports). Otherwise the readable back field is parsed
- * for `✓`/`✗` markers, and a note with no markers becomes a single-option
- * recall question.
+ * for `✓`/`✗` markers, and a note with no markers becomes a zero-option
+ * flashcard whose front is the note's front and whose back is the note's back.
  */
 object AnkiPackageReader {
 
@@ -212,7 +215,7 @@ object AnkiPackageReader {
         Logger.i(
             "IMPORT",
             "Anki package: ${decks.size} decks, $noteCount questions, $recallCount without options, " +
-                "${droppedStems[0]} blank stems dropped, " +
+                "${droppedStems[0]} dropped (blank stem or answer), " +
                 "${scheduling.size} scheduled, $unscheduled new or not due"
         )
         return AnkiReadResult(
@@ -249,7 +252,7 @@ object AnkiPackageReader {
         val deckCount: Int,
         val noteCount: Int,
         val recallCount: Int,
-        /** Card instances dropped for a completely empty stem, for the import report. */
+        /** Card instances dropped for a blank stem or blank answer, for the import report. */
         val droppedStems: Int = 0
     )
 
@@ -414,7 +417,7 @@ object AnkiPackageReader {
         Logger.i(
             "IMPORT",
             "Streamed Anki package: ${decks.size} decks, $noteCount questions, " +
-                "$recallCount without options, $droppedStems blank stems dropped"
+                "$recallCount without options, $droppedStems dropped (blank stem or answer)"
         )
         return AnkiStreamTail(passages.values.toList(), decks.size, noteCount, recallCount, droppedStems)
     }
@@ -884,8 +887,29 @@ object AnkiPackageReader {
 
     // ---- note -> question ----
 
-    /** A question plus whether it had to be reduced to a single option. */
+    /**
+     * A question plus whether it will be imported as a flashcard. The
+     * importers normalise any question with at most one option into a
+     * zero-option card, so the count follows that shape rather than the raw
+     * option list: a single marker (`(a)` with no second choice) is a card too.
+     */
     private data class ParsedQuestion(val question: QuestionDto, val isRecall: Boolean)
+
+    /**
+     * Drops one card instance the reader cannot turn into a usable card and
+     * counts it for the import report. A blank stem and a blank answer are the
+     * same outcome: the editor refuses such a shape, so importing it would put
+     * an unusable row in the library.
+     */
+    private fun dropCard(note: AnkiNote, reason: String, dropped: IntArray): Nothing? {
+        val droppedNumber = ++dropped[0]
+        Logger.w(
+            "IMPORT",
+            "Dropped an Anki card instance with $reason: " +
+                "${note.guid.ifBlank { note.id }} — dropped #$droppedNumber"
+        )
+        return null
+    }
 
     /**
      * The stem-image fallback for a payload that omits `image` (older or
@@ -923,7 +947,7 @@ object AnkiPackageReader {
         val frontHtml = note.fields.firstOrNull().orEmpty()
 
         if (notetype != null && notetype.isCloze) {
-            return clozeQuestion(note, frontHtml, ord ?: 0, media)?.let {
+            return clozeQuestion(note, frontHtml, ord ?: 0, media, dropped)?.let {
                 ParsedQuestion(it, isRecall = true)
             }
         }
@@ -931,13 +955,7 @@ object AnkiPackageReader {
         val questionId = "anki-${note.guid.ifBlank { note.id }}"
         val front = fieldToText(frontHtml, media)
         if (front.first.isBlank() && front.second == null) {
-            val droppedNumber = ++dropped[0]
-            Logger.w(
-                "IMPORT",
-                "Dropped an Anki card instance with a completely empty stem (no text, no image): " +
-                    "${note.guid.ifBlank { note.id }} — dropped #$droppedNumber"
-            )
-            return null
+            return dropCard(note, "a completely empty stem (no text, no image)", dropped)
         }
         // A blank stem that still has an <img> is a picture question: the
         // paths below keep it — the image travels as question content (or,
@@ -982,8 +1000,9 @@ object AnkiPackageReader {
                 tags = (payload.tags + note.tags).distinct(),
                 passageId = payload.passageId
             ),
-            // Nothing to choose between, so this counts as a recall question.
-            isRecall = payload.options.isEmpty())
+            // Nothing to choose between (or a single option the importer will
+            // normalise into the answer), so this counts as a flashcard.
+            isRecall = payload.options.size <= 1)
         }
 
         val back = AnkiHtml.parseBackField(media.rewrite(backHtml))
@@ -1023,7 +1042,9 @@ object AnkiPackageReader {
                     difficulty = difficulty,
                     tags = note.tags
                 ),
-                isRecall = false
+                // At most one option is normalised into a flashcard by the
+                // importer, so the report must count it as one here.
+                isRecall = options.size <= 1
             )
         }
 
@@ -1042,22 +1063,30 @@ object AnkiPackageReader {
                     difficulty = difficulty,
                     tags = note.tags
                 ),
-                isRecall = false
+                isRecall = options.size <= 1
             )
         }
 
-        // A foreign note with no options: keep the content as a single-option
-        // recall question rather than dropping it.
-        val answer = fieldToText(backHtml, media)
+        // A foreign note with no options and no markers is a flashcard: the
+        // front is the prompt and the whole back field is the answer. Both are
+        // built from elements (not fieldToText, which flattens a table and
+        // keeps only the first picture): the guarantee is that tables and
+        // every picture survive. A card with no back is not usable — the
+        // editor refuses that shape — so it is dropped and counted.
+        val frontElements = htmlToElements(frontHtml, media)
+        val backElements = htmlToElements(backHtml, media)
+        if (!backElements.hasVisibleContent) {
+            return dropCard(note, "no answer in the back field", dropped)
+        }
         return ParsedQuestion(
             QuestionDto(
                 id = questionId,
-                text = front.first,
-                image = front.second,
-                options = listOf(
-                    OptionDto("o0", text = answer.first.ifBlank { front.first }, image = answer.second)
-                ),
-                correctOptionIds = listOf("o0"),
+                text = frontElements.textContent,
+                elements = frontElements,
+                options = emptyList(),
+                correctOptionIds = emptyList(),
+                explanation = backElements.textContent,
+                explanationElements = backElements,
                 difficulty = difficulty,
                 tags = note.tags
             ),
@@ -1191,17 +1220,29 @@ object AnkiPackageReader {
     }
 
     /**
-     * Splits a cloze note into one question per card. Anki generates a card per
-     * deletion and sets that deletion's ord in the field it blanks, so the
-     * hidden text is the answer.
+     * Splits a cloze note into one flashcard per card. Anki generates a card
+     * per deletion and sets that deletion's ord in the field it blanks, so the
+     * hidden text is the answer — a cloze card has nothing to choose between,
+     * which makes it a zero-option flashcard with the deletion as its back.
      *
      * `ord` is Anki's cloze number − 1, not a position: a note numbered
      * `{{c1::…}}` / `{{c3::…}}` with ord 2 must resolve to c3, so the deletion
      * is chosen by parsed number. The stem hides the deletions of the current
      * number (Anki's `[...]`) and reveals the others, so it never carries the
      * answer nor the raw `{{cN::…}}` markup.
+     *
+     * The placeholder explanation the earlier rebuild wrote is replaced by the
+     * deletion through the shared [backFromSingleOption] rule, never appended
+     * after it. The question id keeps its `-ord` suffix, so the card's own
+     * schedule is still keyed by the instance that produced it.
      */
-    private fun clozeQuestion(note: AnkiNote, frontHtml: String, ord: Int, media: MediaIndex): QuestionDto? {
+    private fun clozeQuestion(
+        note: AnkiNote,
+        frontHtml: String,
+        ord: Int,
+        media: MediaIndex,
+        dropped: IntArray
+    ): QuestionDto? {
         val deletions = CLOZE_PATTERN.findAll(frontHtml)
             .map { ClozeDeletion(it.groupValues[1].toIntOrNull() ?: 0, it) }
             .toList()
@@ -1210,15 +1251,29 @@ object AnkiPackageReader {
         // note whose numbering is not 1-based (a duplicated or skipped number).
         val target = deletions.firstOrNull { it.number == ord + 1 } ?: deletions.getOrNull(ord)
         if (target == null) return null
-        val text = fieldToText(clozeStem(frontHtml, deletions, target.number), media).first
-        val answer = AnkiHtml.toPlainText(target.match.groupValues[2])
+        // The stem is a document too: a table or several pictures must survive,
+        // not just the text with the first image torn out.
+        val stemElements = htmlToElements(clozeStem(frontHtml, deletions, target.number), media)
+        val answerHtml = target.match.groupValues[2]
+        val answerElements = htmlToElements(answerHtml, media)
+        val back = backFromSingleOption(
+            optionElements = answerElements,
+            optionText = AnkiHtml.toPlainText(answerHtml),
+            explanationElements = listOf(ContentElement.TextElement(FALLBACK_CLOZE_EXPLANATION)),
+            explanationImage = null
+        )
+        if (!back.hasVisibleContent) {
+            return dropCard(note, "an empty cloze answer", dropped)
+        }
         val questionId = "anki-${note.guid.ifBlank { note.id }}-$ord"
         return QuestionDto(
             id = questionId,
-            text = text.ifBlank { CLOZE_BLANK },
-            options = listOf(OptionDto("o0", answer)),
-            correctOptionIds = listOf("o0"),
-            explanation = FALLBACK_CLOZE_EXPLANATION,
+            text = stemElements.textContent.ifBlank { CLOZE_BLANK },
+            elements = stemElements,
+            options = emptyList(),
+            correctOptionIds = emptyList(),
+            explanation = back.textContent,
+            explanationElements = back,
             tags = note.tags + "anki-cloze"
         )
     }

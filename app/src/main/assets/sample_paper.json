@@ -4,7 +4,7 @@
     {
       "id": "paper-demo",
       "title": "Sample Bank — English + हिन्दी",
-      "description": "A showcase bank: MathML formulas and chemical equations, tables and pictures in the question, the options and the explanation, single and multiple correct answers, English and Hindi, reading passages shared by a group of questions, plus deliberate edge cases.",
+      "description": "A showcase bank: MathML formulas and chemical equations, tables and pictures in the question, the options and the explanation, single and multiple correct answers, English and Hindi, reading passages shared by a group of questions, flashcards with text, table, formula and picture backs, plus deliberate edge cases.",
       "durationMinutes": 20,
       "negativeMarking": 0.25,
       "categories": [
@@ -632,6 +632,48 @@
               ],
               "correctOptionIds": [
                 "a"
+              ]
+            },
+            {
+              "id": "q-fc-table",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "What is the SI unit of force, and what is its symbol?"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Force is measured in newtons, written N. The table pairs it with mass for contrast:"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Quantity",
+                      "Unit",
+                      "Symbol"
+                    ],
+                    [
+                      "Force",
+                      "newton",
+                      "N"
+                    ],
+                    [
+                      "Mass",
+                      "kilogram",
+                      "kg"
+                    ]
+                  ]
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
               ]
             }
           ]
@@ -1346,6 +1388,36 @@
               "correctOptionIds": [
                 "a"
               ]
+            },
+            {
+              "id": "q-fc-math",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "State the quadratic formula."
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "For a quadratic equation, the roots are given by "
+                },
+                {
+                  "type": "math",
+                  "content": "<math><mi>x</mi><mo>=</mo><mfrac><mrow><mo>&#x2212;</mo><mi>b</mi><mo>&#x00B1;</mo><msqrt><mrow><msup><mi>b</mi><mn>2</mn></msup><mo>&#x2212;</mo><mn>4</mn><mi>a</mi><mi>c</mi></mrow></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math>"
+                },
+                {
+                  "type": "text",
+                  "content": ", with one sign chosen for each of the two roots."
+                }
+              ],
+              "difficulty": "medium",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
+              ]
             }
           ]
         },
@@ -1427,6 +1499,10 @@
                 {
                   "type": "text",
                   "content": "The circle shows four sectors labelled A to D. Which two sectors are equal in area?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,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\" alt=\"A pie chart with sectors A to D\">"
                 }
               ],
               "options_elements": {
@@ -1520,6 +1596,128 @@
               "tags": [
                 "number-line",
                 "image-question"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
+              "id": "q-fc-image",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which shape is shown?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A square — four equal sides and four right angles."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
+              ]
+            },
+            {
+              "id": "q-fc-image-back",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "What is the shape with four equal sides and four right angles? (Reveal the answer.)"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                },
+                {
+                  "type": "text",
+                  "content": "A square."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
+              ]
+            },
+            {
+              "id": "q-vis-4",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The picture shows one shape. Which option shows the same shape?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfElEQVR42u3ZsQ3AIAwEQO8/WaZACgVD0EBGoEiBrXu9B7j2Ha2P8o3vVulAQkJCQkJCQkJCQkJCQkJCQkJC5kFGkkCeIef7XFtISEhISEhISEhISEhISEhISEhIyIxIC3p+pK8WJCQkJCQkJCQkJCQkJCQkJCQk5N/I8t3rMpbw72mfVAAAAABJRU5ErkJggg==\" alt=\"A rectangle\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Rectangle"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Square"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAABW0lEQVR42u3aMQ7CQBBD0b3/BekoKKi5ASCQUEQgZGZs77KytTnA058y7Xg6T//a/btOPSONNNJII4000kgjjTRya+2xmZFtMSP/FtlWmxZ5uBzub07kq94SKXB2QD6Fypg65FtGZUwR8qNQ5pQi10LN0SqQGxk1MXXIb0JBTDryZ0ZBTBFyW8iOyUXuzMiOqUDuEVJjEpGhjNSYLGRCyHNykVEh6WgpyHRGUkwiMidkxMQjixkZMVnIihAeE4yEZITHRCKBQqwTj0QJgUcLQ8IzAmOCkVghKiYGScqIiolEMoSQmAAkNSMkZhUpENadGCRbWDzaElKWsRgTgNQIKzHzSHHGSswqUilMx0wiu2RMxywh9cJczAyyY8ZczDCyuzDhTCL7CqNHG0MOkjEaM4McQRiKGUAOlTEUM4wcR7g/5l5kG35G+qdeI4000kgjjTTSSCONHA05/bsBgRCY7ue8pGIAAAAASUVORK5CYII=\" alt=\"An equilateral triangle\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Triangle"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "image",
+                    "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAABLklEQVR42u3aOw7CMBBFUe9/g3QUFNTZASAKhIhAeH5+Gd2Rs4Cj58SfyThfru3HeDy31gUSJEiQIEGCBAkyp8az2iLHrrohx5dqgnwnbaftNWqcFchvwg9nHjUX+ZtX5kxE/iksoKYgZ3nZznikWZj3NQpGOnlJkYYh/QHmOWOQ4cJYqheZxwt0upAFwhCqEVnJ8zstyCVCzwIzh1zLM0c6gRQRGpzTyOW8PTUlSSlhMFItzJR3EqT0QmJcQg4Uo2UzALIXUmTHk753PUqMIFVnbPopRCHMovMkSLm5GnD9oR+j6yILZC/kktu6Bfeu4jGCFJuxnk5BTC9EOUaQSsiVXa2y13Jxf7ImTJCFyIJOs9A/A0ml9WNEW6R4gQQJEiRIkCBBggQJUg/ZftwBynmcQGTsO58AAAAASUVORK5CYII=\" alt=\"A regular pentagon\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Pentagon"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The stem shows a square, and option (b) is the only option showing that same shape. The other options show a rectangle, a triangle and a pentagon — different shapes, not the one asked for."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "images",
+                "stem-and-option-images"
               ],
               "correctOptionIds": [
                 "b"
@@ -1842,6 +2040,29 @@
               ],
               "correctOptionIds": [
                 "a"
+              ]
+            },
+            {
+              "id": "q-fc-passage",
+              "passageId": "passage-1",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "In the passage, how long has the same water been circulating?"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "For billions of years."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
               ]
             }
           ]
@@ -2500,7 +2721,7 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "In <strong>Newton’s second law</strong> the acceleration is proportional to the net <em>external</em> force and inversely proportional to the <u>total mass</u>. Which statement about acceleration follows?"
+                  "content": "In <strong>Newton’s second law</strong> the acceleration is proportional to the net <em>external</em> force and inversely proportional to the <u>total mass</u>.<br>Which statement about acceleration follows?"
                 }
               ],
               "options_elements": {
@@ -2850,6 +3071,28 @@
               "correctOptionIds": [
                 "b"
               ]
+            },
+            {
+              "id": "q-fc-hi",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "भारत की राजधानी कौन-सी है? / What is the capital of India?"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "नई दिल्ली / New Delhi."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
+              ]
             }
           ]
         },
@@ -3091,6 +3334,56 @@
                 "b",
                 "e"
               ]
+            },
+            {
+              "id": "q-o5",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Rank these units of length from shortest to longest."
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Millimetre, centimetre, metre, kilometre"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Centimetre, millimetre, metre, kilometre"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Metre, centimetre, millimetre, kilometre"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Kilometre, metre, centimetre, millimetre"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Millimetre, centimetre, metre, kilometre is the correct order. This question is worth zero marks on purpose, which is what the zero-mark warning reports: it still imports and can be practised, but it never changes a score."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 0.0,
+              "tags": [
+                "ordering",
+                "zero-marks"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
             }
           ]
         },
@@ -3138,21 +3431,21 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "This question has no options at all, which the import preview flags as unanswerable."
+                  "content": "What is the capital of France?"
                 }
               ],
               "options_elements": {},
               "explanation_elements": [
                 {
                   "type": "text",
-                  "content": "An empty option list is legal in the file format; the editor will ask for options before the question can be saved from there."
+                  "content": "Paris."
                 }
               ],
               "difficulty": "easy",
               "marks": 1,
               "tags": [
-                "edge-case",
-                "no-options"
+                "flashcard",
+                "demo"
               ]
             },
             {
@@ -3216,7 +3509,7 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "This question has only one option and no explanation, so the preview flags both."
+                  "content": "This question has only one option, so on import it becomes a flashcard: the option below is kept as the answer, not as a choice."
                 }
               ],
               "options_elements": {
@@ -3233,6 +3526,54 @@
               "tags": [
                 "edge-case",
                 "one-option"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
+            },
+            {
+              "id": "q-e6",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which comparison is correct? (Three options, an HTML entity, decimal marks and a long tag list in one demo.)"
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "5 &lt; 6"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "5 &gt; 6"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "5 = 6"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "Five is less than six, so 5 &lt; 6. The entities render as &lt; and &gt;."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 0.5,
+              "tags": [
+                "edge-case",
+                "three-options",
+                "html-entity",
+                "fractional-marks",
+                "many-tags",
+                "option-entity"
               ],
               "correctOptionIds": [
                 "a"
@@ -3334,7 +3675,7 @@
         },
         {
           "type": "text",
-          "content": "Read the passage and the table before answering; the three questions that share this passage all draw on them, and in a test they arrive together with the passage shown above each one."
+          "content": "Read the passage and the table before answering; the three multiple-choice questions and the flashcard that share this passage all draw on them, and in a test they arrive together with the passage shown above each one."
         }
       ]
     },

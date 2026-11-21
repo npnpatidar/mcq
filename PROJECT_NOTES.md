@@ -306,12 +306,14 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.65` is the
-  published release (scrollable import summary; picture/table/formula answers
-  show on reveal). `0.0.64` added the bookmark-removal clarity and the aligned
-  Study clock, `0.0.63` the scrollable export dialogs, `0.0.62` the whole
-  round-2 review pass. Room schema is **29**. Round-2 review reports are in
-  `review-reports-2/` (PR #94, merged); the fix work is PR #95 (merged).
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.66` is the
+  published release (flashcards; keyless questions self-grade instead of showing
+  a false "Incorrect"; sample reload and refreshed demo). `0.0.65` added the
+  scrollable import summary and picture/table/formula answers on reveal,
+  `0.0.64` the bookmark-removal clarity and the aligned Study clock, `0.0.63`
+  the scrollable export dialogs, `0.0.62` the whole round-2 review pass. Room
+  schema is **29**. Round-2 review reports are in `review-reports-2/` (PR #94,
+  merged); the fix work is PR #95 (merged).
 - **Flashcards.** A question with zero options is a flashcard: front = the stem
   elements/image, back = `explanationElements`/`explanationImage`. The type is
   derived, never stored. **Any question without an answer key** — a zero-option

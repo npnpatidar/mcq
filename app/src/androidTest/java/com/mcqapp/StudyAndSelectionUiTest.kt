@@ -126,9 +126,12 @@ class StudyAndSelectionUiTest {
     @After
     fun cleanup() = runBlocking {
         seeded.forEach { repository.deletePaper(it) }
-        // The mode tests below mutate the shared scheduler settings; leaving
-        // them as found keeps test order irrelevant.
+        // The mode tests mutate the shared scheduler settings and the process-
+        // wide study mode; restoring both keeps test order irrelevant. The
+        // reveal tests pin Simplified off, so leaving it would make a later
+        // Simplified test wait forever for its Check button.
         repository.resetSchedulerConfig()
+        repository.setSimplifiedStudy(true)
     }
 
     private fun waitFor(text: String) {

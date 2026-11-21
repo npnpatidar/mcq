@@ -38,39 +38,44 @@ class FlashcardStudyStructureTest {
     }
 
     @Test
-    fun checkCanNeverAutoGradeACard() {
+    fun checkCanNeverAutoGradeAKeylessQuestion() {
         val check = functionBody(viewModel, "fun check() {")
-        // autoGrade reads an empty selection as wrong and would propose AGAIN;
-        // a card has no options to select, so Check must refuse it outright.
+        // autoGrade reads an empty selection (or a selection against an empty
+        // key) as wrong and would propose AGAIN. A card and an ungraded import
+        // both have no key, so Check must refuse the whole self-graded class.
         assertTrue(
-            "check() must return for a flashcard before it proposes a grade",
-            check.contains("if (question.isFlashcard) return")
+            "check() must return for a self-graded question before it proposes a grade",
+            check.contains("if (!current.canAutoGrade) return")
         )
         assertTrue(
             "the guard must run before autoGrade is called",
-            check.indexOf("if (question.isFlashcard) return") < check.indexOf("Study.autoGrade(")
+            check.indexOf("if (!current.canAutoGrade) return") < check.indexOf("Study.autoGrade(")
+        )
+        assertFalse(
+            "the guard must not be card-only: a keyless MCQ is self-graded too",
+            check.contains("if (question.isFlashcard) return")
         )
     }
 
     @Test
-    fun aCardNeverDeclaresAGuess() {
+    fun aSelfGradedQuestionNeverDeclaresAGuess() {
         val setGuess = functionBody(viewModel, "fun setGuess(guessing: Boolean) {")
         assertTrue(
-            "setGuess() must refuse a flashcard, or a hidden switch could still be set",
-            setGuess.contains("if (current.isFlashcard) return")
+            "setGuess() must refuse a self-graded question, or a hidden switch could still be set",
+            setGuess.contains("if (current.selfGraded) return")
         )
     }
 
     @Test
-    fun gradeWritesTheCardRowAsSelfGraded() {
+    fun gradeWritesTheSelfGradedRowForEveryKeylessQuestion() {
         val grade = functionBody(viewModel, "fun grade(grade: ReviewGrade) {")
         listOf(
-            // No correctness: there is no answer to be right about.
-            "wasCorrect = if (card) null else isCorrect(question, current.selection)",
-            // No guess: the card was never declared one.
-            "wasGuess = if (card) null else false",
+            // No correctness: there is no key to be right about.
+            "wasCorrect = if (selfGraded) null else isCorrect(question, current.selection)",
+            // No guess: the question was never declared one.
+            "wasGuess = if (selfGraded) null else false",
             // Nothing was skipped: the prompt itself was studied.
-            "wasSkipped = if (card) false else current.selection.isEmpty()",
+            "wasSkipped = if (selfGraded) false else current.selection.isEmpty()",
             // No app proposal and no app grade — the learner chose it.
             "proposedGrade = null",
             "gradeSource = com.mcqapp.domain.GradeSource.CHOSEN"
@@ -78,21 +83,31 @@ class FlashcardStudyStructureTest {
             assertTrue("grade() must write '$line'", grade.contains(line))
         }
         assertTrue(
-            "a flashcard grade must still advance the per-card tally",
-            grade.contains("advanceStats(grade, flashcards = if (card) 1 else 0)")
+            "a self-graded grade must still advance the summary tally",
+            grade.contains("advanceStats(grade, selfGraded = if (selfGraded) 1 else 0)")
+        )
+        // The row decision must read the key, not the option count.
+        assertTrue(
+            "self-graded must be decided from the answer key",
+            grade.contains("val selfGraded = current.selfGraded")
+        )
+        assertFalse(
+            "a card-only decision would leave a keyless MCQ auto-graded",
+            grade.contains("val card = question.isFlashcard")
         )
     }
 
     @Test
-    fun aCardGradeIsIgnoredBeforeTheReveal() {
+    fun aSelfGradedGradeIsIgnoredBeforeTheReveal() {
         val grade = functionBody(viewModel, "fun grade(grade: ReviewGrade) {")
-        val guard = "if (question.isFlashcard && !current.revealed) return"
+        val guard = "if (current.selfGraded && !current.revealed) return"
         assertTrue(
-            "grade() must refuse a card the learner has not been shown",
+            "grade() must refuse a self-graded question the learner has not been shown",
             grade.contains(guard)
         )
         // Behind the existing single-flight claim, and before any write. MCQ
-        // grading must keep its old shape: only a card needs the reveal.
+        // grading must keep its old shape: only a self-graded question needs
+        // the reveal.
         assertTrue(
             "the reveal guard must follow the grading single-flight",
             grade.indexOf("if (current.grading) return") < grade.indexOf(guard)
@@ -102,7 +117,7 @@ class FlashcardStudyStructureTest {
             grade.indexOf(guard) < grade.indexOf("recordStudyReview(")
         )
         assertFalse(
-            "MCQ grading must not gain a reveal requirement",
+            "keyed MCQ grading must not gain a reveal requirement",
             grade.contains("if (!current.revealed) return")
         )
     }
@@ -134,40 +149,90 @@ class FlashcardStudyStructureTest {
     }
 
     @Test
-    fun theFlashcardFooterIsShowAnswerThenTheFourSelfGrades() {
+    fun theSelfGradedFooterIsShowAnswerThenTheFourSelfGrades() {
         val footer = functionBody(screen, "private fun SimplifiedFooter(")
-        val start = footer.indexOf("} else if (state.isFlashcard) {")
-        assertTrue("the footer has no flashcard branch", start >= 0)
+        val start = footer.indexOf("} else if (state.selfGraded) {")
+        assertTrue(
+            "the footer has no self-graded branch (a keyless MCQ would fall into Check)",
+            start >= 0
+        )
+        assertFalse(
+            "the branch must not be card-only: a keyless MCQ is self-graded too",
+            footer.contains("} else if (state.isFlashcard) {")
+        )
         val end = footer.indexOf("} else if (!state.revealed) {", start)
-        assertTrue("the flashcard branch has no end", end > start)
-        val cardBranch = footer.substring(start, end)
+        assertTrue("the self-graded branch has no end", end > start)
+        val selfGradedBranch = footer.substring(start, end)
 
         // Before reveal: one Show answer button, wired to the reveal path.
-        assertTrue("the card's Show answer must reveal", cardBranch.contains("viewModel.reveal()"))
-        assertTrue("the card's answer button must be labelled", cardBranch.contains("R.string.show_answer"))
+        assertTrue("Show answer must reveal", selfGradedBranch.contains("viewModel.reveal()"))
+        assertTrue("the answer button must be labelled", selfGradedBranch.contains("R.string.show_answer"))
         // After reveal: the same four buttons the classic footer uses, grading
         // straight through — no Next and no change-grade step.
-        assertTrue("the card must grade with the shared buttons", cardBranch.contains("GradeButtons("))
-        assertTrue("the card grade must persist and advance", cardBranch.contains("viewModel.grade(it)"))
-        assertFalse("a card has no Check", cardBranch.contains("viewModel.check()"))
-        assertFalse("a card has no guess switch", cardBranch.contains("study-guess"))
-        assertFalse("a card has no Next step", cardBranch.contains("study-next"))
-        assertFalse("a card has no change-grade control", cardBranch.contains("study-change-grade"))
+        assertTrue("the question must grade with the shared buttons", selfGradedBranch.contains("GradeButtons("))
+        assertTrue("the grade must persist and advance", selfGradedBranch.contains("viewModel.grade(it)"))
+        assertFalse("a self-graded question has no Check", selfGradedBranch.contains("viewModel.check()"))
+        assertFalse("a self-graded question has no guess switch", selfGradedBranch.contains("study-guess"))
+        assertFalse("a self-graded question has no Next step", selfGradedBranch.contains("study-next"))
+        assertFalse(
+            "a self-graded question has no change-grade control",
+            selfGradedBranch.contains("study-change-grade")
+        )
 
         // The stuck state must stay reachable: the footer checks it first, so a
-        // card whose grade persisted before a failed pull still gets Retry.
+        // question whose grade persisted before a failed pull still gets Retry.
         assertTrue(
-            "Retry must come before the card branch or it is unreachable",
+            "Retry must come before the self-graded branch or it is unreachable",
             footer.indexOf("viewModel.loadNext()") in 1 until start
         )
         assertTrue(footer.contains("R.string.retry"))
     }
 
     @Test
-    fun aCardShowsNoResultCard() {
+    fun aSelfGradedQuestionShowsNoResultCard() {
         assertTrue(
-            "the simplified result card must be refused for a card",
-            screen.contains("if (state.revealed && !state.isFlashcard) {")
+            "the simplified result card must be refused for every self-graded question",
+            screen.contains("if (state.revealed && !state.selfGraded) {")
+        )
+    }
+
+    @Test
+    fun aKeylessRevealCarriesNoVerdictTint() {
+        // The option's colour, glyph and spoken state all read the same
+        // key-known flag, so no branch can mark an option right or wrong when
+        // the app has no key.
+        assertTrue(
+            "the key must gate the option verdict",
+            screen.contains("val keyKnown = question.correctOptionIds.isNotEmpty()")
+        )
+        assertTrue("the tint must be gated", screen.contains("val verdict = revealed && keyKnown"))
+        assertTrue(
+            "the spoken state must know there is no key",
+            screen.contains("studyOptionStateRes(revealed, isCorrect, isSelected, keyKnown)")
+        )
+        assertFalse(
+            "no ungated 'correct' tint may survive",
+            screen.contains("revealed && isCorrect -> MaterialTheme.colorScheme.primaryContainer")
+        )
+        assertFalse(
+            "no ungated 'wrong' tint may survive",
+            screen.contains("revealed && isSelected -> MaterialTheme.colorScheme.errorContainer")
+        )
+        assertFalse(
+            "no ungated verdict glyph may survive",
+            screen.contains("revealed && isCorrect -> \"✓\"")
+        )
+    }
+
+    @Test
+    fun theGradingHintAndClockFollowTheKeyNotTheShape() {
+        assertTrue(
+            "the one-time MCQ hint must be suppressed for every self-graded question",
+            viewModel.contains("!gradingHintDismissed && !selfGraded &&")
+        )
+        assertTrue(
+            "the clock must stay neutral for every self-graded question",
+            screen.contains("if (state.correctnessOnlyGrading || state.selfGraded) {")
         )
     }
 
@@ -218,14 +283,6 @@ class FlashcardStudyStructureTest {
         assertFalse(
             "the card path must not announce a verdict literal",
             screen.contains("announcer.announce(stringResource(R.string.r2_study_verdict")
-        )
-    }
-
-    @Test
-    fun theCardClockMakesNoBandClaim() {
-        assertTrue(
-            "a flashcard is graded by the learner, so the clock must stay neutral",
-            screen.contains("if (state.correctnessOnlyGrading || state.isFlashcard) {")
         )
     }
 

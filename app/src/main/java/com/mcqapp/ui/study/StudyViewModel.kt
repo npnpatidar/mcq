@@ -173,11 +173,11 @@ data class StudyUiState(
     val againCount: Int = 0,
     val goodCount: Int = 0,
     /**
-     * How many of [reviewed] were flashcards (zero-option questions, graded by
-     * the learner rather than by the app). A sitting that contains one has no
+     * How many of [reviewed] were self-graded — a card, or a multiple-choice
+     * question with no answer key. A sitting that contains one has no
      * correctness figure to report, so the summary omits the recall line.
      */
-    val flashcardsReviewed: Int = 0,
+    val selfGradedReviewed: Int = 0,
     /**
      * Milliseconds of this sitting spent on questions. Banked per segment and
      * truncated only for display, so the summary does not lose a fraction each
@@ -217,17 +217,34 @@ data class StudyUiState(
      * A zero-option question is a flashcard: the stem is the front and the
      * explanation is the back. Derived, never stored — options present means a
      * multiple-choice card, so nothing can disagree about which kind is on
-     * screen.
+     * screen. This is a *shape* fact and drives card labels and summary copy
+     * only; it is not what decides whether the app may grade the question.
      */
     val isFlashcard: Boolean get() = question?.options?.isEmpty() == true
 
     /**
-     * The summary's recall percentage is a correctness figure, and a flashcard
-     * has no right or wrong answer: the learner grades their own recall. So a
-     * sitting that contains one omits the line rather than reporting a score
-     * built out of self-grades.
+     * Whether the app knows the answer key and may therefore grade by it. A
+     * question with no key (a card, or a multiple-choice question imported
+     * ungraded) can never be marked right or wrong by comparing a selection to
+     * an empty set: the app simply does not know. Those are self-graded.
      */
-    val showsRecallAccuracy: Boolean get() = reviewed > 0 && flashcardsReviewed == 0
+    val canAutoGrade: Boolean
+        get() = question != null && question.correctOptionIds.isNotEmpty()
+
+    /**
+     * The learner grades this question's recall themselves: no key, so no Check
+     * and no result card. True for every card and for every keyless
+     * multiple-choice question — the two are one rule, not two.
+     */
+    val selfGraded: Boolean get() = question != null && !canAutoGrade
+
+    /**
+     * The summary's recall percentage is a correctness figure, and a
+     * self-graded question has no right or wrong answer the app could know: the
+     * learner grades their own recall. So a sitting that contains one omits the
+     * line rather than reporting a score built out of self-grades.
+     */
+    val showsRecallAccuracy: Boolean get() = reviewed > 0 && selfGradedReviewed == 0
 
     /** The banked question time, truncated for display. */
     val questionElapsedSeconds: Long
@@ -275,11 +292,12 @@ data class StudyUiState(
      * screen — never during loading, an error or the summary — and only until
      * dismissed. The dismissal is persisted, so a recreation of the session
      * starts with [gradingHintDismissed] already true and this stays false.
-     * A flashcard never sees it: the hint explains how an MCQ is graded, and a
-     * card is graded by the learner's own four buttons instead.
+     * A self-graded question never sees it: the hint explains how an MCQ is
+     * graded, and a question without a key is graded by the learner's own four
+     * buttons instead.
      */
     val showGradingHint: Boolean
-        get() = !gradingHintDismissed && !isFlashcard && !loading && loadError == null &&
+        get() = !gradingHintDismissed && !selfGraded && !loading && loadError == null &&
             !finished && current != null && question != null
 }
 
@@ -974,10 +992,10 @@ class StudyViewModel(
      */
     fun setGuess(guessing: Boolean) {
         val current = _state.value
-        // A flashcard has no answer to be right about, so a guess declaration
-        // would have nothing to qualify. The switch is hidden for one; this is
-        // the defence behind it.
-        if (current.isFlashcard) return
+        // A self-graded question has no answer the app can check, so a guess
+        // declaration would have nothing to qualify. The switch is hidden for
+        // one; this is the defence behind it.
+        if (current.selfGraded) return
         if (!current.simplified || current.revealed) return
         _state.update { it.copy(isGuess = guessing) }
     }
@@ -990,11 +1008,12 @@ class StudyViewModel(
     fun check() {
         val current = _state.value
         val question = current.question ?: return
-        // Defence: a flashcard has no options to select, so an empty selection
-        // would be read as a wrong answer and autoGrade would propose AGAIN for
-        // a card the app never saw an answer for. The footer shows Show answer
-        // instead of Check; this guard makes that a rule, not a layout detail.
-        if (question.isFlashcard) return
+        // Defence: only a question whose key the app knows can be auto-graded.
+        // A card has no options; an ungraded import has options but an empty
+        // key. Comparing a selection to an empty key would call the answer
+        // wrong and propose AGAIN for something the app cannot know, so both
+        // are self-graded and the footer shows Show answer instead of Check.
+        if (!current.canAutoGrade) return
         if (!current.simplified || current.revealed || current.grading) return
         pauseQuestionClock()
         val paused = _state.value
@@ -1184,10 +1203,11 @@ class StudyViewModel(
         // Claim the card before launching: the write is async, so a second tap
         // would otherwise persist two reviews for the same question.
         if (current.grading) return
-        // Defence behind the footers: a card is graded from its answer, and
-        // nothing may grade one the learner has not been shown. MCQ grading is
-        // deliberately unchanged — its buttons have always implied the reveal.
-        if (question.isFlashcard && !current.revealed) return
+        // Defence behind the footers: a self-graded question is graded from its
+        // answer, and nothing may grade one the learner has not been shown. MCQ
+        // grading is deliberately unchanged — its buttons have always implied
+        // the reveal.
+        if (current.selfGraded && !current.revealed) return
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         // Classic mode has no Check, so the grade tap is the freeze point.
@@ -1203,12 +1223,12 @@ class StudyViewModel(
             // (consolidated_bugs.md I3).
             var persisted = false
             try {
-                // A flashcard has no options, so there is no right or wrong
-                // answer to record and no app proposal: the learner's own
+                // A self-graded question has no key, so there is no right or
+                // wrong answer to record and no app proposal: the learner's own
                 // button is the whole decision. Storing false/empty here would
                 // claim the answer was wrong and contaminate the calibration,
                 // which reads only AUTO rows.
-                val card = question.isFlashcard
+                val selfGraded = current.selfGraded
                 val next = repository.recordStudyReview(
                     paperId = paperId,
                     questionId = question.id,
@@ -1218,20 +1238,20 @@ class StudyViewModel(
                     // The four-button flow has no guess switch: the learner is
                     // self-grading a revealed answer, which is the "earned"
                     // side of the dashboard by construction.
-                    wasGuess = if (card) null else false,
-                    wasCorrect = if (card) null else isCorrect(question, current.selection),
+                    wasGuess = if (selfGraded) null else false,
+                    wasCorrect = if (selfGraded) null else isCorrect(question, current.selection),
                     // Classic mode has no app proposal.
                     proposedGrade = null,
                     gradeSource = com.mcqapp.domain.GradeSource.CHOSEN,
-                    wasSkipped = if (card) false else current.selection.isEmpty()
+                    wasSkipped = if (selfGraded) false else current.selection.isEmpty()
                 )
                 persisted = true
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
-                        "leech=${next.leech}, flashcard=$card"
+                        "leech=${next.leech}, selfGraded=$selfGraded"
                 )
-                advanceStats(grade, flashcards = if (card) 1 else 0)
+                advanceStats(grade, selfGraded = if (selfGraded) 1 else 0)
                 // A stop or a bare clear that landed during the write may
                 // have ended the sitting before this review was tallied;
                 // record the row now (the CAS guard keeps it to exactly one).
@@ -1269,14 +1289,14 @@ class StudyViewModel(
         }
     }
 
-    private fun advanceStats(grade: ReviewGrade, flashcards: Int = 0) {
+    private fun advanceStats(grade: ReviewGrade, selfGraded: Int = 0) {
         _state.update {
             val reviewed = it.reviewed + 1
             it.copy(
                 reviewed = reviewed,
                 againCount = it.againCount + if (grade == ReviewGrade.AGAIN) 1 else 0,
                 goodCount = it.goodCount + if (grade == ReviewGrade.AGAIN) 0 else 1,
-                flashcardsReviewed = it.flashcardsReviewed + flashcards,
+                selfGradedReviewed = it.selfGradedReviewed + selfGraded,
                 // A review whose write lands after the stop already showed the
                 // "nothing reviewed" summary has to move it back to the tally:
                 // the sitting did have work, the disk was just slow.
@@ -1549,7 +1569,7 @@ class StudyViewModel(
                         reviewed = 0,
                         againCount = 0,
                         goodCount = 0,
-                        flashcardsReviewed = 0,
+                        selfGradedReviewed = 0,
                         questionMillis = 0L,
                         sessionTotalSeconds = 0L,
                         reviewsSinceNew = 0,

@@ -74,12 +74,12 @@ class FlashcardStudyStateTest {
     fun recallAccuracyIsOmittedOnceASittingContainsACard() {
         // A card has no right or wrong answer, so a percentage built from
         // self-grades is not a recall figure.
-        assertTrue(StudyUiState(reviewed = 3, flashcardsReviewed = 0).showsRecallAccuracy)
-        assertFalse(StudyUiState(reviewed = 3, flashcardsReviewed = 1).showsRecallAccuracy)
-        assertFalse(StudyUiState(reviewed = 1, flashcardsReviewed = 1).showsRecallAccuracy)
+        assertTrue(StudyUiState(reviewed = 3, selfGradedReviewed = 0).showsRecallAccuracy)
+        assertFalse(StudyUiState(reviewed = 3, selfGradedReviewed = 1).showsRecallAccuracy)
+        assertFalse(StudyUiState(reviewed = 1, selfGradedReviewed = 1).showsRecallAccuracy)
         // A sitting with no reviews at all has no line either.
         assertFalse(StudyUiState().showsRecallAccuracy)
-        assertEquals(0, StudyUiState().flashcardsReviewed)
+        assertEquals(0, StudyUiState().selfGradedReviewed)
     }
 
     @Test
@@ -87,10 +87,10 @@ class FlashcardStudyStateTest {
         // Deliberate: one MCQ + one card is still a sitting whose percentage
         // would be half correctness and half self-grade, so the line is
         // dropped rather than silently mixing the two.
-        val mixed = StudyUiState(reviewed = 2, flashcardsReviewed = 1, goodCount = 1)
+        val mixed = StudyUiState(reviewed = 2, selfGradedReviewed = 1, goodCount = 1)
         assertFalse(mixed.showsRecallAccuracy)
         // The surrounding tally is untouched: only the percentage goes.
         assertEquals(2, mixed.reviewed)
-        assertTrue(StudyUiState(reviewed = 1, flashcardsReviewed = 0).showsRecallAccuracy)
+        assertTrue(StudyUiState(reviewed = 1, selfGradedReviewed = 0).showsRecallAccuracy)
     }
 }

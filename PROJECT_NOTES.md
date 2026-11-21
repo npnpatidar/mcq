@@ -314,7 +314,8 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   `review-reports-2/` (PR #94, merged); the fix work is PR #95 (merged).
 - **Flashcards.** A question with zero options is a flashcard: front = the stem
   elements/image, back = `explanationElements`/`explanationImage`. The type is
-  derived, never stored. Cards are self-graded in Study (Show answer, then
+  derived, never stored. **Any question without an answer key** — a zero-option
+  card or a keyless MCQ — is self-graded in Study (Show answer, then
   Again/Hard/Good/Easy; `wasCorrect`/`wasGuess` null, `gradeSource` CHOSEN),
   studied only (never sampled into tests), searchable by their back, and their
   back resets the schedule through `CardContent` while an MCQ explanation does

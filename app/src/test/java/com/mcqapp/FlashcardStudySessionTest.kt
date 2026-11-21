@@ -136,7 +136,7 @@ class FlashcardStudySessionTest {
         assertEquals(
             "the sitting must count the card it graded",
             1,
-            viewModel.state.value.flashcardsReviewed
+            viewModel.state.value.selfGradedReviewed
         )
     }
 
@@ -155,7 +155,7 @@ class FlashcardStudySessionTest {
         assertFalse("the ignored tap must not claim the card", state.grading)
         assertFalse("and must not reveal it", state.revealed)
         assertEquals("the card stays on screen", "card1", state.current?.questionId)
-        assertEquals(0, state.flashcardsReviewed)
+        assertEquals(0, state.selfGradedReviewed)
         assertEquals("nothing may be persisted", 0, runBlocking { reviews().size })
     }
 

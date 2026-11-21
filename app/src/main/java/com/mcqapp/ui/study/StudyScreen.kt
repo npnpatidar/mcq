@@ -154,7 +154,7 @@ fun StudyScreen(
     LaunchedEffect(lastResult) {
         verdictMessage?.let { announcer.announce(it) }
     }
-    // A flashcard has no result card, so nothing above speaks when its answer
+    // A card has no result card, so nothing above speaks when its answer
     // appears. Announce the revealed heading once per reveal instead, resolved
     // during composition for the same reason as the verdict. The key pairs the
     // card with the reveal flag, so each reveal re-announces and an unchanged
@@ -163,6 +163,11 @@ fun StudyScreen(
     // already heard. It cannot help across process death: this ViewModel has no
     // SavedStateHandle, so a fresh instance starts unrevealed and nothing would
     // be spoken anyway.
+    //
+    // A keyless multiple-choice question is self-graded but is not a card: its
+    // heading is "Explanation", and no verdict exists, so nothing is announced
+    // for it. `isFlashcard` stays the card label rule; `selfGraded` is what
+    // suppresses the verdict.
     val answerHeadingMessage = stringResource(R.string.r2_study_answer_heading)
     val flashcardRevealed = state.revealed && state.isFlashcard
     var answeredRevealSpoken by rememberSaveable { mutableStateOf(false) }
@@ -293,9 +298,9 @@ private fun StudyBody(
                     modifier = cardPositioned
                 )
                 Spacer(Modifier.height(12.dp))
-                if (state.revealed && !state.isFlashcard) {
-                    // A flashcard is self-graded and has no result card: there
-                    // is no verdict it could honestly claim.
+                if (state.revealed && !state.selfGraded) {
+                    // A self-graded question has no result card: the app has no
+                    // verdict it could honestly claim.
                     SimplifiedResultBlock(state = state)
                 }
             }
@@ -355,9 +360,10 @@ private fun StudyBody(
                         Text(stringResource(R.string.show_answer))
                     }
                 } else {
-                    // The same grading write as Simplified's flashcard footer:
+                    // The same grading write as Simplified's self-graded footer:
                     // a self-reported grade is persisted and the next card
-                    // pulled, so a card behaves the same in either mode.
+                    // pulled, so a keyless question behaves the same in either
+                    // mode.
                     GradeButtons(
                         enabled = !state.grading,
                         previews = state.previews,
@@ -417,10 +423,11 @@ private fun SimplifiedResultBlock(state: StudyUiState) {
  * The always-visible Simplified actions, mirroring test mode's fixed footer:
  * Guess + Check before reveal, Next after. None of these ever scrolls away.
  *
- * A flashcard takes the same footer shape but a shorter path: no Guess switch
- * (there is nothing to be right about), Show answer before the reveal, then the
- * four self-grading buttons that grade and advance in one tap. It has no Check,
- * no Next and no result card — the app has no verdict to give.
+ * A self-graded question — a card, or a multiple-choice question with no key —
+ * takes the same footer shape but a shorter path: no Guess switch (there is
+ * nothing the app could check), Show answer before the reveal, then the four
+ * self-grading buttons that grade and advance in one tap. It has no Check, no
+ * Next and no result card — the app has no verdict to give.
  */
 @Composable
 private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
@@ -435,8 +442,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             // The grade is already stored, so re-tapping Next would double-persist
             // it. Only the next card is missing — offer the same recovery the
             // classic footer has (consolidated_bugs.md I3). Checked first so the
-            // retry stays reachable for a flashcard too: it has no Next/Show
-            // answer left to offer once the write landed.
+            // retry stays reachable for a self-graded question too: it has no
+            // Next/Show answer left to offer once the write landed.
             Button(
                 onClick = { viewModel.loadNext() },
                 enabled = !state.grading,
@@ -444,7 +451,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             ) {
                 Text(stringResource(R.string.retry))
             }
-        } else if (state.isFlashcard) {
+        } else if (state.selfGraded) {
             if (!state.revealed) {
                 Button(
                     onClick = {
@@ -678,11 +685,12 @@ private fun StudyStickyHeader(
     // The tints come from the active theme and are contrast-checked against its
     // surface, so the clock stays legible in light, dark and every palette.
     val clockColors = clockBandColors()
-    val dwellBand = if (state.correctnessOnlyGrading || state.isFlashcard) {
+    val dwellBand = if (state.correctnessOnlyGrading || state.selfGraded) {
         // Correctness-only grading records dwell but does not let it decide the
-        // grade, so the clock makes no band claim at all. A flashcard is graded
-        // by the learner from the answer, so the clock never decided its grade
-        // either — the same neutral band, never an implied Easy/Good/Hard.
+        // grade, so the clock makes no band claim at all. A self-graded question
+        // is graded by the learner from the answer, so the clock never decided
+        // its grade either — the same neutral band, never an implied
+        // Easy/Good/Hard.
         Study.DwellBand.NEUTRAL
     } else {
         Study.dwellBand(
@@ -973,12 +981,17 @@ private fun QuestionCard(
                 contentDescription = stringResource(R.string.question_image),
                 modifier = Modifier.padding(top = 4.dp)
             )
+            // With no key there is nothing to mark right or wrong: a keyless
+            // question reveals its explanation without colouring any option,
+            // and its markers stay selection markers rather than verdicts.
+            val keyKnown = question.correctOptionIds.isNotEmpty()
             question.options.forEach { option ->
                 val isCorrect = option.id in question.correctOptionIds
                 val isSelected = option.id in selection
+                val verdict = revealed && keyKnown
                 val container = when {
-                    revealed && isCorrect -> MaterialTheme.colorScheme.primaryContainer
-                    revealed && isSelected -> MaterialTheme.colorScheme.errorContainer
+                    verdict && isCorrect -> MaterialTheme.colorScheme.primaryContainer
+                    verdict && isSelected -> MaterialTheme.colorScheme.errorContainer
                     else -> MaterialTheme.colorScheme.surface
                 }
                 // A multi-correct question can take several picks, so its
@@ -986,8 +999,8 @@ private fun QuestionCard(
                 // test screen draws with a radio button vs a checkbox.
                 val multi = question.isMultiCorrect
                 val mark = when {
-                    revealed && isCorrect -> "✓"
-                    revealed && isSelected -> "✗"
+                    verdict && isCorrect -> "✓"
+                    verdict && isSelected -> "✗"
                     isSelected && multi -> "▣"
                     // Filled circle, not a bullet: "•" renders visibly smaller
                     // than "○" at the same size, so selecting shrank the mark.
@@ -998,8 +1011,9 @@ private fun QuestionCard(
                 // Announced as a checkbox with a localized state description:
                 // the glyph alone left TalkBack reading only "✓ button", and
                 // English literals stayed English under the Hindi locale (S2).
+                // A keyless reveal never says "wrong": the app cannot know.
                 val optionState = stringResource(
-                    studyOptionStateRes(revealed, isCorrect, isSelected)
+                    studyOptionStateRes(revealed, isCorrect, isSelected, keyKnown)
                 )
                 Row(
                     modifier = Modifier
@@ -1023,8 +1037,8 @@ private fun QuestionCard(
                         mark,
                         modifier = Modifier.width(32.dp),
                         style = MaterialTheme.typography.titleLarge,
-                        color = if (revealed && isCorrect) MaterialTheme.colorScheme.primary
-                        else if (revealed && isSelected) MaterialTheme.colorScheme.error
+                        color = if (verdict && isCorrect) MaterialTheme.colorScheme.primary
+                        else if (verdict && isSelected) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurface
                     )
                     Column(modifier = Modifier.weight(1f)) {
@@ -1378,10 +1392,12 @@ internal fun studyGradeTag(grade: ReviewGrade): String =
 internal fun studyOptionStateRes(
     revealed: Boolean,
     isCorrect: Boolean,
-    isSelected: Boolean
+    isSelected: Boolean,
+    /** False for a self-graded question: no key, so no verdict wording. */
+    keyKnown: Boolean = true
 ): Int = when {
-    revealed && isCorrect -> R.string.r2_study_option_correct
-    revealed && isSelected -> R.string.r2_study_option_selected_wrong
+    revealed && keyKnown && isCorrect -> R.string.r2_study_option_correct
+    revealed && keyKnown && isSelected -> R.string.r2_study_option_selected_wrong
     isSelected -> R.string.r2_study_option_selected
     else -> R.string.r2_study_option_not_selected
 }

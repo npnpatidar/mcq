@@ -91,8 +91,10 @@ class StatsGuessingTest {
         )
 
         // The unflagged row is not in the denominator either: counting it made
-        // a card-heavy log look permanently incomplete.
+        // a card-heavy log look permanently incomplete. It is reported
+        // separately so the screen can explain it.
         assertEquals(5, data.allReviews)
+        assertEquals(1, data.unflaggedReviews)
         assertEquals(5, data.reviews)
         assertEquals(2, data.earned)
         assertEquals(1, data.lucky)
@@ -104,6 +106,31 @@ class StatsGuessingTest {
         assertEquals(0.6, data.rawAccuracy!!, 1e-9)
         assertEquals(0.4, data.gradedPassRate!!, 1e-9)
         assertTrue(data.hasData)
+    }
+
+    @Test
+    fun theCoverageNoteHasNothingToExplainWhenEveryRowCarriesAFlag() {
+        // Hidden case: every in-range row carries both flags, so no row was
+        // left out and the note explaining unflagged rows must not be shown.
+        val complete = build(
+            listOf(
+                review("q1", now - 10 * minute),
+                review("q2", now)
+            )
+        )
+        assertEquals(0, complete.unflaggedReviews)
+        assertEquals(complete.reviews, complete.allReviews)
+
+        // One unflagged row is enough to explain, and it is not counted.
+        val partial = build(
+            listOf(
+                review("q1", now - 10 * minute),
+                review("q2", now, guess = null, correct = null)
+            )
+        )
+        assertEquals(1, partial.unflaggedReviews)
+        assertEquals(1, partial.allReviews)
+        assertEquals(1, partial.reviews)
     }
 
     @Test

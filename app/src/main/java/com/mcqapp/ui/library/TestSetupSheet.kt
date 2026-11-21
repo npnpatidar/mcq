@@ -118,17 +118,24 @@ internal fun testablePoolAfterRead(result: Result<Int>): Int? = result.getOrNull
 
 /**
  * What the sheet may act on for the testable pool. Unknown — a read in flight
- * or one that failed — is never the raw total: the count is zero and the sheet
- * keeps waiting, so Start cannot enable on a pool that includes flashcards.
+ * or one that failed — is never the raw total: the count is zero and Start is
+ * disabled, so it cannot enable on a pool that includes flashcards.
  */
-internal data class TestablePoolState(val count: Int, val loading: Boolean)
+internal data class TestablePoolState(
+    val count: Int,
+    val loading: Boolean,
+    /** The read failed; the sheet offers a retry and Start stays disabled. */
+    val failed: Boolean = false
+)
 
-internal fun testablePoolState(loadedCount: Int?): TestablePoolState =
-    if (loadedCount == null) {
-        TestablePoolState(count = 0, loading = true)
-    } else {
-        TestablePoolState(count = loadedCount, loading = false)
-    }
+internal fun testablePoolState(
+    loadedCount: Int?,
+    failed: Boolean = false
+): TestablePoolState = when {
+    failed -> TestablePoolState(count = 0, loading = false, failed = true)
+    loadedCount == null -> TestablePoolState(count = 0, loading = true)
+    else -> TestablePoolState(count = loadedCount, loading = false)
+}
 
 /**
  * Whether a custom pool — bookmarks, one tag or a fixed panel — holds content
@@ -145,6 +152,35 @@ internal fun customPoolIsFlashcardsOnly(
     preview.rawPool > 0 &&
     (type == TestType.BOOKMARKED || type == TestType.TAG ||
         type == TestType.FIXED_PANEL)
+
+/** Which length sentence a fixed panel shows, if any. */
+internal enum class PanelLengthCopy {
+    /** No panel chosen, or nothing in it a test can serve. */
+    NONE,
+
+    /** Every testable member of the panel runs: "Runs all N". */
+    RUNS_ALL,
+
+    /** The frozen set is larger than what can run: "X asked · Y will run". */
+    ASKED_RUN
+}
+
+/**
+ * The panel's length sentence. The picker chip keeps showing the frozen size,
+ * so a shortened panel must not also print "Runs all Y" — that reads as a
+ * contradiction beside "X asked · Y will run"; the asked/run line carries the
+ * truth on its own. When the panel really is all testable, "Runs all N" is
+ * the whole truth and there is no asked/run line.
+ */
+internal fun panelLengthCopy(
+    panelSize: Int?,
+    resolvedCount: Int,
+    showsAskedRun: Boolean
+): PanelLengthCopy = when {
+    panelSize == null || resolvedCount <= 0 -> PanelLengthCopy.NONE
+    showsAskedRun -> PanelLengthCopy.ASKED_RUN
+    else -> PanelLengthCopy.RUNS_ALL
+}
 
 /**
  * The phase-1 setup sheet: what kind of test, how many questions, how long,
@@ -393,15 +429,18 @@ internal fun TestSetupSheet(
     // The scope's testable supply: multiple-choice rows only, never the raw
     // total. Random draws its whole pool from it, and every other type uses it
     // to tell an empty scope from a scope whose content is all flashcards.
-    // Until the count lands it is unknown: the pool reads zero and Start waits
-    // (`poolLoading` below). A failed read stays unknown on purpose — falling
-    // back to the raw total would enable Start on a pool that includes
-    // flashcards.
+    // Until the count lands it is unknown: pool zero, Start disabled. A failed
+    // read is a separate state — it offers a retry instead of an endless
+    // spinner, and never falls back to the raw total (which includes cards).
     var testablePool by remember(paper.id, expanded) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(paper.id, expanded) {
-        testablePool = testablePoolAfterRead(runCatching { loadTestableCount(expanded) })
+    var testablePoolFailed by remember(paper.id, expanded) { mutableStateOf(false) }
+    var testablePoolRetry by remember(paper.id, expanded) { mutableIntStateOf(0) }
+    LaunchedEffect(paper.id, expanded, testablePoolRetry) {
+        val result = runCatching { loadTestableCount(expanded) }
+        testablePool = testablePoolAfterRead(result)
+        testablePoolFailed = result.isFailure
     }
-    val poolState = testablePoolState(testablePool)
+    val poolState = testablePoolState(testablePool, failed = testablePoolFailed)
     val questionPool = poolState.count
     val testablePoolLoading = poolState.loading
     val poolLoading = (type == TestType.MISTAKES && mistakePool == null) || testablePoolLoading
@@ -894,6 +933,7 @@ internal fun TestSetupSheet(
             )
             Text(
                 when {
+                    poolState.failed -> stringResource(R.string.test_setup_count_failed)
                     poolLoading -> stringResource(R.string.test_setup_counting)
                     type == TestType.MISTAKES -> pluralStringResource(
                         R.plurals.test_setup_pool_mistakes, mistakePool ?: 0, mistakePool ?: 0
@@ -906,6 +946,17 @@ internal fun TestSetupSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // A failed count is retryable in place: the sheet is not reopened
+            // just to try again, and Start stays disabled until a read lands.
+            if (poolState.failed) {
+                TextButton(onClick = {
+                    testablePool = null
+                    testablePoolFailed = false
+                    testablePoolRetry++
+                }) {
+                    Text(stringResource(R.string.test_setup_count_retry))
+                }
+            }
             if (type.usesSignalSelector) {
                 Text(
                     if (previewLoading && selectionPreview == null) {
@@ -953,24 +1004,24 @@ internal fun TestSetupSheet(
                 // The panel is the length: every member a test can serve runs,
                 // every time. A member that is a flashcard is study-only, so a
                 // frozen set that shrank says both numbers instead of silently
-                // running fewer than it holds. A panel with nothing testable
-                // shows no length at all — the flashcards-only note explains
-                // it, and "Runs all 0" above that note is noise.
-                if (panelSize != null && setup.resolvedCount() > 0) {
-                    Text(
+                // running fewer than it holds — and it must not also claim
+                // "runs all 2" beside "5 asked · 2 will run". A panel with
+                // nothing testable shows no length at all; the flashcards-only
+                // note explains it.
+                when (panelLengthCopy(panelSize, setup.resolvedCount(), setup.showsAskedRun())) {
+                    PanelLengthCopy.RUNS_ALL -> Text(
                         stringResource(R.string.test_setup_panel_runs_all, setup.resolvedCount()),
                         style = MaterialTheme.typography.labelLarge
                     )
-                    if (setup.showsAskedRun()) {
-                        Text(
-                            stringResource(
-                                R.string.test_setup_asked_run,
-                                requestCount,
-                                setup.resolvedCount()
-                            ),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+                    PanelLengthCopy.ASKED_RUN -> Text(
+                        stringResource(
+                            R.string.test_setup_asked_run,
+                            requestCount,
+                            setup.resolvedCount()
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    PanelLengthCopy.NONE -> Unit
                 }
             } else if (setup.short() && type != TestType.BLUEPRINT && !poolLoading) {
                 // The whole scope is below the minimum: there is nothing to
@@ -1100,6 +1151,10 @@ internal fun TestSetupSheet(
                 )
             }
             val note = when {
+                // The pool line already carries the failure and its retry;
+                // the empty-scope message would be a verdict about a read that
+                // never completed.
+                poolState.failed -> null
                 // An in-flight preview has no pool yet; the empty-scope
                 // message here would be an error about a state we have not
                 // finished reading.
@@ -1131,7 +1186,7 @@ internal fun TestSetupSheet(
             Button(
                 onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, effectiveVariant) },
                 enabled = setup.startable() && !blueprintTooShort && !blueprintLoading &&
-                    !poolLoading && !blockLoading && !panelsLoading,
+                    !poolLoading && !poolState.failed && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("test-setup-start")

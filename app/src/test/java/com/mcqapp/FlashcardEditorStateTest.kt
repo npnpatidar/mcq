@@ -351,6 +351,50 @@ class FlashcardEditorCopyTest {
 }
 
 /**
+ * Layout decisions in the editor that no behaviour test pins: the card-type
+ * picker wraps at the largest font scale instead of clipping its second chip.
+ */
+class FlashcardEditorLayoutTest {
+
+    private fun screen(): String =
+        File("src/main/java/com/mcqapp/ui/editor/QuestionEditorScreen.kt").readText()
+
+    /** The card-type picker block: its comment through to the options gate. */
+    private fun pickerBlock(src: String): String {
+        val start = src.indexOf("// A FlowRow, not a Row")
+        val end = src.indexOf("// A flashcard has no options")
+        assertTrue("the card-type picker block is missing", start >= 0 && end > start)
+        return src.substring(start, end)
+    }
+
+    @Test
+    fun theCardTypeChipsWrapInsteadOfClippingAtTheLargestFontScale() {
+        val block = pickerBlock(screen())
+        assertTrue(
+            "the two labels must be allowed to wrap at font scale 1.3",
+            block.contains("FlowRow(")
+        )
+        assertNull(
+            "a Row clips the second chip at the largest font scale",
+            Regex("""(?<!Flow)Row\(""").find(block)
+        )
+    }
+
+    @Test
+    fun wrappingKeepsTheLabelsOrderTagsAndClicks() {
+        val block = pickerBlock(screen())
+        val question = block.indexOf("card-type-multiple-choice")
+        val card = block.indexOf("card-type-flashcard")
+        assertTrue("the question chip comes first", question in 0 until card)
+        assertTrue(block.contains("r2_editor_card_type_multiple_choice"))
+        assertTrue(block.contains("r2_editor_card_type_flashcard"))
+        // Both clicks still go through the confirm-then-switch handler.
+        assertTrue(block.contains("requestCardType(EditorCardType.MULTIPLE_CHOICE)"))
+        assertTrue(block.contains("requestCardType(EditorCardType.FLASHCARD)"))
+    }
+}
+
+/**
  * The "saving this edit restarts the schedule" note for flashcards.
  *
  * [CardContent] folds a flashcard's back into the fingerprint because the back

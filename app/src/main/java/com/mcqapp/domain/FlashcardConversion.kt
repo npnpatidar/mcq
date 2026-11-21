@@ -36,6 +36,54 @@ fun backFromSingleOption(
     return answer + explanationElements
 }
 
+/** A merged card back: its visible blocks and the scalar picture beside them. */
+data class BackContent(
+    val elements: List<ContentElement>,
+    val image: String?
+)
+
+/**
+ * The complete back for a one-option question, picture included.
+ *
+ * [backFromSingleOption] decides the blocks; this decides where the *answer's*
+ * own picture goes so nothing is lost:
+ *
+ * - the back had no scalar picture: the answer's picture becomes that scalar,
+ *   unless the merged blocks already show it (then it stays an element only);
+ * - the back already had a scalar picture: the answer's different picture is
+ *   appended as an [ContentElement.ImageElement], and an identical source is
+ *   not duplicated.
+ *
+ * The importers and the 28→29 migration call this, so a converted card looks
+ * the same on every path.
+ */
+fun mergedBackContent(
+    optionElements: List<ContentElement>,
+    optionText: String,
+    optionImage: String?,
+    explanationElements: List<ContentElement>,
+    explanationImage: String?
+): BackContent {
+    val blocks = backFromSingleOption(
+        optionElements = optionElements,
+        optionText = optionText,
+        explanationElements = explanationElements,
+        explanationImage = explanationImage
+    )
+    val answerImage = optionImage?.takeIf { it.isNotBlank() }
+    val showsAnswerImage = answerImage != null &&
+        blocks.any { it is ContentElement.ImageElement && it.src == answerImage }
+    val appended = when {
+        answerImage == null -> null
+        explanationImage == null -> null
+        answerImage == explanationImage -> null
+        showsAnswerImage -> null
+        else -> ContentElement.ImageElement(answerImage)
+    }
+    val image = explanationImage ?: answerImage?.takeUnless { showsAnswerImage }
+    return BackContent(blocks + listOfNotNull(appended), image)
+}
+
 /**
  * Whether the explanation carries anything a learner should see. A blank
  * block list, a blank text run and Anki's cloze placeholder all read as "no

@@ -21,6 +21,7 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.normalizedFlashcard
+import com.mcqapp.data.io.withNormalizedFlashcards
 import com.mcqapp.data.io.SharedPrefsImportRunJournal
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.io.interruptedImportNotice
@@ -579,14 +580,18 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateQuestionFromImport(dto: QuestionDto) {
-        val before = _state.value.questions.find { it.id == dto.id }
-        Logger.d("IMPORTVM", "updateQuestionFromImport(id=${dto.id}): foundInState=${before != null}, " +
-            "beforeTextLength=${before?.text?.length}, afterTextLength=${dto.text.length}, " +
-            "afterOptions=${dto.options.size}, afterCorrect=${dto.correctOptionIds}")
+        // The editor writes back the preview's shape, which is the normalised
+        // card; normalising again is idempotent and keeps a stray one-option
+        // edit from changing what the importer will write.
+        val edited = dto.normalizedFlashcard()
+        val before = _state.value.questions.find { it.id == edited.id }
+        Logger.d("IMPORTVM", "updateQuestionFromImport(id=${edited.id}): foundInState=${before != null}, " +
+            "beforeTextLength=${before?.text?.length}, afterTextLength=${edited.text.length}, " +
+            "afterOptions=${edited.options.size}, afterCorrect=${edited.correctOptionIds}")
         _state.update { s ->
-            s.copy(questions = s.questions.map { if (it.id == dto.id) dto else it })
+            s.copy(questions = s.questions.map { if (it.id == edited.id) edited else it })
         }
-        Logger.i("IMPORTVM", "Updated question ${dto.id} from in-memory edit")
+        Logger.i("IMPORTVM", "Updated question ${edited.id} from in-memory edit")
         refreshDuplicates()
     }
 
@@ -810,7 +815,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             emptyList()
         }
-        val sampleQuestions = preview.sample.map { it.dto }
+        val sampleQuestions = preview.sample.map {
+            it.dto.normalizedFlashcard(preserveId = preview.isBackup)
+        }
         _state.value = ImportUiState(
             loading = false,
             paperTitle = header.title,
@@ -919,7 +926,12 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         streamSource = null
         streamRestoreSchedules = false
-        val file = parse()
+        // One shape for the whole preview: state, overrides, editor write-back,
+        // delete, classification and hashing all key on these ids. A backup's
+        // ids stay exactly as the archive carries them, because its study rows
+        // reference them; a fresh bank may re-derive the id it never authored.
+        val parsed = parse()
+        val file = parsed.withNormalizedFlashcards(preserveIds = isBackupFile(parsed))
         val paper = file.papers.firstOrNull()
         if (paper == null) {
             Logger.w("IMPORTVM", "No papers found in JSON; warnings: " +
@@ -1083,7 +1095,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                             repository.db(),
                             updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
                             overrides = overrides,
-                            captureSchedules = streamRestoreSchedules
+                            captureSchedules = streamRestoreSchedules,
+                            // A backup's ids are referenced by its study rows.
+                            preserveIds = s.isBackup
                         ).import(source) { seen ->
                             importJournal.progress(seen)
                             _state.update { it.copy(importedQuestions = seen) }
@@ -1167,7 +1181,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 val report = withContext(Dispatchers.Default) {
                     com.mcqapp.data.io.Importer(
                         repository.db(),
-                        updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first()
+                        updateAnswersOnDuplicate = repository.updateAnswersOnDuplicate().first(),
+                        // A backup's ids are referenced by its study rows.
+                        preserveIds = backup
                     ).import(file)
                 }
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +

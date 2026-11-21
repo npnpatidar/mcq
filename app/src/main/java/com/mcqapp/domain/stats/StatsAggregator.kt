@@ -2177,6 +2177,13 @@ object StatsAggregator {
         private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         private var allReviews = 0
+
+        /**
+         * In-range rows whose `wasGuess`/`wasCorrect` flags are missing, and
+         * which are therefore left out of every figure. They are pre-v19 rows
+         * or self-graded card reviews, indistinguishable from each other.
+         */
+        private var unflaggedReviews = 0
         private var reviews = 0
         private var guessed = 0
         private var earned = 0
@@ -2230,7 +2237,12 @@ object StatsAggregator {
 
             val wasGuess = review.wasGuess
             val wasCorrect = review.wasCorrect
-            if (wasGuess == null || wasCorrect == null) return
+            if (wasGuess == null || wasCorrect == null) {
+                // Left out of every figure. The count lets the screen explain
+                // why, and only when there is something to explain.
+                unflaggedReviews++
+                return
+            }
             // Counted only once the row is known to carry the flags: a
             // self-graded card review records none, and neither does pre-v19
             // history, and the two cannot be told apart. Counting them in the
@@ -2312,6 +2324,7 @@ object StatsAggregator {
             }
             return GuessingData(
                 allReviews = allReviews,
+                unflaggedReviews = unflaggedReviews,
                 reviews = reviews,
                 guessed = guessed,
                 earned = earned,

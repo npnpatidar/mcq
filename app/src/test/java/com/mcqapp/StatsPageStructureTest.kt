@@ -61,6 +61,16 @@ class StatsPageStructureTest {
     }
 
     @Test
+    fun theGuessingCoverageNoteIsOnlyShownWhenRowsWereLeftOut() {
+        val guessing = source("src/main/java/com/mcqapp/ui/stats/sections/GuessingSection.kt")
+        assertTrue(
+            "the coverage note must be guarded by the left-out count",
+            guessing.contains("bundle.unflaggedReviews > 0") &&
+                guessing.contains("R.string.stats_guess_coverage_note")
+        )
+    }
+
+    @Test
     fun theScopeSelectorOffersAPerPaperFilter() {
         val screen = source("src/main/java/com/mcqapp/ui/stats/StatsScreen.kt")
         assertTrue("scope selector missing", screen.contains("ScopeSelector"))

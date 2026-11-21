@@ -11,6 +11,7 @@ import com.mcqapp.data.io.ContentHash
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.TagNormalizer
 import com.mcqapp.domain.backFromSingleOption
+import com.mcqapp.domain.mergedBackContent
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
@@ -1181,20 +1182,18 @@ abstract class AppDatabase : RoomDatabase() {
                         }
                     }
 
-                    val back = backFromSingleOption(
+                    val merged = mergedBackContent(
                         optionElements = optionElements,
                         optionText = optionElements.textContent,
+                        optionImage = optionImage,
                         explanationElements = explanation,
                         explanationImage = explanationImage
                     )
-                    // An option's picture lives in its scalar column in this
-                    // schema; a file-shaped row may instead carry it as a
-                    // trailing image element, which the merged blocks already
-                    // hold. Only a picture the blocks do not show becomes the
-                    // explanation scalar, so nothing renders twice.
-                    val backImage = explanationImage ?: optionImage?.takeUnless { src ->
-                        back.any { it is ContentElement.ImageElement && it.src == src }
-                    }
+                    val back = merged.elements
+                    // The shared rule already placed the answer's picture: a
+                    // scalar back keeps its own and takes the answer as an
+                    // element; an identical source is not duplicated.
+                    val backImage = merged.image
                     val backText = back.searchableText
                     // A flashcard's identity is its stem, exactly as
                     // ContentHash hashes an optionless question.

@@ -1,7 +1,9 @@
 package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
+import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,15 +23,28 @@ import java.io.File
  */
 class SampleFlashcardDemoTest {
 
-    private val questions: List<QuestionDto> by lazy {
+    private val sampleFile: McqFileDto by lazy {
         val text = listOf(
             "src/main/assets/sample_paper.json",
             "app/src/main/assets/sample_paper.json"
         ).firstNotNullOfOrNull { File(it).takeIf { file -> file.isFile } }
             ?.readText()
             ?: error("sample_paper.json not found from ${File(".").absolutePath}")
-        val paper = LegacyParser.parse(text).papers.single()
+        LegacyParser.parse(text)
+    }
+
+    private val questions: List<QuestionDto> by lazy {
+        val paper = sampleFile.papers.single()
         paper.questions + paper.categories.flatMap { it.questions }
+    }
+
+    /** passage-1's prose, where a passage card's answer has to be stated. */
+    private val passageOneProse: String by lazy {
+        sampleFile.passages
+            .single { it.id == "passage-1" }
+            .elements
+            .filterIsInstance<ContentElement.TextElement>()
+            .joinToString(" ") { it.text }
     }
 
     /** The back is visible if any explanation element carries real content. */
@@ -130,7 +145,44 @@ class SampleFlashcardDemoTest {
     fun theSingleOptionConversionEdgeIsStillDemonstrated() {
         val edge = questions.filter { it.id == "q-e5" }
         assertEquals("q-e5 is the one-option conversion edge case", 1, edge.size)
-        assertEquals("q-e5 keeps its single option", 1, edge.single().options.size)
+        val question = edge.single()
+        assertEquals("q-e5 keeps exactly one option", 1, question.options.size)
+        assertEquals("q-e5 keeps its key", listOf("a"), question.correctOptionIds)
+        assertTrue(
+            "q-e5's copy must say it becomes a flashcard",
+            question.text.contains("becomes a flashcard", ignoreCase = true)
+        )
+        assertTrue(
+            "q-e5's copy must say the option becomes the answer",
+            question.text.contains("answer", ignoreCase = true)
+        )
+
+        // The importer's normalisation is the shape actually stored: the
+        // option becomes the back and the key disappears.
+        val stored = question.normalizedFlashcard()
+        assertTrue("the importer must convert q-e5 into a card", stored.options.isEmpty())
+        assertTrue("a converted card must have no key", stored.correctOptionIds.isEmpty())
+        assertTrue(
+            "the converted back must contain the option's answer, got '${stored.explanation}'",
+            stored.explanation.contains("Only choice")
+        )
+        assertEquals("a file's own id must survive the conversion", "q-e5", stored.id)
+    }
+
+    @Test
+    fun thePassageCardIsAnswerableFromItsPassage() {
+        val card = questions.single { it.id == "q-fc-passage" }
+        assertEquals("the passage card must stay a passage-1 member", "passage-1", card.passageId)
+        val answer = card.explanationElements
+            .filterIsInstance<ContentElement.TextElement>()
+            .joinToString(" ") { it.text }
+            .trim()
+            .trimEnd('.')
+        assertTrue("the passage card must have an answer", answer.isNotBlank())
+        assertTrue(
+            "'$answer' must appear in passage-1's prose, or the card is unanswerable",
+            passageOneProse.contains(answer, ignoreCase = true)
+        )
     }
 
     @Test

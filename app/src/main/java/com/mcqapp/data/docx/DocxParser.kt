@@ -678,17 +678,14 @@ private const val EXPLANATION_MARKER = "Exp:"
 private const val CARD_BACK_MARKER = "Answer:"
 
 /**
- * The first marker that ends a card's stem, whichever answer label the author
- * (or the writer) used. `Ans.` is accepted so a hand-written card that keys
- * its back the old way still imports; the export writes `Answer:`.
- *
- * `Exp:` is deliberately *not* one of them: a block with no options and only
- * an explanation is a multiple-choice question whose options were forgotten,
- * and it is refused loudly rather than guessed into a card.
+ * The marker that ends a card's stem: strictly the writer's own `Answer:`
+ * label. A no-option block carrying `Ans.` is **not** a card — `Ans.` means
+ * "the answer key of these options", so a hand-written multiple-choice
+ * question whose options were not on their own lines must keep failing as a
+ * malformed MCQ instead of importing as a card with its options swallowed
+ * into the stem. `Exp:` is excluded for the same reason.
  */
-private val cardBackSplit = Regex(
-    "(?m)^(?:${Regex.escape(ANSWER_MARKER)}|${Regex.escape(CARD_BACK_MARKER)})"
-)
+private val cardBackSplit = Regex("(?m)^${Regex.escape(CARD_BACK_MARKER)}")
 
 /** `Passage:` is the one case-insensitive marker: authors need not match its casing. */
 private const val PASSAGE_MARKER = "(?i:Passage:)"
@@ -864,7 +861,18 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
     // way — any question with two (a) markers was refused before — and the
     // statements stay in the stem, where they read naturally.
     val markers = optionMarker.findAll(optionText).toList()
-    if (markers.isEmpty()) return extractCard(num, block, passageId)
+    if (markers.isEmpty()) {
+        // Only the writer's own `Answer:` label makes a card: an `Ans.`-only
+        // block is a multiple-choice question whose options were not on their
+        // own lines, and it must keep being refused rather than guessed into
+        // a card with its options swallowed into the stem.
+        val cardBack = cardBackSplit.find(block)
+        if (cardBack != null) return extractCard(num, block, cardBack, passageId)
+        fail(
+            "missing option (a). Expected format 'N.) question (a) .. (b) .. (c) .. (d) " +
+                ".. Ans. .. Exp: ..'."
+        )
+    }
     val firstOption = markers.indexOfLast { it.groupValues[1] == "a" }
     if (firstOption < 0) {
         fail(
@@ -983,29 +991,24 @@ private fun extractQuestionData(num: String, block: String, passageId: String = 
 
 /**
  * A `N.)` block with no option markers is a flashcard: the stem is the front,
- * the back is everything after the answer marker. The back rides in
+ * the back is everything after the `Answer:` marker. The back rides in
  * `explanation_elements` (through [RawQuestion.explanationHtml]) because that
  * is where the app keeps a card's back — the same field the hidden payload
  * fingerprints, so an untouched export stays fresh and an edited one still
  * comes back as a card with its answer intact.
  *
- * The writer labels the back `Answer:`; `Ans.` is accepted too so a
- * hand-written card keys its back however it likes. A block with no answer
- * marker at all is still refused: that is a multiple-choice question whose
- * options were forgotten, and guessing the omission would hide the author's
- * mistake.
+ * [backMarker] is always the `Answer:` line: the caller only reaches here
+ * when that explicit card label is present, so `Ans.` and `Exp:` blocks keep
+ * their previous "malformed multiple-choice question" refusal.
  */
-private fun extractCard(num: String, block: String, passageId: String): RawQuestion {
-    val marker = cardBackSplit.find(block)
-    if (marker == null) {
-        throw IllegalArgumentException(
-            "Malformed question $num: no options and no answer. Expected either " +
-                "options '(a) .. (b) .. Ans. .. Exp: ..' or a card's " +
-                "'N.) front .. Answer: back'."
-        )
-    }
-    val stem = block.substring(0, marker.range.first).trim()
-    val back = block.substring(marker.range.last + 1).trim()
+private fun extractCard(
+    num: String,
+    block: String,
+    backMarker: MatchResult,
+    passageId: String
+): RawQuestion {
+    val stem = block.substring(0, backMarker.range.first).trim()
+    val back = block.substring(backMarker.range.last + 1).trim()
     if (stem.isBlank()) {
         throw IllegalArgumentException(
             "Malformed question $num: missing question stem. Expected " +

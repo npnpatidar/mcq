@@ -7,6 +7,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -396,7 +397,11 @@ fun QuestionEditorScreen(
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // A FlowRow, not a Row: at the largest font scale (1.3) the two
+            // labels no longer fit side by side, and a Row would clip the
+            // second chip. Wrapping keeps both reachable and keeps the type
+            // picker's order (question, then card).
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = state.cardType == EditorCardType.MULTIPLE_CHOICE,
                     onClick = { requestCardType(EditorCardType.MULTIPLE_CHOICE) },
@@ -546,7 +551,7 @@ fun QuestionEditorScreen(
                 com.mcqapp.domain.TagNormalizer.fromCsv(state.tags)
             }
             if (tagLabels.isNotEmpty()) {
-                androidx.compose.foundation.layout.FlowRow(
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {

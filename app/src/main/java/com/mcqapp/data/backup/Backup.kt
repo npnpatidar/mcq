@@ -1064,7 +1064,7 @@ class BackupRestorer(private val db: AppDatabase) {
             // categories, questions, options, correct answers, passages,
             // bookmarks and attempts (results remapped onto fresh ids) all
             // land inside the same atomic wipe-and-replace.
-            Importer(db, updateAnswersOnDuplicate = updateAnswersOnDuplicate)
+            Importer(db, updateAnswersOnDuplicate = updateAnswersOnDuplicate, preserveIds = true)
                 .import(content)
             db.cardStateDao().upsertAll(backup.study.cardState.map { it.toEntity() })
             db.reviewLogDao().insertAll(backup.study.reviewLog.map { it.toEntity() })
@@ -1183,7 +1183,9 @@ class BackupRestorer(private val db: AppDatabase) {
                         // take the batch writes off this transaction's thread.
                         StreamingImporter(
                             db,
-                            updateAnswersOnDuplicate = updateAnswersOnDuplicate
+                            updateAnswersOnDuplicate = updateAnswersOnDuplicate,
+                            // The archive's study rows reference these ids.
+                            preserveIds = true
                         ).importInTransaction({ json })
                     }
 

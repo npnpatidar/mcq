@@ -5,6 +5,8 @@
         <item quantity="other">%1$d प्रश्न</item>
     </plurals>
     <string name="test_setup_counting">गिन रहे हैं…</string>
+    <string name="test_setup_count_failed">यहाँ प्रश्नों की गिनती नहीं हो सकी।</string>
+    <string name="test_setup_count_retry">फिर से कोशिश करें</string>
     <string name="test_setup_coverage_exposure">टेस्ट में सामने आने के आधार पर भारांकन</string>
     <string name="test_setup_coverage_exposure_help">उन प्रश्नों को प्राथमिकता दें जो कम संख्या में सहेजे गए टेस्ट में आए हैं, साथ ही विषयों का समान हिस्सा भी बनाए रखें।</string>
     <string name="test_setup_fill_at_risk">देय</string>

@@ -1993,6 +1993,26 @@ class MigrationTest {
                     "('q6','q6-a','Answer text','Answer text','answer text'," +
                     "'answer.png',0)"
             )
+
+            // (g) The back already has its own scalar picture and the answer
+            // has a different one: the answer picture must survive as an
+            // element instead of being dropped.
+            raw.execSQL(
+                "INSERT INTO questions (id,categoryId,text,searchText,searchTextFolded," +
+                    "image,explanation,explanationImage,difficulty,marks,tags,tagsFolded," +
+                    "sortOrder,contentHash) VALUES " +
+                    "('q7','c1','Two pictures','Two pictures','two pictures',NULL,?, " +
+                    "'back.png','medium',1.0,'','',6,'img-q7-hash')",
+                arrayOf(
+                    listOf(ContentElement.TextElement("The explanation")).toContentJson(json)
+                )
+            )
+            raw.execSQL(
+                "INSERT INTO options (questionId,id,text,searchText,searchTextFolded," +
+                    "image,sortOrder) VALUES " +
+                    "('q7','q7-a','Answer text','Answer text','answer text'," +
+                    "'answer.png',0)"
+            )
             raw.version = 28
         }
     }
@@ -2151,6 +2171,32 @@ class MigrationTest {
                 )
                 // The answer still leads the back.
                 assertEquals("Answer text The source", stored.backText)
+            } finally {
+                db.close()
+            }
+        }
+    }
+
+    @Test
+    fun `migration 28 to 29 keeps the answer picture beside the backs own picture`() {
+        runBlocking {
+            createV28WithCards()
+            val db = openMigrated()
+            try {
+                val stored = db.questionDao().getById("q7")!!
+                assertTrue("the option must be gone", db.optionDao().getByQuestion("q7").isEmpty())
+
+                // The back's own scalar picture stays the scalar.
+                assertEquals("back.png", stored.explanationImage)
+                val blocks = stored.explanation.parseContentElements(json)
+                assertEquals("Answer textThe explanation", blocks.textContent)
+                // The different answer picture survives as an element; it is
+                // not silently dropped and the scalar is not overwritten.
+                assertEquals(
+                    listOf("answer.png"),
+                    blocks.filterIsInstance<ContentElement.ImageElement>().map { it.src }
+                )
+                assertEquals("Answer text The explanation", stored.backText)
             } finally {
                 db.close()
             }

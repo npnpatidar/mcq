@@ -1365,16 +1365,6 @@ object LegacyParser {
         return "q-" + bytes.joinToString("") { "%02x".format(it) }.take(12)
     }
 
-    /**
-     * Whether [id] is the shape [stableQuestionId] mints, i.e. an id the file
-     * did not author. Only those may be re-derived after a normalisation; a
-     * user's own id is content and must survive untouched.
-     */
-    internal fun isGeneratedQuestionId(id: String): Boolean = GENERATED_ID.matches(id)
-
-    /** The exact shape [stableQuestionId] mints: `q-` plus 12 lowercase hex digits. */
-    private val GENERATED_ID = Regex("^q-[0-9a-f]{12}$")
-
     private fun parseQuestion(obj: JsonObject, warnings: MutableList<String>): QuestionDto {
         // question_num (e.g. "1.)") is a bank serial, not question content:
         // it is deliberately ignored so it never becomes part of the text.

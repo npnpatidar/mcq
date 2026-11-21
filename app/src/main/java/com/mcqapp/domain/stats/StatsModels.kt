@@ -467,7 +467,8 @@ data class ShakyCard(
  * counted anywhere: a self-graded card review records no objective outcome, and
  * pre-v19 history records neither flag, and the two cannot be told apart.
  * [allReviews] is that same counted set, so an unflagged row is never treated
- * as history the figures are missing.
+ * as history the figures are missing; [unflaggedReviews] says how many rows the
+ * figures leave out, and is 0 when there is nothing to explain.
  *
  * The four outcomes are the 2×2 of declared guess × correctness: [earned]
  * (knew it), [lucky] (guessed right), [lapse] (knew it was wrong / didn't know
@@ -476,6 +477,8 @@ data class ShakyCard(
  */
 data class GuessingData(
     val allReviews: Int,
+    /** In-range rows with no flags: older rows or self-graded card reviews. */
+    val unflaggedReviews: Int,
     val reviews: Int,
     val guessed: Int,
     val earned: Int,

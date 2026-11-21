@@ -158,8 +158,11 @@ fun StudyScreen(
     // appears. Announce the revealed heading once per reveal instead, resolved
     // during composition for the same reason as the verdict. The key pairs the
     // card with the reveal flag, so each reveal re-announces and an unchanged
-    // card does not repeat — and the saveable flag means a recreation (rotation,
-    // process death) does not speak a reveal the learner already heard.
+    // card does not repeat — and the saveable flag means a ROTATION (the same
+    // ViewModel, its state still revealed) does not speak a reveal the learner
+    // already heard. It cannot help across process death: this ViewModel has no
+    // SavedStateHandle, so a fresh instance starts unrevealed and nothing would
+    // be spoken anyway.
     val answerHeadingMessage = stringResource(R.string.r2_study_answer_heading)
     val flashcardRevealed = state.revealed && state.isFlashcard
     var answeredRevealSpoken by rememberSaveable { mutableStateOf(false) }

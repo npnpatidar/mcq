@@ -81,4 +81,16 @@ class FlashcardStudyStateTest {
         assertFalse(StudyUiState().showsRecallAccuracy)
         assertEquals(0, StudyUiState().flashcardsReviewed)
     }
+
+    @Test
+    fun aMixedSittingStillOmitsRecallAccuracy() {
+        // Deliberate: one MCQ + one card is still a sitting whose percentage
+        // would be half correctness and half self-grade, so the line is
+        // dropped rather than silently mixing the two.
+        val mixed = StudyUiState(reviewed = 2, flashcardsReviewed = 1, goodCount = 1)
+        assertFalse(mixed.showsRecallAccuracy)
+        // The surrounding tally is untouched: only the percentage goes.
+        assertEquals(2, mixed.reviewed)
+        assertTrue(StudyUiState(reviewed = 1, flashcardsReviewed = 0).showsRecallAccuracy)
+    }
 }

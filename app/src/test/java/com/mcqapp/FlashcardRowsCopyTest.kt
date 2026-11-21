@@ -292,6 +292,66 @@ class FlashcardRowsCopyTest {
         )
     }
 
+    /**
+     * A generated id is the prompt-only one, so two legacy one-option rows with
+     * the same front and different single answers normalise to the same id. The
+     * import writes by id — the later row replaces the earlier — so the preview
+     * must collapse them the same way: two rows sharing a key crash Compose's
+     * keyed list, and showing both promises an option the store never keeps.
+     */
+    @Test
+    fun twoLegacyOneOptionRowsWithTheSameFrontCollapseToTheStoredCard() {
+        val first = QuestionDto(
+            id = "",
+            text = "Same front",
+            options = listOf(OptionDto(id = "a", text = "First answer"))
+        )
+        val second = QuestionDto(
+            id = "",
+            text = "Same front",
+            options = listOf(OptionDto(id = "b", text = "Second answer"))
+        )
+
+        val rows = previewQuestionsOf(listOf(first, second))
+
+        assertEquals("the importer writes one row", 1, rows.size)
+        assertEquals("the preview's list keys are unique", 1, rows.map { it.id }.toSet().size)
+        assertTrue("the normalised row has an id", rows.single().id.isNotBlank())
+        assertEquals(
+            "the later row wins, exactly as the write does",
+            listOf(ContentElement.TextElement("Second answer")),
+            rows.single().explanationElements
+        )
+        assertFalse(
+            "the replaced answer is gone: ${rows.single().explanation}",
+            rows.single().explanation.contains("First answer")
+        )
+        assertEquals(
+            "and the one row is badged as a card",
+            listOf(R.string.r2_import_badge_flashcard),
+            previewBadges(rows.single())
+        )
+    }
+
+    @Test
+    fun aFilesOwnIdsAreNeverCollapsedByFront() {
+        val first = QuestionDto(
+            id = "file-1",
+            text = "Same front",
+            options = listOf(OptionDto(id = "a", text = "First answer"))
+        )
+        val second = QuestionDto(
+            id = "file-2",
+            text = "Same front",
+            options = listOf(OptionDto(id = "b", text = "Second answer"))
+        )
+        assertEquals(
+            "two authored ids stay two rows",
+            2,
+            previewQuestionsOf(listOf(first, second)).size
+        )
+    }
+
     @Test
     fun thePreviewRendersTheNormalisedRows() {
         val screen = source("ui/importscreen/ImportScreen.kt")

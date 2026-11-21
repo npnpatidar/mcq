@@ -203,7 +203,7 @@ class FlashcardStudyStructureTest {
             screen.contains("announcer.announce(answerHeadingMessage)")
         )
         assertTrue(
-            "a recreation must not re-speak a reveal the learner already heard",
+            "a rotation must not re-speak a reveal the learner already heard",
             screen.contains(
                 "var answeredRevealSpoken by rememberSaveable { mutableStateOf(false) }"
             ) && screen.contains("} else if (!answeredRevealSpoken) {")

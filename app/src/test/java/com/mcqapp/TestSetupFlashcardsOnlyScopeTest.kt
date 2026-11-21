@@ -6,7 +6,9 @@ import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.signals.Composition
 import com.mcqapp.domain.signals.SelectionPreview
+import com.mcqapp.ui.library.PanelLengthCopy
 import com.mcqapp.ui.library.customPoolIsFlashcardsOnly
+import com.mcqapp.ui.library.panelLengthCopy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,13 +35,14 @@ class TestSetupFlashcardsOnlyScopeTest {
         type: TestType,
         available: Int,
         flashcardsOnly: Boolean,
-        variant: String? = null
+        variant: String? = null,
+        requestedCount: Int = TestPlan.DEFAULT_LENGTH
     ) = TestSetup(
         paperId = "p1",
         categoryIds = emptyList(),
         scopeKey = ScopeKey.wholePaper("p1"),
         type = type,
-        requestedCount = TestPlan.DEFAULT_LENGTH,
+        requestedCount = requestedCount,
         available = available,
         variant = variant,
         scopeIsFlashcardsOnly = flashcardsOnly
@@ -94,5 +97,37 @@ class TestSetupFlashcardsOnlyScopeTest {
         assertTrue(panel.flashcardsOnlyScope())
         assertFalse(panel.showsAskedRun())
         assertEquals(TestPlan.NO_MULTIPLE_CHOICE_MESSAGE, panel.message())
+        assertEquals(
+            PanelLengthCopy.NONE,
+            panelLengthCopy(panelSize = 5, resolvedCount = 0, showsAskedRun = false)
+        )
+    }
+
+    @Test
+    fun aPanelShowsRunsAllOnlyWhenItRunsTheWholeTestableSet() {
+        // Frozen 5, all testable: there is no asked/run line, so "Runs all 5"
+        // is the whole truth.
+        val whole = setup(TestType.FIXED_PANEL, available = 5, flashcardsOnly = false, variant = "7", requestedCount = 5)
+        assertEquals(5, whole.resolvedCount())
+        assertFalse(whole.showsAskedRun())
+        assertEquals(
+            PanelLengthCopy.RUNS_ALL,
+            panelLengthCopy(panelSize = 5, resolvedCount = 5, showsAskedRun = whole.showsAskedRun())
+        )
+
+        // Frozen 5, only 2 testable: the chip still says 5, so the runs-all
+        // sentence is suppressed and the asked/run line carries the truth.
+        val shortened = setup(TestType.FIXED_PANEL, available = 2, flashcardsOnly = false, variant = "7", requestedCount = 5)
+        assertEquals(2, shortened.resolvedCount())
+        assertTrue(shortened.showsAskedRun())
+        assertEquals(
+            PanelLengthCopy.ASKED_RUN,
+            panelLengthCopy(panelSize = 5, resolvedCount = 2, showsAskedRun = shortened.showsAskedRun())
+        )
+        // No panel chosen at all: no length sentence.
+        assertEquals(
+            PanelLengthCopy.NONE,
+            panelLengthCopy(panelSize = null, resolvedCount = 5, showsAskedRun = false)
+        )
     }
 }

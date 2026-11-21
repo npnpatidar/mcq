@@ -484,6 +484,8 @@
         <item quantity="other">%1$d mistakes</item>
     </plurals>
     <string name="test_setup_counting">Counting…</string>
+    <string name="test_setup_count_failed">Couldn’t count the questions here.</string>
+    <string name="test_setup_count_retry">Retry</string>
     <string name="test_setup_length">Length</string>
     <plurals name="test_setup_count_label">
         <item quantity="one">%1$d question</item>
@@ -770,7 +772,7 @@
     <string name="stats_guess_lift">Lift over chance</string>
     <string name="stats_guess_raw_accuracy">Raw accuracy</string>
     <string name="stats_guess_graded_pass">Graded pass</string>
-    <string name="stats_guess_coverage_note">Counting %1$d in-range reviews; older rows and self-graded cards carry no guess flag.</string>
+    <string name="stats_guess_coverage_note">Counting %1$d in-range reviews; %2$d older or self-graded rows carry no guess flag.</string>
     <string name="stats_guess_outcomes">Outcomes</string>
     <string name="stats_guess_outcomes_help">Declared guess and correctness. Lucky is right by chance; earned is right by knowledge.</string>
     <string name="stats_guess_earned">Earned (knew it)</string>
@@ -962,7 +964,7 @@
     <string name="stats_young">Young</string>
     <string name="stats_mature">Mature</string>
     <string name="stats_hourly">Hourly breakdown</string>
-    <string name="stats_hourly_help">Reviews per hour of day; the line is the pass rate.</string>
+    <string name="stats_hourly_help">All reviews per hour of day, cards included; the line is the pass rate among reviews whose outcome was recorded.</string>
     <string name="stats_response_time">Response time</string>
     <string name="stats_answer_speed">Answer speed</string>
     <string name="stats_time_by_grade">Average time by grade</string>

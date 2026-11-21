@@ -124,12 +124,18 @@ private fun KpiCard(bundle: GuessingData) {
                 )
             )
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            stringResource(R.string.stats_guess_coverage_note, bundle.reviews),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (bundle.unflaggedReviews > 0) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(
+                    R.string.stats_guess_coverage_note,
+                    bundle.reviews,
+                    bundle.unflaggedReviews
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

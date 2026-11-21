@@ -14,7 +14,7 @@ package com.mcqapp.domain
 object QuestionSearch {
 
     /** Where to look: question text (+tags), option texts, or both. */
-    enum class Scope(val label: String) { ALL("All"), QUESTION("Questions"), OPTIONS("Options") }
+    enum class Scope { ALL, QUESTION, OPTIONS }
 
     /**
      * The longest single alphanumeric run of the query, ORed into the SQL
@@ -110,21 +110,28 @@ object QuestionSearch {
      *
      * Only a window around the match is returned, never the whole back: a back
      * can hold an inline image or a table, which the row must not try to render.
+     *
+     * The match is located on [flat]'s own indices with a per-character
+     * case-insensitive compare. It deliberately does not search a lowercased
+     * copy: case mapping is not length-preserving (`İ` lowercases to two
+     * characters), so an index taken from that copy could point past the end of
+     * the original and made the substring throw.
      */
     fun backSnippet(
         question: Question,
         query: String,
         maxChars: Int = BACK_SNIPPET_CHARS
     ): String? {
-        val q = query.trim().lowercase()
-        if (q.isBlank()) return null
+        val needle = query.trim()
+        if (needle.isEmpty()) return null
         val back = question.explanationElements.searchableText
         if (back.isBlank()) return null
-        // Collapse the flattened back to one line first, then match, so a
-        // multi-line back cannot split the matched phrase.
+        // Collapse the flattened back to one line first, so a multi-line back
+        // cannot split the matched phrase.
         val flat = WHITESPACE_RUN.replace(back, " ").trim()
-        val at = flat.lowercase().indexOf(q)
+        val at = indexOfIgnoreCase(flat, needle)
         if (at < 0) return null
+        val q = needle.lowercase()
         if (question.elements.searchableText.lowercase().contains(q)) return null
         if (question.tags.any { it.lowercase().contains(q) }) return null
         if (question.options.any { it.elements.searchableText.lowercase().contains(q) }) return null
@@ -132,6 +139,22 @@ object QuestionSearch {
         val end = minOf(flat.length, start + maxChars)
         val body = flat.substring(start, end).trim()
         return (if (start > 0) ELLIPSIS else "") + body + (if (end < flat.length) ELLIPSIS else "")
+    }
+
+    /**
+     * The index of [needle] in [haystack], compared character by character with
+     * case folding and without allocating a second string. A lowercased copy can
+     * be longer than its original (`İ` → two characters), so an index found
+     * there must never be used to substring the original.
+     */
+    private fun indexOfIgnoreCase(haystack: String, needle: String): Int {
+        if (needle.length > haystack.length) return -1
+        for (start in 0..haystack.length - needle.length) {
+            if (haystack.regionMatches(start, needle, 0, needle.length, ignoreCase = true)) {
+                return start
+            }
+        }
+        return -1
     }
 
     /** A back snippet's length; long enough to read, short enough for a row. */

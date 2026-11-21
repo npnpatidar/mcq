@@ -2,13 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.data.io.FALLBACK_CLOZE_EXPLANATION
 import com.mcqapp.data.io.ContentHash
-import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.LegacyParser
-import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
-import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
-import com.mcqapp.data.io.countFlashcardConversions
 import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.textContent
@@ -16,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -69,11 +66,37 @@ class FlashcardNormalizationTest {
         val normalized = oneOption(optionImage = "answer.png").normalizedFlashcard()
 
         assertEquals("answer.png", normalized.explanationImage)
-        // An explanation that already has its own picture keeps it.
-        assertEquals(
-            "explanation.png",
-            oneOption(explanationImage = "explanation.png", optionImage = "answer.png")
-                .normalizedFlashcard().explanationImage
+        // The scalar carries it when the back had none, so no element duplicate.
+        assertTrue(normalized.explanationElements.none { it is ContentElement.ImageElement })
+    }
+
+    @Test
+    fun aDifferentAnswerPictureJoinsTheBackThatAlreadyHasOne() {
+        val normalized = oneOption(
+            explanationImage = "explanation.png",
+            optionImage = "answer.png"
+        ).normalizedFlashcard()
+
+        assertEquals("explanation.png", normalized.explanationImage)
+        assertTrue(
+            normalized.explanationElements.any {
+                it is ContentElement.ImageElement && it.src == "answer.png"
+            }
+        )
+    }
+
+    @Test
+    fun anIdenticalAnswerPictureIsNotDuplicated() {
+        val normalized = oneOption(
+            explanationImage = "same.png",
+            optionImage = "same.png"
+        ).normalizedFlashcard()
+
+        assertEquals("same.png", normalized.explanationImage)
+        assertTrue(
+            normalized.explanationElements.none {
+                it is ContentElement.ImageElement && it.src == "same.png"
+            }
         )
     }
 
@@ -156,30 +179,20 @@ class FlashcardNormalizationTest {
         )
 
         assertEquals(parserId, question.normalizedFlashcard().id)
-        assertEquals(0, McqFileDto().countFlashcardConversions())
     }
 
     @Test
-    fun theConversionCountFollowsTheOneOptionShape() {
-        fun q(id: String, options: Int) = QuestionDto(
-            id = id,
-            text = "Prompt $id",
-            options = (0 until options).map { OptionDto("o$it", "Answer $it") }
-        )
-        val file = McqFileDto(
-            papers = listOf(
-                PaperDto(
-                    id = "p1",
-                    title = "P",
-                    questions = listOf(q("top", 1)),
-                    categories = listOf(
-                        CategoryDto(id = "c1", title = "C", questions = listOf(q("a", 1), q("b", 2), q("c", 0)))
-                    )
-                )
-            )
+    fun preserveIdKeepsTheGeneratedLookingId() {
+        val prompt = "Capital of France?"
+        val parserId = LegacyParser.stableQuestionId(prompt, listOf(OptionDto("a", "Paris")))
+        val question = QuestionDto(
+            id = parserId,
+            text = prompt,
+            options = listOf(OptionDto("a", "Paris")),
+            correctOptionIds = listOf("a")
         )
 
-        assertEquals(2, file.countFlashcardConversions())
+        assertEquals(parserId, question.normalizedFlashcard(preserveId = true).id)
     }
 
     @Test

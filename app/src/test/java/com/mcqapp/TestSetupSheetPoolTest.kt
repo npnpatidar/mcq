@@ -33,9 +33,21 @@ class TestSetupSheetPoolTest {
         val failed = testablePoolAfterRead(Result.failure(IllegalStateException("database busy")))
         assertNull("a failed read is unknown, not a count", failed)
 
-        val state = testablePoolState(failed)
+        val state = testablePoolState(failed, failed = true)
         assertEquals("an unknown pool is zero, never the raw total", 0, state.count)
-        assertTrue("the sheet keeps waiting, so Start is disabled", state.loading)
+        assertTrue("the failure is its own state, with a retry", state.failed)
+        assertFalse("the endless spinner stops", state.loading)
+        // The sheet keeps Start disabled: a zero pool cannot resolve.
+        assertFalse(
+            TestSetup(
+                paperId = "p1",
+                categoryIds = emptyList(),
+                scopeKey = ScopeKey.wholePaper("p1"),
+                type = TestType.RANDOM,
+                requestedCount = TestPlan.DEFAULT_LENGTH,
+                available = state.count
+            ).startable()
+        )
     }
 
     @Test

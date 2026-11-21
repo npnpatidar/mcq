@@ -193,7 +193,7 @@
         <item quantity="other">• %1$d उत्तर रीफ़्रेश हुए</item>
     </plurals>
     <plurals name="followup_import_dropped_stems">
-        <item quantity="one">• %1$d कार्ड हटाया गया — इसके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
-        <item quantity="other">• %1$d कार্ড हटाए गए — इनके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
+        <item quantity="one">• %1$d कार्ड हटाया गया — इसमें कोई पाठ, चित्र या उत्तर नहीं था</item>
+        <item quantity="other">• %1$d कार्ड हटाए गए — इनमें कोई पाठ, चित्र या उत्तर नहीं था</item>
     </plurals>
 </resources>

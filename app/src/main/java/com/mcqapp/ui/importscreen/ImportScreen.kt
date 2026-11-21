@@ -670,12 +670,25 @@ internal fun ImportReportDetails(report: ImportReport) {
  * multiple-choice row with an option and no FLASHCARD badge — that row would
  * contradict what actually gets imported.
  *
- * Ids are preserved, which is what keeps the changed/duplicate classification
- * (id-keyed, computed from the normalised hash) working unchanged.
+ * Ids are preserved for a file's own ids, which is what keeps the
+ * changed/duplicate classification (id-keyed, computed from the normalised
+ * hash) working unchanged. A *generated* id becomes the prompt-only one, so two
+ * legacy one-option rows with the same front and different single answers now
+ * share an id — and the import writes by id, the later row replacing the
+ * earlier. The preview must show that one row too (last wins, first position):
+ * a list keyed by id cannot hold both, and claiming two options are coming when
+ * the store keeps one is the same "preview lies about the import" defect.
  */
 internal fun previewQuestionsOf(
     questions: List<com.mcqapp.data.io.QuestionDto>
-): List<com.mcqapp.data.io.QuestionDto> = questions.map { it.normalizedFlashcard() }
+): List<com.mcqapp.data.io.QuestionDto> {
+    val byId = LinkedHashMap<String, com.mcqapp.data.io.QuestionDto>(questions.size)
+    for (question in questions) {
+        val stored = question.normalizedFlashcard()
+        byId[stored.id] = stored
+    }
+    return byId.values.toList()
+}
 
 /**
  * The badges a preview row shows, as string resources in display order.

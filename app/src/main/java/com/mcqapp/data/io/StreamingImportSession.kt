@@ -111,7 +111,9 @@ internal class StreamingImportSession(
     private val captureSchedules: Boolean = false,
     /** Bounds on the two progress-buffering structures; see [ScheduleRestoreBudget]. */
     private val maxSchedulePages: Int = DEFAULT_MAX_SCHEDULE_PAGES,
-    private val maxScheduleTargets: Int = DEFAULT_MAX_SCHEDULE_TARGETS
+    private val maxScheduleTargets: Int = DEFAULT_MAX_SCHEDULE_TARGETS,
+    /** Keep the source's ids verbatim; backup restore sets this. */
+    private val preserveIds: Boolean = false
 ) {
     private val scheduleBudget = ScheduleRestoreBudget(maxSchedulePages, maxScheduleTargets)
     private var warnedScheduleCap = false
@@ -136,8 +138,8 @@ internal class StreamingImportSession(
     private var restoredAttempts = 0
     private var restoredSchedules = 0
     private var questionsSeen = 0
-    /** One-option DTOs normalised into cards, for the completion report. */
-    private var recallConverted = 0
+    /** Cards actually written: questions with no options after normalisation. */
+    private var importedCards = 0
 
     private var paperOpen = false
     private var paperIndex = 0
@@ -354,7 +356,7 @@ internal class StreamingImportSession(
         restoredBookmarks = restoredBookmarks,
         restoredAttempts = restoredAttempts,
         restoredSchedules = restoredSchedules,
-        recallConverted = recallConverted,
+        recallConverted = importedCards,
         progressRestoreSkipped = scheduleBudget.exhausted
     )
 
@@ -511,31 +513,30 @@ internal class StreamingImportSession(
         questions: List<QuestionDto>,
         schedules: Map<String, CardScheduleDto>
     ) {
-        // Apply the bounded preview's edits before anything else: a deleted
-        // question must not claim a passage's first member, and an edited
-        // one is what the whole-file importer would have been handed.
+        // Normalise first: the one-option rule (see `normalizedFlashcard`) is
+        // what the preview showed and what the importer writes, so the preview's
+        // delete/edit keys are the normalised ids too. Applying overrides before
+        // this left an id-less one-option row keyed by the parser's
+        // option-inclusive id: a delete never matched and an edit was dropped.
+        val normalizedAll = questions.map { it.normalizedFlashcard(preserveIds) }
+        // Apply the bounded preview's edits now that ids and shape agree: a
+        // deleted question must not claim a passage's first member, and an
+        // edited one is what the whole-file importer would have been handed.
         val applied = if (paperIndex == 1 && !overrides.isEmpty) {
-            questions.mapNotNull { q ->
+            normalizedAll.mapNotNull { q ->
                 when {
                     q.id in overrides.deletedIds -> null
-                    else -> overrides.editedQuestions[q.id] ?: q
+                    else -> overrides.editedQuestions[q.id]?.normalizedFlashcard(preserveIds) ?: q
                 }
             }
         } else {
-            questions
+            normalizedAll
         }
-        // The one-option rule, before hashing and writing: a single option is
-        // a flashcard's answer, not a choice (see `normalizedFlashcard`). It
-        // runs after preview edits, so an edit that leaves one option is
-        // normalised too, and it covers the Anki and backup streaming paths,
-        // which never pass through the whole-file parser.
-        val normalized = applied.map { it.normalizedFlashcard() }
-        if (normalized.isEmpty()) return
-        recallConverted += applied.count { it.convertsToFlashcard() }
+        if (applied.isEmpty()) return
         // A question of this paper was seen, whether it is written or turns out
         // to be a duplicate: the whole-file importer's skip needs at least one.
         sawAnyQuestion = true
-        val scaled = normalized.map { it.withDownscaledImages() }
+        val scaled = applied.map { it.withDownscaledImages() }
         // Members follow their passage's remap: a question row must point at
         // the passage row this import writes (consolidated_bugs.md A3). The
         // hash follows the written shape, because that is what the study
@@ -551,7 +552,7 @@ internal class StreamingImportSession(
         val candidates = candidates(matchIds, matchedIds)
         val dbHashes = matchIds.mapTo(HashSet()) { it.contentHash }
 
-        val ids = normalized.map { it.id }
+        val ids = applied.map { it.id }
         val idEntities = db.questionDao().getByIdsChunked(ids).associateBy { it.id }
         val idCorrect = db.correctAnswerDao().getForQuestionsChunked(ids)
             .groupBy({ it.questionId }, { it.optionId })
@@ -560,7 +561,7 @@ internal class StreamingImportSession(
         val batchWritten = HashMap<String, MutableList<QuestionDto>>()
         val writtenById = HashMap<String, QuestionEntity>()
 
-        normalized.forEachIndexed { index, dto ->
+        applied.forEachIndexed { index, dto ->
             val scaledQuestion = effective[index]
             val contentHash = hashes[index]
             // Record the passage before any duplicate/refresh decision: the
@@ -625,6 +626,7 @@ internal class StreamingImportSession(
                         explanationImage = scaledQuestion.explanationImage
                     )
                     answersRefreshed++
+                    if (scaledQuestion.options.isEmpty()) importedCards++
                     return@forEachIndexed
                 }
             }
@@ -713,6 +715,7 @@ internal class StreamingImportSession(
                 contentHash = contentHash,
                 json = json
             )
+            if (questionForWrite.options.isEmpty()) importedCards++
             db.questionDao().upsert(entity)
             db.questionTagDao().replaceQuestionTags(effectiveQuestionId, questionForWrite.tags)
             writtenById[dto.id] = entity

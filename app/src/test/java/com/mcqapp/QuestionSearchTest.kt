@@ -276,6 +276,21 @@ class QuestionSearchTest {
     }
 
     /**
+     * The scope labels were English literals on the enum until the UI started
+     * resolving them from resources; the dead property is gone, so a future
+     * caller cannot reintroduce a hardcoded label by accident.
+     */
+    @Test
+    fun theScopeEnumCarriesNoHardcodedLabel() {
+        assertEquals(
+            listOf("ALL", "QUESTION", "OPTIONS"),
+            QuestionSearch.Scope.entries.map { it.name }
+        )
+        val fields = QuestionSearch.Scope::class.java.declaredFields.map { it.name }
+        assertFalse("Scope must not carry a label property: $fields", fields.contains("label"))
+    }
+
+    /**
      * A result row shows the *visible* text. `text` is the stored shape — the
      * concatenated text elements as imported — so rendering it put an imported
      * stem's inline markup on the screen ("<b>Bold</b> opening").

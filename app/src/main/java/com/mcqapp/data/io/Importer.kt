@@ -17,6 +17,7 @@ import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.backFromSingleOption
+import com.mcqapp.domain.mergedBackContent
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.textContent
@@ -81,9 +82,9 @@ data class ImportReport(
     val restoredAttempts: Int = 0,
     /** Cards whose review progress was carried in, e.g. from an Anki package. */
     val restoredSchedules: Int = 0,
-    /** Anki card instances whose whole stem was empty (no text, no image) and were dropped. */
+    /** Card instances dropped for a blank stem or a blank answer. */
     val droppedAnkiStems: Int = 0,
-    /** Anki notes (and other one-option questions) imported as flashcards. */
+    /** Cards actually imported: questions with no options after normalisation. */
     val recallConverted: Int = 0,
     /**
      * The streamed restore hit its explicit memory budget: the questions were
@@ -116,7 +117,15 @@ class Importer(
      * long-standing "duplicates are skipped" behaviour; the Settings toggle
      * turns it on.
      */
-    private val updateAnswersOnDuplicate: Boolean = false
+    private val updateAnswersOnDuplicate: Boolean = false,
+    /**
+     * Keep every question id exactly as the source carries it. Restore sets
+     * this: a backup's `card_state`, `review_log`, bookmarks and panel members
+     * all reference its ids, so re-deriving one would orphan the learner's
+     * progress. A fresh JSON/DOCX import leaves it false and may correct the
+     * one id the file never authored.
+     */
+    private val preserveIds: Boolean = false
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -136,13 +145,9 @@ class Importer(
         // JSON bank, a one-choice question). Normalise before anything is
         // hashed or written, so the hash, the duplicate checks, the rows and
         // the restored schedules all describe the flashcard this import
-        // actually stores. Restores come through here too, which is why the
-        // rule cannot live in a parser.
-        val source = file.withNormalizedFlashcards()
-        // Counted before the import so the completion report can say how many
-        // answers arrived as a single option and became cards, the same way a
-        // streamed import counts them per batch.
-        val convertedToFlashcards = file.countFlashcardConversions()
+        // actually stores. Restores preserve the archive's ids; a fresh import
+        // may re-derive the id the file never authored.
+        val source = file.withNormalizedFlashcards(preserveIds)
         importedFile = source
         // Per-import state: a reused Importer must not carry the previous
         // file's collision candidates into this one.
@@ -167,6 +172,8 @@ class Importer(
         var restoredBookmarks = 0
         var restoredAttempts = 0
         var restoredSchedules = 0
+        /** Cards actually written, i.e. questions with no options after normalisation. */
+        var importedCards = 0
 
         db.withTransaction {
             // Snapshot BEFORE any writes: an update can change a stored
@@ -532,6 +539,7 @@ class Importer(
                                         explanationImage = scaledQuestion.explanationImage
                                     )
                                     answersRefreshed++
+                                    if (scaledQuestion.options.isEmpty()) importedCards++
                                     Logger.i(
                                         "IMPORT",
                                         "  Refreshed answers on duplicate id=$sameContentId"
@@ -649,6 +657,7 @@ class Importer(
                         // resolves inside this transaction.
                         // Built from the scaled twin: the row's element JSON is
                         // what the content hash reads back on the next import.
+                        if (questionForWrite.options.isEmpty()) importedCards++
                         db.questionDao().upsert(
                             questionForWrite.toQuestionEntity(
                                 categoryId = effectiveCatId,
@@ -846,7 +855,7 @@ class Importer(
             restoredBookmarks = restoredBookmarks,
             restoredAttempts = restoredAttempts,
             restoredSchedules = restoredSchedules,
-            recallConverted = convertedToFlashcards
+            recallConverted = importedCards
         )
     }
 
@@ -1047,8 +1056,13 @@ private fun normaliseOptionsJson(json: Json, raw: String): String {
  *
  * A zero-option DTO passes through untouched: it is already a flashcard. A
  * two-or-more-option DTO is a multiple-choice card and also passes through.
+ *
+ * [preserveId] is for restore: a backup's ids are referenced by its study rows
+ * (`card_state`, `review_log`, bookmarks, panels), so the replay must keep every
+ * id exactly as the archive stored it. A fresh import leaves it false and may
+ * re-derive the one id the file never authored (see [promptOnlyIdIfGenerated]).
  */
-internal fun QuestionDto.normalizedFlashcard(): QuestionDto {
+internal fun QuestionDto.normalizedFlashcard(preserveId: Boolean = false): QuestionDto {
     if (!convertsToFlashcard()) return this
     val answer = options.single()
     // A DTO may carry its explanation as flat text only; treat that exactly as
@@ -1057,27 +1071,23 @@ internal fun QuestionDto.normalizedFlashcard(): QuestionDto {
     val explanationBlocks = explanationElements.ifEmpty {
         if (explanation.isBlank()) emptyList() else listOf(ContentElement.TextElement(explanation))
     }
-    val back = backFromSingleOption(
+    // No answer content may disappear when the back already has a picture of
+    // its own: the shared merge decides where the answer's picture goes.
+    val merged = mergedBackContent(
         optionElements = answer.elements,
         optionText = answer.text,
+        optionImage = answer.image,
         explanationElements = explanationBlocks,
         explanationImage = explanationImage
     )
     return copy(
-        // An id the file did not author was derived from text + options. The
-        // option is gone now, so re-derive the prompt-only identity here: a
-        // re-import of the same prompt with a corrected answer must match the
-        // stored card and update it, not arrive as a second row. A file's own
-        // id is content and never changes.
-        id = generatedIdForNormalisedShape(),
+        id = if (preserveId) id else promptOnlyIdIfGenerated(),
         options = emptyList(),
         // A flashcard has no answer key: the option *is* the answer.
         correctOptionIds = emptyList(),
-        explanation = back.textContent,
-        explanationElements = back,
-        // The answer's own picture becomes the back's scalar image when the
-        // card had none; the elements keep any picture they already carry.
-        explanationImage = explanationImage ?: answer.image
+        explanation = merged.elements.textContent,
+        explanationElements = merged.elements,
+        explanationImage = merged.image
     )
 }
 
@@ -1085,36 +1095,31 @@ internal fun QuestionDto.normalizedFlashcard(): QuestionDto {
 internal fun QuestionDto.convertsToFlashcard(): Boolean = options.size == 1
 
 /**
- * The prompt-only id for a normalised card, when [this] carried a generated
- * (or blank) one; otherwise the existing id.
+ * The prompt-only id for a normalised card, when the file authored none.
  *
- * [LegacyParser.stableQuestionId] minted the one-option id with the option in
- * it, so a later re-import of the same prompt with another answer would mint a
- * different id and duplicate the card. The prompt text is derived the way the
- * writer sees it (elements, flat text as the fallback), so both imports land on
- * the same value.
+ * [LegacyParser.stableQuestionId] mints an id from text *and* options for an
+ * id-less question. A one-option source therefore minted an id the card no
+ * longer matches after conversion; this re-derives the prompt-only identity so
+ * a re-import of the same prompt with a corrected answer lands on the stored
+ * card. The check is the exact value the parser would mint for this DTO, not
+ * the id's shape: an id the file authored — including a generated-looking one
+ * from an older database — is kept.
  */
-private fun QuestionDto.generatedIdForNormalisedShape(): String {
-    if (!id.isBlank() && !LegacyParser.isGeneratedQuestionId(id)) return id
+private fun QuestionDto.promptOnlyIdIfGenerated(): String {
     val promptText = elements.ifEmpty { listOf(ContentElement.TextElement(text)) }.textContent
+    if (id.isNotBlank() && id != LegacyParser.stableQuestionId(promptText, options)) return id
     return LegacyParser.stableQuestionId(promptText, emptyList())
 }
 
 /** [normalizedFlashcard] over a whole file, so every write path sees one shape. */
-internal fun McqFileDto.withNormalizedFlashcards(): McqFileDto = copy(
-    papers = papers.map { it.withNormalizedFlashcards() }
+internal fun McqFileDto.withNormalizedFlashcards(preserveIds: Boolean = false): McqFileDto = copy(
+    papers = papers.map { it.withNormalizedFlashcards(preserveIds) }
 )
 
-/** How many questions this file has that normalisation turns into cards. */
-internal fun McqFileDto.countFlashcardConversions(): Int = papers.sumOf { paper ->
-    paper.questions.count { it.convertsToFlashcard() } +
-        paper.categories.sumOf { category -> category.questions.count { it.convertsToFlashcard() } }
-}
-
-internal fun PaperDto.withNormalizedFlashcards(): PaperDto = copy(
-    questions = questions.map { it.normalizedFlashcard() },
+internal fun PaperDto.withNormalizedFlashcards(preserveIds: Boolean = false): PaperDto = copy(
+    questions = questions.map { it.normalizedFlashcard(preserveIds) },
     categories = categories.map { category ->
-        category.copy(questions = category.questions.map { it.normalizedFlashcard() })
+        category.copy(questions = category.questions.map { it.normalizedFlashcard(preserveIds) })
     }
 )
 

@@ -80,6 +80,21 @@ class FlashcardStudySessionTest {
         return viewModel
     }
 
+    /** Two fresh cards, so a failed pull can be retried and still find work. */
+    private fun seedTwoCards(): StudyViewModel {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(flashcard("card1"))
+            repository.saveQuestion(flashcard("card2"))
+        }
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(
+            "state=${viewModel.state.value}",
+            awaitCondition { viewModel.state.value.current != null }
+        )
+        return viewModel
+    }
+
     private suspend fun reviews(id: String = "card1"): List<ReviewLogEntity> =
         repository.db().reviewLogDao().historyForQuestion(id)
 
@@ -165,6 +180,60 @@ class FlashcardStudySessionTest {
         assertEquals("nothing was skipped", false, row.wasSkipped)
         assertNull("the app proposed no grade for a card", row.proposedRating)
         assertEquals("the learner chose the grade", "CHOSEN", row.gradeSource)
+    }
+
+    /**
+     * The card's stuck path, mirroring [StudyGradedStuckTest]'s MCQ harness:
+     * the review persisted but the next pull failed. The footer's Retry
+     * (`loadNext()`) must fetch the next card without writing the grade again,
+     * and the stored row must still be the self-graded card row.
+     */
+    @Test
+    fun aStuckCardGradeRecoversOnRetryWithoutRegrading() {
+        val viewModel = seedTwoCards()
+        // Authored order serves card1 first; derive both ids so the assertions
+        // do not depend on which one the pull picked.
+        val first = viewModel.state.value.current?.questionId
+        assertTrue("a card must be on screen, was $first", first == "card1" || first == "card2")
+        val firstId = first ?: error("no card on screen")
+        val second = if (firstId == "card1") "card2" else "card1"
+
+        viewModel.reveal()
+        // The injected failure fires inside grade()'s pull, after the write.
+        viewModel.failPullForTests = true
+        viewModel.grade(ReviewGrade.GOOD)
+
+        assertTrue(
+            "state=${viewModel.state.value} — the pull must fail after the write",
+            awaitCondition { viewModel.state.value.gradedAndStuck }
+        )
+        assertFalse("the buttons must stand down", viewModel.state.value.grading)
+        assertEquals(
+            "only the plain localized message belongs on the card",
+            app.getString(R.string.study_next_card_failed),
+            viewModel.state.value.gradeError
+        )
+        // The row persisted before the failure is the card's self-graded one.
+        val row = runBlocking { reviews(firstId) }.single()
+        assertEquals("the chosen grade is the stored rating", 3, row.rating)
+        assertNull("a card has no correct answer to record", row.wasCorrect)
+        assertNull("a card is never a declared guess", row.wasGuess)
+        assertEquals("nothing was skipped", false, row.wasSkipped)
+        assertNull("the app proposed no grade for a card", row.proposedRating)
+        assertEquals("the learner chose the grade", "CHOSEN", row.gradeSource)
+
+        // What the footer's Retry calls: pull the next card, never re-grade.
+        viewModel.loadNext()
+
+        assertTrue("state=${viewModel.state.value}", awaitCondition {
+            viewModel.state.value.current?.questionId == second
+        })
+        assertFalse("the retry must clear the stuck state", viewModel.state.value.gradedAndStuck)
+        assertEquals(
+            "the retry must not write a second review",
+            1,
+            runBlocking { reviews(firstId) }.size
+        )
     }
 
     @Test

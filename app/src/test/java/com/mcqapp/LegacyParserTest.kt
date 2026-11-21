@@ -353,7 +353,6 @@ class LegacyParserTest {
         var scalarOptionImages = 0
         var scalarExplanationImages = 0
         var missingExplanation = 0
-        var missingAnswer = 0
         var multiCorrect = 0
         var hindi = 0
         val unknownMathTags = sortedSetOf<String>()
@@ -368,7 +367,6 @@ class LegacyParserTest {
             if (q.correctOptionIds.size > 1) multiCorrect++
             if (DEVANAGARI.containsMatchIn(q.text)) hindi++
             if (q.explanation.isBlank()) missingExplanation++
-            if (q.correctOptionIds.isEmpty()) missingAnswer++
 
             for (element in q.elements + q.explanationElements) {
                 if (element is ContentElement.MathElement) {
@@ -415,8 +413,25 @@ class LegacyParserTest {
         assertTrue("expected Hindi questions, got $hindi", hindi >= 5)
         assertTrue("expected edge questions without explanation, got $missingExplanation",
             missingExplanation >= 2)
-        assertTrue("expected edge questions without answer, got $missingAnswer",
-            missingAnswer >= 2)
+        // Keyless is meaningful only where it is deliberate: the six cards have
+        // no key because their back is the explanation, and q-e1 is the one
+        // ungraded-MCQ edge. Anything else keyless would be a broken question.
+        val keyless = questions.filter { it.correctOptionIds.isEmpty() }
+        assertEquals(
+            "expected exactly the six cards plus q-e1 keyless, got ${keyless.map { it.id }}",
+            7,
+            keyless.size
+        )
+        assertEquals(
+            "the keyless cards must be the six demo flashcards",
+            listOf("q-e2", "q-fc-hi", "q-fc-image", "q-fc-math", "q-fc-passage", "q-fc-table"),
+            keyless.filter { it.options.isEmpty() }.map { it.id }.sorted()
+        )
+        assertTrue(
+            "a keyless multiple-choice question must be the q-e1 edge only: " +
+                keyless.filter { it.options.isNotEmpty() && it.id != "q-e1" }.map { it.id },
+            keyless.all { it.options.isEmpty() || it.id == "q-e1" }
+        )
 
         // Distinct text keeps the .apkg round trip able to tell questions apart.
         assertEquals("duplicate question text in the sample bank",
@@ -478,10 +493,14 @@ class LegacyParserTest {
         val stemAndOptions = questions.single { it.id == "q-vis-4" }
         assertTrue("q-vis-4 must carry a stem picture",
             stemAndOptions.elements.any { it is ContentElement.ImageElement })
-        assertTrue("every q-vis-4 option must carry a picture and text",
+        assertTrue("every q-vis-4 option must carry a picture",
             stemAndOptions.options.all { option ->
-                option.elements.any { it is ContentElement.ImageElement } && option.text.isNotBlank()
+                option.elements.any { it is ContentElement.ImageElement }
             })
+        assertEquals("q-vis-4 must demonstrate exactly one image-only option",
+            1, stemAndOptions.options.count { it.text.isBlank() })
+        assertEquals("the other three q-vis-4 options must keep their text",
+            3, stemAndOptions.options.count { it.text.isNotBlank() })
 
         // Reading passages: two groups, every member resolves, one standalone
         // question shares the category without joining a passage, and the

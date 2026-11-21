@@ -197,4 +197,41 @@ class FlashcardBackSearchTest {
         assertTrue("the table cell is searchable: $snippet", snippet!!.contains("Akbar"))
         assertFalse("a row snippet has no newlines: $snippet", snippet.contains("\n"))
     }
+
+    /**
+     * Case mapping is not length-preserving: `İ` lowercases to two characters
+     * (`i` + combining dot). Locating the match on a lowercased copy and then
+     * substringing the original could index past its end and throw, which took
+     * the whole result list down. The snippet now scans the original's own
+     * indices.
+     */
+    @Test
+    fun aLengthChangingCharacterStillProducesASnippet() {
+        val question = card(back = "İstanbul is split by the Bosphorus.")
+        val snippet = QuestionSearch.backSnippet(question, "İstanbul")
+        assertNotNull("a back-only İstanbul hit must still render: $snippet", snippet)
+        assertTrue("and show the matched text: $snippet", snippet!!.contains("İstanbul"))
+    }
+
+    /**
+     * The crash shape: enough length-changing characters before the match that
+     * an index taken from the lowercased copy is far past the original's end.
+     * This threw StringIndexOutOfBoundsException before the fix.
+     */
+    @Test
+    fun aMatchAfterManyExpandingCharactersIsFoundWithoutThrowing() {
+        val back = "İ".repeat(60) + "İstanbul is the city."
+        val question = card(back = back)
+        val snippet = QuestionSearch.backSnippet(question, "İstanbul")
+        assertNotNull("the match must be found, not crash: $snippet", snippet)
+        assertTrue("and the window shows it: $snippet", snippet!!.contains("İstanbul"))
+    }
+
+    @Test
+    fun theSnippetMatchIsCaseInsensitiveInAscii() {
+        val question = card(back = "Oxygen, split from water in the light reactions.")
+        val snippet = QuestionSearch.backSnippet(question, "OXYGEN")
+        assertNotNull("an upper-case query finds the back-only match: $snippet", snippet)
+        assertTrue("and keeps the stored casing: $snippet", snippet!!.contains("Oxygen"))
+    }
 }

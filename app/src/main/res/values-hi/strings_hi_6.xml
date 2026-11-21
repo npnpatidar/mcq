@@ -28,7 +28,7 @@
     <string name="stats_guess_cost_detail">%1$d रिव्यू; अच्छा देने पर औसत %2$s रहता, कार्ड ने %3$s रखा।</string>
     <string name="stats_guess_cost_help">अनुमान से सही रिव्यू पर अच्छा ग्रेड देने पर जो अंतराल मिलता, घटाएँ कि कार्ड ने वास्तव में कितना रखा।</string>
     <string name="stats_guess_cost_none">अभी कोई अनुमान-सही रिव्यू दोबारा चलाया नहीं जा सका।</string>
-    <string name="stats_guess_coverage_note">%1$d रिव्यू गिने गए; पुरानी पंक्तियों और स्व-ग्रेड किए गए कार्डों में अनुमान चिह्न नहीं होता।</string>
+    <string name="stats_guess_coverage_note">%1$d रिव्यू गिने गए; %2$d पुरानी या स्व-ग्रेड की गई पंक्तियों में अनुमान चिह्न नहीं है।</string>
     <string name="stats_guess_didnt_know">पता नहीं था (गलत अनुमान)</string>
     <string name="stats_guess_dwell">कार्ड पर बिताया समय</string>
     <string name="stats_guess_dwell_earned">अर्जित: %1$s · %2$d समय सहित</string>
@@ -70,7 +70,7 @@
     <string name="stats_guess_trend_help">भरी हुई रेखा: अनुमान बताए गए रिव्यू का हिस्सा। दूसरी रेखा: सफलता दर। डैश वाली: यादृच्छिक संभावना।</string>
     <string name="stats_history">इतिहास</string>
     <string name="stats_hourly">घंटेवार विवरण</string>
-    <string name="stats_hourly_help">दिन के प्रत्येक घंटे के रिव्यू; रेखा उत्तीर्ण दर है।</string>
+    <string name="stats_hourly_help">दिन के प्रत्येक घंटे के सभी रिव्यू, कार्ड सहित; रेखा उन रिव्यू में उत्तीर्ण दर है जिनका परिणाम दर्ज है।</string>
     <string name="stats_interval_181_plus">181+ दिन</string>
     <string name="stats_interval_1_7">1–7 दिन</string>
     <string name="stats_interval_22_60">22–60 दिन</string>

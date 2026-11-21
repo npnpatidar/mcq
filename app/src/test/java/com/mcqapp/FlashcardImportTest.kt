@@ -359,6 +359,139 @@ class FlashcardImportTest {
         assertNotNull("the stale sweep must not delete the card", db.cardStateDao().get("p1", "q1"))
     }
 
+    // ---- pre-29 id-less one-option row: restore must keep its id ----------
+
+    private val promptOnlyId = LegacyParser.stableQuestionId("Capital of France?", emptyList())
+    private val generatedOldId = LegacyParser.stableQuestionId(
+        "Capital of France?",
+        listOf(OptionDto("a", "Paris"))
+    )
+
+    private fun generatedIdQuestion() = QuestionDto(
+        id = generatedOldId,
+        text = "Capital of France?",
+        options = listOf(OptionDto("a", "Paris")),
+        correctOptionIds = listOf("a"),
+        explanation = "It is the capital.",
+        explanationElements = listOf(ContentElement.TextElement("It is the capital."))
+    )
+
+    private fun generatedIdFile() = McqFileDto(
+        version = 1,
+        papers = listOf(
+            PaperDto(
+                id = "p1",
+                title = "Deck",
+                categories = listOf(
+                    CategoryDto(id = "c1", title = "Cat", questions = listOf(generatedIdQuestion()))
+                )
+            )
+        ),
+        bookmarks = listOf(generatedOldId)
+    )
+
+    private fun generatedIdStudy() = McqBackupFormat.StudyFile(
+        cardState = listOf(
+            McqBackupFormat.CardStateRow(
+                paperId = "p1",
+                questionId = generatedOldId,
+                ease = 2.4,
+                intervalDays = 12,
+                dueAt = 1_700_000_000_000L,
+                reps = 4,
+                lapses = 1,
+                leech = false,
+                lastReviewedAt = 1_699_000_000_000L,
+                // The v28 identity: the option was part of the hash.
+                contentHash = ContentHash.of(generatedIdQuestion()),
+                difficulty = 5.5,
+                stability = 8.5,
+                stabilityFast = 7.5,
+                cardState = "REVIEW",
+                reviewCount = 4
+            )
+        ),
+        reviewLog = listOf(
+            McqBackupFormat.ReviewLogRow(
+                id = 77L,
+                paperId = "p1",
+                questionId = generatedOldId,
+                rating = 3,
+                reviewedAt = 1_699_000_000_000L,
+                stateBefore = "REVIEW",
+                stabilityAfter = 8.5,
+                difficultyAfter = 5.5,
+                stabilityFastAfter = 7.5,
+                intervalDaysAfter = 12
+            )
+        )
+    )
+
+    private fun generatedIdBackup() = McqBackupFormat.Backup(
+        manifest = McqBackupFormat.Manifest(dbVersion = 28),
+        content = generatedIdFile(),
+        study = generatedIdStudy(),
+        settings = McqBackupFormat.SettingsFile()
+    )
+
+    /** Restore kept every id the archive's study rows reference. */
+    private suspend fun assertGeneratedIdRestored() {
+        assertNull(
+            "restore must not mint the prompt-only id",
+            db.questionDao().getById(promptOnlyId)
+        )
+        val row = db.questionDao().getById(generatedOldId)
+        assertNotNull("the stored id must survive the restore", row)
+        row!!
+        assertTrue("the one-option row must be a card", db.optionDao().getByQuestion(generatedOldId).isEmpty())
+        assertTrue(repository.getQuestion(generatedOldId)!!.options.isEmpty())
+
+        val card = db.cardStateDao().get("p1", generatedOldId)
+        assertNotNull("the schedule must follow the kept id", card)
+        assertEquals("the schedule must follow the question's hash", row.contentHash, card!!.contentHash)
+        assertEquals(2.4, card.ease, 0.0)
+        assertEquals(4, card.reps)
+        assertEquals(8.5, card.stability, 0.0)
+        assertEquals(7.5, card.stabilityFast, 0.0)
+        assertEquals("REVIEW", card.cardState.name)
+
+        val review = db.reviewLogDao().getAll().single()
+        assertEquals(77L, review.id)
+        assertEquals(generatedOldId, review.questionId)
+        assertTrue("the bookmark must follow the kept id", db.bookmarkDao().isBookmarked(generatedOldId))
+    }
+
+    @Test
+    fun aPre29GeneratedIdSurvivesTheWholeFileRestore() = runBlocking {
+        BackupRestorer(db).restore(generatedIdBackup())
+
+        assertGeneratedIdRestored()
+        repository.getStudyQueue("p1")
+        assertNotNull(
+            "the stale sweep must not delete the card",
+            db.cardStateDao().get("p1", generatedOldId)
+        )
+    }
+
+    @Test
+    fun aPre29GeneratedIdSurvivesTheStreamedRestore() = runBlocking {
+        val bytes = McqBackupFormat.write(
+            manifest = generatedIdBackup().manifest,
+            content = generatedIdFile(),
+            study = generatedIdStudy(),
+            settings = McqBackupFormat.SettingsFile()
+        )
+
+        BackupRestorer(db).restoreStreaming(ByteArrayInputStream(bytes))
+
+        assertGeneratedIdRestored()
+        repository.getStudyQueue("p1")
+        assertNotNull(
+            "the stale sweep must not delete the card",
+            db.cardStateDao().get("p1", generatedOldId)
+        )
+    }
+
     @Test
     fun aZeroOptionFlashcardIsNotTreatedAsAOneOptionQuestion() = runBlocking {
         // The flashcard path must stay a no-op: an exported zero-option card
@@ -382,8 +515,9 @@ class FlashcardImportTest {
             )
         )
 
-        Importer(db).import(file)
+        val report = Importer(db).import(file)
 
+        assertEquals("an already-card question still counts as an imported card", 1, report.recallConverted)
         val stored = repository.getQuestion("q2")!!
         assertTrue(stored.options.isEmpty())
         assertEquals(listOf(ContentElement.TextElement("Tokyo")), stored.explanationElements)

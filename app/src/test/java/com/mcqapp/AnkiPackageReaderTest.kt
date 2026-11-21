@@ -232,6 +232,42 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun aForeignCardFrontKeepsItsTableAndEveryPicture() {
+        val front = "Which cells?<table><tr><td>Rod</td><td>Cone</td></tr></table>" +
+            "<img src=\"0\"><img src=\"1\">"
+        val apkg = legacyPackage(
+            notes = listOf("$front${us}Both are light sensors.${us}" to 1L),
+            media = mapOf("0" to "a.png", "1" to "b.png"),
+            mediaBytes = mapOf("0" to pngBytes, "1" to pngBytes)
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(emptyList<OptionDto>(), question.options)
+        assertEquals(
+            listOf(listOf("Rod", "Cone")),
+            question.elements
+                .filterIsInstance<com.mcqapp.domain.ContentElement.TableElement>()
+                .single().rows
+        )
+        val images = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+        assertEquals("every front picture must survive", 2, images.size)
+        assertTrue(images.all { it.src.startsWith("data:image/png;base64,") })
+    }
+
+    @Test
+    fun anEmptyBackIsDroppedAndCounted() {
+        val apkg = legacyPackage(notes = listOf("A question with no answer?${us}${us}" to 1L))
+
+        val result = AnkiPackageReader.read(apkg)
+
+        assertTrue("an unusable card must not import", result.file.papers.isEmpty())
+        assertEquals(0, result.noteCount)
+        assertEquals("the drop must be counted for the report", 1, result.droppedStems)
+    }
+
+    @Test
     fun aNoteWithASingleChoiceCountsAsAFlashcard() {
         // One option cannot be a multiple-choice card: the importer normalises
         // it into a flashcard, so the report's "imported as flashcards" count
@@ -405,10 +441,10 @@ class AnkiPackageReaderTest {
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
 
         assertEquals("image is the question's own, not markup in the text", "look:", question.text)
-        assertTrue(
-            "image inlined: ${question.image}",
-            question.image!!.startsWith("data:image/png;base64,")
-        )
+        val image = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+            .single().src
+        assertTrue("image inlined: $image", image.startsWith("data:image/png;base64,"))
     }
 
     @Test
@@ -424,8 +460,12 @@ class AnkiPackageReaderTest {
             mediaBytes = mapOf("0" to gif, "1" to webp)
         )
         val questions = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions)
-        assertTrue("gif labelled: ${questions[0].image}", questions[0].image!!.startsWith("data:image/gif;base64,"))
-        assertTrue("webP labelled: ${questions[1].image}", questions[1].image!!.startsWith("data:image/webp;base64,"))
+        val gifSrc = questions[0].elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>().single().src
+        val webpSrc = questions[1].elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>().single().src
+        assertTrue("gif labelled: $gifSrc", gifSrc.startsWith("data:image/gif;base64,"))
+        assertTrue("webP labelled: $webpSrc", webpSrc.startsWith("data:image/webp;base64,"))
     }
 
     @Test
@@ -437,9 +477,11 @@ class AnkiPackageReaderTest {
             mediaBytes = mapOf("0" to riff)
         )
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        val image = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>().single().src
         assertTrue(
-            "RIFF without WEBP is not WebP: ${question.image}",
-            question.image!!.startsWith("data:image/jpeg;base64,")
+            "RIFF without WEBP is not WebP: $image",
+            image.startsWith("data:image/jpeg;base64,")
         )
     }
 
@@ -454,9 +496,11 @@ class AnkiPackageReaderTest {
             mediaBytes = mapOf("0" to fakePng)
         )
         val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        val image = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>().single().src
         assertTrue(
-            "a bare 89 50 prefix is not a PNG signature: ${question.image}",
-            question.image!!.startsWith("data:image/jpeg;base64,")
+            "a bare 89 50 prefix is not a PNG signature: $image",
+            image.startsWith("data:image/jpeg;base64,")
         )
     }
 
@@ -688,6 +732,36 @@ class AnkiPackageReaderTest {
         assertFalse("stem leaks its answer", questions[0].text.contains("France"))
         assertFalse("stem leaks its answer", questions[1].text.contains("Paris"))
         assertTrue("raw cloze markup survived", questions.none { "{{c" in it.text })
+    }
+
+    @Test
+    fun aClozeStemKeepsItsTableAndEveryPicture() {
+        val stem = "Look: <table><tr><td>A</td><td>B</td></tr></table>" +
+            "<img src=\"0\"><img src=\"1\"> The capital is {{c1::Paris}}."
+        val apkg = legacyPackage(
+            models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
+            notes = listOf("$stem${us}${us}" to 1L),
+            cards = listOf(ClozeCard(10L, 1L, 1L, 0)),
+            media = mapOf("0" to "a.png", "1" to "b.png"),
+            mediaBytes = mapOf("0" to pngBytes, "1" to pngBytes)
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals(emptyList<OptionDto>(), question.options)
+        assertEquals("Paris", question.explanation)
+        assertEquals(
+            listOf(listOf("A", "B")),
+            question.elements
+                .filterIsInstance<com.mcqapp.domain.ContentElement.TableElement>()
+                .single().rows
+        )
+        assertEquals(
+            "both stem pictures must survive",
+            2,
+            question.elements.filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>().size
+        )
+        assertTrue("the cloze is still blanked", "[...]" in question.text)
     }
 
     @Test

@@ -1628,7 +1628,7 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "The picture shows one shape. Which option shows the same shape with the correct name?"
+                  "content": "The picture shows one shape. Which option shows the same shape?"
                 },
                 {
                   "type": "image",
@@ -1650,10 +1650,6 @@
                   {
                     "type": "image",
                     "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
-                  },
-                  {
-                    "type": "text",
-                    "content": " Square"
                   }
                 ],
                 "c": [
@@ -1680,7 +1676,7 @@
               "explanation_elements": [
                 {
                   "type": "text",
-                  "content": "The stem shows a square; the other options show a rectangle, a triangle and a pentagon, each correctly named — they are different shapes, not the one asked for."
+                  "content": "The stem shows a square, and option (b) is the only option showing that same shape. The other options show a rectangle, a triangle and a pentagon — different shapes, not the one asked for."
                 }
               ],
               "difficulty": "easy",
@@ -2691,7 +2687,7 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "In <strong>Newton’s second law</strong> the acceleration is proportional to the net <em>external</em> force and inversely proportional to the <u>total mass</u>. Which statement about acceleration follows?"
+                  "content": "In <strong>Newton’s second law</strong> the acceleration is proportional to the net <em>external</em> force and inversely proportional to the <u>total mass</u>.<br>Which statement about acceleration follows?"
                 }
               ],
               "options_elements": {

@@ -990,7 +990,9 @@ class AnkiPackageReaderTest {
 
         val paper = AnkiPackageReader.read(apkg).file.papers.single()
         assertEquals("Bank", paper.title)
-        assertEquals(listOf("Science", "Visual Reasoning"), paper.categories.map { it.title })
+        // Deck 56 ("Visual Reasoning") exists in the collection but holds no
+        // question in this fixture, so the reader drops that empty category.
+        assertEquals(listOf("Science"), paper.categories.map { it.title })
         val question = allQuestions(paper).single()
         assertEquals("Look:", question.text)
         val image = question.elements

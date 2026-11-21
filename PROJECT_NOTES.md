@@ -287,6 +287,9 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
 
 ## CI, artifacts and releases
 
+- **Every reported bug ships with a regression test in the same PR** — a unit
+  test for logic/data, a UI test for layout/interaction — and it must fail on
+  the old behaviour. Owner rule; the portable form is in `AGENTS.md`.
 - The workflows are `.github/workflows/build.yml` (build, unit tests, lint, UI
   test) and `.github/workflows/release.yml` (publish on a tag). The release
   workflow signs with the real keystore from CI secrets and uploads

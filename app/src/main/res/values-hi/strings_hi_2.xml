@@ -37,6 +37,7 @@
         <item quantity="other">• %1$d प्रश्न अपडेट किए गए</item>
     </plurals>
     <string name="followup_search_type_to_hint">सभी पेपरों में खोजने के लिए टाइप करें</string>
+    <string name="import_report_no_questions">इस डेक में कोई प्रश्न नहीं मिला।</string>
     <string name="formula">सूत्र</string>
     <string name="fsrs7_upgrade_notice">FSRS-6 के फिट किए गए वेट्स को FSRS-7 में बदला नहीं जा सका: मॉडल बदला है, सिर्फ़ वेट्स की संख्या नहीं। शेड्यूलिंग आधिकारिक डिफ़ॉल्ट पर है; दोबारा फिट करने के लिए Optimize दबाएँ।</string>
     <string name="fsrs_scheduling_help">अध्ययन के लिए FSRS शेड्यूलिंग। ये Anki\'s समीक्षा विकल्पों से मेल खाते हैं, इसलिए दोनों ऐप्स में एक ही मान काम करते हैं। बदलाव अगली समीक्षा से लागू होंगे; जिन कार्ड्स का शेड्यूल पहले से तय है, उनकी मौजूदा तारीख़ बनी रहेगी।</string>

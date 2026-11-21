@@ -9,6 +9,7 @@ import com.mcqapp.data.io.AnkiApkgImporter
 import com.mcqapp.data.io.CardScheduleDto
 import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.Importer
+import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
@@ -281,7 +282,178 @@ class AnkiStreamEquivalenceTest {
             }
         }
 
-    private fun foreignPackage(ver: Int = 11): ByteArray {
+    private fun foreignPackage(ver: Int = 11): ByteArray = zipOf(
+        "collection.anki2" to foreignCollection(ver),
+        "media" to """{"0":"pic.png"}""".toByteArray(),
+        "0" to pngBytes
+    )
+
+    /**
+     * The compatibility stub a modern export writes into `collection.anki2`
+     * beside the real `collection.anki21`: one note, no deck content, blank
+     * back. Reading it is what produced a zero-question import.
+     */
+    private fun stubCollection(): ByteArray {
+        val db = newCollection(11, crtSeconds = 0)
+        db.execSQL(
+            "update col set models = ?, decks = ?",
+            arrayOf<Any>(
+                """{"1":{"id":1,"name":"Basic","type":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0}]}}""",
+                """{"1":{"id":1,"name":"Default"}}"""
+            )
+        )
+        db.addNote(
+            id = 1,
+            mid = 1,
+            tags = "",
+            flds = "Please update to the latest Anki version, then import the " +
+                ".colpkg/.apkg file again.${us}",
+            cards = listOf(Triple(1L, 1L, 0))
+        )
+        return bytesOf(db)
+    }
+
+    /**
+     * A modern package in Anki's authentic order: `meta`, the real
+     * `collection.anki21`, the compatibility stub in `collection.anki2`, then
+     * `media`. The old streamed reader preferred `collection.anki2` by name
+     * regardless of order, so it read the stub and lost the deck; the old
+     * whole-file reader happened to take the first matching zip entry, which the
+     * authentic order gets right but a stub-first package does not (that case is
+     * pinned in AnkiPackageReaderTest).
+     */
+    @Test
+    fun aStubBesideTheModernCollectionStreamsToTheSameDatabase() {
+        val bytes = zipOf(
+            "meta" to byteArrayOf(0x08, 0x02),
+            "collection.anki21" to foreignCollection(ver = 11),
+            "collection.anki2" to stubCollection(),
+            "media" to """{"0":"pic.png"}""".toByteArray(),
+            "0" to pngBytes
+        )
+
+        assertSameDatabase(bytes, "compatibility stub + modern collection")
+        val texts = questionTexts(streamed(bytes))
+        assertTrue(
+            "the stub's text must never reach the library: $texts",
+            texts.none { it.contains("Please update to the latest Anki version") }
+        )
+        assertTrue("the real collection's questions import", texts.any { it.contains("2 + 2?") })
+    }
+
+    /**
+     * The `.anki21b` shape: collection, manifest and every picture are zstd
+     * frames. Both readers must decode all three; the streamed one decodes the
+     * collection into its spooled file rather than asking SQLite to open a
+     * compressed database.
+     */
+    @Test
+    fun aZstdCompressedPackageStreamsToTheSameDatabase() {
+        val bytes = zipOf(
+            "collection.anki21b" to zstdFrame(foreignCollection(ver = 11)),
+            "media" to zstdFrame("""{"0":"pic.png"}""".toByteArray()),
+            "0" to zstdFrame(pngBytes)
+        )
+
+        assertSameDatabase(bytes, "zstd package")
+        assertTrue(
+            "the compressed collection's questions import",
+            questionTexts(streamed(bytes)).any { it.contains("2 + 2?") }
+        )
+    }
+
+
+    /**
+     * A schema-18 package whose deck names use the Unit Separator (`0x1f`)
+     * instead of `::`. Both readers must normalise it to the same hierarchy:
+     * one "Bank" paper with "Science" and "Visual Reasoning" under it.
+     */
+    @Test
+    fun unitSeparatorDeckNamesStreamToTheSameTitles() {
+        val bytes = unitSeparatorPackage()
+
+        assertSameDatabase(bytes, "unit-separator deck names")
+
+        val whole = AnkiPackageReader.read(bytes, nowMillis = NOW).file
+        val sink = TitleSink()
+        runBlocking {
+            AnkiPackageReader.stream(ByteArrayInputStream(bytes), sink, nowMillis = NOW)
+        }
+
+        assertEquals(
+            whole.papers.map { it.title },
+            sink.paperTitles
+        )
+        assertEquals(
+            whole.papers.flatMap { paper -> paper.categories.map { it.title } },
+            sink.categoryTitles
+        )
+        assertEquals(listOf("Bank"), sink.paperTitles)
+        assertEquals(listOf("Science", "Visual Reasoning"), sink.categoryTitles)
+        assertTrue(
+            "no title may carry the Unit Separator: ${sink.paperTitles + sink.categoryTitles}",
+            (sink.paperTitles + sink.categoryTitles).none { '\u001f' in it }
+        )
+    }
+
+    private fun unitSeparatorPackage(): ByteArray {
+        val db = newCollection(18, crtSeconds = 1_700_000_000L)
+        db.execSQL(
+            "create table fields (ntid integer not null, ord integer not null, name text not null, " +
+                "primary key (ntid, ord))"
+        )
+        db.execSQL("create table notetypes (id integer primary key, name text not null, config blob)")
+        db.execSQL(
+            "create table templates (ntid integer not null, ord integer not null, qfmt text not null, " +
+                "primary key (ntid, ord))"
+        )
+        db.execSQL(
+            "create table decks (id integer primary key, name text not null, mtime_secs integer not null, " +
+                "usn integer not null, common blob not null, kind blob not null)"
+        )
+        db.execSQL("insert into notetypes values (1, 'Basic', x'')")
+        db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
+        db.execSQL("insert into templates values (1, 0, '{{Front}}')")
+        db.execSQL(
+            "insert into decks values (1, 'Default', 0, 0, x'', x''), " +
+                "(54, 'Bank', 0, 0, x'', x''), " +
+                "(55, 'Bank${us}Science', 0, 0, x'', x''), " +
+                "(56, 'Bank${us}Visual Reasoning', 0, 0, x'', x'')"
+        )
+        db.addNote(
+            id = 100, mid = 1, tags = " mcqapp ",
+            flds = "Q1?${us}&#10003; yes<br>&#10007; no",
+            cards = listOf(Triple(200L, 55L, 0))
+        )
+        db.addNote(
+            id = 101, mid = 1, tags = " mcqapp ",
+            flds = "Q2?${us}&#10003; yes<br>&#10007; no",
+            cards = listOf(Triple(201L, 56L, 0))
+        )
+        return zipOf("collection.anki21" to bytesOf(db))
+    }
+
+    /** Collects the paper and category titles the streamed reader emits. */
+    private class TitleSink : AnkiPackageReader.StreamSink {
+        val paperTitles = mutableListOf<String>()
+        val categoryTitles = mutableListOf<String>()
+
+        override suspend fun onPaper(header: LegacyParser.PaperHeader) {
+            paperTitles += header.title
+        }
+
+        override suspend fun onCategory(category: CategoryDto) {
+            categoryTitles += category.title
+        }
+
+        override suspend fun onQuestions(
+            categoryId: String,
+            questions: List<QuestionDto>,
+            schedules: Map<String, CardScheduleDto>
+        ) = Unit
+    }
+
+    private fun foreignCollection(ver: Int = 11): ByteArray {
         val db = newCollection(ver, crtSeconds = 1_700_000_000L)
         val models =
             """{"1":{"id":1,"name":"Basic","type":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0}]},""" +
@@ -387,12 +559,7 @@ class AnkiStreamEquivalenceTest {
         // how long it took in millis.
         db.execSQL("insert into revlog values (1699996400000, 1011, -1, 3, 5, 1, 2600, 32500, 0)")
 
-        val collection = bytesOf(db)
-        return zipOf(
-            "collection.anki2" to collection,
-            "media" to """{"0":"pic.png"}""".toByteArray(),
-            "0" to pngBytes
-        )
+        return bytesOf(db)
     }
 
     // ---- helpers ----------------------------------------------------------

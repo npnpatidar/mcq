@@ -1140,6 +1140,14 @@ object StatsAggregator {
         private val answerKinds = LinkedHashMap<AnswerButtonsData.Kind, IntArray>()
 
         private val hourReviews = IntArray(24)
+
+        /**
+         * Rows per hour that recorded an objective outcome. The pass rate is a
+         * share of these, not of [hourReviews]: a self-graded card review (or a
+         * pre-v19 row) has no outcome, and an Again on a card is not a wrong
+         * answer.
+         */
+        private val hourJudged = IntArray(24)
         private val hourPasses = IntArray(24)
 
         private val responseHistogram = IntArray(RESPONSE_LABELS.size)
@@ -1164,7 +1172,12 @@ object StatsAggregator {
             countAnswerButtons(review)
             val hour = hourOf(review.reviewedAt, zone)
             hourReviews[hour]++
-            if (review.passed) hourPasses[hour]++
+            // Only rows with a recorded outcome can lower a pass rate; the bar
+            // itself stays the hour's review volume.
+            if (review.wasCorrect != null) {
+                hourJudged[hour]++
+                if (review.passed) hourPasses[hour]++
+            }
             review.elapsedSeconds?.let { seconds ->
                 var bin = RESPONSE_EDGES.indexOfFirst { seconds < it }
                 if (bin < 0) bin = RESPONSE_LABELS.size - 1
@@ -1173,7 +1186,9 @@ object StatsAggregator {
                     gradeReviews[review.rating - 1]++
                     gradeSeconds[review.rating - 1] += seconds
                 }
-                if (!review.passed && seconds < 5) fastFails++
+                // An Again on a self-graded card has no objective outcome, so
+                // it is not an impulsive failure — it is just an Again.
+                if (review.wasCorrect != null && !review.passed && seconds < 5) fastFails++
             }
             countRoll(review)
         }
@@ -1420,11 +1435,14 @@ object StatsAggregator {
         )
 
         private fun hourly(): List<HourlyStat> = (0 until 24).map { hour ->
-            val reviews = hourReviews[hour]
             HourlyStat(
                 hour = hour,
-                reviews = reviews,
-                passRate = if (reviews == 0) null else hourPasses[hour].toDouble() / reviews
+                reviews = hourReviews[hour],
+                passRate = if (hourJudged[hour] == 0) {
+                    null
+                } else {
+                    hourPasses[hour].toDouble() / hourJudged[hour]
+                }
             )
         }
 
@@ -2133,10 +2151,11 @@ object StatsAggregator {
     /**
      * Counts the guessing dashboard in one pass over the in-scope log.
      *
-     * Only rows that carry both flags are classified. Rows written before v19
-     * have no flag and are counted in [allReviews] only, so the screen can say
-     * how much history the figures leave out instead of pretending it was
-     * earned.
+     * Only rows that carry both flags are counted at all: a self-graded card
+     * review records no objective outcome, and pre-v19 history records neither
+     * flag, and the two cannot be told apart. Leaving them out of [reviews] and
+     * [allReviews] alike is what stops a card-heavy or legacy log from looking
+     * permanently incomplete.
      *
      * Sitting position uses a 30-minute gap to start a new sitting. The log is
      * fed in append order (the order the app wrote it), which is also how the
@@ -2158,6 +2177,13 @@ object StatsAggregator {
         private val rangeStart = range.days?.let { DayBoundary.boundaryOf(todayDay - (it - 1), cfg.dayStartHour, zone) }
 
         private var allReviews = 0
+
+        /**
+         * In-range rows whose `wasGuess`/`wasCorrect` flags are missing, and
+         * which are therefore left out of every figure. They are pre-v19 rows
+         * or self-graded card reviews, indistinguishable from each other.
+         */
+        private var unflaggedReviews = 0
         private var reviews = 0
         private var guessed = 0
         private var earned = 0
@@ -2198,8 +2224,6 @@ object StatsAggregator {
         fun add(review: ReplayReview) {
             if (scopePaperId != null && review.paperId != scopePaperId) return
             if (rangeStart != null && review.reviewedAt < rangeStart) return
-            allReviews++
-            earliest = earliest?.let { minOf(it, review.reviewedAt) } ?: review.reviewedAt
 
             // A gap of 30 minutes or more starts a new sitting; a timestamp
             // that moved backwards does too (a clock rollback, not a pause).
@@ -2213,7 +2237,18 @@ object StatsAggregator {
 
             val wasGuess = review.wasGuess
             val wasCorrect = review.wasCorrect
-            if (wasGuess == null || wasCorrect == null) return
+            if (wasGuess == null || wasCorrect == null) {
+                // Left out of every figure. The count lets the screen explain
+                // why, and only when there is something to explain.
+                unflaggedReviews++
+                return
+            }
+            // Counted only once the row is known to carry the flags: a
+            // self-graded card review records none, and neither does pre-v19
+            // history, and the two cannot be told apart. Counting them in the
+            // denominator made a card-heavy log permanently look incomplete.
+            allReviews++
+            earliest = earliest?.let { minOf(it, review.reviewedAt) } ?: review.reviewedAt
 
             reviews++
             val hit = if (wasCorrect) 1 else 0
@@ -2289,6 +2324,7 @@ object StatsAggregator {
             }
             return GuessingData(
                 allReviews = allReviews,
+                unflaggedReviews = unflaggedReviews,
                 reviews = reviews,
                 guessed = guessed,
                 earned = earned,

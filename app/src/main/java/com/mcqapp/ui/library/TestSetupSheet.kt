@@ -108,6 +108,81 @@ internal fun <T> rowsAfterDelete(
 ): List<T> = if (result.isSuccess) rows.filterNot { idOf(it) == deletedId } else rows
 
 /**
+ * The testable pool after its read: the count on success, `null` (unknown) on
+ * failure. It must never fall back to the raw total — that figure includes
+ * flashcards, and substituting it would enable Start on a pool the sampler
+ * cannot draw from. Null keeps the sheet's existing "counting" state and
+ * Start disabled until a read succeeds.
+ */
+internal fun testablePoolAfterRead(result: Result<Int>): Int? = result.getOrNull()
+
+/**
+ * What the sheet may act on for the testable pool. Unknown — a read in flight
+ * or one that failed — is never the raw total: the count is zero and Start is
+ * disabled, so it cannot enable on a pool that includes flashcards.
+ */
+internal data class TestablePoolState(
+    val count: Int,
+    val loading: Boolean,
+    /** The read failed; the sheet offers a retry and Start stays disabled. */
+    val failed: Boolean = false
+)
+
+internal fun testablePoolState(
+    loadedCount: Int?,
+    failed: Boolean = false
+): TestablePoolState = when {
+    failed -> TestablePoolState(count = 0, loading = false, failed = true)
+    loadedCount == null -> TestablePoolState(count = 0, loading = true)
+    else -> TestablePoolState(count = loadedCount, loading = false)
+}
+
+/**
+ * Whether a custom pool — bookmarks, one tag or a fixed panel — holds content
+ * but nothing a test can serve, so every member is a flashcard.
+ * [SelectionPreview.pool] is the testable part and [SelectionPreview.rawPool]
+ * the whole pool: only that contrast tells this apart from an actually empty
+ * pool, which keeps the generic "no questions" message.
+ */
+internal fun customPoolIsFlashcardsOnly(
+    type: TestType,
+    preview: SelectionPreview?
+): Boolean = preview != null &&
+    preview.pool == 0 &&
+    preview.rawPool > 0 &&
+    (type == TestType.BOOKMARKED || type == TestType.TAG ||
+        type == TestType.FIXED_PANEL)
+
+/** Which length sentence a fixed panel shows, if any. */
+internal enum class PanelLengthCopy {
+    /** No panel chosen, or nothing in it a test can serve. */
+    NONE,
+
+    /** Every testable member of the panel runs: "Runs all N". */
+    RUNS_ALL,
+
+    /** The frozen set is larger than what can run: "X asked · Y will run". */
+    ASKED_RUN
+}
+
+/**
+ * The panel's length sentence. The picker chip keeps showing the frozen size,
+ * so a shortened panel must not also print "Runs all Y" — that reads as a
+ * contradiction beside "X asked · Y will run"; the asked/run line carries the
+ * truth on its own. When the panel really is all testable, "Runs all N" is
+ * the whole truth and there is no asked/run line.
+ */
+internal fun panelLengthCopy(
+    panelSize: Int?,
+    resolvedCount: Int,
+    showsAskedRun: Boolean
+): PanelLengthCopy = when {
+    panelSize == null || resolvedCount <= 0 -> PanelLengthCopy.NONE
+    showsAskedRun -> PanelLengthCopy.ASKED_RUN
+    else -> PanelLengthCopy.RUNS_ALL
+}
+
+/**
  * The phase-1 setup sheet: what kind of test, how many questions, how long,
  * and what the learner is about to get (sections 7.2-7.5).
  *
@@ -138,6 +213,18 @@ internal fun TestSetupSheet(
      * pool, so the scope needs its own count.
      */
     loadScopedMistakeCount: suspend (List<String>) -> Int,
+    /**
+     * The scope's **testable** question count: multiple-choice questions only,
+     * because a flashcard is study-only and never reaches a test. Empty means
+     * the whole paper. The sheet counts with this, never with the paper's raw
+     * total (the library card keeps that raw figure).
+     */
+    loadTestableCount: suspend (List<String>) -> Int,
+    /**
+     * The paper's per-category testable counts, for the blueprint editor's
+     * preview pools and quotas. One grouped read; empty while it is in flight.
+     */
+    loadTestableCategoryCounts: suspend () -> Map<String, Int>,
     /**
      * The smallest passage block the selected type would sample. The sampler
      * pre-check uses it so Start cannot emit a route that fails at load
@@ -261,6 +348,18 @@ internal fun TestSetupSheet(
     var blueprintViews by remember(paper.id, variant) {
         mutableStateOf<List<BlueprintSectionView>?>(null)
     }
+    /**
+     * The paper's per-category testable counts for the blueprint editor's
+     * pools and quotas. A failed read stays empty, which reads as zero — never
+     * the raw count that would promise a quota the run cannot fill.
+     */
+    var testableCountsByCategory by remember(paper.id) {
+        mutableStateOf<Map<String, Int>>(emptyMap())
+    }
+    LaunchedEffect(paper.id) {
+        testableCountsByCategory =
+            runCatching { loadTestableCategoryCounts() }.getOrDefault(emptyMap())
+    }
     /** Bumped after a save so editing the already-selected blueprint reloads it. */
     var blueprintRefresh by remember(paper.id) { mutableIntStateOf(0) }
     LaunchedEffect(paper.id, type, variant, blueprintRefresh) {
@@ -305,8 +404,10 @@ internal fun TestSetupSheet(
             ScopeKey.ofExpanded(expanded)
         }
     }
-    // The scope's question count: the paper's own when nothing is ticked.
-    val questionPool = remember(paper.categories, paper.totalQuestions, tickedIds) {
+    // The scope's raw question count, copy only: it is what separates a truly
+    // empty scope from one that holds nothing but flashcards. The pool the
+    // sampler draws from is the *testable* count, loaded below.
+    val rawQuestionPool = remember(paper.categories, paper.totalQuestions, tickedIds) {
         if (tickedIds.isEmpty()) {
             paper.totalQuestions
         } else {
@@ -325,7 +426,24 @@ internal fun TestSetupSheet(
         }
     }
     val mistakePool = if (tickedIds.isEmpty()) mistakeCount else scopedMistakes
-    val poolLoading = type == TestType.MISTAKES && mistakePool == null
+    // The scope's testable supply: multiple-choice rows only, never the raw
+    // total. Random draws its whole pool from it, and every other type uses it
+    // to tell an empty scope from a scope whose content is all flashcards.
+    // Until the count lands it is unknown: pool zero, Start disabled. A failed
+    // read is a separate state — it offers a retry instead of an endless
+    // spinner, and never falls back to the raw total (which includes cards).
+    var testablePool by remember(paper.id, expanded) { mutableStateOf<Int?>(null) }
+    var testablePoolFailed by remember(paper.id, expanded) { mutableStateOf(false) }
+    var testablePoolRetry by remember(paper.id, expanded) { mutableIntStateOf(0) }
+    LaunchedEffect(paper.id, expanded, testablePoolRetry) {
+        val result = runCatching { loadTestableCount(expanded) }
+        testablePool = testablePoolAfterRead(result)
+        testablePoolFailed = result.isFailure
+    }
+    val poolState = testablePoolState(testablePool, failed = testablePoolFailed)
+    val questionPool = poolState.count
+    val testablePoolLoading = poolState.loading
+    val poolLoading = (type == TestType.MISTAKES && mistakePool == null) || testablePoolLoading
     // A custom type's pool comes from the preview (computed below); until
     // it lands the pool reads empty and Start waits. A blueprint's pool is
     // the achievable quota sum the preview carries, not the raw scope size.
@@ -406,6 +524,36 @@ internal fun TestSetupSheet(
         null
     }
     val blueprintName = blueprints?.firstOrNull { it.id.toString() == variant }?.name
+    // The raw count of the scope being set up: the blueprint union when one is
+    // chosen (its views' pools are testable-only, so they cannot answer this),
+    // a fixed panel's own frozen size, otherwise the ticked expansion or the
+    // whole paper. Copy only — it separates "nothing here" from "nothing to
+    // test here".
+    val rawScopeCount = when {
+        type == TestType.BLUEPRINT ->
+            blueprintPlan?.categoryIds?.takeIf { it.isNotEmpty() }
+                ?.let { CategorySelection.questionCount(paper.categories, it) }
+                ?: paper.totalQuestions
+        type == TestType.FIXED_PANEL && panelSize != null -> panelSize ?: 0
+        else -> rawQuestionPool
+    }
+    // Content exists, but every question the type can draw from is a
+    // flashcard, which a test can never serve. A blueprint's supply comes from
+    // its own section views (already testable-only), a panel's from the
+    // preview's pool, the rest from the scope count. Null means "not known
+    // yet" (no panel chosen), never a verdict. Read only once the pool has
+    // actually landed: a count still in flight is not a verdict either.
+    val scopeTestableCount: Int? = when {
+        type == TestType.BLUEPRINT ->
+            blueprintViews?.takeIf { blueprintPlan != null }?.sumOf { it.pool }
+        type == TestType.FIXED_PANEL ->
+            selectionPreview?.takeIf { variant != null && panelSize != null }?.pool
+        else -> questionPool
+    }
+    val scopeIsFlashcardsOnly = !poolLoading && !previewLoading && (
+        customPoolIsFlashcardsOnly(type, selectionPreview) ||
+            (scopeTestableCount == 0 && rawScopeCount > 0)
+        )
     // A blueprint below the minimum length cannot start: Start is refused
     // with the short-scope message, exactly like a small scope today.
     val blueprintTooShort = type == TestType.BLUEPRINT && available < TestPlan.MIN_LENGTH
@@ -457,7 +605,8 @@ internal fun TestSetupSheet(
             else -> null
         },
         blueprint = blueprintPlan,
-        minBlockSize = minBlockSize ?: 1
+        minBlockSize = minBlockSize ?: 1,
+        scopeIsFlashcardsOnly = scopeIsFlashcardsOnly
     )
     // The largest length this pool can actually supply. Chips above it are
     // disabled rather than left to the clamp message (§7.2, §14); the message
@@ -784,6 +933,7 @@ internal fun TestSetupSheet(
             )
             Text(
                 when {
+                    poolState.failed -> stringResource(R.string.test_setup_count_failed)
                     poolLoading -> stringResource(R.string.test_setup_counting)
                     type == TestType.MISTAKES -> pluralStringResource(
                         R.plurals.test_setup_pool_mistakes, mistakePool ?: 0, mistakePool ?: 0
@@ -796,6 +946,17 @@ internal fun TestSetupSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // A failed count is retryable in place: the sheet is not reopened
+            // just to try again, and Start stays disabled until a read lands.
+            if (poolState.failed) {
+                TextButton(onClick = {
+                    testablePool = null
+                    testablePoolFailed = false
+                    testablePoolRetry++
+                }) {
+                    Text(stringResource(R.string.test_setup_count_retry))
+                }
+            }
             if (type.usesSignalSelector) {
                 Text(
                     if (previewLoading && selectionPreview == null) {
@@ -840,14 +1001,29 @@ internal fun TestSetupSheet(
 
             // --- length ---
             if (type == TestType.FIXED_PANEL) {
-                // The panel is the length: every member runs, every time.
-                if (panelSize != null) {
-                    Text(
+                // The panel is the length: every member a test can serve runs,
+                // every time. A member that is a flashcard is study-only, so a
+                // frozen set that shrank says both numbers instead of silently
+                // running fewer than it holds — and it must not also claim
+                // "runs all 2" beside "5 asked · 2 will run". A panel with
+                // nothing testable shows no length at all; the flashcards-only
+                // note explains it.
+                when (panelLengthCopy(panelSize, setup.resolvedCount(), setup.showsAskedRun())) {
+                    PanelLengthCopy.RUNS_ALL -> Text(
                         stringResource(R.string.test_setup_panel_runs_all, setup.resolvedCount()),
                         style = MaterialTheme.typography.labelLarge
                     )
+                    PanelLengthCopy.ASKED_RUN -> Text(
+                        stringResource(
+                            R.string.test_setup_asked_run,
+                            requestCount,
+                            setup.resolvedCount()
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    PanelLengthCopy.NONE -> Unit
                 }
-            } else if (setup.short() && type != TestType.BLUEPRINT) {
+            } else if (setup.short() && type != TestType.BLUEPRINT && !poolLoading) {
                 // The whole scope is below the minimum: there is nothing to
                 // choose, the session runs every question it holds. A short
                 // blueprint is refused instead, so calling it a "short test"
@@ -862,7 +1038,7 @@ internal fun TestSetupSheet(
                     style = MaterialTheme.typography.labelLarge
                 )
                 Text(
-                    if (requestedCount > maxSelectable) {
+                    if (setup.showsAskedRun()) {
                         stringResource(
                             R.string.test_setup_asked_run,
                             requestedCount,
@@ -975,6 +1151,10 @@ internal fun TestSetupSheet(
                 )
             }
             val note = when {
+                // The pool line already carries the failure and its retry;
+                // the empty-scope message would be a verdict about a read that
+                // never completed.
+                poolState.failed -> null
                 // An in-flight preview has no pool yet; the empty-scope
                 // message here would be an error about a state we have not
                 // finished reading.
@@ -983,6 +1163,10 @@ internal fun TestSetupSheet(
                 // The whole-paper notice above already says why a panel
                 // cannot run under a category scope.
                 panelBlocked -> null
+                // Content exists but all of it is study-only: say that rather
+                // than calling a non-empty scope empty.
+                setup.flashcardsOnlyScope() ->
+                    stringResource(R.string.test_setup_scope_flashcards_only)
                 type == TestType.MISTAKES && available == 0 ->
                     stringResource(R.string.test_setup_no_mistakes)
                 type == TestType.BLUEPRINT && selectionPreview != null && blueprintTooShort ->
@@ -1002,7 +1186,7 @@ internal fun TestSetupSheet(
             Button(
                 onClick = { onStart(type, requestCount, setup.minutes(), exclusionMode, breadth, effectiveVariant) },
                 enabled = setup.startable() && !blueprintTooShort && !blueprintLoading &&
-                    !poolLoading && !blockLoading && !panelsLoading,
+                    !poolLoading && !poolState.failed && !blockLoading && !panelsLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("test-setup-start")
@@ -1135,6 +1319,7 @@ internal fun TestSetupSheet(
             paper = paper,
             blueprint = editing,
             initialSections = if (editing != null) blueprintViews.orEmpty() else emptyList(),
+            testableCounts = testableCountsByCategory,
             requestedCount = requestCount,
             // The saveable edit id drives both the drafts and the edit/create
             // rendering; it does not blink to null while the list reloads.

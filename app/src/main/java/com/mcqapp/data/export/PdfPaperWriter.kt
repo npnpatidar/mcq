@@ -147,18 +147,39 @@ object PdfPaperWriter {
                 // With the answers at the end, nothing is revealed here: the
                 // marks above are already suppressed and the key prints later.
                 if (!answersAtEnd) {
-                    if (answer.isNotEmpty()) {
-                        w.paragraph(
-                            SpannableStringBuilder("Answer: ")
-                                .append(SpannableStringBuilder(answer.joinToString(", "))),
-                            11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
+                    if (question.options.isEmpty()) {
+                        // A flashcard has no option label to print: its back
+                        // *is* the answer, so it is labelled "Answer:" here
+                        // rather than left unlabelled or called an
+                        // explanation, and printed once.
+                        val hasBack = question.explanationElements.isNotEmpty() ||
+                            question.explanation.isNotBlank() ||
+                            question.explanationImage != null
+                        if (hasBack) {
+                            w.paragraph(
+                                "Answer:",
+                                11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
+                            )
+                            w.elements(
+                                question.explanationElements,
+                                question.explanationImage,
+                                question.explanation
+                            )
+                        }
+                    } else {
+                        if (answer.isNotEmpty()) {
+                            w.paragraph(
+                                SpannableStringBuilder("Answer: ")
+                                    .append(SpannableStringBuilder(answer.joinToString(", "))),
+                                11f, Typeface.NORMAL, Color.rgb(46, 125, 50)
+                            )
+                        }
+                        w.elements(
+                            question.explanationElements,
+                            question.explanationImage,
+                            question.explanation
                         )
                     }
-                    w.elements(
-                        question.explanationElements,
-                        question.explanationImage,
-                        question.explanation
-                    )
                 }
             }
         )
@@ -184,11 +205,22 @@ object PdfPaperWriter {
                         headingWritten = true
                     }
                     w.paragraph(entry, 11f, Typeface.NORMAL, Color.rgb(46, 125, 50), spaceBefore = 6f)
-                    w.elements(
-                        question.explanationElements,
-                        question.explanationImage,
-                        question.explanation
-                    )
+                    if (question.options.isEmpty()) {
+                        // The card's back text is already on the entry line;
+                        // only a picture cannot ride it, so print the back's
+                        // pictures here rather than the whole back twice.
+                        w.elements(
+                            question.explanationElements
+                                .filterIsInstance<ContentElement.ImageElement>(),
+                            question.explanationImage
+                        )
+                    } else {
+                        w.elements(
+                            question.explanationElements,
+                            question.explanationImage,
+                            question.explanation
+                        )
+                    }
                 }
             }
         )
@@ -721,21 +753,67 @@ internal fun mathToLinear(mathml: String): String {
 }
 
 /**
- * One answer-key line — `Q7. B`, or `Q7. —` when nothing is correct — or null
- * when the question has neither an answer nor an explanation, in which case
- * the key does not list it at all.
+ * One answer-key line — `Q7. B` for a question, `Q7. Paris` for a flashcard —
+ * or null when the question has nothing to list: no answer of its own, or a
+ * card with no back at all. A question whose answer is empty but which has an
+ * explanation prints the old `Q7. —` marker.
  *
  * Explanation counts whether it is rich content, the legacy text field or an
  * image: they are the same thing to a reader, and the inline path already
- * prints all three. Pure so the entry rules unit-test without Android.
+ * prints all three. For a card the back *is* the answer, so the line carries
+ * its text instead of the `—` placeholder that used to stand where a card's
+ * answer should be. A back that only carries a picture or a table flattens to
+ * its readable part; a picture-only back keeps the explicit `(card)` marker
+ * and the picture itself prints under the line.
+ *
+ * Pure so the entry rules unit-test without Android.
  */
 internal fun answerKeyEntry(question: QuestionDto, number: Int): String? {
+    // A zero-option question is a flashcard: its back is the answer.
+    if (question.options.isEmpty()) {
+        val back = cardBackText(question)
+        val hasBack = question.explanationElements.isNotEmpty() ||
+            question.explanation.isNotBlank() ||
+            question.explanationImage != null
+        if (!hasBack) return null
+        return "Q$number. " + back.ifEmpty { "(card)" }
+    }
     val answer = answerLabels(question.options, question.correctOptionIds).joinToString(", ")
     val hasExplanation = question.explanationElements.isNotEmpty() ||
         question.explanation.isNotBlank() ||
         question.explanationImage != null
     if (answer.isEmpty() && !hasExplanation) return null
     return "Q$number. " + if (answer.isEmpty()) "—" else answer
+}
+
+/**
+ * A flashcard's back as one line of plain text, for [answerKeyEntry].
+ *
+ * Pictures cannot ride a line, so they are skipped here (the key prints them
+ * under the entry); formulas become their linear text and table cells join
+ * with a space, the same flattening the PDF reader already sees on the page.
+ * Inline markup is stripped and entities decoded, because the line is drawn
+ * as plain text.
+ */
+private fun cardBackText(question: QuestionDto): String {
+    if (question.explanationElements.isNotEmpty()) {
+        val text = question.explanationElements.joinToString(" ") { element ->
+            when (element) {
+                is ContentElement.TextElement -> element.text
+                is ContentElement.MathElement -> mathToLinear(element.mathml)
+                is ContentElement.TableElement ->
+                    element.rows.joinToString(" ") { row -> row.joinToString(" ") }
+                is ContentElement.ImageElement -> ""
+            }
+        }
+        val plain = decodeEntities(stripInlineHtml(text))
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (plain.isNotEmpty()) return plain
+    }
+    return decodeEntities(stripInlineHtml(question.explanation))
+        .replace(Regex("\\s+"), " ")
+        .trim()
 }
 
 /**

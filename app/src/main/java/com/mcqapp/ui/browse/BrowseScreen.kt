@@ -93,6 +93,7 @@ import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
+import com.mcqapp.domain.isFlashcard
 import com.mcqapp.ui.BrowseViewModelFactory
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -1215,12 +1216,29 @@ private fun BrowseQuestionCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            if (categoryTitle != null) {
-                Text(
-                    categoryTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
+            // The category on the left, the card type on the right. A
+            // flashcard's type is a rendered label, not a description only: it
+            // tells the reader why there are no options below.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (categoryTitle != null) {
+                    Text(
+                        categoryTitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (question.isFlashcard) {
+                    Text(
+                        stringResource(R.string.r2_flashcard_label),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
@@ -1288,7 +1306,12 @@ private fun BrowseQuestionCard(
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Icon(
                         Icons.Default.Lightbulb,
-                        contentDescription = stringResource(R.string.explanation),
+                        // A card's back is its answer, not an explanation: same
+                        // distinction Study makes on the revealed card.
+                        contentDescription = stringResource(
+                            if (question.isFlashcard) R.string.r2_study_answer_heading
+                            else R.string.explanation
+                        ),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .padding(top = 2.dp)
@@ -1302,7 +1325,13 @@ private fun BrowseQuestionCard(
                     )
                 }
             }
-            QuestionImage(src = question.explanationImage, contentDescription = stringResource(R.string.explanation_image))
+            QuestionImage(
+                src = question.explanationImage,
+                contentDescription = stringResource(
+                    if (question.isFlashcard) R.string.r2_study_answer_image
+                    else R.string.explanation_image
+                )
+            )
 
             Spacer(Modifier.height(8.dp))
             if (!selectionMode) {

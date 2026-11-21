@@ -106,6 +106,23 @@ android {
     }
 
     signingConfigs {
+        // The debug key is deliberately committed (apk-build/debug.keystore) and
+        // its credentials are the public Android defaults, not secrets. CI
+        // runners are ephemeral: without a fixed key each run generated a fresh
+        // one, so a new CI debug APK could not install over the previous debug
+        // install ("App not installed"). Pinning the key makes every debug build
+        // — local or CI — share one signer. Changing it later means one
+        // uninstall of the installed debug app.
+        getByName("debug") {
+            storeFile = rootProject.file("apk-build/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            // Enables v1+v2+v3 so every Android release can install it.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
         if (releaseSigningConfigured) {
             create("release") {
                 storeFile = rootProject.file(releaseKeystoreFile!!)
@@ -137,6 +154,9 @@ android {
             )
         }
         debug {
+            // Same fixed debug key as CI, so local and CI debug builds share a
+            // signer and one installs over the other.
+            signingConfig = signingConfigs.getByName("debug")
             // Installs beside the release build instead of replacing it: a
             // distinct applicationId gives the debug app its own data
             // directory, FileProvider authority and launcher entry, so the two

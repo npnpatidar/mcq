@@ -31,17 +31,23 @@ code or copy changes.
   on pausing to think *around* the timer is out of scope, so evidence stored as `0 s` should
   be read as a genuinely quick answer, not as a paused one.
 
-## Room schema (version 28)
+## Room schema (version 29)
 
-- The database is at **Room version 28** (`app/src/main/java/com/mcqapp/data/local/AppDatabase.kt`).
+- The database is at **Room version 29** (`app/src/main/java/com/mcqapp/data/local/AppDatabase.kt`).
   Exported schemas live in `app/schemas/com.mcqapp.data.local.AppDatabase/`, one JSON per
-  version; `28.json` is the current one.
-- The live upgrade chain at the tail is **25 → 26 → 27 → 28**:
+  version; `29.json` is the current one.
+- The live upgrade chain at the tail is **25 → 26 → 27 → 28 → 29**:
   - `MIGRATION_25_26` creates the adaptive ladder (`ladder_versions`, `ladder_blocks`).
   - `MIGRATION_26_27` is FSRS-7: it adds `card_state.stabilityFast`
     (`REAL NOT NULL DEFAULT 0.0`) and `review_log.stabilityFastAfter` (nullable).
   - `MIGRATION_27_28` replaces the ladder with the fixed grading rule
     (`grading_versions`) and drops both ladder tables.
+  - `MIGRATION_28_29` adds the back-search columns (`questions.backText`,
+    `backTextFolded`, default `''`) and fills them from each explanation, then converts
+    every stored one-option question into a flashcard (answer into the back, option and key
+    deleted, both `questions.contentHash` and every `card_state.contentHash` rewritten in
+    the same transaction so the schedule survives). A flashcard is a zero-option question;
+    no type column exists.
 - **Two incompatible shapes are both called 27**, because the two parents of the
   merge that renumbered Room to 28 each used that number. A `main` v27 has
   `ladder_versions` and already has the fast-trace columns; a v27 written by the
@@ -300,12 +306,24 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.64` is the
-  published release (bookmark action is clearly a bookmark removal with Undo;
-  Study clock state aligned with the review lines). `0.0.63` added the
-  scrollable export dialogs, `0.0.62` shipped the whole round-2 review pass.
-  Room schema remains 28. Round-2 review reports are in `review-reports-2/`
-  (PR #94, merged); the fix work is PR #95 (merged).
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.65` is the
+  published release (scrollable import summary; picture/table/formula answers
+  show on reveal). `0.0.64` added the bookmark-removal clarity and the aligned
+  Study clock, `0.0.63` the scrollable export dialogs, `0.0.62` the whole
+  round-2 review pass. Room schema is **29**. Round-2 review reports are in
+  `review-reports-2/` (PR #94, merged); the fix work is PR #95 (merged).
+- **Flashcards.** A question with zero options is a flashcard: front = the stem
+  elements/image, back = `explanationElements`/`explanationImage`. The type is
+  derived, never stored. **Any question without an answer key** — a zero-option
+  card or a keyless MCQ — is self-graded in Study (Show answer, then
+  Again/Hard/Good/Easy; `wasCorrect`/`wasGuess` null, `gradeSource` CHOSEN),
+  studied only (never sampled into tests), searchable by their back, and their
+  back resets the schedule through `CardContent` while an MCQ explanation does
+  not. One prompt = one answer: the identity hash is prompt-only, and a changed
+  back is an answer update. One-option questions are invalid; importers convert
+  them and schema 29 converts any stored ones. The bundled sample bank
+  demonstrates each back kind: text, table, formula, image, bilingual and a
+  passage-member card, plus the one-option conversion edge.
 - `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
   class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`,
   `SignalQueryTest`). Cause (proven by a CI `jstack` sentinel): a DataStore write
@@ -331,6 +349,16 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 # unit-test results: repeat --name test-results-shard-0 .. -3
 ```
 
+- **Debug builds are signed with the committed `apk-build/debug.keystore`.** CI
+  runners are ephemeral, so a freshly generated debug key each run changed the
+  signer and a new CI debug APK could not install over the previous debug
+  install ("App not installed"). The key is a *debug* key: deliberately public
+  and non-secret (standard `android`/`androiddebugkey` credentials, cert
+  SHA-256 `74:7D:D7:74:F5:EC:8E:4E:88:E0:C5:AB:65:6D:5D:95:2C:67:FA:06:22:BF:10:48:48:82:DC:E9:F5:A9:81:23`),
+  which is why `.gitignore` carries a narrow exception for exactly that path
+  while every other `*.keystore`/`*.jks` stays ignored. **Never add a similar
+  exception for a release key.** Replacing the committed debug key changes the
+  debug signer, so the already-installed debug app needs one uninstall first.
 - `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the
   latest build. The debug variant has `applicationIdSuffix = ".debug"`, so it installs as
   `com.mcqapp.debug` **beside** the release (`com.mcqapp`) with its own data directory and

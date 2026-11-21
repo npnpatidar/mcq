@@ -368,6 +368,79 @@ class DocxParserTest {
         assertEquals(listOf("d"), q.correctIds)
     }
 
+    /**
+     * A `N.)` block with no option markers is a flashcard only when it carries
+     * the writer's explicit `Answer:` label: the stem is the front and
+     * everything after the label is the back, carried in the explanation
+     * field (the app's one home for a card's back).
+     */
+    @Test
+    fun anAnswerLabelledBlockWithoutOptionsIsACard() {
+        val questions = splitDocxMarkersForTest(
+            "1.) Capital of France?\nAnswer: Paris.\n" +
+                "2.) Largest planet?\nAnswer: Jupiter"
+        )
+        assertEquals(2, questions.size)
+        assertTrue(questions[0].options.isEmpty())
+        assertEquals("Capital of France?", questions[0].stemHtml)
+        assertEquals("Paris.", questions[0].explanationHtml)
+        // The back is not an option key, so no answer id is invented.
+        assertEquals("", questions[0].answer)
+        assertTrue(questions[1].options.isEmpty())
+        assertEquals("Jupiter", questions[1].explanationHtml)
+    }
+
+    /**
+     * `Ans.` is the answer key *of options*, so a block with no line-start
+     * `(a)` but an `Ans.` line is a multiple-choice question whose options were
+     * not on their own lines — a formatting mistake. It must keep failing
+     * loudly, not import as a card with its options swallowed into the stem.
+     * `Answer:` alone is the card grammar; `Ans.` alone is not.
+     */
+    @Test
+    fun anAnsOnlyBlockWithoutOptionsIsStillRefused() {
+        try {
+            splitDocxMarkersForTest("1.) Capital of France?\nAns. Paris")
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("1.)"))
+            assertTrue(e.message!!.contains("missing option (a)"))
+            assertTrue(e.message!!.contains("Expected format"))
+        }
+    }
+
+    /**
+     * The defect this pins: options written inline in the stem instead of on
+     * their own lines, answered with `Ans.`. That used to be refused; becoming
+     * a card would silently move the options into the front and lose the key.
+     */
+    @Test
+    fun anMcqWithInlineOptionsAndAnAnsLineIsStillRefused() {
+        try {
+            splitDocxMarkersForTest("1.) Pick one (a) Alpha (b) Beta\nAns. b")
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("1.)"))
+            assertTrue(e.message!!.contains("missing option (a)"))
+        }
+    }
+
+    /**
+     * A block with no options *and* no card label is still refused: that is a
+     * multiple-choice question whose options were forgotten, and guessing the
+     * omission would hide the author's mistake.
+     */
+    @Test
+    fun aBlockWithoutOptionsOrAnswerStillFailsLoudly() {
+        try {
+            splitDocxMarkersForTest("1.) Stem only")
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("1.)"))
+            assertTrue(e.message!!.contains("missing option (a)"))
+        }
+    }
+
     @Test
     fun noMarkersFailsLoudly() {
         try {

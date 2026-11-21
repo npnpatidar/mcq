@@ -80,7 +80,13 @@ data class TestSetup(
      * questions (or no passage information). The sampler pre-check refuses a
      * scope whose smallest block cannot fit the overshoot limit (section 9.6).
      */
-    val minBlockSize: Int = 1
+    val minBlockSize: Int = 1,
+    /**
+     * The scope holds questions but none a test can serve — every one is a
+     * flashcard. [available] is the testable pool, so it is 0 here; this flag
+     * is what separates "nothing here" from "nothing to *test* here".
+     */
+    val scopeIsFlashcardsOnly: Boolean = false
 ) {
 
     /**
@@ -132,10 +138,28 @@ data class TestSetup(
     /** Whether the request was larger than the pool and was reduced. */
     fun clamped(): Boolean = (resolution() as? TestPlan.Resolution.Ready)?.clamped == true
 
+    /** Whether the scope's content is entirely flashcards, so nothing can be tested. */
+    fun flashcardsOnlyScope(): Boolean = available <= 0 && scopeIsFlashcardsOnly
+
+    /**
+     * Whether the sheet must say "asked X · ran Y": the run is shorter than
+     * what was asked. A frozen set (panel or blueprint) can shrink because a
+     * member is a flashcard, and a sampled request can be clamped by a short
+     * pool; either way the sheet says both numbers rather than silently
+     * running less than the learner asked for.
+     */
+    fun showsAskedRun(): Boolean =
+        resolution() is TestPlan.Resolution.Ready && requestedCount > resolvedCount()
+
     /** What to tell the learner: the refusal, the clamp note, or nothing. */
-    fun message(): String? = when (val resolution = resolution()) {
-        is TestPlan.Resolution.Refused -> resolution.message
-        is TestPlan.Resolution.Ready -> resolution.message
+    fun message(): String? {
+        // Content exists, but all of it is study-only: say that rather than
+        // calling a non-empty scope empty.
+        if (flashcardsOnlyScope()) return TestPlan.NO_MULTIPLE_CHOICE_MESSAGE
+        return when (val resolution = resolution()) {
+            is TestPlan.Resolution.Refused -> resolution.message
+            is TestPlan.Resolution.Ready -> resolution.message
+        }
     }
 
     /** Whether Start may be pressed: the plan resolves and the pool is not empty. */

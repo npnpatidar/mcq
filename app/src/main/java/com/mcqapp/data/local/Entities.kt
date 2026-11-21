@@ -117,6 +117,26 @@ data class QuestionEntity(
     val image: String? = null,
     val explanation: String = "",
     val explanationImage: String? = null,
+    /**
+     * The back's flattened, markup-free visible text
+     * ([com.mcqapp.domain.searchableText]) — the searchable form of
+     * [explanation] plus [explanationImage], maintained at write time.
+     *
+     * A flashcard's back *is* its explanation; for a multiple-choice card this
+     * is the explanation the learner sees after answering. Search matches this
+     * dedicated column and never widens [searchText]: that one holds the stem
+     * alone because it is the list row's preview, so an answer written into it
+     * would appear where the question preview belongs.
+     */
+    @ColumnInfo(defaultValue = "''")
+    val backText: String = "",
+    /**
+     * [backText] case-folded with Kotlin's full-Unicode [String.lowercase] at
+     * write time, exactly like [searchTextFolded]: the SQL prefilter matches a
+     * Kotlin-lowercased query against it, so `CAFÉ` is found by `café`.
+     */
+    @ColumnInfo(defaultValue = "''")
+    val backTextFolded: String = "",
     val difficulty: String = "medium",
     val marks: Double = 1.0,
     val tags: String = "",

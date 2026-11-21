@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -124,18 +125,18 @@ private fun KpiCard(bundle: GuessingData) {
                 )
             )
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            if (bundle.isComplete) {
-                stringResource(R.string.stats_guess_coverage_complete, bundle.reviews)
-            } else {
-                stringResource(
-                    R.string.stats_guess_coverage, bundle.reviews, bundle.allReviews
-                )
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (bundle.unflaggedReviews > 0) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                pluralStringResource(
+                    R.plurals.stats_guess_coverage_note,
+                    bundle.unflaggedReviews,
+                    bundle.unflaggedReviews
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

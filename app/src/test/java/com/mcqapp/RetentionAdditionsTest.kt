@@ -29,7 +29,8 @@ class RetentionAdditionsTest {
         rating: Int,
         reviewedAt: Long = todayStart + hour,
         paperId: String = "p1",
-        intervalBeforeDays: Int? = null
+        intervalBeforeDays: Int? = null,
+        wasCorrect: Boolean? = null
     ) = ReplayReview(
         paperId = paperId,
         questionId = questionId,
@@ -41,7 +42,8 @@ class RetentionAdditionsTest {
         difficultyAfter = 5.0,
         intervalDaysAfter = 3,
         predictedRetention = null,
-        intervalBeforeDays = intervalBeforeDays
+        intervalBeforeDays = intervalBeforeDays,
+        wasCorrect = wasCorrect
     )
 
     private fun retention(
@@ -168,6 +170,29 @@ class RetentionAdditionsTest {
         val scoped = retention(reviews, scopePaperId = "p1", categories = categories)
         assertTrue(scoped.categoryRetention.isEmpty())
         assertEquals(setOf("Alpha", "Beta"), scoped.groupRetention.map { it.label }.toSet())
+    }
+
+    @Test
+    fun aSelfGradedCardReviewStillCountsOnTheRatingBasedSlices() {
+        // Retention is the grade the learner gave, not an objective mark, so a
+        // card review with no `wasCorrect` flag belongs here; only the
+        // objective surfaces leave it out.
+        val reviews = listOf(
+            review("card", rating = 1, intervalBeforeDays = 30, wasCorrect = null),
+            review("judged", rating = 3, intervalBeforeDays = 30, wasCorrect = true),
+            review("same-card", rating = 3, intervalBeforeDays = 5, wasCorrect = null)
+        )
+        val data = retention(reviews, categories = mapOf("card" to "Alpha", "judged" to "Alpha"))
+
+        val band = data.intervalRetention.first { it.band == IntervalBand.D22_60 }
+        assertEquals(2, band.reviews)
+        assertEquals(1, band.passes)
+        assertEquals(0.5, band.retention!!, 1e-9)
+        val byCategory = data.categoryRetention.associateBy { it.label }
+        assertEquals(2, byCategory.getValue("Alpha").reviews)
+        assertEquals(1, byCategory.getValue("Alpha").passes)
+        // The trend counts both cards' first-of-day rows, card review included.
+        assertEquals(3, data.retentionTrend.points.sumOf { it.count })
     }
 
     @Test

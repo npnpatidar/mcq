@@ -226,8 +226,7 @@ class CalibrationTest {
                 l.copy(stateBefore = CardStateKind.NEW) to o
             },
             mutate(Calibration.Exclusion.NO_FORECAST) { l, o -> l to o.copy(predictedRecall = null) },
-            mutate(Calibration.Exclusion.NO_FORECAST) { l, o -> l.copy(predictedRecall = null) to o },
-            mutate(Calibration.Exclusion.NO_OUTCOME) { l, o -> l to o.copy(wasCorrect = null) }
+            mutate(Calibration.Exclusion.NO_FORECAST) { l, o -> l.copy(predictedRecall = null) to o }
         )
         for (case in cases) {
             val result = Calibration.report(case.rows, now = t0 + 400 * day, epochStart = t0)
@@ -238,6 +237,39 @@ class CalibrationTest {
                 result.exclusions.firstOrNull { it.reason == case.reason }?.count
             )
         }
+    }
+
+    @Test
+    fun `a row without an outcome between a label and its outcome keeps the pair`() {
+        // A flashcard (or legacy) review records `wasCorrect = null`. Pairing by
+        // adjacency let it take the real outcome's slot, losing the pair AND
+        // inflating the "no outcome" count. It must be skipped, silently.
+        val (label, outcome) = card()
+        val selfGraded = row(
+            rating = 3,
+            reviewedAt = t0 + 2 * day,
+            gradeSource = "CHOSEN",
+            wasGuess = null,
+            wasCorrect = null,
+            wasSkipped = false,
+            intervalDaysAfter = 1
+        )
+        val result = Calibration.report(
+            listOf(label, selfGraded, outcome),
+            now = t0 + 400 * day,
+            epochStart = t0
+        )
+        assertEquals(1, result.pairs)
+        assertEquals(0, result.excluded)
+        assertEquals(
+            "the label pairs with the next row that has an outcome",
+            1.0,
+            result.grades.first { it.grade == Calibration.GradeClass.EASY }.recall!!,
+            1e-9
+        )
+        val easy = result.followUp.first { it.grade == Calibration.GradeClass.EASY }
+        assertEquals(1, easy.due)
+        assertEquals("the self-graded row is not an observed outcome", 1, easy.observed)
     }
 
     @Test

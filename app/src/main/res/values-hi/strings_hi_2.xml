@@ -13,8 +13,8 @@
         <item quantity="other">• %1$d नए प्रश्न जोड़े गए</item>
     </plurals>
     <plurals name="followup_import_recall_converted">
-        <item quantity="one">• %1$d नोट को रिकॉल कार्ड में बदला गया</item>
-        <item quantity="other">• %1$d नोटों को रिकॉल कार्ड में बदला गया</item>
+        <item quantity="one">• %1$d कार्ड आयात किया गया</item>
+        <item quantity="other">• %1$d कार्ड आयात किए गए</item>
     </plurals>
     <plurals name="followup_import_restored_attempts">
         <item quantity="one">• %1$d टेस्ट प्रयास बहाल किया गया</item>

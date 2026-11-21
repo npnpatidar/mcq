@@ -345,6 +345,13 @@ internal suspend fun QuestionDao.countForCategoriesChunked(
 ): Int =
     categoryIds.chunks().sumOf { countForCategories(paperId, it) }
 
+/** The scope's testable (multiple-choice) count, summed over disjoint chunks. */
+internal suspend fun QuestionDao.countTestableForCategoriesChunked(
+    paperId: String,
+    categoryIds: List<String>
+): Int =
+    categoryIds.chunks().sumOf { countTestableForCategories(paperId, it) }
+
 /**
  * The smallest block in a whole paper (section 9.6). A standalone question is
  * a block of one; with none, it is the smallest passage's member count.
@@ -457,6 +464,37 @@ internal suspend fun QuestionTagDao.bookmarkedIdsInScopeChunked(
         bookmarkedIdsInScope(paperId, scopeAll = 1, categoryIds = emptyList())
     } else {
         categoryIds.chunks().flatMap { bookmarkedIdsInScope(paperId, scopeAll = 0, categoryIds = it) }
+    }
+
+/**
+ * The scope's raw bookmarked count (flashcards included), summed over disjoint
+ * chunks. Copy only: it separates an empty pool from an all-flashcard one.
+ */
+internal suspend fun QuestionTagDao.bookmarkedCountInScopeChunked(
+    paperId: String,
+    categoryIds: List<String>
+): Int =
+    if (categoryIds.isEmpty()) {
+        bookmarkedCountInScope(paperId, scopeAll = 1, categoryIds = emptyList())
+    } else {
+        categoryIds.chunks().sumOf { bookmarkedCountInScope(paperId, scopeAll = 0, categoryIds = it) }
+    }
+
+/**
+ * The scope's raw questions carrying a tag (flashcards included), summed over
+ * disjoint chunks. Copy only, like [bookmarkedCountInScopeChunked].
+ */
+internal suspend fun QuestionTagDao.questionCountForTagChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    tagFolded: String
+): Int =
+    if (categoryIds.isEmpty()) {
+        questionCountForTag(paperId, scopeAll = 1, categoryIds = emptyList(), tagFolded = tagFolded)
+    } else {
+        categoryIds.chunks().sumOf {
+            questionCountForTag(paperId, scopeAll = 0, categoryIds = it, tagFolded = tagFolded)
+        }
     }
 
 /** Every timed sample of the scope; per-question grouping happens in Kotlin. */

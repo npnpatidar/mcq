@@ -59,7 +59,7 @@ class DocxDbRoundTripTest {
     @Test
     fun reimportingAnExportUpdatesNothing() = runBlocking {
         val first = Importer(db).import(LegacyParser.parse(sampleJson()))
-        assertEquals(53, first.newQuestions)
+        assertEquals(62, first.newQuestions)
 
         val exporter = PaperExporter(db)
         // The exporter writes into a stream now, so the test supplies one.
@@ -83,6 +83,6 @@ class DocxDbRoundTripTest {
             0,
             second.updatedQuestions
         )
-        assertEquals(53, second.duplicateQuestions)
+        assertEquals(62, second.duplicateQuestions)
     }
 }

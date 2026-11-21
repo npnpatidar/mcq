@@ -75,7 +75,27 @@ data class TestReportInput(
      * question id. Empty when the sample cannot support it; the review row
      * then says nothing rather than showing a 0.
      */
-    val discrimination: Map<String, Reliability.ItemDiscrimination> = emptyMap()
+    val discrimination: Map<String, Reliability.ItemDiscrimination> = emptyMap(),
+    /**
+     * How many questions in the attempt's scope a **test** could sample:
+     * multiple-choice only, flashcards excluded. Null means the caller did not
+     * read it, and the report falls back to the raw category sum — old callers
+     * and synthetic tests keep their behaviour.
+     *
+     * This is the population behind the header's denominator, the coverage
+     * card, the finite-population margin and the longer-mock suggestion: a
+     * flashcard is study-only, so counting it there would promise coverage and
+     * confidence a run can never reach.
+     */
+    val testableScopeSize: Int? = null,
+    /**
+     * Per-category **testable** counts (a category's own multiple-choice
+     * questions), keyed by category id; a category absent from the map has
+     * none. Read-only for [scopeTopicsOf] and [notSampledTopics]; ignored
+     * unless [testableScopeSize] is non-null, because an empty map is also
+     * what an all-flashcard paper legitimately produces.
+     */
+    val testableCategoryCounts: Map<String, Int> = emptyMap()
 )
 
 /** The headline numbers, with both denominators the report shows (section 11.4). */
@@ -398,11 +418,14 @@ object TestReportBuilder {
         val type = TestType.fromStorage(attempt.testType)
         val score = scoreOf(attempt, input.rows)
         val scopeTopics = scopeTopicsOf(input)
-        val scopeSize = if (scopeTopics.isNotEmpty()) {
-            scopeTopics.sumOf { it.questionCount }
-        } else {
-            score.shown
-        }
+        // The testable population when the caller read it; the raw scope sum
+        // otherwise (legacy callers and synthetic inputs).
+        val scopeSize = input.testableScopeSize
+            ?: if (scopeTopics.isNotEmpty()) {
+                scopeTopics.sumOf { it.questionCount }
+            } else {
+                score.shown
+            }
         val comparable = family == ReportFamily.MOCK || family == ReportFamily.FRESH_SAMPLE
         val margin = if (comparable) {
             TestStatistics.marginPoints(
@@ -1104,7 +1127,18 @@ object TestReportBuilder {
                 .associate { it.first.id to it.first }
             ids.mapNotNull { byId[it] }
         }
-        return expanded.map { ScopeTopic(it.id, it.title, it.questionCount) }
+        // When the caller read the testable counts, a category's pool is its
+        // multiple-choice questions only (absent reads as zero); otherwise the
+        // raw paper count stands, which is what a legacy caller supplies.
+        val testable = input.testableScopeSize != null
+        val counts = input.testableCategoryCounts
+        return expanded.map { node ->
+            ScopeTopic(
+                id = node.id,
+                title = node.title,
+                questionCount = if (testable) counts[node.id] ?: 0 else node.questionCount
+            )
+        }
     }
 
     private fun notSampledTopics(scope: List<ScopeTopic>, rows: List<ReportRow>): List<String> {
@@ -1112,6 +1146,9 @@ object TestReportBuilder {
         val sampledIds = rows.mapNotNull { it.currentCategoryId }.toHashSet()
         val sampledTitles = rows.map { it.categoryTitle }.toHashSet()
         return scope
+            // A category with no question a test can serve is not "unseen";
+            // naming it would suggest a card-only topic was simply skipped.
+            .filter { it.questionCount > 0 }
             .filter { it.id !in sampledIds && it.title !in sampledTitles }
             .map { it.title }
             .distinct()

@@ -42,6 +42,7 @@ class CardContentTest {
         correct: Set<String> = setOf("o1"),
         passageId: String? = null,
         explanation: List<ContentElement> = emptyList(),
+        explanationImage: String? = null,
         marks: Double = 1.0,
         tags: List<String> = emptyList()
     ) = Question(
@@ -52,6 +53,7 @@ class CardContentTest {
         options = options,
         correctOptionIds = correct,
         explanationElements = explanation,
+        explanationImage = explanationImage,
         marks = marks,
         tags = tags,
         passageId = passageId
@@ -73,6 +75,8 @@ class CardContentTest {
         correct: List<String> = listOf("o1"),
         passageId: String? = null,
         explanation: String = "",
+        explanationElements: List<ContentElement> = emptyList(),
+        explanationImage: String? = null,
         marks: Double = 1.0,
         tags: List<String> = emptyList()
     ) = QuestionDto(
@@ -83,6 +87,8 @@ class CardContentTest {
         options = options,
         correctOptionIds = correct,
         explanation = explanation,
+        explanationElements = explanationElements,
+        explanationImage = explanationImage,
         marks = marks,
         tags = tags,
         passageId = passageId
@@ -101,7 +107,10 @@ class CardContentTest {
         elements: List<ContentElement> = stem,
         image: String? = null,
         options: List<OptionEntity> = defaultOptionEntities(),
-        passageId: String? = null
+        passageId: String? = null,
+        explanation: List<ContentElement> = emptyList(),
+        explanationImage: String? = null,
+        explanationJson: String = explanation.toContentJson(json)
     ) = QuestionEntity(
         id = "q1",
         categoryId = "c1",
@@ -110,8 +119,35 @@ class CardContentTest {
         searchText = elements.searchableText,
         searchTextFolded = elements.searchableText.lowercase(),
         image = image,
+        explanation = explanationJson,
+        explanationImage = explanationImage,
         tagsFolded = "",
         contentHash = ""
+    )
+
+    /** A zero-option question: its explanation is the back. */
+    private fun flashcard(
+        elements: List<ContentElement> = stem,
+        explanation: List<ContentElement> = listOf(ContentElement.TextElement("Because four.")),
+        explanationImage: String? = null
+    ) = domainQuestion(
+        elements = elements,
+        options = emptyList(),
+        correct = emptySet(),
+        explanation = explanation,
+        explanationImage = explanationImage
+    )
+
+    private fun flashcardDto(
+        elements: List<ContentElement> = stem,
+        explanation: List<ContentElement> = listOf(ContentElement.TextElement("Because four.")),
+        explanationImage: String? = null
+    ) = dto(
+        elements = elements,
+        options = emptyList(),
+        correct = emptyList(),
+        explanationElements = explanation,
+        explanationImage = explanationImage
     )
 
     private fun defaultOptionEntities() = listOf(
@@ -266,6 +302,87 @@ class CardContentTest {
                     tags = listOf("arithmetic")
                 )
             )
+        )
+    }
+
+    @Test
+    fun aFlashcardBackIsContent() {
+        val base = CardContent.of(flashcard())
+        assertNotEquals(
+            "a changed textual back is a new answer",
+            base,
+            CardContent.of(flashcard(explanation = listOf(ContentElement.TextElement("Because five."))))
+        )
+        assertNotEquals(
+            "a table-only back change must be visible",
+            base,
+            CardContent.of(
+                flashcard(explanation = listOf(ContentElement.TableElement(listOf(listOf("a", "b")))))
+            )
+        )
+        assertNotEquals(
+            "a formula-only back change must be visible",
+            base,
+            CardContent.of(
+                flashcard(explanation = listOf(ContentElement.MathElement("<math><mn>4</mn></math>")))
+            )
+        )
+        assertNotEquals(
+            "a back picture is content",
+            base,
+            CardContent.of(flashcard(explanationImage = "back.png"))
+        )
+        assertNotEquals(
+            "the stem is still the front",
+            base,
+            CardContent.of(flashcard(elements = stem.dropLast(1)))
+        )
+    }
+
+    @Test
+    fun aBlankFlashcardBackHasOneShape() {
+        assertEquals(
+            "[] and one blank text block describe the same back",
+            CardContent.of(flashcard(explanation = emptyList())),
+            CardContent.of(flashcard(explanation = listOf(ContentElement.TextElement(""))))
+        )
+        assertEquals(
+            "a stored [] and an empty DTO back are the same",
+            CardContent.of(
+                storedQuestion(options = emptyList(), explanation = emptyList()),
+                emptyList(),
+                emptySet()
+            ),
+            CardContent.of(flashcardDto(explanation = emptyList()))
+        )
+        assertEquals(
+            "a legacy blank explanation column and an empty DTO back are the same",
+            CardContent.of(
+                storedQuestion(options = emptyList(), explanationJson = ""),
+                emptyList(),
+                emptySet()
+            ),
+            CardContent.of(flashcardDto(explanation = emptyList()))
+        )
+    }
+
+    @Test
+    fun theThreeShapesFingerprintIdenticallyForAFlashcard() {
+        val back = listOf(ContentElement.TextElement("Because four."))
+        val stored = storedQuestion(
+            options = emptyList(),
+            explanation = back,
+            explanationImage = "back.png"
+        )
+        assertEquals(
+            CardContent.of(flashcard(explanation = back, explanationImage = "back.png")),
+            CardContent.of(
+                flashcardDto(explanation = back, explanationImage = "back.png")
+            )
+        )
+        assertEquals(
+            CardContent.of(flashcard(explanation = back, explanationImage = "back.png")),
+            CardContent.of(stored, emptyList(), emptySet())
         )
     }
 

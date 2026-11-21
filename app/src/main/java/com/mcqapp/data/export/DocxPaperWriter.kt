@@ -28,6 +28,14 @@ import java.util.zip.ZipOutputStream
  * subcategories survive), and questions follow the `N.) … (a) … Ans. …
  * Exp:` marker grammar with `Passage:` blocks.
  *
+ * A flashcard (a question with no options) has no options to list, so it is
+ * written as `N.) front` followed by `Answer: back` — the back is the
+ * question's explanation field, which is where the app keeps a card's answer.
+ * The label says Answer rather than Exp: because there is no option for a
+ * note to explain. The parser reads the same shape back as a zero-option
+ * question, so a card survives export, editing and re-import like any other
+ * question instead of being dropped.
+ *
  * The visible document is the whole format: maths travels as native OMML
  * equations, pictures as `word/media` entries, tables as Word tables, and
  * the inline tags (`strong`, `em`, `u`, `del`, `sub`, `sup`, `mark`) as run
@@ -347,16 +355,17 @@ object DocxPaperWriter {
                     ?.let { ContentElement.TextElement(it) }
             )
         }
-        // A question without options (or with nothing at all in the stem)
-        // cannot round-trip: the marker grammar requires (a)… and Ans.
-        // Emitting one would make the whole document fail loudly on import,
-        // so it is left out with a warning instead.
-        if (question.options.isEmpty() ||
-            (stemElements.isEmpty() && question.image == null)
-        ) {
+        // A question with nothing at all in its stem cannot round-trip: the
+        // marker grammar needs a `N.)` line to open the block, and the parser
+        // refuses a blank stem. Emitting one would make the whole document
+        // fail loudly on import, so it is left out with a warning instead.
+        val hasStem = question.image != null || stemElements.any { element ->
+            element !is ContentElement.TextElement || element.text.isNotBlank()
+        }
+        if (!hasStem) {
             warnings.add(
-                "Question ${question.id} has no options or no content; " +
-                    "Word cannot carry it and it was left out."
+                "Question ${question.id} has no content; Word cannot carry it " +
+                    "and it was left out."
             )
             return out
         }
@@ -374,6 +383,15 @@ object DocxPaperWriter {
                 "Question ${question.id} has no content Word can carry; " +
                     "it was left out."
             )
+            return out
+        }
+
+        // A question with no options is a flashcard: there are no options to
+        // list and no option to key, so the back is written under `Answer:`
+        // and nothing else follows. It used to be dropped from the document
+        // entirely, which silently lost a card a teacher had in the paper.
+        if (question.options.isEmpty()) {
+            out.addAll(answerBlocks(question, media, warnings))
             return out
         }
 
@@ -448,6 +466,34 @@ object DocxPaperWriter {
         }
         return fieldBlocks(
             elements, question.explanationImage, media, warnings, markerPrefix = "Exp: "
+        )
+    }
+
+    /**
+     * A flashcard's back, written under `Answer:`. The back is the question's
+     * explanation field — the app's one home for it — so the visible markers
+     * and the hidden payload describe the same content and an untouched
+     * export still round-trips. The label says Answer because a card has no
+     * options: what follows is the answer, not a note about one.
+     *
+     * A card whose back is empty still gets its `Answer:` line: without it
+     * the block has no marker at all and the parser would refuse the whole
+     * document as a multiple-choice question with its options forgotten. The
+     * empty line is honest — the card has no answer recorded — and unlike an
+     * empty `Ans.` line it carries the card's grammar.
+     */
+    private fun answerBlocks(
+        question: QuestionDto,
+        media: MediaPool,
+        warnings: MutableList<String>
+    ): List<String> {
+        val elements = if (question.explanationElements.isNotEmpty()) {
+            question.explanationElements
+        } else {
+            listOf(ContentElement.TextElement(question.explanation))
+        }
+        return fieldBlocks(
+            elements, question.explanationImage, media, warnings, markerPrefix = "Answer: "
         )
     }
 

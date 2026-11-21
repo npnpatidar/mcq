@@ -288,6 +288,11 @@ internal class QuestionStore(
                     Logger.i("REPO", "saveQuestion(id=${question.id}): content changed, schedule reset")
                 }
             }
+            // The back as search matches it. For a flashcard this is the
+            // answer; for a multiple-choice card it is the explanation shown
+            // after answering. searchText stays the stem alone — it is the
+            // list row's preview.
+            val backText = question.explanationElements.searchableText
             db.questionDao().upsert(
                 QuestionEntity(
                     id = question.id,
@@ -299,6 +304,8 @@ internal class QuestionStore(
                     image = question.image,
                     explanation = question.explanationElements.toContentJson(mapper.json),
                     explanationImage = question.explanationImage,
+                    backText = backText,
+                    backTextFolded = backText.lowercase(),
                     difficulty = question.difficulty.label,
                     marks = question.marks,
                     tags = question.tags.joinToString(","),
@@ -376,6 +383,8 @@ internal class QuestionStore(
                 image = q.image,
                 explanation = q.explanationElements.toContentJson(mapper.json),
                 explanationImage = q.explanationImage,
+                backText = q.explanationElements.searchableText,
+                backTextFolded = q.explanationElements.searchableText.lowercase(),
                 difficulty = q.difficulty.label,
                 marks = q.marks,
                 tags = q.tags.joinToString(","),

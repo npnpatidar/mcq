@@ -82,8 +82,8 @@ or Anki (.apkg).
 | **Results** | `results/{attemptId}` / `review/{attemptId}` | Score ring, accuracy, margin, trend, topics, time, What to do next, per-question review with filters, bookmark toggles. |
 | **History** | `history` | Trends, weakest categories, hardest questions, attempt list (tappable → Results). No attempt delete. |
 | **Statistics** | `stats` | Scope chip (All papers / one paper), range chips (7 d / 30 d / 90 d / 1 y / All). Seven tabs. |
-| **Study** | `study/{paperId}?...` | One card at a time. Classic footer (Show answer → Again/Hard/Good/Easy) or Simplified (Guessing switch → Check → Change grade → Next). Clocks, passage header, summary on stop. |
-| **Browse** | `browse/{paperId}?...` | Question list with search, 4 filter chips (All / No answer / No explanation / Uncategorized), category dropdown, selection mode (bulk edit/move/copy/delete/export), reorder arrows, passage headers. |
+| **Study** | `study/{paperId}?...` | One card at a time. Classic footer (Show answer → Again/Hard/Good/Easy) or Simplified (Guessing switch → Check → Change grade → Next). A **flashcard** (zero options) always uses Show answer → Again/Hard/Good/Easy in both modes and is self-graded. Clocks, passage header, summary on stop. |
+| **Browse** | `browse/{paperId}?...` | Question list with search, 4 filter chips (All / No answer key (multiple choice) / No explanation / Uncategorized), category dropdown, selection mode (bulk edit/move/copy/delete/export), reorder arrows, passage headers, Flashcard labels. |
 | **Editor** | `editor?...` | Full question editor: category, passage, BlockListEditor (text/image/table/math), options with checkboxes, marks, difficulty, tags, explanation, validation, Prev/Next over current filter, Save/Delete. |
 | **Passages** | `passages` | List of passages with member counts. Create/Edit/Delete/Move. Tap member → opens in Browse. Delete guarded if members exist. |
 | **Bookmarks** | `bookmarks` | Paged list. Tap → opens in Browse (reading list). Remove icon. Export (all bookmarks as pseudo-paper). |
@@ -1166,7 +1166,7 @@ Modal bottom sheet (Anki's Card Info):
 
 **Search Field:** `OutlinedTextField`, label `Search text, tags, options`, single line, 300 ms debounce.
 
-**Filter Chips (4):** `All` / `No answer` / `No explanation` / `Uncategorized`. Changing filter drops selection.
+**Filter Chips (4):** `All` / `No answer key (multiple choice)` / `No explanation` / `Uncategorized`. A flashcard legitimately has no key, so it is excluded from the no-answer chip. Changing filter drops selection.
 
 **Category Dropdown:** `All categories` / single category (depth-indented). Single pick only.
 
@@ -1213,7 +1213,9 @@ Modal bottom sheet (Anki's Card Info):
 
 **Tags:** Existing tags as `InputChip` (tap → remove). Add tag: field + `Add` button.
 
-**Validation Warnings:** `No answer is marked correct — this question will not be graded.` (error colour). Blank text / < 2 options / blank option → Save/Prev/Next disabled.
+**Card Type:** `Multiple choice` / `Flashcard` chips above Options (default Multiple choice). A flashcard hides the options block, calls the explanation field `Answer`, and shows the front + back in the preview. Switching to Flashcard clears typed options only after a confirmation.
+
+**Validation Warnings:** `No answer is marked correct — this question will not be graded.` (error colour, MCQ only). A multiple-choice question needs ≥2 non-blank options; a flashcard needs a visible answer and zero options; one option is never valid. A blank form blocks Save/Prev/Next.
 
 **Save / Delete Row:** `Save` (enabled when valid & not saving) → saves, pops, `Saved` toast. `Delete` (not new, not from import) → deletes, pops.
 
@@ -1249,11 +1251,11 @@ Modal bottom sheet (Anki's Card Info):
 
 **Search Field:** `Search text or tags`, single line, 300 ms debounce (whole `SearchRequest` debounced).
 
-**Scope Chips (3):** `All` (question+tags+options+passage) / `Questions` (question+tags+passage) / `Options` (options only).
+**Scope Chips (3):** `All` (question+tags+options+passage+answer) / `Questions` (question+tags+passage+answer) / `Options` (options only).
 
 **Results:** Paged (30/page). `Searching…` / `No matches` / `N match(es)` (+ `+` if possibly more). Per hit: preview (2 lines) + paper title (primary). Tap → Browse focused.
 
-**Admission Rules:** `searchableText` (flattens blocks, joins with space, strips markup; tables & formulas included). Prefilter key = longest alphanumeric run (len ≥ 2) escaped for SQL `LIKE`. Blank query → all questions (UI shows empty until non-blank). Cross-paper via `paperByCategoryId`; deleted papers/categories dropped.
+**Admission Rules:** `searchableText` for the front (flattens blocks, joins with space, strips markup; tables & formulas included) plus `backTextFolded` for the answer/explanation (indexed at write time and backfilled by schema 29). A hit found only in the back shows a short `Answer: …` snippet and a Flashcard label. Prefilter key = longest alphanumeric run (len ≥ 2) escaped for SQL `LIKE`. Blank query → all questions (UI shows empty until non-blank). Cross-paper via `paperByCategoryId`; deleted papers/categories dropped.
 
 ---
 
@@ -1267,6 +1269,7 @@ Modal bottom sheet (Anki's Card Info):
 | **Option** | `^\([a-z]\)` | exact | Yes | `(a)`..`(j)`; must start at `(a)`, consecutive without gaps. |
 | **Answer** | `^Ans\.` | exact | Yes | `Ans. b` or `Ans. b, d` or `Ans. b and d`. |
 | **Explanation** | `^Exp:` | exact | No | `Exp: <text>`. |
+| **Card answer** | `^Answer:` | exact | Flashcard | `Answer: <back>`. Marks a zero-option front/back card; replaces the option/`Ans.` pair. `Ans.` is also accepted as a card's answer marker. |
 | **Passage** | `^(?i)Passage:` | **case-insensitive** | No | `Passage: <title>`; blank line = end-of-passage reset. |
 
 Markers are line-anchored (`(?m)^`). DOCX writer prefixes such lines with a space
@@ -1672,9 +1675,8 @@ but check these**:
 | Warning | Condition |
 |---------|-----------|
 | `Blank text` | `elements` empty AND `text` blank |
-| `No options` | `options.isEmpty()` |
-| `Only one option` | `options.size == 1` |
-| `No answer key` | `correctOptionIds.isEmpty()` |
+| `No answer yet` | a flashcard (zero options) whose back has no visible content |
+| `No answer key` | a multiple-choice question with `correctOptionIds.isEmpty()` |
 | `Answer key references missing option: <id>` | `correctOptionIds` contains id not in `options` |
 | `Worth 0 marks` | `marks == 0.0` |
 | `Image is <N> KB` | Data URI payload > `LARGE_IMAGE_CHARS` (≈ 100 KB base64) |
@@ -1864,7 +1866,7 @@ or saving is one tap after picking the format.
 - **MIME:** `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 - **Ext:** `.docx` | **File:** `<base>.docx`
 - **Contains:** OOXML: `word/document.xml`, `word/styles.xml`, `word/media/`, `docProps/custom.xml` (hidden payload), `[Content_Types].xml`, `_rels/.rels`.
-- **Structure:** Paper title = Heading 1; categories = Heading (depth+1); questions = marker grammar (`N.)`, `(a)`, `Ans.`, `Exp:`, `Passage:`).
+- **Structure:** Paper title = Heading 1; categories = Heading (depth+1); questions = marker grammar (`N.)`, `(a)`, `Ans.`, `Exp:`, `Passage:`); a flashcard uses `N.)` front + `Answer:` back with no options.
 - **Math:** Native OMML (`m:oMath`) — `mathMlToOmml()`.
 - **Images:** `word/media/imageN.<ext>`; relationships in `word/_rels/document.xml.rels`.
 - **Tables:** Word tables (`w:tbl`) with borders, auto-fit.

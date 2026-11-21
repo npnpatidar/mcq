@@ -21,8 +21,10 @@ import kotlinx.serialization.json.Json
  * the passage assignment.
  *
  * Explanation, marks, difficulty, tags and sort order are deliberately
- * absent: changing those must keep the interval the card earned. A passage's
- * own body is not folded in here either; [passageChanged] compares it once
+ * absent for a multiple-choice card: changing those must keep the interval the
+ * card earned. A flashcard is the exception — its explanation *is* the answer,
+ * so the back (blocks and image) is fingerprinted for a zero-option question.
+ * A passage's own body is not folded in here either; [passageChanged] compares it once
  * and resets the members, so one passage edit reads as "its context changed"
  * rather than "every member's text changed".
  *
@@ -47,7 +49,9 @@ object CardContent {
         options = question.options.map { option(it.elements, it.image) },
         optionIds = question.options.map { it.id },
         correctIds = question.correctOptionIds,
-        passageId = question.passageId
+        passageId = question.passageId,
+        backElements = question.explanationElements,
+        backImage = question.explanationImage
     )
 
     fun of(dto: QuestionDto): String = fingerprint(
@@ -58,7 +62,11 @@ object CardContent {
         },
         optionIds = dto.options.map { it.id },
         correctIds = dto.correctOptionIds.toSet(),
-        passageId = dto.passageId
+        passageId = dto.passageId,
+        backElements = dto.explanationElements.ifEmpty {
+            listOf(ContentElement.TextElement(dto.explanation))
+        },
+        backImage = dto.explanationImage
     )
 
     fun of(
@@ -71,7 +79,9 @@ object CardContent {
         options = options.map { option(it.text.parseContentElements(json).orBlankElement(), it.image) },
         optionIds = options.map { it.id },
         correctIds = correctIds,
-        passageId = question.passageId
+        passageId = question.passageId,
+        backElements = question.explanation.parseContentElements(json),
+        backImage = question.explanationImage
     )
 
     /** A passage's body, image and title as its members studied them. */
@@ -105,7 +115,9 @@ object CardContent {
         options: List<String>,
         optionIds: List<String>,
         correctIds: Set<String>,
-        passageId: String?
+        passageId: String?,
+        backElements: List<ContentElement>,
+        backImage: String?
     ): String {
         val raw = buildString {
             append("q").append(FIELD)
@@ -122,6 +134,14 @@ object CardContent {
             }
             append(FIELD)
             append(passageId ?: "")
+            // A flashcard's back is its answer. Appended only when there are
+            // no options, so every multiple-choice fingerprint keeps the exact
+            // bytes it had before flashcards existed.
+            if (options.isEmpty()) {
+                append(FIELD)
+                append(canonical(backElements.orBlankElement())).append(FIELD)
+                append(backImage ?: "")
+            }
         }
         return sha256(raw)
     }

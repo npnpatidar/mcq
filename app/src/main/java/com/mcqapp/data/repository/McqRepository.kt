@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.chunks
 import com.mcqapp.data.local.countUngradedForCategoriesChunked
+import com.mcqapp.data.local.countTestableForCategoriesChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.minBlockSizeForCategoriesChunked
@@ -21,6 +22,8 @@ import com.mcqapp.data.local.getQuestionIdsWithKeysChunked
 import com.mcqapp.data.local.getSessionRefsByIdsChunked
 import com.mcqapp.data.local.getTagsByIdsChunked
 import com.mcqapp.data.local.bookmarkedIdsInScopeChunked
+import com.mcqapp.data.local.bookmarkedCountInScopeChunked
+import com.mcqapp.data.local.questionCountForTagChunked
 import com.mcqapp.data.local.dwellSamplesInScopeChunked
 import com.mcqapp.data.local.questionIdsForTagChunked
 import com.mcqapp.data.local.tagCountsChunked
@@ -1051,6 +1054,35 @@ class McqRepository internal constructor(
     }
 
     /**
+     * How many of the paper's questions a test can serve: multiple-choice only,
+     * because a flashcard is study-only. This is the setup sheet's pool; the
+     * library card keeps the raw [Paper.totalQuestions] figure.
+     */
+    suspend fun countTestableForPaper(paperId: String): Int =
+        db.questionDao().countTestableForPaper(paperId)
+
+    /**
+     * [countTestableForPaper] over an explicit category selection. An empty
+     * selection is the whole paper (the scope the empty list means everywhere
+     * else in the test path).
+     */
+    suspend fun countTestableForCategories(paperId: String, categoryIds: List<String>): Int =
+        if (categoryIds.isEmpty()) {
+            countTestableForPaper(paperId)
+        } else {
+            db.questionDao().countTestableForCategoriesChunked(paperId, categoryIds)
+        }
+
+    /**
+     * The paper's per-category testable counts, zero-filled for a category
+     * with no multiple-choice question. Blueprint section pools read this, so
+     * no shown pool counts a flashcard.
+     */
+    suspend fun testableCategoryCountsForPaper(paperId: String): Map<String, Int> =
+        db.questionDao().categoryTestableCountsForPaper(paperId)
+            .associate { it.categoryId to it.cnt }
+
+    /**
      * The per-question signals a focus selector ranks (stats.md §9.2).
      * Read-only: it never touches `card_state` or `review_log`.
      */
@@ -1094,6 +1126,24 @@ class McqRepository internal constructor(
         paperId = paperId,
         categoryIds = categoryIds
     )
+
+    /**
+     * The scope's **raw** bookmarked count, flashcards included. Copy only:
+     * the setup sheet uses it to say "flashcards are study-only" when a
+     * Bookmarked pool holds cards but no testable question.
+     */
+    suspend fun bookmarkedCountInScope(paperId: String, categoryIds: List<String>): Int =
+        db.questionTagDao().bookmarkedCountInScopeChunked(paperId, categoryIds)
+
+    /**
+     * The scope's **raw** count of questions carrying a tag, flashcards
+     * included. Copy only, like [bookmarkedCountInScope].
+     */
+    suspend fun questionCountForTagInScope(
+        paperId: String,
+        categoryIds: List<String>,
+        foldedTag: String
+    ): Int = db.questionTagDao().questionCountForTagChunked(paperId, categoryIds, foldedTag)
 
     /**
      * The paper's fixed panels, oldest first (phase 3). The size comes from a
@@ -1382,7 +1432,7 @@ class McqRepository internal constructor(
     suspend fun blueprintSectionViews(blueprint: Blueprint): List<BlueprintSectionView> {
         val categories = db.categoryDao().getByPaper(blueprint.paperId)
         val counts = if (categories.isEmpty()) emptyMap()
-        else db.questionDao().categoryCountsForPaper(blueprint.paperId)
+        else db.questionDao().categoryTestableCountsForPaper(blueprint.paperId)
             .associate { it.categoryId to it.cnt }
         // subtree pool per paper category id, post-order
         val childrenOfCat: Map<String, List<CategoryEntity>> =
@@ -1444,7 +1494,7 @@ class McqRepository internal constructor(
         val views = blueprintSectionViews(blueprint)
         val categories = db.categoryDao().getByPaper(blueprint.paperId)
         val counts = if (categories.isEmpty()) emptyMap()
-        else db.questionDao().categoryCountsForPaper(blueprint.paperId)
+        else db.questionDao().categoryTestableCountsForPaper(blueprint.paperId)
             .associate { it.categoryId to it.cnt }
         val nodes = categoryNodesOf(categories, counts)
         fun convert(section: BlueprintSection, view: BlueprintSectionView): BlueprintSection? {
@@ -2225,8 +2275,12 @@ class McqRepository internal constructor(
             keys.map { key ->
                 val comparable = family.filter { ExamComparisonKey.of(it) == key }
                 val ids = comparable.map { it.id }
+                // The finite-population correction takes the questions a test
+                // can sample, not the paper's raw size: a flashcard is
+                // study-only, so counting it would overstate the population
+                // and make the margin too confident.
                 val population = comparable.lastOrNull()
-                    ?.let { db.questionDao().countQuestionsInScope(it.paperId) }
+                    ?.let { db.questionDao().countTestableForPaper(it.paperId) }
                     ?: 0
                 val base = buildExamStatsProfile(
                     attempts = comparable,

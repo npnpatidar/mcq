@@ -92,7 +92,7 @@
     <string name="stats_col_all">सभी</string>
     <string name="stats_col_mature">परिपक्व</string>
     <string name="stats_col_young">नवीन</string>
-    <string name="stats_correct">सही</string>
+    <string name="stats_recall">स्मरण</string>
     <string name="stats_coverage_empty">इस दायरे में कोई प्रश्न नहीं है।</string>
     <string name="stats_coverage_help">पंक्ति-आधारित: जिस प्रश्न का कार्ड सहेजा गया है, उसे पढ़ा गया माना जाता है। रीसेट किया गया कार्ड फिर से अपढ़ा हो जाता है।</string>
     <string name="stats_coverage_line">%1$d पढ़े गए · %2$d अपढ़े · %3$d बुकमार्क किए गए, कुल %4$d</string>

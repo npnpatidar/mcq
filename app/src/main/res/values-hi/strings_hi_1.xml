@@ -17,7 +17,7 @@
     <string name="a11y_chart_summary">%1$s. %2$s</string>
     <string name="a11y_chart_total">कुल %1$s</string>
     <string name="a11y_formula_editor_value">फ़ॉर्मूला एडिटर। वर्तमान फ़ॉर्मूला: %1$s</string>
-    <string name="a11y_rich_content">फ़ॉर्मूलों सहित प्रदर्शित प्रश्न सामग्री</string>
+    <string name="a11y_rich_content">फ़ॉर्मूलों सहित प्रदर्शित सामग्री</string>
     <string name="action_failed">कार्रवाई विफल रही</string>
     <string name="add_block">ब्लॉक जोड़ें</string>
     <string name="add_category">श्रेणी जोड़ें</string>
@@ -193,7 +193,7 @@
         <item quantity="other">• %1$d उत्तर रीफ़्रेश हुए</item>
     </plurals>
     <plurals name="followup_import_dropped_stems">
-        <item quantity="one">• %1$d कार्ड हटाया गया — इसके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
-        <item quantity="other">• %1$d कार্ড हटाए गए — इनके प्रश्न-भाग में कोई पाठ या चित्र नहीं था</item>
+        <item quantity="one">• %1$d कार्ड हटाया गया — इसमें कोई पाठ, चित्र या उत्तर नहीं था</item>
+        <item quantity="other">• %1$d कार्ड हटाए गए — इनमें कोई पाठ, चित्र या उत्तर नहीं था</item>
     </plurals>
 </resources>

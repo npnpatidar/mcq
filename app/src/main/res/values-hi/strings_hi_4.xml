@@ -167,7 +167,7 @@
         <item quantity="other">%1$d मिनट बीते</item>
     </plurals>
     <string name="session_stopped_early">किसी कार्ड की समीक्षा करने से पहले रोक दिया गया।</string>
-    <string name="session_time_split">प्रश्न %1$s • स्पष्टीकरण %2$s • कुल %3$s</string>
+    <string name="session_time_split">प्रश्न %1$s • उत्तर %2$s • कुल %3$s</string>
     <string name="sessions">सत्र</string>
     <string name="sessions_clock">%1$s – %2$s</string>
     <plurals name="sessions_count">

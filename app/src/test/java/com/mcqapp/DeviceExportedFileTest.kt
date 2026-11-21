@@ -21,8 +21,9 @@ import java.util.zip.ZipInputStream
  * otherwise an untouched export re-imports as 32 new questions instead
  * of deduplicating (the 0.0.20 regression).
  *
- * The sample bank exercises every blank-field shape: q-e2 (no options,
- * left out of the body), q-e3 (no explanation), q-e5 (single option, no
+ * The sample bank exercises every blank-field shape: q-e2 (no options — a
+ * flashcard, so DOCX writes its back under `Answer:` rather than leaving it
+ * out of the body), q-e3 (no explanation), q-e5 (single option, no
  * explanation), and q-math-6 (a formula whose MathML carries MathML-level
  * entities like `&prime;` that the OMML round trip decodes).
  */

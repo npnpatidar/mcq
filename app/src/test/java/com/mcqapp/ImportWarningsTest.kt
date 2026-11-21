@@ -4,6 +4,7 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ImportWarnings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -15,13 +16,15 @@ class ImportWarningsTest {
         options: List<OptionDto> = listOf(OptionDto("a", "A"), OptionDto("b", "B")),
         correct: List<String> = listOf("a"),
         marks: Double = 1.0,
-        image: String? = null
+        image: String? = null,
+        explanation: String = ""
     ) = QuestionDto(
         id = id,
         text = text,
         image = image,
         options = options,
         correctOptionIds = correct,
+        explanation = explanation,
         marks = marks
     )
 
@@ -38,9 +41,37 @@ class ImportWarningsTest {
         )
         val messages = warnings.map { it.message }
         assertTrue(messages.any { it.startsWith("Blank text") })
-        assertTrue(messages.any { it.startsWith("No options") })
-        assertTrue(messages.any { it.startsWith("No answer key") })
+        // Zero options is a flashcard; the problem is an empty back, not a
+        // missing answer key or an unanswerable choice.
+        assertTrue(messages.any { it.startsWith("No answer yet") })
+        assertFalse(messages.any { it.startsWith("No options") })
+        assertFalse(messages.any { it.startsWith("No answer key") })
         assertTrue(warnings.all { it.questionId == "qx" && it.label == "Q9" })
+    }
+
+    @Test
+    fun aFlashcardWithABackHasNoWarning() {
+        val warnings = ImportWarnings.forQuestion(
+            question(
+                options = emptyList(),
+                correct = emptyList(),
+                explanation = "The answer."
+            ),
+            "Q2"
+        )
+        assertEquals(emptyList<String>(), warnings.map { it.message })
+    }
+
+    @Test
+    fun aFlashcardWithNoBackWarnsItWillShowNothingOnReveal() {
+        val warnings = ImportWarnings.forQuestion(
+            question(options = emptyList(), correct = emptyList(), explanation = ""),
+            "Q3"
+        )
+        assertEquals(
+            listOf("No answer yet — will show nothing on reveal"),
+            warnings.map { it.message }
+        )
     }
 
     @Test
@@ -54,9 +85,24 @@ class ImportWarningsTest {
             "Q2"
         )
         val messages = warnings.map { it.message }
-        assertTrue(messages.any { it.startsWith("Only one option") })
-        assertTrue(messages.any { it.contains("zzz") })
+        // One option is converted to a flashcard before writing, so neither the
+        // option count nor a key that names no stored option is a problem.
+        assertFalse(messages.any { it.startsWith("Only one option") })
+        assertFalse(messages.any { it.startsWith("No answer") })
+        assertFalse(messages.any { it.contains("zzz") })
         assertTrue(messages.any { it.startsWith("Worth 0 marks") })
+    }
+
+    @Test
+    fun aMultipleChoiceKeyThatNamesNoStoredOptionStillWarns() {
+        val warnings = ImportWarnings.forQuestion(
+            question(
+                options = listOf(OptionDto("a", "A"), OptionDto("b", "B")),
+                correct = listOf("zzz")
+            ),
+            "Q4"
+        )
+        assertTrue(warnings.map { it.message }.any { it.contains("zzz") })
     }
 
     @Test
@@ -76,9 +122,19 @@ class ImportWarningsTest {
         val questions = file.papers.single().categories.flatMap { it.questions }
         val byId = ImportWarnings.forFile(questions).groupBy { it.questionId }
         assertTrue(byId["q-e1"]!!.any { it.message.startsWith("No answer key") })
-        assertTrue(byId["q-e2"]!!.any { it.message.startsWith("No options") })
-        assertTrue(byId["q-e5"]!!.any { it.message.startsWith("Only one option") })
+        // q-e2 has no options but a real explanation: it is a flashcard with a
+        // back, not an unanswerable question.
+        assertTrue(byId["q-e2"].orEmpty().isEmpty())
+        // q-e5 has one option and becomes a flashcard at import: no option or
+        // key warning.
+        assertTrue(byId["q-e5"].orEmpty().isEmpty())
         assertTrue(byId["q-o3"].orEmpty().isEmpty())
+        // q-o5 is worth zero marks on purpose: it imports and can be
+        // practised, but the advisory says it can never affect a score.
+        assertTrue(
+            "q-o5 must carry the zero-mark advisory",
+            byId["q-o5"]!!.any { it.message.startsWith("Worth 0 marks") }
+        )
     }
 
     /**

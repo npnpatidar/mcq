@@ -289,6 +289,13 @@ data class Question(
 }
 
 /**
+ * A card with no options is a flashcard: the stem is the front and the
+ * explanation is the back. Derived, never stored — options present means a
+ * multiple-choice card.
+ */
+val Question.isFlashcard: Boolean get() = options.isEmpty()
+
+/**
  * A reading passage: shared context for a group of questions.
  *
  * Members live as ordinary [Question]s pointing at this id through

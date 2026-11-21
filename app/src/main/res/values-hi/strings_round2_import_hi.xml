@@ -7,4 +7,11 @@
     <string name="r2_import_fallback_category">श्रेणी</string>
     <string name="r2_import_fallback_passage">गद्यांश</string>
     <string name="r2_import_fallback_cloze_explanation">एंकी से लिया गया रिक्त-स्थान प्रश्न।</string>
+
+    <!-- Import preview badges (see the English file). -->
+    <string name="r2_import_badge_flashcard">फ़्लैशकार्ड</string>
+    <string name="r2_import_badge_changed">बदला गया</string>
+    <string name="r2_import_badge_duplicate">डुप्लिकेट</string>
+    <!-- A card's back in the preview is its answer. -->
+    <string name="r2_import_answer_label">उत्तर: %1$s</string>
 </resources>

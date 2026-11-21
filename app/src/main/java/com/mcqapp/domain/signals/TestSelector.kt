@@ -163,7 +163,15 @@ data class SelectionPreview(
      * [pool] stays the achievable quota at the request (the startable figure);
      * the setup sheet uses this to keep the length control usable.
      */
-    val capacity: Int = pool
+    val capacity: Int = pool,
+    /**
+     * How many ids the custom pool (bookmarks, one tag, a fixed panel) holds
+     * before flashcards are removed; [pool] is the testable part. Equal to
+     * [pool] for every other type, whose pool is the scope itself. The setup
+     * sheet reads the contrast to tell an empty pool from one whose questions
+     * are all flashcards — both have a testable pool of zero.
+     */
+    val rawPool: Int = pool
 )
 
 /**
@@ -338,8 +346,17 @@ object TestSelector {
                 terminalCounts = terminalCounts
             )
         }
+        val testablePool =
+            poolSize(plan.type, signals, plan.variant, customPool, medianDwellSeconds)
+        // A custom type's pool is the ids read outside the signals. When the
+        // caller passes the whole pool (cards included), this is the raw size;
+        // a caller that reads the pool testable-only overrides it with the
+        // true raw count so the sheet can tell "empty" from "all flashcards".
+        val usesCustomPool = plan.type == TestType.BOOKMARKED ||
+            plan.type == TestType.TAG || plan.type == TestType.FIXED_PANEL
         return SelectionPreview(
-            pool = poolSize(plan.type, signals, plan.variant, customPool, medianDwellSeconds),
+            pool = testablePool,
+            rawPool = if (usesCustomPool) customPool.size else testablePool,
             composition = selection?.composition ?: Composition(),
             targets = targets,
             ids = selection?.ids.orEmpty()

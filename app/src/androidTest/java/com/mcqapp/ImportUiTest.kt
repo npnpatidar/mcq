@@ -2,13 +2,16 @@ package com.mcqapp
 
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModel
@@ -22,6 +25,7 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.ui.importscreen.ImportDataHolder
 import com.mcqapp.ui.importscreen.ImportScreen
 import com.mcqapp.ui.importscreen.ImportSource
@@ -86,14 +90,19 @@ class ImportUiTest {
         ImportDataHolder.pendingEditQuestion = null
     }
 
-    private fun sampleJson(count: Int = 1, textLen: Int = 0): ByteArray {
+    private fun sampleJson(
+        count: Int = 1,
+        textLen: Int = 0,
+        explanationElements: List<ContentElement> = emptyList()
+    ): ByteArray {
         val questions = (1..count).map { i ->
             val stem = if (textLen > 0) "Q".repeat(textLen) else "UIIMPORT question"
             QuestionDto(
                 id = "uiimport-q$i",
                 text = "$stem $i",
                 options = listOf(OptionDto("a", "Alpha"), OptionDto("b", "Beta")),
-                correctOptionIds = listOf("a")
+                correctOptionIds = listOf("a"),
+                explanationElements = if (i == 1) explanationElements else emptyList()
             )
         }
         val file = McqFileDto(
@@ -215,6 +224,29 @@ class ImportUiTest {
         // line would claim a duplicate this import never produced.
         compose.onNodeWithText(oneNew, substring = true).assertExists()
         compose.onNodeWithText(oneDuplicate, substring = true).assertDoesNotExist()
+    }
+
+    /**
+     * A back that is only a table has no flattened explanation text, so the
+     * preview used to omit it entirely. The card must show the table itself.
+     */
+    @Test
+    fun thePreviewShowsATableOnlyExplanation() {
+        open(
+            sampleJson(
+                explanationElements = listOf(
+                    ContentElement.TableElement(listOf(listOf("cell-alpha", "cell-beta")))
+                )
+            )
+        )
+        waitForForm()
+
+        // The preview card sits below the whole form, so the lazy list must
+        // scroll it into composition before the cell can be asserted.
+        compose.onNode(hasScrollToIndexAction())
+            .performScrollToNode(hasText("cell-alpha", substring = false))
+        compose.onNodeWithText("cell-alpha", substring = false)
+            .assertIsDisplayed()
     }
 
     /** Only an Anki-classified source shows the scheduling-memory notice. */

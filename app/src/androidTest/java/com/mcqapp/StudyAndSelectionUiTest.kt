@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.data.local.CategoryEntity
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewGrade
@@ -86,6 +87,33 @@ class StudyAndSelectionUiTest {
         correctOptionIds = setOf("$id-a", "$id-c")
     )
 
+    /**
+     * A Study question whose revealed back is [explanationElements] (plus an
+     * optional scalar image): the text fields are empty on purpose, so the
+     * flattened `explanation` cannot be what makes the back visible.
+     */
+    private fun explanationQuestion(
+        id: String,
+        categoryId: String,
+        explanationElements: List<ContentElement>,
+        explanationImage: String? = null
+    ) = Question(
+        id = id,
+        categoryId = categoryId,
+        elements = listOf(ContentElement.TextElement("UITest $id?")),
+        options = listOf(QuestionOption("$id-a", "Alpha"), QuestionOption("$id-b", "Beta")),
+        correctOptionIds = setOf("$id-a"),
+        explanationElements = explanationElements,
+        explanationImage = explanationImage
+    )
+
+    /**
+     * A real 1x1 PNG. [com.mcqapp.util.QuestionImage] only tags its slot once
+     * the data URI decodes, so a placeholder base64 string would never appear.
+     */
+    private val tinyPng =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
     private val seeded = mutableListOf<String>()
 
     private fun seedPaper(id: String, title: String, categoryId: String, vararg questions: Question) =
@@ -98,9 +126,12 @@ class StudyAndSelectionUiTest {
     @After
     fun cleanup() = runBlocking {
         seeded.forEach { repository.deletePaper(it) }
-        // The mode tests below mutate the shared scheduler settings; leaving
-        // them as found keeps test order irrelevant.
+        // The mode tests mutate the shared scheduler settings and the process-
+        // wide study mode; restoring both keeps test order irrelevant. The
+        // reveal tests pin Simplified off, so leaving it would make a later
+        // Simplified test wait forever for its Check button.
         repository.resetSchedulerConfig()
+        repository.setSimplifiedStudy(true)
     }
 
     private fun waitFor(text: String) {
@@ -127,6 +158,15 @@ class StudyAndSelectionUiTest {
             compose.onAllNodesWithTag(tag, useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /** Opens [paperId] in Study and presses the classic Show-answer button. */
+    private fun revealStudyAnswer(paperId: String) {
+        compose.setContent { McqNavHost(repository = repository) }
+        compose.onNodeWithTag("paper-study-$paperId").performClick()
+        waitFor("Show answer")
+        compose.onNodeWithText("Show answer", substring = false).performClick()
+        compose.waitForIdle()
     }
 
     /**
@@ -1437,5 +1477,102 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("All categories", substring = false).performClick()
         waitFor("UITest ui-cbrowse-q1?")
         waitFor("UITest ui-cbrowse-q2?")
+    }
+
+    /**
+     * An explanation that is only a picture flattens to ""; the reveal gate
+     * used to read that as "no explanation" and rendered nothing at all.
+     */
+    @Test
+    fun studyRevealsAnImageOnlyExplanation() {
+        seedPaper(
+            "ui-back-image", "UIBack Image", "ui-back-image-cat",
+            explanationQuestion(
+                "ui-back-image-q", "ui-back-image-cat",
+                listOf(ContentElement.ImageElement(tinyPng))
+            )
+        )
+        runBlocking { repository.setSimplifiedStudy(false) }
+        revealStudyAnswer("ui-back-image")
+
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onAllNodesWithTag("question-image", useUnmergedTree = true)[0]
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * A table-only back likewise has no flattened text. Its cells must reach
+     * the revealed card, not just the stored row.
+     */
+    @Test
+    fun studyRevealsATableOnlyExplanation() {
+        seedPaper(
+            "ui-back-table", "UIBack Table", "ui-back-table-cat",
+            explanationQuestion(
+                "ui-back-table-q", "ui-back-table-cat",
+                listOf(
+                    ContentElement.TableElement(listOf(listOf("cell-alpha", "cell-beta")))
+                )
+            )
+        )
+        runBlocking { repository.setSimplifiedStudy(false) }
+        revealStudyAnswer("ui-back-table")
+
+        compose.onNodeWithText("cell-alpha", substring = false)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * A table back and the scalar explanation image are two visible slots; a
+     * gate keyed on either one alone would drop the other.
+     */
+    @Test
+    fun studyRevealsATableExplanationAndItsImage() {
+        seedPaper(
+            "ui-back-table-image", "UIBack Table Image", "ui-back-table-image-cat",
+            explanationQuestion(
+                "ui-back-table-image-q", "ui-back-table-image-cat",
+                listOf(ContentElement.TableElement(listOf(listOf("cell-alpha")))),
+                explanationImage = tinyPng
+            )
+        )
+        runBlocking { repository.setSimplifiedStudy(false) }
+        revealStudyAnswer("ui-back-table-image")
+
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText("cell-alpha", substring = false)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("cell-alpha", substring = false).assertExists()
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("question-image", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onAllNodesWithTag("question-image", useUnmergedTree = true)[0]
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** Guard: the plain text back, which already worked, must keep working. */
+    @Test
+    fun studyStillRevealsATextOnlyExplanation() {
+        seedPaper(
+            "ui-back-text", "UIBack Text", "ui-back-text-cat",
+            explanationQuestion(
+                "ui-back-text-q", "ui-back-text-cat",
+                listOf(ContentElement.TextElement("plain-back-text"))
+            )
+        )
+        runBlocking { repository.setSimplifiedStudy(false) }
+        revealStudyAnswer("ui-back-text")
+
+        compose.onNodeWithText("plain-back-text", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 }

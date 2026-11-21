@@ -113,6 +113,23 @@ val List<ContentElement>.textContent: String
     get() = filterIsInstance<ContentElement.TextElement>().joinToString("") { it.text }
 
 /**
+ * True when these blocks carry anything visible (a blank text run is not).
+ *
+ * [textContent] cannot answer this: an explanation made only of a picture, a
+ * table or a formula flattens to "" and used to be treated as absent, so it
+ * never rendered. Kept exhaustive so a future element kind has to decide.
+ */
+val List<ContentElement>.hasVisibleContent: Boolean
+    get() = any { el ->
+        when (el) {
+            is ContentElement.TextElement -> el.text.isNotBlank()
+            is ContentElement.ImageElement -> el.src.isNotBlank()
+            is ContentElement.TableElement -> el.rows.any { row -> row.any { it.isNotBlank() } }
+            is ContentElement.MathElement -> el.mathml.isNotBlank()
+        }
+    }
+
+/**
  * Everything a reader can actually see, flattened for searching.
  *
  * [textContent] is the wrong basis for search: it drops tables and formulas

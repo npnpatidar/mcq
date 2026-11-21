@@ -58,7 +58,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.mcqapp.data.io.ImportReport
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ImportWarnings
+import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
@@ -710,15 +712,42 @@ private fun PreviewQuestionCard(
                     )
                 }
             }
-            if (question.explanation.isNotBlank()) {
+            // A parsed DTO can carry a flattened explanation without element
+            // blocks (an Anki marker back), so the text still counts as
+            // visible alongside the content-aware check.
+            val explanationVisible = question.explanation.isNotBlank() ||
+                question.explanationElements.hasVisibleContent ||
+                !question.explanationImage.isNullOrBlank()
+            if (explanationVisible) {
                 Text(
-                    stringResource(
-                        R.string.import_explanation_label,
-                        displayTitle(question.explanation)
-                    ),
+                    // A back that is only a picture, a table or a formula has
+                    // no flattened text to append, so the heading falls back
+                    // to the plain label.
+                    if (question.explanation.isNotBlank()) {
+                        stringResource(
+                            R.string.import_explanation_label,
+                            displayTitle(question.explanation)
+                        )
+                    } else {
+                        stringResource(R.string.explanation)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(top = 2.dp)
                 )
+                // The flattened heading already reads the text runs out;
+                // render only the blocks it cannot, so the preview shows a
+                // table/formula/image back without printing text twice.
+                val richExplanation =
+                    question.explanationElements.filterNot { it is ContentElement.TextElement }
+                if (richExplanation.isNotEmpty()) {
+                    ContentElements(
+                        richExplanation,
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                }
             }
             QuestionImage(
                 src = question.explanationImage,

@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ContentElementJson
+import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.parseContentElements
 import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
@@ -10,6 +11,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,6 +71,44 @@ class ContentElementTest {
     @Test
     fun emptyElementsGiveEmptyText() {
         assertEquals("", emptyList<ContentElement>().toContentJson(json).parseContentElements(json).textContent)
+    }
+
+    /**
+     * The reveal gate: an explanation made only of a picture, a table or a
+     * formula flattens to "" but is still something a reader can see. On the
+     * old text-only gate none of these rendered at all.
+     */
+    @Test
+    fun hasVisibleContentAcceptsEveryNonTextKind() {
+        assertTrue(listOf(ContentElement.ImageElement("data:image/png;base64,AAA")).hasVisibleContent)
+        assertTrue(listOf(ContentElement.TableElement(listOf(listOf("cell-alpha")))).hasVisibleContent)
+        assertTrue(listOf(ContentElement.MathElement("<math><mi>x</mi></math>")).hasVisibleContent)
+    }
+
+    @Test
+    fun hasVisibleContentFindsOneVisibleBlockInAMixedList() {
+        val mixed = listOf(
+            ContentElement.TextElement("   "),
+            ContentElement.TableElement(listOf(listOf("cell-alpha")))
+        )
+        assertTrue(mixed.hasVisibleContent)
+
+        assertTrue(
+            listOf(
+                ContentElement.TextElement("Because"),
+                ContentElement.ImageElement("data:image/png;base64,AAA")
+            ).hasVisibleContent
+        )
+    }
+
+    @Test
+    fun hasVisibleContentRejectsBlankAndEmptyBlocks() {
+        assertFalse(emptyList<ContentElement>().hasVisibleContent)
+        assertFalse(listOf(ContentElement.TextElement("")).hasVisibleContent)
+        assertFalse(listOf(ContentElement.TextElement("   ")).hasVisibleContent)
+        assertFalse(listOf(ContentElement.ImageElement("")).hasVisibleContent)
+        assertFalse(listOf(ContentElement.TableElement(listOf(listOf("", " ")))).hasVisibleContent)
+        assertFalse(listOf(ContentElement.MathElement(" ")).hasVisibleContent)
     }
 
     @Test

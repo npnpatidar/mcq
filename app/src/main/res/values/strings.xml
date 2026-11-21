@@ -213,6 +213,8 @@
     <string name="keep">Keep</string>
     <string name="load_remote_images">Load remote images</string>
     <string name="load_sample_paper">Load sample paper</string>
+    <string name="reload_sample_paper">Reload sample paper</string>
+    <string name="library_more_actions">More actions</string>
     <string name="loading">Loading…</string>
     <string name="manage">Manage</string>
     <string name="show_categories">Show categories</string>

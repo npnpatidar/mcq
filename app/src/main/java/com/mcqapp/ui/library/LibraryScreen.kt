@@ -25,9 +25,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -126,6 +129,10 @@ fun LibraryScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // The top bar's overflow menu (reload the bundled sample). Plain
+    // saveable state would reopen the menu after a rotation, which no one
+    // asked for.
+    var showOverflowMenu by remember { mutableStateOf(false) }
     // LocalResources (not LocalContext.current) keeps the chooser title
     // configuration-aware: LocalContext.getString() is not re-read when the
     // Configuration changes (LocalContextGetResourceValueCall).
@@ -315,6 +322,30 @@ fun LibraryScreen(
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = stringResource(R.string.open_menu))
+                        }
+                    },
+                    actions = {
+                        // The sample paper can be refreshed after the first
+                        // load too: its fixes are in the bundled asset, and
+                        // the empty-state button is gone once a paper exists.
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.library_more_actions)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.reload_sample_paper)) },
+                                enabled = !isLoadingSample,
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.loadSampleData()
+                                }
+                            )
                         }
                     }
                 )

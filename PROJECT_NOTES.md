@@ -348,6 +348,16 @@ gh run download <run-id> --name app-release -D /sdcard/Download   # -> app-relea
 # unit-test results: repeat --name test-results-shard-0 .. -3
 ```
 
+- **Debug builds are signed with the committed `apk-build/debug.keystore`.** CI
+  runners are ephemeral, so a freshly generated debug key each run changed the
+  signer and a new CI debug APK could not install over the previous debug
+  install ("App not installed"). The key is a *debug* key: deliberately public
+  and non-secret (standard `android`/`androiddebugkey` credentials, cert
+  SHA-256 `74:7D:D7:74:F5:EC:8E:4E:88:E0:C5:AB:65:6D:5D:95:2C:67:FA:06:22:BF:10:48:48:82:DC:E9:F5:A9:81:23`),
+  which is why `.gitignore` carries a narrow exception for exactly that path
+  while every other `*.keystore`/`*.jks` stays ignored. **Never add a similar
+  exception for a release key.** Replacing the committed debug key changes the
+  debug signer, so the already-installed debug app needs one uninstall first.
 - `/sdcard/Download/app-debug.apk` and `/sdcard/Download/app-release.apk` are always the
   latest build. The debug variant has `applicationIdSuffix = ".debug"`, so it installs as
   `com.mcqapp.debug` **beside** the release (`com.mcqapp`) with its own data directory and

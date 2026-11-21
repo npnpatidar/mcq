@@ -22,6 +22,13 @@ local.properties
 *.jks
 *.keystore
 keystore.properties
+# Exception: the debug keystore is deliberately public. Android's debug key is
+# non-secret by design (a shared, well-known test identity, not a credential),
+# and committing it is what lets a CI-built debug APK install over the previous
+# debug install — CI runners are ephemeral, so a freshly generated per-run key
+# would otherwise change the signer every build ("App not installed").
+# Release keys stay ignored: never add an exception for one.
+!apk-build/debug.keystore
 
 # Generated question-bank scratch files (exports, converted DOCX/APKG used
 # for manual verification). Regenerate rather than commit.

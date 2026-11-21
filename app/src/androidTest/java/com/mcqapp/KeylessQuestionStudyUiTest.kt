@@ -2,9 +2,12 @@ package com.mcqapp
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -82,6 +85,29 @@ class KeylessQuestionStudyUiTest {
         }
     }
 
+    /**
+     * Selects one option and waits for the tap to land in the semantics tree
+     * before anything reveals. `performClick` can return before the selection
+     * state recomposes, and a reveal in that window would leave the option
+     * unselected — the assertion that it stays selected with neutral wording
+     * would then fail for a timing reason rather than a behaviour one. The Row
+     * is tapped by its stable tag (its text lives in a child) and scrolled into
+     * view first, as `StudyAndSelectionUiTest` does.
+     */
+    private fun selectOption(optionId: String) {
+        compose.onNodeWithTag("study-option-$optionId")
+            .performScrollTo()
+            .performClick()
+        val selected = SemanticsMatcher.expectValue(SemanticsProperties.Selected, true)
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(
+                hasTestTag("study-option-$optionId") and selected,
+                useUnmergedTree = true
+            ).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("study-option-$optionId").assertIsSelected()
+    }
+
     /** The reveal must show an explanation and no verdict anywhere. */
     private fun assertNoVerdictOnReveal(optionId: String) {
         // A keyless question is not a card: its back keeps the Explanation
@@ -140,7 +166,7 @@ class KeylessQuestionStudyUiTest {
         compose.onNodeWithTag("study-guess").assertDoesNotExist()
 
         // A selection is still possible before the reveal, as for any MCQ.
-        compose.onNodeWithText("Alpha", substring = false).performScrollTo().performClick()
+        selectOption("ui-nokey-1-a")
         compose.onNodeWithTag("study-show-answer").performClick()
         compose.waitForIdle()
 
@@ -172,6 +198,9 @@ class KeylessQuestionStudyUiTest {
         // Classic mode has no Check for anything, and no guess switch here.
         compose.onNodeWithTag("study-check").assertDoesNotExist()
         compose.onNodeWithTag("study-guess").assertDoesNotExist()
+        // The reveal assertion is about a *selected* option, so select one and
+        // let it settle before Show answer.
+        selectOption("ui-nokey-classic-1-a")
         val showAnswer = app.getString(R.string.show_answer)
         compose.onNodeWithText(showAnswer, substring = false).assertIsDisplayed()
         compose.onNodeWithText(showAnswer, substring = false).performClick()

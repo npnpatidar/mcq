@@ -716,7 +716,12 @@ fun LibraryScreen(
                     // The same tested, plural-aware enumeration the JSON import
                     // dialog uses: it now names restored schedules, papers and
                     // the Anki drops/conversions that never reached the library.
-                    ImportReportDetails(report)
+                    // An all-zero report (a deck with no usable question) still
+                    // says so rather than leaving the dialog body blank.
+                    ImportReportDetails(
+                        report,
+                        emptyMessageRes = R.string.import_report_no_questions
+                    )
                     // This dialog is opened only by importAnkiPackage, so an
                     // Anki deck's scheduling memory is always in play here. The
                     // note is informational and never blocks the dialog.

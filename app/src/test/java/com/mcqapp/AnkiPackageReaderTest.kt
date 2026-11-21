@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import android.database.sqlite.SQLiteDatabase
+import com.mcqapp.data.anki.AnkiPackageException
 import com.mcqapp.data.anki.AnkiPackageReader
 import com.mcqapp.data.anki.AnkiPackageWriter
 import com.mcqapp.data.io.CardScheduleDto
@@ -48,6 +49,11 @@ class AnkiPackageReaderTest {
     private val pngBytes = java.util.Base64.getDecoder().decode(png1x1.substringAfterLast(","))
 
     private val us = AnkiPackageWriter.FIELD_SEPARATOR
+
+    /** The default notetype and deck JSON a hand-built legacy collection carries. */
+    private val basicModels =
+        """{"1":{"id":1,"name":"Basic","type":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0,"qfmt":"{{Front}}","afmt":"{{Back}}"}]}}"""
+    private val basicDecks = """{"1":{"id":1,"name":"Default"}}"""
 
     /** The reader maps every deck to a category, so questions live in one. */
     private fun allQuestions(paper: com.mcqapp.data.io.PaperDto) =
@@ -706,6 +712,52 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun schema18UnitSeparatorDeckNamesBecomeNestedCategories() {
+        // Anki 2.1.50+ (schema 18) stores a deck's folder separator as the
+        // Unit Separator (0x1f), not "::". The reader split only on "::", so
+        // each subdeck became its own flat paper with a raw control character
+        // in the title. Normalising once in the deck reader must give exactly
+        // the hierarchy the "::" form gives.
+        val db = newCollection(18)
+        modernTables(db)
+        db.execSQL("insert into notetypes values (1, 'Basic', x'')")
+        db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
+        db.execSQL("insert into templates values (1, 0, '{{Front}}')")
+        db.execSQL(
+            "insert into decks values (1, 'Default', 0, 0, x'', x''), " +
+                "(54, 'Bank', 0, 0, x'', x''), " +
+                "(55, 'Bank${us}Science', 0, 0, x'', x''), " +
+                "(56, 'Bank${us}Visual Reasoning', 0, 0, x'', x'')"
+        )
+        db.execSQL(
+            "insert into notes values (100, 'g1', 1, 0, 0, '', " +
+                "'Q1?${us}&#10003; yes<br>&#10007; no', '', 0, 0, '')"
+        )
+        db.execSQL(
+            "insert into notes values (101, 'g2', 1, 0, 0, '', " +
+                "'Q2?${us}&#10003; yes<br>&#10007; no', '', 0, 0, '')"
+        )
+        db.execSQL(
+            "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, " +
+                "lapses, left, odue, odid, flags, data) values " +
+                "(200, 100, 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ''), " +
+                "(201, 101, 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')"
+        )
+
+        val result = AnkiPackageReader.read(zipOf("collection.anki21" to bytesOf(db)))
+
+        val paper = result.file.papers.single()
+        assertEquals("Bank", paper.title)
+        assertEquals(listOf("Science", "Visual Reasoning"), paper.categories.map { it.title })
+        assertEquals(2, result.noteCount)
+        val titles = listOf(paper.title) + paper.categories.map { it.title }
+        assertTrue(
+            "no title may carry the Unit Separator: $titles",
+            titles.none { '\u001f' in it }
+        )
+    }
+
+    @Test
     fun aClozeNoteBecomesOneQuestionPerCard() {
         val apkg = legacyPackage(
             models = """{"1":{"id":1,"name":"Cloze","type":1,"flds":[{"name":"Text","ord":0},{"name":"Back Extra","ord":1}],"tmpls":[{"name":"Cloze","ord":0}]}}""",
@@ -811,12 +863,306 @@ class AnkiPackageReaderTest {
         assertTrue("message names the missing collection: $message", "collection.anki2" in message)
     }
 
+    /**
+     * The real v3 package the owner reported: `meta` is `08 03`, the collection
+     * is zstd `collection.anki21b`, the media manifest is a zstd protobuf
+     * `MediaEntries` and every picture entry is zstd too. A JSON-only manifest
+     * parser leaves every front-referenced picture as a raw `mcqapp-…` filename,
+     * so this test fails on it (the image assertions below).
+     */
     @Test
-    fun aZstdCompressedCollectionIsRejectedWithAnActionableMessage() {
-        val zstd = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte()) + ByteArray(8)
-        val e = runCatching { AnkiPackageReader.read(zipOf("collection.anki21b" to zstd)) }
-        val message = e.exceptionOrNull()?.message.orEmpty()
-        assertTrue("message suggests .apkg: $message", ".apkg" in message)
+    fun theRealV3PackageImportsItsMediaAndNestedCategories() {
+        val apkg = fixture("anki-v3-sample.apkg")
+
+        val whole = AnkiPackageReader.read(apkg)
+        assertEquals(62, whole.noteCount)
+        val paper = whole.file.papers.single()
+        assertEquals("Sample Bank — English + हिन्दी", paper.title)
+        val categories = paper.categories.map { it.title }
+        for (expected in listOf(
+            "Science", "Mathematics", "Visual Reasoning", "Reading Passages", "History",
+            "Geography", "Sports", "Multiple Correct Answers", "Text Formatting",
+            "Bilingual — English + हिन्दी", "Order Check and Marks", "Edge Cases", "Uncategorized"
+        )) {
+            assertTrue("missing category $expected: $categories", expected in categories)
+        }
+        val science = paper.categories.first { it.title == "Science" }
+        assertEquals(
+            "the schema-18 separator must nest these under Science",
+            listOf("Chemistry", "Physics"),
+            paper.categories.filter { it.parentId == science.id }.map { it.title }
+        )
+        assertTrue(
+            "no title may carry the Unit Separator: ${listOf(paper.title) + categories}",
+            (listOf(paper.title) + categories).none { '\u001f' in it }
+        )
+
+        val questions = allQuestions(paper)
+        // The package normalises the sample's single-option question into a
+        // flashcard (its option became the back), so the no-option cards are the
+        // sample's seven flashcards plus that one; the same nine carry no key.
+        assertEquals(8, questions.count { it.options.isEmpty() })
+        assertEquals(9, questions.count { it.correctOptionIds.isEmpty() })
+        val imageValues = questions.mapNotNull { it.image }
+        assertTrue(
+            "a front-referenced picture must be inlined: ${imageValues.filter { "mcqapp-" in it }}",
+            imageValues.any { it.startsWith("data:image/") }
+        )
+        assertTrue(
+            "no package filename may survive as an image: ${imageValues.filter { "mcqapp-" in it }}",
+            imageValues.none { "mcqapp-" in it }
+        )
+        assertTrue(
+            "the compatibility stub must never become a question",
+            questions.none { it.text.contains("Please update to the latest Anki version") }
+        )
+
+        val sink = streamed(apkg)
+        assertEquals(listOf(paper.title), sink.paperTitles)
+        assertEquals(categories, sink.categoryTitles)
+        assertEquals(questions.size, sink.questions.size)
+        assertEquals(8, sink.questions.count { it.options.isEmpty() })
+        assertEquals(9, sink.questions.count { it.correctOptionIds.isEmpty() })
+        assertTrue(
+            "the streamed reader must inline the same pictures",
+            sink.questions.mapNotNull { it.image }.any { it.startsWith("data:image/") }
+        )
+        assertTrue(
+            "the streamed reader must not leave package filenames",
+            sink.questions.mapNotNull { it.image }.none { "mcqapp-" in it }
+        )
+        assertTrue(
+            sink.questions.none { it.text.contains("Please update to the latest Anki version") }
+        )
+    }
+
+    @Test
+    fun aModernCollectionIsPreferredOverTheCompatibilityStub() {
+        // Anki writes a tiny `collection.anki2` beside the real modern collection
+        // only so an older client can tell the user to upgrade. This fixture puts
+        // the stub first deliberately: the old whole-file reader took the first
+        // matching zip entry, so a stub-first package imported zero questions even
+        // though an authentic package writes meta -> collection -> stub -> media.
+        // The streamed reader was worse: it preferred anki2 by name regardless of
+        // zip order, so the authentic order broke there too.
+        val full = collectionBytes(
+            notes = listOf(
+                "Front: 2 + 2?${us}&#10003; 4<br>&#10007; five" to 1L,
+                "Capital of France?${us}Paris" to 1L
+            )
+        )
+        val apkg = zipOf(
+            "collection.anki2" to stubCollection(),
+            "collection.anki21" to full,
+            "media" to "{}".toByteArray()
+        )
+
+        val result = AnkiPackageReader.read(apkg)
+        val questions = result.file.papers.single().let(::allQuestions)
+
+        assertEquals("the real collection's two questions import", 2, result.noteCount)
+        assertEquals(2, questions.size)
+        assertTrue(
+            "the compatibility stub must never become a question: " +
+                questions.map { it.text },
+            questions.none { it.text.contains("Please update to the latest Anki version") }
+        )
+    }
+
+    @Test
+    fun aV3PackageReadsItsProtobufMediaManifest() {
+        // Anki v3: `meta` is 08 03, the collection is schema 18 with `anki21b`,
+        // deck names use the Unit Separator, the media manifest is the protobuf
+        // MediaEntries, and every picture entry is zstd. The picture is
+        // referenced by its manifest filename, so a missing manifest decode
+        // cannot pass on the numeric zip name.
+        val apkg = zipOf(
+            "meta" to byteArrayOf(0x08, 0x03),
+            "collection.anki2" to stubCollection(),
+            "collection.anki21b" to zstdFrame(
+                v3CollectionBytes(
+                    notes = listOf("Look: <img src=\"a.png\">${us}answer" to 55L)
+                )
+            ),
+            "media" to zstdFrame(mediaManifestProto(listOf("a.png"))),
+            "0" to zstdFrame(pngBytes)
+        )
+
+        val paper = AnkiPackageReader.read(apkg).file.papers.single()
+        assertEquals("Bank", paper.title)
+        // Deck 56 ("Visual Reasoning") exists in the collection but holds no
+        // question in this fixture, so the reader drops that empty category.
+        assertEquals(listOf("Science"), paper.categories.map { it.title })
+        val question = allQuestions(paper).single()
+        assertEquals("Look:", question.text)
+        val image = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+            .single().src
+        assertTrue("the compressed picture is inlined: $image", image.startsWith("data:image/png;base64,"))
+        assertTrue("no Unit Separator in a title", paper.categories.none { '\u001f' in it.title })
+    }
+
+    @Test
+    fun aMalformedMediaManifestLosesPicturesButKeepsQuestions() {
+        // A truncated protobuf manifest (field 1, length 5, no bytes) is
+        // atypical, not fatal: log it, resolve no picture, and still import the
+        // deck's questions. Only a broken zstd frame is a package error.
+        val apkg = zipOf(
+            "meta" to byteArrayOf(0x08, 0x03),
+            "collection.anki21b" to zstdFrame(
+                v3CollectionBytes(notes = listOf("Look: <img src=\"a.png\">${us}answer" to 55L))
+            ),
+            "media" to zstdFrame(byteArrayOf(0x0A, 0x05))
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+        assertEquals("Look:", question.text)
+        assertTrue(
+            "with no manifest the picture cannot be inlined",
+            question.elements
+                .filterIsInstance<com.mcqapp.domain.ContentElement.ImageElement>()
+                .none { it.src.startsWith("data:") }
+        )
+        assertEquals(1, streamed(apkg).questions.size)
+    }
+
+    @Test
+    fun aZstdOnlyCollectionWithNoPlainFallbackImports() {
+        // Fallback case: a package with no `meta` and no plain member, only a
+        // zstd `anki21b`. The name preference must still find and decode it.
+        val apkg = zipOf(
+            "collection.anki21b" to zstdFrame(
+                collectionBytes(notes = listOf("Capital of France?${us}Paris" to 1L))
+            )
+        )
+
+        val question = AnkiPackageReader.read(apkg).file.papers.single().let(::allQuestions).single()
+
+        assertEquals("Capital of France?", question.text)
+        assertEquals("Paris", question.explanation)
+    }
+
+    @Test
+    fun aCorruptZstdCollectionIsAFriendlyPackageError() {
+        // The magic says "zstd", the frame is nonsense: the import must report a
+        // package problem with the decoder failure kept as the cause, not leak a
+        // raw IOException (and certainly not crash). Anki only compresses
+        // `anki21b`, so that is the entry this can happen in.
+        val e = runCatching {
+            AnkiPackageReader.read(zipOf("collection.anki21b" to corruptZstd()))
+        }
+        val failure = e.exceptionOrNull()
+
+        assertTrue("reported as an Anki package problem: $failure", failure is AnkiPackageException)
+        assertEquals(
+            "a sentence the user can act on: ${failure?.message}",
+            true,
+            "could not be unpacked" in failure?.message.orEmpty()
+        )
+        assertNotNull("the decoder failure is kept as the cause", failure?.cause)
+        assertFalse(
+            "the .colpkg rejection text must be gone: ${failure?.message}",
+            ".colpkg" in failure?.message.orEmpty()
+        )
+    }
+
+    @Test
+    fun aCorruptZstdCollectionIsAFriendlyPackageErrorWhenStreamed() {
+        // The streamed decoder is a separate path (ZstdInputStream into the
+        // spooled collection file), so it gets its own regression.
+        val apkg = zipOf("collection.anki21b" to corruptZstd())
+        val e = runCatching { streamed(apkg) }
+        val failure = e.exceptionOrNull()
+
+        assertTrue("reported as an Anki package problem: $failure", failure is AnkiPackageException)
+        assertEquals(
+            "a sentence the user can act on: ${failure?.message}",
+            true,
+            "could not be unpacked" in failure?.message.orEmpty()
+        )
+        assertNotNull("the decoder failure is kept as the cause", failure?.cause)
+        assertFalse(
+            "the .colpkg rejection text must be gone: ${failure?.message}",
+            ".colpkg" in failure?.message.orEmpty()
+        )
+    }
+
+    @Test
+    fun aV3MetaChoosesAnki21bOverAStaleAnki21Copy() {
+        // Upstream Anki derives the collection from `meta`'s version, not from
+        // the member that happens to be first. A v3 package keeps a stale
+        // `collection.anki21` copy; reading it by name would import the wrong
+        // deck. Both readers must take `anki21b`'s two questions.
+        val stale = collectionBytes(notes = listOf("Stale copy?${us}stale" to 1L))
+        val apkg = zipOf(
+            "meta" to byteArrayOf(0x08, 0x03),
+            "collection.anki21" to stale,
+            "collection.anki21b" to zstdFrame(
+                v3CollectionBytes(
+                    notes = listOf(
+                        "V3 one?${us}&#10003; yes<br>&#10007; no" to 55L,
+                        "V3 two?${us}&#10003; yes<br>&#10007; no" to 56L
+                    )
+                )
+            ),
+            "media" to "{}".toByteArray()
+        )
+
+        val whole = AnkiPackageReader.read(apkg)
+        assertEquals(2, whole.noteCount)
+        val texts = whole.file.papers.single().let(::allQuestions).map { it.text }
+        assertTrue("the anki21b questions import: $texts", "V3 one?" in texts && "V3 two?" in texts)
+        assertFalse("the stale anki21 copy must not win: $texts", "Stale copy?" in texts)
+
+        val sink = streamed(apkg)
+        val streamedTexts = sink.questions.map { it.text }
+        assertEquals(texts, streamedTexts)
+        assertFalse("the stale anki21 copy must not win when streamed", "Stale copy?" in streamedTexts)
+    }
+
+    @Test
+    fun aV2MetaChoosesAnki21() {
+        val apkg = zipOf(
+            "meta" to byteArrayOf(0x08, 0x02),
+            "collection.anki2" to stubCollection(),
+            "collection.anki21" to collectionBytes(
+                notes = listOf("V2 question?${us}&#10003; yes<br>&#10007; no" to 1L)
+            ),
+            "media" to "{}".toByteArray()
+        )
+
+        val whole = AnkiPackageReader.read(apkg)
+        assertEquals(listOf("V2 question?"), whole.file.papers.single().let(::allQuestions).map { it.text })
+        assertEquals(listOf("V2 question?"), streamed(apkg).questions.map { it.text })
+    }
+
+    @Test
+    fun aPackageWithoutMetaStillReadsAnki2() {
+        // Our own exports and old AnkiDroid packages have no `meta`; the legacy
+        // name must keep working with no version to guide the choice.
+        val apkg = legacyPackage(notes = listOf("Legacy?${us}Paris" to 1L))
+
+        val result = AnkiPackageReader.read(apkg)
+
+        assertEquals(listOf("Legacy?"), result.file.papers.single().let(::allQuestions).map { it.text })
+    }
+
+    @Test
+    fun aMalformedMetaFallsBackToTheNameOrder() {
+        // Field 1's key with no varint value: the version cannot be read. That
+        // must not fail the import; the name preference chooses anki21.
+        val apkg = zipOf(
+            "meta" to byteArrayOf(0x08),
+            "collection.anki2" to stubCollection(),
+            "collection.anki21" to collectionBytes(
+                notes = listOf("Fallback?${us}&#10003; yes<br>&#10007; no" to 1L)
+            ),
+            "media" to "{}".toByteArray()
+        )
+
+        val result = AnkiPackageReader.read(apkg)
+
+        assertEquals(listOf("Fallback?"), result.file.papers.single().let(::allQuestions).map { it.text })
     }
 
     @Test
@@ -866,19 +1212,17 @@ class AnkiPackageReaderTest {
     }
 
     /**
-     * Builds a package the way Anki 2.1 wrote one: a plain zip holding
-     * `collection.anki2` and a `media` manifest mapping numeric entry names to
-     * original filenames.
+     * Builds the collection bytes [legacyPackage] puts in a package, so a test
+     * can place the same collection under whichever entry name it is testing
+     * (`collection.anki2`, `collection.anki21`, `collection.anki21b`).
      */
-    private fun legacyPackage(
-        models: String = """{"1":{"id":1,"name":"Basic","type":0,"flds":[{"name":"Front","ord":0},{"name":"Back","ord":1}],"tmpls":[{"name":"Card 1","ord":0,"qfmt":"{{Front}}","afmt":"{{Back}}"}]}}""",
-        decks: String = """{"1":{"id":1,"name":"Default"}}""",
+    private fun collectionBytes(
+        models: String = basicModels,
+        decks: String = basicDecks,
         notes: List<Pair<String, Long>> = emptyList(),
         noteTags: String = " mcqapp ",
         cards: List<ClozeCard> = emptyList(),
         skipAutoCard: Boolean = false,
-        media: Map<String, String> = emptyMap(),
-        mediaBytes: Map<String, ByteArray> = emptyMap(),
         /** When the collection was created; a review card's due counts from it. */
         crtSeconds: Long = 0L,
         /** `col.ver` to write. 11 is the legacy shape; 14 is still JSON-in-col. */
@@ -908,7 +1252,137 @@ class AnkiPackageReaderTest {
             )
         }
         extraSql.forEach { db.execSQL(it) }
-        val collection = bytesOf(db)
+        return bytesOf(db)
+    }
+
+
+    /** A zstd frame whose magic is right and whose contents are not a frame. */
+    private fun corruptZstd(): ByteArray =
+        byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte()) + ByteArray(32) { 0x7F }
+
+    /** Reads a classpath fixture under `src/test/resources/fixtures/`. */
+    private fun fixture(name: String): ByteArray =
+        javaClass.classLoader?.getResourceAsStream("fixtures/$name")?.use { it.readBytes() }
+            ?: throw AssertionError("missing test fixture fixtures/$name")
+
+    /**
+     * The 1-note compatibility stub Anki writes into `collection.anki2` beside
+     * a modern collection. A real stub has no tags and exactly one field
+     * separator: one front field and a blank back.
+     */
+    private fun stubCollection(): ByteArray = collectionBytes(
+        notes = listOf(
+            "Please update to the latest Anki version, then import the " +
+                ".colpkg/.apkg file again.$us" to 1L
+        ),
+        noteTags = ""
+    )
+
+    /**
+     * A schema-18 collection, the shape Anki writes into `collection.anki21b`:
+     * the normalised notetype/deck tables and deck names using the v3 folder
+     * separator. "Bank" holds Science and Visual Reasoning.
+     */
+    private fun v3CollectionBytes(notes: List<Pair<String, Long>> = emptyList()): ByteArray {
+        val db = newCollection(18)
+        modernTables(db)
+        db.execSQL("insert into notetypes values (1, 'Basic', x'')")
+        db.execSQL("insert into fields values (1, 0, 'Front'), (1, 1, 'Back')")
+        db.execSQL("insert into templates values (1, 0, '{{Front}}')")
+        db.execSQL(
+            "insert into decks values (1, 'Default', 0, 0, x'', x''), " +
+                "(54, 'Bank', 0, 0, x'', x''), " +
+                "(55, 'Bank${us}Science', 0, 0, x'', x''), " +
+                "(56, 'Bank${us}Visual Reasoning', 0, 0, x'', x'')"
+        )
+        notes.forEachIndexed { i, (flds, did) ->
+            val nid = 100L + i
+            db.execSQL(
+                "insert into notes values (?, ?, 1, 0, 0, '', ?, '', 0, 0, '')",
+                arrayOf<Any>(nid, "g$nid", flds)
+            )
+            db.execSQL(
+                "insert into cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, " +
+                    "reps, lapses, left, odue, odid, flags, data) values " +
+                    "(?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                arrayOf<Any>(1000L + i, nid, did)
+            )
+        }
+        return bytesOf(db)
+    }
+
+    /**
+     * Anki v3's `MediaEntries` protobuf: repeated field 1 of
+     * `MediaEntry { string name = 1; uint32 size = 2; bytes sha1 = 3; }`, plus an
+     * unknown outer field the reader must skip. The entry's position is its
+     * zip-entry name.
+     */
+    private fun mediaManifestProto(names: List<String>): ByteArray {
+        val out = ByteArrayOutputStream()
+        names.forEach { name ->
+            val entry = ByteArrayOutputStream()
+            entry.write(0x0A) // MediaEntry.name = 1, length-delimited
+            entry.writeProtoVarint(name.toByteArray().size.toLong())
+            entry.write(name.toByteArray())
+            entry.write(0x10) // MediaEntry.size = 2, varint
+            entry.writeProtoVarint(1234)
+            entry.write(0x1A) // MediaEntry.sha1 = 3, length-delimited
+            entry.writeProtoVarint(20)
+            entry.write(ByteArray(20) { 0x11 })
+            out.write(0x0A) // MediaEntries.entries = 1, length-delimited
+            out.writeProtoVarint(entry.size().toLong())
+            out.write(entry.toByteArray())
+        }
+        out.write(0x10) // unknown outer field 2, varint: skipped
+        out.writeProtoVarint(99)
+        return out.toByteArray()
+    }
+
+    private fun ByteArrayOutputStream.writeProtoVarint(value: Long) {
+        var remaining = value
+        while (true) {
+            val byte = (remaining and 0x7F).toInt()
+            remaining = remaining ushr 7
+            if (remaining == 0L) {
+                write(byte)
+                return
+            }
+            write(byte or 0x80)
+        }
+    }
+
+    /**
+     * Builds a package the way Anki 2.1 wrote one: a plain zip holding
+     * `collection.anki2` and a `media` manifest mapping numeric entry names to
+     * original filenames.
+     */
+    private fun legacyPackage(
+        models: String = basicModels,
+        decks: String = basicDecks,
+        notes: List<Pair<String, Long>> = emptyList(),
+        noteTags: String = " mcqapp ",
+        cards: List<ClozeCard> = emptyList(),
+        skipAutoCard: Boolean = false,
+        media: Map<String, String> = emptyMap(),
+        mediaBytes: Map<String, ByteArray> = emptyMap(),
+        /** When the collection was created; a review card's due counts from it. */
+        crtSeconds: Long = 0L,
+        /** `col.ver` to write. 11 is the legacy shape; 14 is still JSON-in-col. */
+        version: Int = 11,
+        /** Scheduling and review-log rows, which the defaults above leave new. */
+        extraSql: List<String> = emptyList()
+    ): ByteArray {
+        val collection = collectionBytes(
+            models = models,
+            decks = decks,
+            notes = notes,
+            noteTags = noteTags,
+            cards = cards,
+            skipAutoCard = skipAutoCard,
+            crtSeconds = crtSeconds,
+            version = version,
+            extraSql = extraSql
+        )
         return zipOf(
             "collection.anki2" to collection,
             "media" to mediaJson(media).toByteArray(),
@@ -1123,6 +1597,35 @@ class AnkiPackageReaderTest {
             schedules: Map<String, CardScheduleDto>
         ) {
             this.schedules += schedules
+        }
+    }
+
+    /** Streams [apkg] and keeps what the listener delivered. */
+    private fun streamed(apkg: ByteArray): CollectingSink {
+        val sink = CollectingSink()
+        runBlocking { AnkiPackageReader.stream(ByteArrayInputStream(apkg), sink) }
+        return sink
+    }
+
+    private class CollectingSink : AnkiPackageReader.StreamSink {
+        val paperTitles = mutableListOf<String>()
+        val categoryTitles = mutableListOf<String>()
+        val questions = mutableListOf<QuestionDto>()
+
+        override suspend fun onPaper(header: LegacyParser.PaperHeader) {
+            paperTitles += header.title
+        }
+
+        override suspend fun onCategory(category: CategoryDto) {
+            categoryTitles += category.title
+        }
+
+        override suspend fun onQuestions(
+            categoryId: String,
+            questions: List<QuestionDto>,
+            schedules: Map<String, CardScheduleDto>
+        ) {
+            this.questions += questions
         }
     }
 

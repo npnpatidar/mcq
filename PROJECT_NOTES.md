@@ -180,6 +180,17 @@ code or copy changes.
 - Options go on the **front** of the card, the correct answer(s) and explanation on the back.
 - Media in fields is referenced by **filename** (`mcqapp-0.png`), never by the numeric zip
   entry name. Anki keys its import media map by filename, so a numeric `src` never resolves.
+- **Import accepts modern packages.** Anki 2.1.50+ writes `collection.anki21` or a
+  zstd-compressed `collection.anki21b` (schema 18, `decks.name` using `\x1f` as the folder
+  separator) beside a one-note `collection.anki2` compatibility stub. The collection is
+  chosen from `meta`: v3 → `anki21b`, v2 → `anki21`, v1/absent → `anki21` else `anki2`,
+  with `anki21`/`anki21b`/`anki2` as the fallback. The stub is never imported; the
+  collection and the `media` manifest may be zstd frames, decoded by the app's vendored
+  pure-Java decoder (`com.mcqapp.data.anki.zstd`; no dependency, no native code, no
+  `Unsafe`/`VarHandle`/foreign API), and the manifest is JSON in legacy packages but
+  protobuf `MediaEntries` in v3 ones. Both are parsed, and `\x1f` becomes `::` so the
+  category tree survives. A stub-first package used to import zero questions and show an
+  empty "Imported" dialog.
 - **The SM-2 import bridge solves at Anki's historical retention, not the learner's target.**
   `AnkiScheduling.HISTORICAL_RETENTION = 0.9` feeds
   `FsrsScheduler.stateForInterval`, mirroring upstream's

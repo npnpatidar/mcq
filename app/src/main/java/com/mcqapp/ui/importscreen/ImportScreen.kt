@@ -612,6 +612,9 @@ internal fun importReportLineTag(kind: ImportReportLineKind): String =
 /** Tag for the "progress restore was skipped" notice under the counted lines. */
 internal const val IMPORT_REPORT_NOTICE_TAG = "import-report-notice"
 
+/** Tag for the line shown when a report has no counted line at all. */
+internal const val IMPORT_REPORT_EMPTY_TAG = "import-report-empty"
+
 /**
  * The completion report, one plural-aware line per non-zero count. Backed by
  * [importReportLines] so what the user reads is the tested enumeration — in
@@ -621,16 +624,29 @@ internal const val IMPORT_REPORT_NOTICE_TAG = "import-report-notice"
  * in AlertDialog's height-constrained text slot: laid out as loose siblings they
  * drew over each other and over the buttons. The column scrolls and spaces its
  * lines so any report length stays inside the dialog and remains readable.
+ *
+ * [emptyMessageRes] covers the one case with nothing to enumerate: an Anki
+ * deck that yielded no question. Without it the dialog's text slot is blank,
+ * which reads as a silent failure; the caller supplies the sentence to say
+ * instead. The resource id, not resolved text, keeps the call inside a `Text`.
  */
 @Composable
-internal fun ImportReportDetails(report: ImportReport) {
+internal fun ImportReportDetails(report: ImportReport, emptyMessageRes: Int? = null) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        importReportLines(report).forEach { line ->
+        val lines = importReportLines(report)
+        if (lines.isEmpty() && emptyMessageRes != null) {
+            Text(
+                text = stringResource(emptyMessageRes),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(IMPORT_REPORT_EMPTY_TAG)
+            )
+        }
+        lines.forEach { line ->
             val resId = when (line.kind) {
                 ImportReportLineKind.NEW_PAPERS -> R.plurals.followup_import_new_papers
                 ImportReportLineKind.UPDATED_PAPERS -> R.plurals.followup_import_updated_papers

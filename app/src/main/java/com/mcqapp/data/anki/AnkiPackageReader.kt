@@ -18,14 +18,20 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.backFromSingleOption
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.textContent
+import com.mcqapp.data.anki.zstd.ZstdInputStream
 import com.mcqapp.util.Logger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 
 /** What a package contained, for the import report. */
 data class AnkiReadResult(
@@ -55,6 +61,8 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  * `col`) and the modern one (schema 15+, `collection.anki21`/
  * `collection.anki21b` with per-table notetype and deck storage). A package
  * with no `meta` entry is the legacy form, which is what this app exports.
+ * Newer exporters also zstd-compress the collection and its media entries; both
+ * a compressed and a plain member are accepted, whole-file and streamed.
  *
  * Deck names encode their hierarchy with `::`, so `Biology::Cells` becomes a
  * paper "Biology" with a category "Cells". Each top-level deck becomes its own
@@ -67,7 +75,6 @@ class AnkiPackageException(message: String, cause: Throwable? = null) : Exceptio
  */
 object AnkiPackageReader {
 
-    private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
     private val json = Json { ignoreUnknownKeys = true }
 
     private const val DEFAULT_DECK_ID = 1L
@@ -84,22 +91,30 @@ object AnkiPackageReader {
         leechThreshold: Int = AnkiScheduling.LEECH_THRESHOLD
     ): AnkiReadResult {
         val entries = unzip(bytes)
-        val collectionName = entries.keys.firstOrNull { it in COLLECTION_NAMES }
-            ?: throw AnkiPackageException(
-                "No Anki collection found in this package (looked for ${COLLECTION_NAMES.joinToString()})"
-            )
-        val collectionBytes = entries.getValue(collectionName)
-
-        if (collectionBytes.size >= 4 && ZSTD_MAGIC.indices.all { collectionBytes[it] == ZSTD_MAGIC[it] }) {
-            throw AnkiPackageException(
-                "This is a zstd-compressed .colpkg, which needs Anki 2.1.50+ to unpack. " +
-                    "Export the deck as .apkg from Anki and import that instead."
-            )
-        }
-
-        val media = MediaIndex(entries["media"]?.let { String(it, Charsets.UTF_8) }, { name -> entries[name] }, cache = true)
+        // Upstream Anki records the package layout in `meta` (PackageMetadata
+        // field 1 = version) and derives the collection's filename from it.
+        // The name preference below is only a fallback for packages with no
+        // readable meta. Both readers share chooseCollectionName.
+        val collectionName =
+            chooseCollectionName(parseMetaVersion(entries[META_MANIFEST]), { it in entries })
+                ?: throw AnkiPackageException(
+                    "No Anki collection found in this package (looked for ${COLLECTION_NAMES.joinToString()})"
+                )
+        // The decode, manifest parse and database walk are wrapped together:
+        // a zstd buffer can exhaust memory before SQLite is ever opened, and an
+        // OutOfMemoryError is an Error that the Exception catch below cannot see.
         val file = File.createTempFile("anki-import", ".anki2")
         return try {
+            // Newer exports store the collection zstd-compressed. Decode it
+            // before SQLite sees it; there is no length the caller could have
+            // supplied, so it is decompressed whole, under the same per-entry
+            // cap SafeZip uses.
+            val collectionBytes = decodeIfZstd(entries.getValue(collectionName))
+            val media = MediaIndex(
+                entries["media"]?.let { parseMediaManifest(decodeIfZstd(it)) }.orEmpty(),
+                { name -> entries[name] },
+                cache = true
+            )
             file.writeBytes(collectionBytes)
             val db = SQLiteDatabase.openOrCreateDatabase(file, null)
             try {
@@ -280,34 +295,36 @@ object AnkiPackageReader {
         require(batchSize > 0) { "batchSize must be positive" }
         val work = AnkiImportWork()
         try {
-            work.extract(input)
-            val collectionFile = work.collectionFile
-                ?: throw AnkiPackageException(
-                    "No Anki collection found in this package (looked for ${COLLECTION_NAMES.joinToString()})"
-                )
-            if (startsWithZstd(collectionFile)) {
-                throw AnkiPackageException(
-                    "This is a zstd-compressed .colpkg, which needs Anki 2.1.50+ to unpack. " +
-                        "Export the deck as .apkg from Anki and import that instead."
-                )
-            }
-            val db = try {
-                SQLiteDatabase.openOrCreateDatabase(collectionFile, null)
-            } catch (e: Exception) {
-                throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
-            }
-            try {
-                return streamCollection(
-                    db, work.mediaIndex(), sink, batchSize, nowMillis, parameters, leechThreshold
-                )
+            // Extract, zstd decode and the database walk share one mapping: a
+            // decode buffer can exhaust memory before the DB is opened, and an
+            // OutOfMemoryError is an Error that the Exception catch cannot see.
+            return try {
+                work.extract(input)
+                val spooled = work.collectionFile
+                    ?: throw AnkiPackageException(
+                        "No Anki collection found in this package (looked for ${COLLECTION_NAMES.joinToString()})"
+                    )
+                // A zstd collection is decoded into the same spooled file, so
+                // the streamed reader never holds a second copy of the collection.
+                val collectionFile = work.decodeCollectionIfZstd(spooled)
+                val db = try {
+                    SQLiteDatabase.openOrCreateDatabase(collectionFile, null)
+                } catch (e: Exception) {
+                    throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
+                }
+                try {
+                    streamCollection(
+                        db, work.mediaIndex(), sink, batchSize, nowMillis, parameters, leechThreshold
+                    )
+                } finally {
+                    db.close()
+                }
             } catch (e: AnkiPackageException) {
                 throw e
             } catch (e: OutOfMemoryError) {
                 throw AnkiPackageException("This package needs more memory than this device has.", e)
             } catch (e: Exception) {
                 throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
-            } finally {
-                db.close()
             }
         } finally {
             work.close()
@@ -685,7 +702,7 @@ object AnkiPackageReader {
             val id = key.toLongOrNull() ?: return@mapNotNull null
             // dyn=1 marks a filtered (temporary) deck; it is not a real deck.
             if ((d["dyn"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0) == 1.0) return@mapNotNull null
-            AnkiDeck(id, d["name"]?.jsonPrimitive?.content.orEmpty())
+            AnkiDeck(id, normalizeDeckName(d["name"]?.jsonPrimitive?.content.orEmpty()))
         }
     }
 
@@ -732,11 +749,21 @@ object AnkiPackageReader {
             while (c.moveToNext()) {
                 // kind 2 is a filtered deck; it is not a real deck.
                 if (deckIsFiltered(c.getBlob(2))) continue
-                out += AnkiDeck(c.getLong(0), c.getString(1))
+                out += AnkiDeck(c.getLong(0), normalizeDeckName(c.getString(1)))
             }
         }
         return out
     }
+
+    /**
+     * Schema 18+ (Anki 2.1.50+) stores a deck's hierarchy separator as the
+     * Unit Separator (`\u001f`); older packages, including this app's exports,
+     * use `::`. Every deck name is normalised here, once, before it is split,
+     * compared or used as a paper/category title, so no control character can
+     * reach the library. Both deck readers call this, so the streamed path sees
+     * the same names as the whole-file one.
+     */
+    private fun normalizeDeckName(name: String): String = name.replace("\u001f", "::")
 
     /**
      * `NotetypeConfig.kind` (1 = cloze), read from the notetype's protobuf
@@ -797,21 +824,6 @@ object AnkiPackageReader {
             }
         }
         return out
-    }
-
-    /** One base-128 varint starting at [start], with the index just past it. */
-    private fun readVarint(bytes: ByteArray, start: Int): Pair<Long, Int>? {
-        var result = 0L
-        var shift = 0
-        var i = start
-        while (i < bytes.size && shift < 64) {
-            val b = bytes[i].toInt() and 0xFF
-            result = result or ((b and 0x7F).toLong() shl shift)
-            i++
-            if (b and 0x80 == 0) return result to i
-            shift += 7
-        }
-        return null
     }
 
     // ---- notes and cards ----
@@ -1432,22 +1444,6 @@ object AnkiPackageReader {
         return out
     }
 
-    /** Whether the collection file begins with zstd's magic (a `.colpkg`). */
-    private fun startsWithZstd(file: File): Boolean = try {
-        file.inputStream().use { stream ->
-            val head = ByteArray(4)
-            var read = 0
-            while (read < 4) {
-                val n = stream.read(head, read, 4 - read)
-                if (n < 0) break
-                read += n
-            }
-            read == 4 && ZSTD_MAGIC.indices.all { head[it] == ZSTD_MAGIC[it] }
-        }
-    } catch (e: Exception) {
-        false
-    }
-
     /**
      * Anki's tags field is space-delimited with a leading and trailing space.
      */
@@ -1517,12 +1513,23 @@ private const val CLOZE_BLANK = "[...]"
 
 /**
  * The collection entry names Anki has used, in the order they are preferred
- * when a package somehow carries more than one.
+ * when a package carries more than one.
+ *
+ * A modern export ships `collection.anki21` (the real collection) beside a tiny
+ * `collection.anki2` **compatibility stub**: one note reading "Please update to
+ * the latest Anki version, then import the .colpkg/.apkg file again." plus a
+ * blank back. Anki writes that stub only so an older client recognises the
+ * package and tells the user to upgrade; it holds none of the deck. Preferring
+ * `collection.anki2` read the stub, the blank-back rule dropped its only note,
+ * and the import reported zero questions. The `.anki21b` variant is the
+ * zstd-compressed modern collection (see `decodeIfZstd`), equally authoritative
+ * over the stub. A package this app exports itself has only
+ * `collection.anki2`, which is why it stays in the list.
  */
 private val COLLECTION_NAMES = listOf(
-    "collection.anki2",
     "collection.anki21",
-    "collection.anki21b"
+    "collection.anki21b",
+    "collection.anki2"
 )
 
 /** Notes fetched per page while a streamed import walks a deck. */
@@ -1531,8 +1538,11 @@ private const val NOTE_PAGE = 2000
 /** Rows per `IN (...)` chunk; SQLite's bound-variable default is 999. */
 private const val IN_CHUNK = 900
 
-/** The `media` manifest entry: a JSON map, not the pictures themselves. */
+/** The `media` manifest entry: name mappings, never the pictures themselves. */
 private const val MEDIA_MANIFEST = "media"
+
+/** The package metadata entry: PackageMetadata protobuf, field 1 = version. */
+private const val META_MANIFEST = "meta"
 private const val IMPORT_MEDIA_PREFIX = "mcq-media-import"
 private const val TEMP_COLLECTION_PREFIX = "anki-import"
 
@@ -1542,15 +1552,15 @@ private const val TEMP_COLLECTION_PREFIX = "anki-import"
  * data URI — never changes that, and decoding every picture a second time to
  * find out would cost as much as the import itself.
  */
-private val PROBE_MEDIA = MediaIndex(null, { _ -> null }, cache = false)
+private val PROBE_MEDIA = MediaIndex(emptyMap(), { _ -> null }, cache = false)
 
 /**
  * Resolves `<img src>` references to inline data URIs.
  *
  * A legacy package references media by the numeric zip entry name; a modern one
  * references it by the stored filename. Both are looked up in the `media`
- * manifest, and an entry missing from the manifest but present in the package
- * is used directly.
+ * manifest ([byZipName]), and an entry missing from the manifest but present in
+ * the package is used directly.
  *
  * [lookup] hands back the bytes for a name, so the whole-file reader answers
  * from its entry map and the streamed reader from its spooled files. [cache]
@@ -1559,17 +1569,11 @@ private val PROBE_MEDIA = MediaIndex(null, { _ -> null }, cache = false)
  * package held in memory again.
  */
 private class MediaIndex(
-    manifestJson: String?,
+    /** zip entry name -> original filename. */
+    private val byZipName: Map<String, String>,
     private val lookup: (String) -> ByteArray?,
     cache: Boolean
 ) {
-    /** zip entry name -> original filename. */
-    private val byZipName: Map<String, String> = try {
-        manifestJson?.let { jsonObjectOf(it) }.orEmpty()
-    } catch (e: Exception) {
-        emptyMap()
-    }
-
     /** original filename -> zip entry name, so a filename resolves in O(1). */
     private val zipNameByFilename: Map<String, String> =
         byZipName.entries.associate { (zip, filename) -> filename to zip }
@@ -1592,7 +1596,8 @@ private class MediaIndex(
 
     private fun encode(src: String): String? {
         val zipName = zipNameByFilename[src] ?: src
-        val bytes = lookup(zipName) ?: return null
+        // Newer packages compress each media entry as well as the manifest.
+        val bytes = decodeIfZstd(lookup(zipName) ?: return null)
         return "data:${mimeOf(bytes)};base64,${Base64.encode(bytes)}"
     }
 }
@@ -1607,7 +1612,8 @@ private class AnkiImportWork : Closeable {
 
     private var dir: File? = null
     private val collectionFiles = LinkedHashMap<String, File>()
-    private var manifest: String? = null
+    private var metaVersion: Int? = null
+    private var manifest: Map<String, String>? = null
     private val media = LinkedHashMap<String, File>()
 
     private val directory: File
@@ -1617,13 +1623,15 @@ private class AnkiImportWork : Closeable {
             it.also { made -> dir = made }
         }
 
-    /** The collection, preferring the names in [COLLECTION_NAMES] order. */
+    /** The collection, chosen from `meta`'s version with the name order as fallback. */
     val collectionFile: File?
-        get() = COLLECTION_NAMES.firstNotNullOfOrNull { collectionFiles[it] }
+        get() = chooseCollectionName(metaVersion) { it in collectionFiles }
+            ?.let { collectionFiles[it] }
 
     suspend fun extract(input: InputStream) {
         SafeZip.stream(input) { name, entry ->
             when {
+                name == META_MANIFEST -> metaVersion = parseMetaVersion(entry.readBytes())
                 name in COLLECTION_NAMES -> {
                     if (name !in collectionFiles) {
                         val file = File.createTempFile(TEMP_COLLECTION_PREFIX, ".anki2")
@@ -1631,7 +1639,12 @@ private class AnkiImportWork : Closeable {
                         collectionFiles[name] = file
                     }
                 }
-                name == MEDIA_MANIFEST -> manifest = entry.readBytes().toString(Charsets.UTF_8)
+                name == MEDIA_MANIFEST -> {
+                    // The manifest is zstd-compressed in the same packages that
+                    // compress the collection; decode it, then parse whichever
+                    // shape it holds (JSON or protobuf).
+                    manifest = parseMediaManifest(decodeIfZstd(entry.readBytes()))
+                }
                 // A media entry (the numeric zip name) or a foreign member: a
                 // temp file either way. The manifest decides what is used.
                 else -> {
@@ -1644,7 +1657,37 @@ private class AnkiImportWork : Closeable {
     }
 
     fun mediaIndex(): MediaIndex =
-        MediaIndex(manifest, { name -> media[name]?.readBytes() }, cache = false)
+        MediaIndex(manifest.orEmpty(), { name -> media[name]?.readBytes() }, cache = false)
+
+    /**
+     * Decodes a zstd-compressed collection into its own spooled file, so the
+     * streamed reader never materialises a second copy: the compressed bytes go
+     * through [ZstdInputStream] into a sibling temp file, which replaces the
+     * spooled entry. A package that is not compressed is returned untouched.
+     */
+    fun decodeCollectionIfZstd(file: File): File {
+        if (!isZstd(file)) return file
+        // Keep the `.anki2` suffix last so AnkiTempFiles' startup sweep removes
+        // this file if the process is killed mid-import.
+        val decoded = File.createTempFile(TEMP_COLLECTION_PREFIX, ".decoded.anki2")
+        try {
+            ZstdInputStream(file.inputStream().buffered()).use { input ->
+                decoded.outputStream().buffered().use { output ->
+                    copyBounded(input, output, SafeZip.MAX_ENTRY_BYTES)
+                }
+            }
+            // Same temp directory, so this is an atomic replace on Android;
+            // fall back to a copy if the rename is refused.
+            if (!decoded.renameTo(file)) decoded.copyTo(file, overwrite = true)
+            return file
+        } catch (e: AnkiPackageException) {
+            throw e
+        } catch (e: Exception) {
+            throw AnkiPackageException(ZSTD_FAILURE_MESSAGE, e)
+        } finally {
+            decoded.delete()
+        }
+    }
 
     override fun close() {
         dir?.deleteRecursively()
@@ -1655,6 +1698,283 @@ private class AnkiImportWork : Closeable {
             }
         }
         collectionFiles.clear()
+    }
+}
+
+/** Package versions in the `meta` protobuf (Anki's `meta.rs`). */
+private const val PACKAGE_V2 = 2
+private const val PACKAGE_V3 = 3
+
+/**
+ * The collection entry to read, derived from the package's `meta` version the
+ * way upstream `VersionExt::collection_filename()` does: v3 (`Latest`) names
+ * `collection.anki21b`, v2 (`Legacy2`) names `collection.anki21`, and v1 or a
+ * package with no `meta` (our own exports, old AnkiDroid) names
+ * `collection.anki21` with `collection.anki2` as its alternative. When the
+ * derived member is not in the archive, [COLLECTION_NAMES] is the fallback, so
+ * neither reader can drift from the other.
+ */
+private fun chooseCollectionName(metaVersion: Int?, has: (String) -> Boolean): String? {
+    val preferred = when (metaVersion) {
+        PACKAGE_V3 -> "collection.anki21b"
+        PACKAGE_V2 -> "collection.anki21"
+        else -> "collection.anki21"
+    }
+    if (has(preferred)) return preferred
+    return COLLECTION_NAMES.firstOrNull(has)
+}
+
+/**
+ * `PackageMetadata.version`, field 1 of the `meta` entry's protobuf
+ * (`rslib/src/import_export/package/meta.rs`). Other fields are skipped by wire
+ * type. An absent entry is not an error; a truncated or unreadable one is
+ * logged and ignored so the caller falls back to the name preference instead of
+ * failing the whole import.
+ */
+private fun parseMetaVersion(bytes: ByteArray?): Int? {
+    if (bytes == null) return null
+    var version: Int? = null
+    var malformed = false
+    var i = 0
+    while (i < bytes.size) {
+        val keyAndNext = readVarint(bytes, i)
+        if (keyAndNext == null) {
+            malformed = true
+            break
+        }
+        val (key, afterKey) = keyAndNext
+        i = afterKey
+        when ((key and 7L).toInt()) {
+            0 -> {
+                val valueAndNext = readVarint(bytes, i)
+                if (valueAndNext == null) {
+                    malformed = true
+                    break
+                }
+                if ((key ushr 3).toInt() == 1) version = valueAndNext.first.toInt()
+                i = valueAndNext.second
+            }
+            1 -> i = skipProtoBytes(bytes, i, 8)
+            2 -> {
+                val lengthAndNext = readVarint(bytes, i)
+                if (lengthAndNext == null) {
+                    malformed = true
+                    break
+                }
+                val (length, afterLength) = lengthAndNext
+                if (length < 0 || length > bytes.size - afterLength) {
+                    malformed = true
+                    break
+                }
+                i = afterLength + length.toInt()
+            }
+            5 -> i = skipProtoBytes(bytes, i, 4)
+            else -> {
+                malformed = true
+                break
+            }
+        }
+    }
+    if (malformed) Logger.w("ANKI", "Ignoring an unreadable Anki package metadata entry")
+    return version
+}
+
+/**
+ * The `media` manifest's name map. Anki has written two encodings:
+ *
+ * - JSON `{"0":"name.png"}` — schema-11/v2 packages and our own exports.
+ * - A protobuf `MediaEntries` — v3 packages. Repeated field 1 is
+ *   `MediaEntry { string name = 1; uint32 size = 2; bytes sha1 = 3; }`, and an
+ *   entry's position is its zip-entry name (`0`, `1`, …). Upstream:
+ *   `rslib/src/import_export/package/media.rs` (`write_media_map` writes it,
+ *   `extract_media_entries` reads it).
+ *
+ * The result is zip entry name -> original filename, which is what [MediaIndex]
+ * expects. A malformed or unexpected manifest (BOM, a JSON array, a truncated
+ * protobuf) is logged and resolves nothing: pictures are lost, but the deck's
+ * questions still import. Only a failed zstd decode is a package error.
+ */
+private fun parseMediaManifest(bytes: ByteArray): Map<String, String> {
+    val first = bytes.firstOrNull { b ->
+        b != ' '.code.toByte() && b != '\n'.code.toByte() &&
+            b != '\r'.code.toByte() && b != '\t'.code.toByte()
+    } ?: return emptyMap()
+    if (first == '{'.code.toByte()) {
+        return try {
+            jsonObjectOf(String(bytes, Charsets.UTF_8))
+        } catch (e: Exception) {
+            Logger.w("ANKI", "Could not read the Anki media manifest as JSON: ${e.message}")
+            emptyMap()
+        }
+    }
+    return parseMediaProtobuf(bytes)
+}
+
+/** The v3 `MediaEntries` protobuf, in the manifest's entry order. */
+private fun parseMediaProtobuf(bytes: ByteArray): Map<String, String> = try {
+    val out = LinkedHashMap<String, String>()
+    var i = 0
+    while (i < bytes.size) {
+        val (key, afterKey) = requireVarint(bytes, i, "a field key")
+        i = afterKey
+        when ((key and 7L).toInt()) {
+            0 -> i = requireVarint(bytes, i, "a varint field").second
+            1 -> i = skipProtoBytes(bytes, i, 8)
+            2 -> {
+                val (length, afterLength) = requireVarint(bytes, i, "a length")
+                if (length < 0 || length > bytes.size - afterLength) {
+                    throw IllegalArgumentException("a field length runs past the manifest")
+                }
+                val end = afterLength + length.toInt()
+                if ((key ushr 3).toInt() == 1) {
+                    out[out.size.toString()] = mediaEntryName(bytes, afterLength, end)
+                }
+                i = end
+            }
+            5 -> i = skipProtoBytes(bytes, i, 4)
+            else -> throw IllegalArgumentException("unsupported wire type ${key and 7L}")
+        }
+    }
+    out
+} catch (e: Exception) {
+    // Pictures are cosmetic next to the deck itself: never reject the import
+    // over a manifest this reader does not recognise.
+    Logger.w("ANKI", "Could not read the Anki media manifest as protobuf: ${e.message}")
+    emptyMap()
+}
+
+/**
+ * The `name` field (inner field 1) of one `MediaEntry`. Other fields — `size`
+ * (2), `sha1` (3) and anything newer — are skipped by wire type.
+ */
+private fun mediaEntryName(bytes: ByteArray, start: Int, end: Int): String {
+    var name: String? = null
+    var i = start
+    while (i < end) {
+        val (key, afterKey) = requireVarint(bytes, i, "a media entry field key")
+        i = afterKey
+        when ((key and 7L).toInt()) {
+            0 -> i = requireVarint(bytes, i, "a media entry varint").second
+            1 -> i = skipProtoBytes(bytes, i, 8, end)
+            2 -> {
+                val (length, afterLength) = requireVarint(bytes, i, "a media entry length")
+                if (length < 0 || length > end - afterLength) {
+                    throw IllegalArgumentException("a media entry field runs past the entry")
+                }
+                val fieldEnd = afterLength + length.toInt()
+                if ((key ushr 3).toInt() == 1 && name == null) {
+                    name = decodeUtf8(bytes, afterLength, fieldEnd)
+                }
+                i = fieldEnd
+            }
+            5 -> i = skipProtoBytes(bytes, i, 4, end)
+            else -> throw IllegalArgumentException("unsupported wire type ${key and 7L}")
+        }
+    }
+    return name ?: throw IllegalArgumentException("a media entry has no name")
+}
+
+/** One base-128 varint starting at [start], with the index just past it. */
+private fun readVarint(bytes: ByteArray, start: Int): Pair<Long, Int>? {
+    var result = 0L
+    var shift = 0
+    var i = start
+    while (i < bytes.size && shift < 64) {
+        val b = bytes[i].toInt() and 0xFF
+        result = result or ((b and 0x7F).toLong() shl shift)
+        i++
+        if (b and 0x80 == 0) return result to i
+        shift += 7
+    }
+    return null
+}
+
+private fun requireVarint(bytes: ByteArray, start: Int, what: String): Pair<Long, Int> =
+    readVarint(bytes, start) ?: throw IllegalArgumentException("$what is truncated")
+
+private fun skipProtoBytes(bytes: ByteArray, start: Int, count: Int, limit: Int = bytes.size): Int {
+    val end = start + count
+    if (end > limit) throw IllegalArgumentException("a fixed-width field is truncated")
+    return end
+}
+
+/** Strict UTF-8: an invalid name is rejected, never silently replaced. */
+private fun decodeUtf8(bytes: ByteArray, start: Int, end: Int): String = try {
+    Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(bytes, start, end - start))
+        .toString()
+} catch (e: CharacterCodingException) {
+    throw IllegalArgumentException("a media filename is not valid UTF-8", e)
+}
+
+/** The zstd frame magic number, little-endian as written: 28 B5 2F FD. */
+private val ZSTD_MAGIC = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
+/** Friendly text for a zstd payload that will not decode; the cause is kept. */
+private const val ZSTD_FAILURE_MESSAGE =
+    "This Anki package's data could not be unpacked. Export the deck again from Anki " +
+        "as an .apkg file and try importing that."
+
+private fun isZstd(bytes: ByteArray): Boolean =
+    bytes.size >= ZSTD_MAGIC.size && ZSTD_MAGIC.indices.all { bytes[it] == ZSTD_MAGIC[it] }
+
+/** Whether the first four bytes of [file] are zstd's magic. */
+private fun isZstd(file: File): Boolean = try {
+    file.inputStream().use { stream ->
+        val head = ByteArray(ZSTD_MAGIC.size)
+        var read = 0
+        while (read < head.size) {
+            val n = stream.read(head, read, head.size - read)
+            if (n < 0) break
+            read += n
+        }
+        read == head.size && isZstd(head)
+    }
+} catch (e: Exception) {
+    false
+}
+
+/**
+ * A payload may be stored raw or zstd-compressed: newer Anki exports compress
+ * both the collection and every media entry, so every byte array that came out
+ * of the archive passes through here before it is parsed or encoded.
+ */
+private fun decodeIfZstd(bytes: ByteArray): ByteArray =
+    if (isZstd(bytes)) zstdBytes(bytes) else bytes
+
+/**
+ * Decompresses [bytes] under [SafeZip]'s per-entry cap. The compressed member
+ * already passed that cap, but compression must not be a way around it.
+ */
+private fun zstdBytes(bytes: ByteArray): ByteArray {
+    val out = ByteArrayOutputStream()
+    try {
+        ZstdInputStream(bytes.inputStream()).use { input ->
+            copyBounded(input, out, SafeZip.MAX_ENTRY_BYTES)
+        }
+    } catch (e: AnkiPackageException) {
+        throw e
+    } catch (e: Exception) {
+        throw AnkiPackageException(ZSTD_FAILURE_MESSAGE, e)
+    }
+    return out.toByteArray()
+}
+
+/** Copies [input] to [output], refusing to exceed [limit] bytes. */
+private fun copyBounded(input: InputStream, output: OutputStream, limit: Long) {
+    val chunk = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val read = input.read(chunk)
+        if (read < 0) break
+        total += read
+        if (total > limit) {
+            throw AnkiPackageException(
+                "This package expands to more than ${limit / (1024 * 1024)} MB when unpacked."
+            )
+        }
+        output.write(chunk, 0, read)
     }
 }
 

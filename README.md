@@ -1845,7 +1845,7 @@ nothing was imported.
 - `Couldn’t read that Word file. Make sure it’s a valid document and try again.` (DOCX)
 - `No question papers were found in this file.`
 - Exception detail is logged only, never rendered.
-- Anki: `This is a zstd-compressed .colpkg, which needs Anki 2.1.50+ to unpack. Export the deck as .apkg from Anki and import that instead.`
+- Anki: `This Anki package's data could not be unpacked. Export the deck again from Anki as an .apkg file and try importing that.` (a corrupt or unsupported compressed payload; the detail is logged)
 
 ---
 
@@ -2721,6 +2721,27 @@ instead.
 
 ### Anki Interoperability
 
+- **Import** accepts both layouts: legacy packages (`collection.anki2`, schema
+  11/14, JSON `col.decks`) and modern ones (`collection.anki21`/`anki21b`,
+  schema 15/18). A modern collection and its `media` manifest may be
+  zstd-compressed; the app unpacks them with its **vendored pure-Java decoder**
+  (`com.mcqapp.data.anki.zstd`, derived from aircompressor via
+  `com.qyntrax:unzstd 0.1.0`; no runtime dependency, no native code, no
+  `sun.misc.Unsafe`/`VarHandle`/foreign API). A modern package's
+  `collection.anki2` is a one-note compatibility stub ("Please update to the
+  latest Anki version…"), so the reader chooses the collection from the
+  package's `meta` version: v3 → `collection.anki21b`, v2 →
+  `collection.anki21`, v1/absent → `collection.anki21` else
+  `collection.anki2`; if that member is missing it falls back to
+  `anki21`/`anki21b`/`anki2`. The stub is never imported.
+- **Media manifest**: legacy packages and our own exports carry a JSON map
+  (zip entry → filename); schema-18 packages carry a protobuf `MediaEntries`
+  list, in both cases optionally zstd-compressed. Both are parsed, and pictures
+  are stored inline as `data:` URIs.
+- **Deck hierarchy**: schema-18 deck names use `\x1f` as the folder separator;
+  it is normalised to `::`, so the category tree survives.
+- **Zero-question decks**: if a deck yields no importable question, the report
+  says `No questions were found in this deck.` instead of an empty dialog.
 - Export writes legacy schema-11 `.apkg` with no `meta`; Anki upgrades on import
   (officially supported path for old clients).
 - Notetype: 3 fields — Front, Back, `mcqapp` (JSON copy of question). Card

@@ -48,6 +48,10 @@
         <item quantity="other">• %1$d cards imported</item>
     </plurals>
 
+    <!-- Anki import: a deck that yielded no question at all must say so instead
+         of showing an empty dialog body. -->
+    <string name="import_report_no_questions">No questions were found in this deck.</string>
+
     <!-- Search: a blank query gets a prompt instead of a silent empty list. -->
     <string name="followup_search_type_to_hint">Type to search across all papers</string>
 </resources>

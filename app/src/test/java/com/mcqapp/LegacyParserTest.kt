@@ -413,18 +413,22 @@ class LegacyParserTest {
         assertTrue("expected Hindi questions, got $hindi", hindi >= 5)
         assertTrue("expected edge questions without explanation, got $missingExplanation",
             missingExplanation >= 2)
-        // Keyless is meaningful only where it is deliberate: the six cards have
-        // no key because their back is the explanation, and q-e1 is the one
-        // ungraded-MCQ edge. Anything else keyless would be a broken question.
+        // Keyless is meaningful only where it is deliberate: the seven cards
+        // have no key because their back is the explanation, and q-e1 is the
+        // one ungraded-MCQ edge. Anything else keyless would be a broken
+        // question.
         val keyless = questions.filter { it.correctOptionIds.isEmpty() }
         assertEquals(
-            "expected exactly the six cards plus q-e1 keyless, got ${keyless.map { it.id }}",
-            7,
+            "expected exactly the seven cards plus q-e1 keyless, got ${keyless.map { it.id }}",
+            8,
             keyless.size
         )
         assertEquals(
-            "the keyless cards must be the six demo flashcards",
-            listOf("q-e2", "q-fc-hi", "q-fc-image", "q-fc-math", "q-fc-passage", "q-fc-table"),
+            "the keyless cards must be the seven demo flashcards",
+            listOf(
+                "q-e2", "q-fc-hi", "q-fc-image", "q-fc-image-back",
+                "q-fc-math", "q-fc-passage", "q-fc-table"
+            ),
             keyless.filter { it.options.isEmpty() }.map { it.id }.sorted()
         )
         assertTrue(
@@ -493,14 +497,14 @@ class LegacyParserTest {
         val stemAndOptions = questions.single { it.id == "q-vis-4" }
         assertTrue("q-vis-4 must carry a stem picture",
             stemAndOptions.elements.any { it is ContentElement.ImageElement })
-        assertTrue("every q-vis-4 option must carry a picture",
+        assertTrue("every q-vis-4 option must carry a picture and its name label",
             stemAndOptions.options.all { option ->
-                option.elements.any { it is ContentElement.ImageElement }
+                option.elements.any { it is ContentElement.ImageElement } && option.text.isNotBlank()
             })
-        assertEquals("q-vis-4 must demonstrate exactly one image-only option",
-            1, stemAndOptions.options.count { it.text.isBlank() })
-        assertEquals("the other three q-vis-4 options must keep their text",
-            3, stemAndOptions.options.count { it.text.isNotBlank() })
+        val correctOption = stemAndOptions.options.filter { it.id in stemAndOptions.correctOptionIds }
+        assertEquals("q-vis-4 must key exactly one option", 1, correctOption.size)
+        assertEquals("the correct q-vis-4 option must be named",
+            "Square", correctOption.single().text.trim())
 
         // Reading passages: two groups, every member resolves, one standalone
         // question shares the category without joining a passage, and the

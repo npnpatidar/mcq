@@ -1603,6 +1603,32 @@
                 {
                   "type": "text",
                   "content": "Which shape is shown?"
+                },
+                {
+                  "type": "image",
+                  "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                }
+              ],
+              "options_elements": {},
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "A square — four equal sides and four right angles."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "flashcard",
+                "demo"
+              ]
+            },
+            {
+              "id": "q-fc-image-back",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "What is the shape with four equal sides and four right angles? (Reveal the answer.)"
                 }
               ],
               "options_elements": {},
@@ -1650,6 +1676,10 @@
                   {
                     "type": "image",
                     "content": "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEwAAABMCAIAAABI9cZ8AAAAfUlEQVR42u3asQ3AIAxFQe8/WYZAFCkyBA2wAwoJ1n09D3C9o95P+mJeTz1ISEhISEhISEhISEhIyL3I+GiQ7yCv0rYFCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ+R+k74/zkQcNEhISEhISEhISEhISEnIBmb4BOjSckFn9noEAAAAASUVORK5CYII=\" alt=\"A square\">"
+                  },
+                  {
+                    "type": "text",
+                    "content": " Square"
                   }
                 ],
                 "c": [

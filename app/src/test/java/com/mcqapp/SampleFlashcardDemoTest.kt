@@ -19,7 +19,8 @@ import java.io.File
  * This pins the demo's coverage — prose, table, formula, picture and a
  * passage member — and the one-option conversion edge case, so a future edit
  * cannot quietly turn the sample back into a bank with an unanswerable
- * question in it.
+ * question in it. An option always carries its text label; an image-only
+ * option is not a supported demo shape.
  */
 class SampleFlashcardDemoTest {
 
@@ -64,8 +65,8 @@ class SampleFlashcardDemoTest {
     fun everyZeroOptionQuestionIsAReadableCard() {
         val cards = questions.filter { it.options.isEmpty() }
         assertEquals(
-            "the sample must keep exactly six flashcards, got ${cards.size}",
-            6,
+            "the sample must keep exactly seven flashcards, got ${cards.size}",
+            7,
             cards.size
         )
         cards.forEach { card ->
@@ -137,6 +138,17 @@ class SampleFlashcardDemoTest {
             cards.any { card ->
                 back(card).filterIsInstance<ContentElement.TableElement>()
                     .any { it.rows.firstOrNull() == listOf("Quantity", "Unit", "Symbol") }
+            }
+        )
+
+        // The picture prompt must show its picture on the *front*: a
+        // "which shape is shown?" card whose image only sits on the back is
+        // unanswerable as shown.
+        val shapePrompt = cards.single { it.text.contains("Which shape is shown?") }
+        assertTrue(
+            "the shape prompt's front must carry the embedded picture",
+            shapePrompt.elements.any { element ->
+                element is ContentElement.ImageElement && element.src.startsWith("data:image/")
             }
         )
     }

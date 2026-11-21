@@ -12,6 +12,8 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import kotlinx.coroutines.runBlocking
@@ -152,7 +154,12 @@ class ImportRemintedOptionIdsTest {
 
         assertEquals(1, report.answersRefreshed)
         val q1 = db.questionDao().getById("q1")!!
-        assertEquals("Second answer.", q1.explanation)
+        // `explanation` is the stored element JSON; its decoded text is the
+        // sentence the learner sees.
+        assertEquals(
+            "Second answer.",
+            q1.explanation.parseContentElements(json).textContent
+        )
         assertEquals("Second answer.", q1.backText)
         assertEquals("second answer.", q1.backTextFolded)
         // The stem column belongs to the question text and is not rewritten.

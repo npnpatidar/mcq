@@ -120,6 +120,73 @@ class FlashcardEditorStateTest {
         assertEquals(R.string.save_blocked_no_content, saveBlockedHintRes(noFront))
     }
 
+    /**
+     * The MCQ hint order is the one `main` shipped, because the visible copy is
+     * pinned by `QuestionEditorUiTest.blankNewQuestionExplainsTheDisabledSave`:
+     * a brand-new question (two blank options, no front) blames its options, not
+     * the empty text field.
+     */
+    @Test
+    fun aBlankNewQuestionStillBlamesItsBlankOptions() {
+        val fresh = EditorUiState(
+            loading = false,
+            questionId = "",
+            paperId = "p-1",
+            categoryId = "c-1",
+            isNew = true,
+            elements = listOf(ContentElement.TextElement("")),
+            options = blankOptions()
+        )
+        assertEquals("the editor's default shape", EditorCardType.MULTIPLE_CHOICE, fresh.cardType)
+        assertFalse(fresh.canSave)
+        assertEquals(
+            "options come before the front, as on main",
+            R.string.save_blocked_empty_option,
+            saveBlockedHintRes(fresh)
+        )
+
+        // The option-list checks still precede the front check in every
+        // combination: too few options first...
+        assertEquals(
+            R.string.save_blocked_two_options,
+            saveBlockedHintRes(fresh.copy(options = emptyList()))
+        )
+        // ...then a blank one, then (only with a complete option list) the front.
+        assertEquals(
+            R.string.save_blocked_empty_option,
+            saveBlockedHintRes(fresh)
+        )
+        assertEquals(
+            R.string.save_blocked_no_content,
+            saveBlockedHintRes(
+                question("Alpha", "Beta").copy(elements = listOf(ContentElement.TextElement("")))
+            )
+        )
+    }
+
+    /**
+     * A card reports its missing answer first: the back is the piece a question
+     * does not have, so it is what makes the form a card.
+     */
+    @Test
+    fun aCardReportsItsMissingAnswerBeforeAMissingFront() {
+        val blankCard = card(back = emptyList()).copy(
+            elements = listOf(ContentElement.TextElement(""))
+        )
+        assertEquals(
+            "the answer is the card's defining missing piece",
+            R.string.r2_editor_save_blocked_flashcard_back,
+            saveBlockedHintRes(blankCard)
+        )
+
+        val answeredButNoFront = card().copy(elements = listOf(ContentElement.TextElement("  ")))
+        assertEquals(
+            "with an answer present, the front is what is missing",
+            R.string.save_blocked_no_content,
+            saveBlockedHintRes(answeredButNoFront)
+        )
+    }
+
     @Test
     fun theCardTypeComesFromTheQuestion() {
         assertEquals("no options is a flashcard", EditorCardType.FLASHCARD, cardTypeOf(0))

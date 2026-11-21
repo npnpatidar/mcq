@@ -153,6 +153,11 @@ class BackupRestoreRoundTripTest {
 
     private suspend fun seed() {
         com.mcqapp.data.io.Importer(db).import(content())
+        // The card rows carry the hash of the question as the importer wrote
+        // it. Restore reconciles restored schedules to the replayed question's
+        // hash by design, so a seed with a made-up literal would not round-trip.
+        val q1Hash = db.questionDao().getById("q-1")!!.contentHash
+        val q2Hash = db.questionDao().getById("q-2")!!.contentHash
         db.cardStateDao().upsertAll(
             listOf(
                 CardStateEntity(
@@ -165,7 +170,7 @@ class BackupRestoreRoundTripTest {
                     lapses = 1,
                     leech = false,
                     lastReviewedAt = 1_750_000_000_000,
-                    contentHash = "hash-q-1",
+                    contentHash = q1Hash,
                     difficulty = 5.5,
                     stability = 21.0,
                     cardState = com.mcqapp.domain.CardStateKind.REVIEW,
@@ -181,7 +186,7 @@ class BackupRestoreRoundTripTest {
                     lapses = 0,
                     leech = true,
                     lastReviewedAt = 0,
-                    contentHash = "hash-q-2",
+                    contentHash = q2Hash,
                     cardState = com.mcqapp.domain.CardStateKind.NEW
                 )
             )

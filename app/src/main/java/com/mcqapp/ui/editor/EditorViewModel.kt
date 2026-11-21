@@ -550,11 +550,23 @@ internal fun editorCardFingerprint(s: EditorUiState, rawImages: Boolean = false)
  */
 internal fun saveBlockedHintRes(s: EditorUiState): Int? = when {
     s.loading || s.busy || !s.marksValid -> null
-    !s.hasFrontContent -> R.string.save_blocked_no_content
+    // One hint at a time, and the shape's own missing piece comes first — in
+    // the order the form is read top to bottom.
     s.cardType == EditorCardType.FLASHCARD ->
-        if (s.hasSaveableBack) null else R.string.r2_editor_save_blocked_flashcard_back
+        // A card is defined by its answer, so an empty back is reported before
+        // a missing front: the back is the part a question does not have.
+        when {
+            !s.hasSaveableBack -> R.string.r2_editor_save_blocked_flashcard_back
+            !s.hasFrontContent -> R.string.save_blocked_no_content
+            else -> null
+        }
+    // Unchanged from before flashcards: the option list (the part a save
+    // rewrites) is reported before the front, so a blank new question keeps
+    // saying "Every option needs content" instead of jumping to the text
+    // hint (QuestionEditorUiTest pins that copy).
     s.options.size < 2 -> R.string.save_blocked_two_options
     s.options.any { !it.hasContent } -> R.string.save_blocked_empty_option
+    !s.hasFrontContent -> R.string.save_blocked_no_content
     else -> null
 }
 

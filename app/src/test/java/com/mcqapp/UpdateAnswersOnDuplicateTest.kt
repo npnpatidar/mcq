@@ -10,6 +10,9 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.textContent
+import kotlinx.serialization.json.Json
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -163,7 +166,11 @@ class UpdateAnswersOnDuplicateTest {
 
         assertEquals("the refresh path must have run", 1, report.answersRefreshed)
         val q1 = db.questionDao().getById("q1")!!
-        assertEquals("Second answer.", q1.explanation)
+        // `explanation` is the stored element JSON, not flat text.
+        assertEquals(
+            "Second answer.",
+            q1.explanation.parseContentElements(Json { ignoreUnknownKeys = true }).textContent
+        )
         assertEquals("Second answer.", q1.backText)
         assertEquals("second answer.", q1.backTextFolded)
         // The stem column is the question's own text and must not move.

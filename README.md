@@ -1269,7 +1269,7 @@ Modal bottom sheet (Anki's Card Info):
 | **Option** | `^\([a-z]\)` | exact | Yes | `(a)`..`(j)`; must start at `(a)`, consecutive without gaps. |
 | **Answer** | `^Ans\.` | exact | Yes | `Ans. b` or `Ans. b, d` or `Ans. b and d`. |
 | **Explanation** | `^Exp:` | exact | No | `Exp: <text>`. |
-| **Card answer** | `^Answer:` | exact | Flashcard | `Answer: <back>`. Marks a zero-option front/back card; replaces the option/`Ans.` pair. `Ans.` is also accepted as a card's answer marker. |
+| **Card answer** | `^Answer:` | exact | Flashcard | `Answer: <back>`. Marks a zero-option front/back card and replaces the option/`Ans.` pair. `Ans.` alone does **not** make a card — see [Flashcards](#flashcards). |
 | **Passage** | `^(?i)Passage:` | **case-insensitive** | No | `Passage: <title>`; blank line = end-of-passage reset. |
 
 Markers are line-anchored (`(?m)^`). DOCX writer prefixes such lines with a space
@@ -1302,6 +1302,57 @@ Passage:
 (c) Third Law
 Ans. b
 ```
+
+### Flashcards
+
+A flashcard is the same numbered grammar with **no options and no `Ans.` line**.
+The `Answer:` line starts the back; everything after it, up to the next `N.)`
+question, is the answer:
+
+```
+4.) What is the capital of France?
+Answer: Paris.
+
+5.) State Newton's second law.
+Answer: Force equals mass times acceleration, F = ma.
+It holds only while the mass is constant.
+
+6.) Which shape is shown?
+Answer:
+```
+
+Rules:
+
+- **Marker:** a line that starts with exactly `Answer:` (capital A, no leading
+  space). It must be inside a `N.)` block. `Ans.` is the key *of options* and
+  never starts a card; a block with `Ans.` and no options is refused as a
+  malformed multiple-choice question.
+- **Front and back:** the front is everything between the number and `Answer:`;
+  the back is everything after it. Both may run over several paragraphs and
+  lines, and both accept the same formatting as any other field — bold, italic,
+  underline, strike, sub/superscript, highlight, tables, embedded pictures and
+  Word equations (see below).
+- **Back is the answer, not a note:** the app stores a card's back in the
+  explanation/answer field. Study shows it under **Answer** (no "Incorrect"
+  unless the card has options), Browse labels the row **Flashcard**, and
+  statistics count it as self-graded.
+- **Empty back is allowed:** a bare `Answer:` line imports the card and raises
+  the advisory warning "No answer yet" (the import still succeeds; Study shows
+  an empty answer). It is not a dropped question. (Question 6 above.)
+- **No options at all:** as soon as a block lists `(a)`, `(b)` … it is a
+  multiple-choice question, and it then needs `Ans.`. A card cannot key options.
+- **Escaping marker-shaped lines:** the grammar is line-based, so a line in a
+  front or back that starts with `N.)`, `(a)`–`(z)`, `Ans.`, `Exp:`, `Answer:`
+  or `Passage:` changes how the block is read — a `(a)` line makes it a
+  multiple-choice question, an `N.)` line starts a new question, `Passage:`
+  starts a passage. Start such a line with one space to keep it as text; the
+  app's own DOCX exports do this automatically.
+- **Metadata:** marks, difficulty and tags are not in the visible markers. They
+  survive only when re-importing a DOCX the app itself exported (its hidden
+  payload); with a hand-written document they take their defaults.
+- **Where it lands:** the card joins the category of the heading it sits under,
+  exactly like a multiple-choice question. Headings are optional; without one
+  the app creates a single section for the document.
 
 ### Formatting Support
 

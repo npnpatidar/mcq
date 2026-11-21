@@ -163,6 +163,18 @@ class FlashcardImportTest {
         }]}]}
     """.trimIndent()
 
+    /**
+     * A changed back on the same prompt is an answer refresh, not a new
+     * question.
+     *
+     * An id-less one-option source is normalised to a prompt-only id, so the
+     * re-import with another answer matches the stored card *and* its
+     * prompt-only content hash. That takes the answers-refresh path (enabled by
+     * `updateAnswersOnDuplicate`): the back is rewritten in place and the
+     * schedule it earned is reset, because the learner studied a different
+     * answer. The refresh returns before the duplicate counter, so it reports
+     * `answersRefreshed = 1` rather than also counting a skipped duplicate.
+     */
     @Test
     fun anIdLessOneOptionQuestionKeepsItsPromptIdentityWhenTheAnswerChanges() = runBlocking {
         val prompt = "Capital of France?"
@@ -204,14 +216,17 @@ class FlashcardImportTest {
         val report = Importer(db, updateAnswersOnDuplicate = true)
             .import(LegacyParser.parse(idLessBank("Lyon")))
 
-        assertEquals("the corrected answer must update, not duplicate", 0, report.newQuestions)
-        assertEquals(1, report.updatedQuestions)
+        // One prompt = one answer: the row is refreshed, not minted as a
+        // second card and not skipped as an unchanged duplicate.
+        assertEquals(0, report.newQuestions)
+        assertEquals(0, report.updatedQuestions)
         assertEquals(0, report.duplicateQuestions)
+        assertEquals(1, report.answersRefreshed)
         assertEquals(1, db.questionDao().countQuestions())
         val updated = repository.getQuestion(expectedId)!!
         assertTrue(updated.options.isEmpty())
         assertEquals(listOf(ContentElement.TextElement("Lyon"), ContentElement.TextElement("Capital city.")), updated.explanationElements)
-        // A changed answer is content the learner studied: the schedule resets.
+        // The learner studied a different answer: the schedule resets.
         assertNull(db.cardStateDao().get("p1", expectedId))
     }
 

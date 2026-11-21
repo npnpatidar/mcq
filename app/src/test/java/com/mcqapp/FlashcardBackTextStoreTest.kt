@@ -103,10 +103,12 @@ class FlashcardBackTextStoreTest {
             )
 
             val row = db.questionDao().getById("mcq")!!
-            // Flattened like the in-memory filter sees it: markup gone, table
-            // cells kept.
-            assertEquals("Which law applies Newton's second law m kg", row.backText)
-            assertEquals("which law applies newton's second law m kg", row.backTextFolded)
+            // backText is the back only: the explanation, flattened the way
+            // the in-memory filter sees it (markup gone, table cells kept).
+            // The stem lives in searchText — search ORs the two columns, so
+            // neither has to repeat the other.
+            assertEquals("Newton's second law m kg", row.backText)
+            assertEquals("newton's second law m kg", row.backTextFolded)
             // The preview column never widens: stem only, no answer, no
             // explanation.
             assertEquals("Which law applies", row.searchText)

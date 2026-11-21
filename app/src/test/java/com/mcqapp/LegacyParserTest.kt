@@ -4,6 +4,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.toOptionEntities
 import com.mcqapp.data.io.toQuestionEntity
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.InlineHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -360,7 +361,7 @@ class LegacyParserTest {
             assertTrue("blank id", q.id.isNotBlank())
             assertTrue("blank text: ${q.id}", q.text.isNotBlank())
             assertTrue("unexpected option count: ${q.id}",
-                q.options.size >= 2 || q.id == "q-e2" || q.id == "q-e5")
+                q.options.isEmpty() || q.options.size >= 2 || q.id == "q-e5")
             val optionIds = q.options.map { it.id }.toSet()
             assertTrue("unresolved correct ids: ${q.id}",
                 q.correctOptionIds.all { it in optionIds })
@@ -428,6 +429,60 @@ class LegacyParserTest {
         assertEquals(1.0, marks["q-o2"]!!, 0.0001)
         assertEquals(3.0, marks["q-o3"]!!, 0.0001)
 
+        // The three question-level shapes the coverage audit added.
+        val threeOptions = questions.single { it.id == "q-e6" }
+        assertEquals("q-e6 demonstrates three options", 3, threeOptions.options.size)
+        assertEquals("q-e6 demonstrates fractional marks", 0.5, threeOptions.marks, 0.0)
+        // The demo must author real entities: replacing them with raw "<"/">"
+        // would lose the shape under test even though it renders the same.
+        assertTrue(
+            "q-e6 must author its option as an HTML entity, not a raw <",
+            threeOptions.options.any { it.text.contains("&lt;") }
+        )
+        assertTrue(
+            "q-e6 must author its explanation with HTML entities",
+            threeOptions.explanation.contains("&lt;") &&
+                threeOptions.explanation.contains("&gt;")
+        )
+        // The entity must survive parsing and *render* as the comparison
+        // sign: a raw "<" standing in for the authored entity would pass a
+        // substring check while losing the thing the demo is for.
+        val renderedOptions = threeOptions.options.map { InlineHtml.parse(it.text).text }
+        assertTrue(
+            "q-e6's less-than option must render as 5 < 6, got $renderedOptions",
+            renderedOptions.any { it.trim() == "5 < 6" }
+        )
+        assertTrue(
+            "q-e6's greater-than option must render as 5 > 6, got $renderedOptions",
+            renderedOptions.any { it.trim() == "5 > 6" }
+        )
+        assertTrue(
+            "an option still shows a raw entity: $renderedOptions",
+            renderedOptions.none { it.contains("&lt;") || it.contains("&gt;") }
+        )
+        val renderedExplanation = InlineHtml.parse(threeOptions.explanation).text
+        assertTrue(
+            "q-e6's explanation must render the comparison signs, got '$renderedExplanation'",
+            renderedExplanation.contains("5 < 6") &&
+                renderedExplanation.contains("< and >")
+        )
+        assertTrue(
+            "the explanation still shows a raw entity: '$renderedExplanation'",
+            !renderedExplanation.contains("&lt;") && !renderedExplanation.contains("&gt;")
+        )
+        assertTrue("q-e6 demonstrates a long tag list", threeOptions.tags.size >= 6)
+
+        val zeroMarks = questions.single { it.id == "q-o5" }
+        assertEquals("q-o5 is worth zero marks on purpose", 0.0, zeroMarks.marks, 0.0)
+
+        val stemAndOptions = questions.single { it.id == "q-vis-4" }
+        assertTrue("q-vis-4 must carry a stem picture",
+            stemAndOptions.elements.any { it is ContentElement.ImageElement })
+        assertTrue("every q-vis-4 option must carry a picture and text",
+            stemAndOptions.options.all { option ->
+                option.elements.any { it is ContentElement.ImageElement } && option.text.isNotBlank()
+            })
+
         // Reading passages: two groups, every member resolves, one standalone
         // question shares the category without joining a passage, and the
         // passage body carries rich content (a table) like a question can.
@@ -444,7 +499,7 @@ class LegacyParserTest {
         )
         val passageIds = file.passages.map { it.id }.toSet()
         val members = questions.filter { !it.passageId.isNullOrBlank() }
-        assertEquals("expected five passage members", 5, members.size)
+        assertEquals("expected six passage members", 6, members.size)
         assertTrue(
             "a member points at a passage that is not in the file",
             members.all { it.passageId in passageIds }

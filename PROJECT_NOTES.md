@@ -320,7 +320,9 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   back resets the schedule through `CardContent` while an MCQ explanation does
   not. One prompt = one answer: the identity hash is prompt-only, and a changed
   back is an answer update. One-option questions are invalid; importers convert
-  them and schema 29 converts any stored ones.
+  them and schema 29 converts any stored ones. The bundled sample bank
+  demonstrates each back kind: text, table, formula, image, bilingual and a
+  passage-member card, plus the one-option conversion edge.
 - `:app:testDebugUnitTest` has stalled at its 10-minute timeout at a **different
   class each run** (`BlueprintPreviewFreshTest`, `Fsrs7UpgradeTest`,
   `SignalQueryTest`). Cause (proven by a CI `jstack` sentinel): a DataStore write

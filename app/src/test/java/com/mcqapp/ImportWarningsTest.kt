@@ -129,6 +129,12 @@ class ImportWarningsTest {
         // key warning.
         assertTrue(byId["q-e5"].orEmpty().isEmpty())
         assertTrue(byId["q-o3"].orEmpty().isEmpty())
+        // q-o5 is worth zero marks on purpose: it imports and can be
+        // practised, but the advisory says it can never affect a score.
+        assertTrue(
+            "q-o5 must carry the zero-mark advisory",
+            byId["q-o5"]!!.any { it.message.startsWith("Worth 0 marks") }
+        )
     }
 
     /**

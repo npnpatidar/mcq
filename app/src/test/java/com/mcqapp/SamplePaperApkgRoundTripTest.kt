@@ -277,7 +277,7 @@ class SamplePaperApkgRoundTripTest {
             before.map { it.passageId },
             after.map { it.passageId }
         )
-        assertEquals(5, after.count { !it.passageId.isNullOrBlank() })
+        assertEquals(6, after.count { !it.passageId.isNullOrBlank() })
         // The reader re-keys questions as anki-<guid>, so the standalone mate
         // is located by position, not by id.
         val standaloneIndex = before.indexOfFirst { it.id == "q-psg-6" }

@@ -716,6 +716,8 @@ class Importer(
                                         schedule.cardState, schedule.stability
                                     ),
                                     reviewCount = schedule.reviewCount,
+                                    suspended = schedule.suspended,
+                                    buriedUntil = schedule.buriedUntil,
                                     contentHash = contentHash
                                 )
                             )

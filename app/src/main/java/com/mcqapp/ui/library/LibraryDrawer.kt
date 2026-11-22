@@ -20,7 +20,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Search
@@ -68,6 +68,7 @@ internal fun DrawerContent(
     onOpenSearch: () -> Unit,
     onOpenPassages: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAiSchemas: () -> Unit,
     onStartTest: (paperId: String, categoryIds: List<String>) -> Unit,
     /**
      * The selection lives in [LibraryViewModel] (D2) — one owner for the
@@ -185,7 +186,7 @@ internal fun DrawerContent(
                         .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Notes, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.passages))
                 }
@@ -204,6 +205,23 @@ internal fun DrawerContent(
                     Icon(Icons.Default.Settings, contentDescription = null)
                     Spacer(Modifier.width(12.dp))
                     Text(stringResource(R.string.settings))
+                }
+            }
+            item(contentType = "action") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onCloseDrawer()
+                            onOpenAiSchemas()
+                        }
+                        .testTag("drawer-ai-schemas")
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(R.string.ai_schemas))
                 }
             }
             item(contentType = "divider") { Divider() }

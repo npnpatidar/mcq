@@ -83,7 +83,9 @@ internal class StudyStore(
         stability = stability,
         stabilityFast = stabilityFast,
         state = cardState,
-        reviewCount = reviewCount
+        reviewCount = reviewCount,
+        suspended = suspended,
+        buriedUntil = buriedUntil
     )
 
     private fun com.mcqapp.domain.CardState.toEntity(paperId: String, hash: String) =
@@ -105,7 +107,9 @@ internal class StudyStore(
             // trace (the scheduler then reads Sf = S).
             stabilityFast = stabilityFast,
             cardState = state,
-            reviewCount = reviewCount
+            reviewCount = reviewCount,
+            suspended = suspended,
+            buriedUntil = buriedUntil
         )
 
     /**
@@ -139,7 +143,7 @@ internal class StudyStore(
         }
         val fresh = if (config.introduceNewCards) {
             val scheduler = fsrs(config)
-            newQuestions(paperId, scope).map {
+            newQuestions(paperId, scope, now).map {
                 com.mcqapp.domain.StudyCard(
                     it,
                     com.mcqapp.domain.StudyReason.NEW,
@@ -203,7 +207,7 @@ internal class StudyStore(
                     )
                 }
             ),
-            freshFirst = firstNewCard(config, paperId, scope),
+            freshFirst = firstNewCard(config, paperId, scope, now),
             studyMode = config.studyMode,
             reviewsSinceNew = reviewsSinceNew
         )
@@ -250,11 +254,15 @@ internal class StudyStore(
         if (categoryIds.isEmpty()) emptyList() else categoryIds.distinct()
 
     /** The new pool's ids: whole paper, or the scope in chunk order. */
-    private suspend fun newQuestions(paperId: String, categoryIds: List<String>): List<String> =
+    private suspend fun newQuestions(
+        paperId: String,
+        categoryIds: List<String>,
+        now: Long
+    ): List<String> =
         if (categoryIds.isEmpty()) {
-            db.questionDao().newQuestionsForPaper(paperId)
+            db.questionDao().newQuestionsForPaper(paperId, now)
         } else {
-            db.questionDao().newQuestionsForCategoriesChunked(paperId, categoryIds)
+            db.questionDao().newQuestionsForCategoriesChunked(paperId, categoryIds, now)
         }
 
     /** The first due learning card of the paper or of the scope. */
@@ -356,13 +364,14 @@ internal class StudyStore(
     private suspend fun firstNewCard(
         config: com.mcqapp.domain.SchedulerConfig,
         paperId: String,
-        categoryIds: List<String>
+        categoryIds: List<String>,
+        now: Long
     ): com.mcqapp.domain.StudyCard? {
         if (!config.introduceNewCards) return null
         val id = if (categoryIds.isEmpty()) {
-            db.questionDao().firstNewQuestionForPaper(paperId)
+            db.questionDao().firstNewQuestionForPaper(paperId, now)
         } else {
-            db.questionDao().firstNewQuestionForCategoriesChunked(paperId, categoryIds)
+            db.questionDao().firstNewQuestionForCategoriesChunked(paperId, categoryIds, now)
         } ?: return null
         return com.mcqapp.domain.StudyCard(
             id,

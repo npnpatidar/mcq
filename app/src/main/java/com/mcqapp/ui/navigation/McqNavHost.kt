@@ -367,6 +367,9 @@ fun McqNavHost(repository: McqRepository) {
         composable("settings") {
             SettingsScreen(repository = repository, navController = navController)
         }
+        composable("ai-schemas") {
+            com.mcqapp.ui.settings.AiSchemaScreen(navController = navController)
+        }
         composable("import/direct") {
             val bytes = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes
             val uri = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri

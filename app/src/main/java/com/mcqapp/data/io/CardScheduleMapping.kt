@@ -111,5 +111,7 @@ internal fun CardStateEntity.toCardScheduleDto(): CardScheduleDto = CardSchedule
     stability = stability,
     stabilityFast = stabilityFast,
     cardState = cardState.name,
-    reviewCount = reviewCount
+    reviewCount = reviewCount,
+    suspended = suspended,
+    buriedUntil = buriedUntil
 )

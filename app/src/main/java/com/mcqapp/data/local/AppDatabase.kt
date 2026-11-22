@@ -43,7 +43,7 @@ import kotlinx.coroutines.withContext
         GradingVersionEntity::class,
         StudySessionEntity::class
     ],
-    version = 29,
+    version = 30,
     // From v11 on the schema is exported to app/schemas so every index and
     // column change is reviewable as a diff rather than discovered by a
     // migration failure on a user's device.
@@ -127,7 +127,7 @@ abstract class AppDatabase : RoomDatabase() {
     }
 
     /**
-     * The app's single definition of a new install (v29): this database has
+     * The app's single definition of a new install (v30): this database has
      * never held a paper or a review row.
      *
      * The first-launch grading-rule seed asks this instead of probing for the
@@ -1067,6 +1067,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Suspend / bury state (v30). Two additive columns on `card_state`:
+         * `suspended` defaults to 0 and `buriedUntil` to NULL, so every existing
+         * card keeps its schedule and is studyable exactly as before. New
+         * backups need not open on older app versions, so no compatibility
+         * shim is written on the wire for them.
+         */
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `card_state` ADD COLUMN `suspended` " +
+                        "INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL("ALTER TABLE `card_state` ADD COLUMN `buriedUntil` INTEGER")
+            }
+        }
+
         /** Rows filled per back-text backfill round trip. */
         private const val BACK_TEXT_BATCH = 2000
 
@@ -1474,7 +1491,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22,
                     MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29
+                    MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
+                    MIGRATION_29_30
                 )
                 .addCallback(CREATE_PARTIAL_RESULT_INDEX)
 

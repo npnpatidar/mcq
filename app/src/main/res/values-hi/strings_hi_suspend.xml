@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Suspend / bury (v30): Hindi copy, names and format specifiers paired with values/strings_suspend.xml. -->
+<resources>
+    <string name="suspend_card_actions">कार्ड के विकल्प</string>
+    <string name="suspend_action_bury">कल तक दबाएँ</string>
+    <string name="suspend_action_suspend">निलंबित करें</string>
+    <string name="suspend_action_open_list">निलंबित कार्ड</string>
+    <string name="suspend_action_failed">यह कार्ड अपडेट नहीं हो सका। कृपया फिर से कोशिश करें।</string>
+
+    <string name="suspend_indicator_count">%1$d निलंबित</string>
+    <string name="suspend_indicator">निलंबित</string>
+    <string name="suspend_indicator_buried">कल तक दबाया गया</string>
+
+    <string name="suspend_dialog_title">निलंबित कार्ड</string>
+    <string name="suspend_dialog_empty">इस पेपर में कोई निलंबित कार्ड नहीं है।</string>
+    <string name="suspend_dialog_unsuspend">फिर से शामिल करें</string>
+</resources>

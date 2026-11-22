@@ -60,6 +60,10 @@ fun StudySchedulerSection(
     onSimplifiedChange: (Boolean) -> Unit,
     confirmGradeBeforeNext: Boolean,
     onConfirmGradeBeforeNextChange: (Boolean) -> Unit,
+    dailyGoalEnabled: Boolean,
+    dailyGoalCount: Int,
+    onDailyGoalEnabledChange: (Boolean) -> Unit,
+    onDailyGoalCountChange: (Int) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -106,6 +110,10 @@ fun StudySchedulerSection(
                 onSimplifiedChange = onSimplifiedChange,
                 confirmGradeBeforeNext = confirmGradeBeforeNext,
                 onConfirmGradeBeforeNextChange = onConfirmGradeBeforeNextChange,
+                dailyGoalEnabled = dailyGoalEnabled,
+                dailyGoalCount = dailyGoalCount,
+                onDailyGoalEnabledChange = onDailyGoalEnabledChange,
+                onDailyGoalCountChange = onDailyGoalCountChange,
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimizeState,
                 fsrs7Notice = fsrs7Notice,
@@ -140,6 +148,10 @@ private fun AnkiSchedulerBody(
     onSimplifiedChange: (Boolean) -> Unit,
     confirmGradeBeforeNext: Boolean,
     onConfirmGradeBeforeNextChange: (Boolean) -> Unit,
+    dailyGoalEnabled: Boolean,
+    dailyGoalCount: Int,
+    onDailyGoalEnabledChange: (Boolean) -> Unit,
+    onDailyGoalCountChange: (Int) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -207,6 +219,31 @@ private fun AnkiSchedulerBody(
         onChange = onConfirmGradeBeforeNextChange,
         testTag = "setting-confirm-grade-before-next"
     )
+    Spacer(Modifier.height(12.dp))
+
+    // Reporting only. The switch and the stepper are the whole feature: no
+    // study, test or scheduling code reads either preference. The count row is
+    // hidden while the switch is off so the card stays small for everyone who
+    // never asked for a goal.
+    SwitchSettingRow(
+        label = stringResource(R.string.daily_goal_title),
+        help = stringResource(R.string.daily_goal_switch_help),
+        checked = dailyGoalEnabled,
+        onChange = onDailyGoalEnabledChange,
+        testTag = "setting-daily-goal"
+    )
+    if (dailyGoalEnabled) {
+        AnkiNumberRow(
+            label = stringResource(R.string.daily_goal_count_label),
+            help = stringResource(R.string.daily_goal_count_help),
+            value = dailyGoalCount,
+            step = 1.0,
+            range = com.mcqapp.domain.DailyGoal.MIN_COUNT.toFloat()..
+                com.mcqapp.domain.DailyGoal.MAX_COUNT.toFloat(),
+            onChange = { onDailyGoalCountChange(it.toInt()) },
+            testTag = "setting-daily-goal-count"
+        )
+    }
     Spacer(Modifier.height(12.dp))
 
     // --- the everyday pull-based controls ---
@@ -546,7 +583,8 @@ private fun AnkiNumberRow(
      *  an error and is never committed, instead of being clamped away
      *  silently (consolidated_bugs.md F16/H2). */
     validExtra: ((Double) -> Boolean)? = null,
-    onChange: (Double) -> Unit
+    onChange: (Double) -> Unit,
+    testTag: String? = null
 ) {
     val current = value.toDouble()
     var text by remember(current) { mutableStateOf(formatValue(current, step)) }
@@ -559,7 +597,10 @@ private fun AnkiNumberRow(
     val stepBase = if (valid) parsed!! else current
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .let { if (testTag != null) it.testTag(testTag) else it },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {

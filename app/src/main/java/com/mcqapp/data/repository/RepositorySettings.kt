@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mcqapp.AppLanguageCache
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
@@ -351,6 +352,28 @@ internal class SettingsStore(
 
     suspend fun setFontScale(scale: Float) {
         context.editPreferences { it[fontScaleKey] = scale }
+    }
+
+    // --- Reporting-only daily goal (owner ruling) ---
+    // Two plain preferences: the generic backup snapshot/restore already
+    // carries every boolean/int key, so neither needs a special path. Nothing
+    // in the scheduler reads them — the goal only feeds a label and a bar.
+
+    private val dailyGoalEnabledKey = booleanPreferencesKey("daily_goal_enabled")
+    private val dailyGoalCountKey = intPreferencesKey("daily_goal_count")
+
+    fun dailyGoalEnabled(): Flow<Boolean> =
+        context.dataStore.data.map { it[dailyGoalEnabledKey] ?: DailyGoal.DEFAULT_ENABLED }
+
+    suspend fun setDailyGoalEnabled(enabled: Boolean) {
+        context.editPreferences { it[dailyGoalEnabledKey] = enabled }
+    }
+
+    fun dailyGoalCount(): Flow<Int> =
+        context.dataStore.data.map { it[dailyGoalCountKey] ?: DailyGoal.DEFAULT_COUNT }
+
+    suspend fun setDailyGoalCount(count: Int) {
+        context.editPreferences { it[dailyGoalCountKey] = DailyGoal.normalizeCount(count) }
     }
 
     // --- Scheduler settings ---

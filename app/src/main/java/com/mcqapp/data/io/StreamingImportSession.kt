@@ -781,6 +781,8 @@ internal class StreamingImportSession(
                                 stabilityFast = schedule.stabilityFast,
                                 cardState = importedCardState(schedule.cardState, schedule.stability),
                                 reviewCount = schedule.reviewCount,
+                                suspended = schedule.suspended,
+                                buriedUntil = schedule.buriedUntil,
                                 contentHash = contentHash
                             )
                         )
@@ -1071,6 +1073,8 @@ internal class StreamingImportSession(
                     stabilityFast = schedule.stabilityFast,
                     cardState = importedCardState(schedule.cardState, schedule.stability),
                     reviewCount = schedule.reviewCount,
+                    suspended = schedule.suspended,
+                    buriedUntil = schedule.buriedUntil,
                     contentHash = target.contentHash
                 )
             )

@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -41,6 +42,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -221,7 +224,10 @@ fun StudyScreen(
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },
-                    onToggleBookmark = { viewModel.toggleBookmarkCurrent() }
+                    onToggleBookmark = { viewModel.toggleBookmarkCurrent() },
+                    onBury = { viewModel.buryCurrent() },
+                    onSuspend = { viewModel.suspendCurrent() },
+                    onOpenSuspended = { viewModel.openSuspendedDialog() }
                 )
             } else {
                 BackOnlyBar(onBack = { navController.popBackStack() })
@@ -249,6 +255,15 @@ fun StudyScreen(
                 else -> StudyBody(
                     state = state,
                     viewModel = viewModel
+                )
+            }
+            // The unsuspend route. A suspended card never reaches the pull, so
+            // this dialog is the only way back into the pool from the UI.
+            if (state.showSuspendedDialog) {
+                SuspendedCardsDialog(
+                    cards = state.suspendedCards,
+                    onUnsuspend = { viewModel.unsuspend(it) },
+                    onDismiss = { viewModel.closeSuspendedDialog() }
                 )
             }
         }
@@ -353,6 +368,7 @@ private fun StudyBody(
                     .padding(16.dp)
             ) {
                 GradeError(state.gradeError)
+                GradeError(state.cardActionError)
                 if (state.gradedAndStuck) {
                     // The grade is already stored; re-grading would double it.
                     // Only the next card is missing (consolidated_bugs.md I3).
@@ -544,6 +560,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             .padding(16.dp)
     ) {
         GradeError(state.gradeError)
+        GradeError(state.cardActionError)
         if (state.gradedAndStuck) {
             // The grade is already stored, so re-tapping Next would double-persist
             // it. Only the next card is missing — offer the same recovery the
@@ -737,7 +754,10 @@ private fun StudyStickyHeader(
     onStop: () -> Unit,
     onDismissBreak: () -> Unit,
     onToggleClock: () -> Unit,
-    onToggleBookmark: () -> Unit
+    onToggleBookmark: () -> Unit,
+    onBury: () -> Unit,
+    onSuspend: () -> Unit,
+    onOpenSuspended: () -> Unit
 ) {
     // `semantics {}` is not composable, so resolve its accessibility strings
     // during composition with stringResource and capture the plain Strings;
@@ -750,6 +770,7 @@ private fun StudyStickyHeader(
     val haptics = rememberHaptics()
     val currentBookmarked =
         state.question?.id?.let { it in state.bookmarked } == true
+    var cardMenuExpanded by remember { mutableStateOf(false) }
     // The question clock doubles as a dwell gauge: green while the card is in
     // the Easy window, amber through Good, red once it reaches Hard. Thresholds
     // are the absolute cuts from the same rule the check grades with, and the
@@ -833,6 +854,60 @@ private fun StudyStickyHeader(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("study-scope-label")
+                        )
+                    }
+                    if (state.suspendedCount > 0) {
+                        Text(
+                            stringResource(R.string.suspend_indicator_count, state.suspendedCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("study-suspended-indicator")
+                        )
+                    }
+                }
+                // Card actions live behind one overflow so the header keeps its
+                // bookmark and Done controls. Suspend and bury act on the card
+                // on screen without writing a grade; the last item opens the
+                // unsuspend route, without which a hidden card is stranded.
+                Box {
+                    IconButton(
+                        onClick = { cardMenuExpanded = true },
+                        enabled = state.question != null,
+                        modifier = Modifier.testTag("study-card-actions")
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = stringResource(R.string.suspend_card_actions)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = cardMenuExpanded,
+                        onDismissRequest = { cardMenuExpanded = false },
+                        modifier = Modifier.testTag("study-card-actions-menu")
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_bury)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onBury()
+                            },
+                            enabled = !state.cardActionInProgress
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_suspend)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onSuspend()
+                            },
+                            enabled = !state.cardActionInProgress
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_open_list)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onOpenSuspended()
+                            }
                         )
                     }
                 }
@@ -1333,6 +1408,7 @@ private fun StudySummary(
         // A stop that could not write the pending review says so here rather
         // than in a session that is already gone.
         GradeError(state.gradeError)
+        GradeError(state.cardActionError)
         if (emptyText.isNotEmpty()) {
             Text(
                 emptyText,

@@ -281,7 +281,18 @@ data class CardStateEntity(
     val stabilityFast: Double = 0.0,
     val cardState: CardStateKind = CardStateKind.NEW,
     /** Total FSRS reviews ever applied. Mirrored into [reps]. */
-    val reviewCount: Int = 0
+    val reviewCount: Int = 0,
+    /**
+     * Suspend / bury state (v30). A suspended card stays out of Study until the
+     * learner explicitly clears it; a buried card comes back at [buriedUntil],
+     * the next 04:00 study-day boundary after it was hidden. Neither is a grade:
+     * no `review_log` row is written and the FSRS schedule is left untouched.
+     * Both default to the ordinary, studyable state so an older row or a restore
+     * from an older backup needs no backfill.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val suspended: Boolean = false,
+    val buriedUntil: Long? = null
 )
 
 /**

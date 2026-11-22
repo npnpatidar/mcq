@@ -443,6 +443,15 @@ class McqRepository internal constructor(
 
     suspend fun markStudyGradingHintShown() = settings.setStudyGradingHintShown()
 
+    // --- Reporting-only daily goal ---
+    // Deliberately not read by any study/test path: the goal is a gauge.
+
+    fun dailyGoalEnabled(): Flow<Boolean> = settings.dailyGoalEnabled()
+    suspend fun setDailyGoalEnabled(enabled: Boolean) = settings.setDailyGoalEnabled(enabled)
+
+    fun dailyGoalCount(): Flow<Int> = settings.dailyGoalCount()
+    suspend fun setDailyGoalCount(count: Int) = settings.setDailyGoalCount(count)
+
     /**
      * Rebuilds every card's dual-trace memory from its review log. Runs from
      * [com.mcqapp.McqApplication]; a completed run returns immediately.

@@ -257,5 +257,11 @@ data class CardScheduleDto(
     /** FSRS-7's fast trace; absent in files written before v27. */
     val stabilityFast: Double = 0.0,
     val cardState: String = com.mcqapp.domain.CardStateKind.NEW.name,
-    val reviewCount: Int = 0
+    val reviewCount: Int = 0,
+    /**
+     * Suspend / bury state (v30). Defaults keep a file written before v30
+     * readable: its cards were all ordinary, studyable cards.
+     */
+    val suspended: Boolean = false,
+    val buriedUntil: Long? = null
 )

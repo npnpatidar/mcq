@@ -16,6 +16,7 @@ import com.mcqapp.data.backup.RestorePartialCopy
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.ui.theme.AppTheme
 import com.mcqapp.ui.theme.CustomTheme
@@ -513,6 +514,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setAvoidRecentQuestions(enabled: Boolean) {
         viewModelScope.launch { repository.setAvoidRecentQuestions(enabled) }
+    }
+
+    // --- Reporting-only daily goal ---
+    // Two plain preferences, collected like the other switches. Neither is a
+    // scheduler knob: nothing here touches the study queue or a test sample.
+    private val _dailyGoalEnabled = MutableStateFlow(DailyGoal.DEFAULT_ENABLED)
+    val dailyGoalEnabled: StateFlow<Boolean> = _dailyGoalEnabled.asStateFlow()
+
+    private val _dailyGoalCount = MutableStateFlow(DailyGoal.DEFAULT_COUNT)
+    val dailyGoalCount: StateFlow<Int> = _dailyGoalCount.asStateFlow()
+
+    init {
+        viewModelScope.launch { repository.dailyGoalEnabled().collect { _dailyGoalEnabled.value = it } }
+        viewModelScope.launch { repository.dailyGoalCount().collect { _dailyGoalCount.value = it } }
+    }
+
+    fun setDailyGoalEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setDailyGoalEnabled(enabled) }
+    }
+
+    fun setDailyGoalCount(count: Int) {
+        viewModelScope.launch { repository.setDailyGoalCount(count) }
     }
 
     private val _loadRemoteImages = MutableStateFlow(false)

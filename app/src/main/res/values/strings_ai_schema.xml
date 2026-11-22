@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ai_schemas">AI schemas</string>
+    <string name="ai_schema_settings_title">AI question schemas</string>
+    <string name="ai_schema_settings_help">Build a small JSON Schema, prompt and example for an AI question bank.</string>
+    <string name="ai_schema_open">Open generator</string>
+
+    <string name="ai_schema_question_type">Question type</string>
+    <string name="ai_schema_kind_flashcards">Flashcards</string>
+    <string name="ai_schema_kind_mcq">MCQ</string>
+    <string name="ai_schema_kind_mixed">Mixed</string>
+
+    <string name="ai_schema_blocks">Content blocks</string>
+    <string name="ai_schema_block_text_always">Text (always included)</string>
+    <string name="ai_schema_block_table">Table</string>
+    <string name="ai_schema_block_math">Math (MathML)</string>
+    <string name="ai_schema_block_image">Image</string>
+
+    <string name="ai_schema_passage">Passage mode</string>
+    <string name="ai_schema_passage_none">None</string>
+    <string name="ai_schema_passage_text">Text-only passage</string>
+    <string name="ai_schema_passage_rich">Rich passage</string>
+
+    <string name="ai_schema_wrapper">Wrapper</string>
+    <string name="ai_schema_wrapper_full">Full bank (papers + categories)</string>
+    <string name="ai_schema_wrapper_paperless">Paperless (questions + passages only — fewest tokens)</string>
+
+    <string name="ai_schema_output_schema">JSON Schema</string>
+    <string name="ai_schema_output_prompt">Prompt</string>
+    <string name="ai_schema_output_example">Example JSON</string>
+    <string name="ai_schema_size">%1$d characters — smaller = fewer tokens</string>
+    <string name="ai_schema_copy_prompt">Copy prompt</string>
+    <string name="ai_schema_save">Save schema</string>
+    <string name="ai_schema_share">Share</string>
+    <string name="ai_schema_copied">Prompt copied</string>
+    <string name="ai_schema_saved">Schema saved</string>
+    <string name="ai_schema_save_failed">Could not save the schema</string>
+    <string name="ai_schema_share_no_app">No app can share text</string>
+    <string name="ai_schema_share_file_name">mcq-ai-schema.txt</string>
+</resources>

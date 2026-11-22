@@ -65,6 +65,7 @@ fun StatsScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val cardDetail by viewModel.cardDetail.collectAsStateWithLifecycle()
+    val dailyGoal by viewModel.dailyGoal.collectAsStateWithLifecycle()
 
     // Reviews logged elsewhere (a study session) must show up when coming back.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -174,6 +175,7 @@ fun StatsScreen(
                             StatsViewModel.Tab.OVERVIEW -> state.overview?.let { data ->
                                 OverviewSection(
                                     bundle = data,
+                                    dailyGoal = dailyGoal,
                                     questionText = questionText,
                                     onOpenCard = { openCard(it.paperId, it.questionId) },
                                     onOpenSettings = { navController.navigate("settings") }

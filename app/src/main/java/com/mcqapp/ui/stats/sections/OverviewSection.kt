@@ -20,8 +20,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.stats.OverviewData
 import com.mcqapp.domain.stats.WeakCard
+import com.mcqapp.ui.common.DailyGoalIndicator
 import com.mcqapp.ui.stats.RetentionTableHeader
 import com.mcqapp.ui.stats.RetentionTableRow
 import com.mcqapp.ui.stats.KpiGrid
@@ -41,6 +43,7 @@ import kotlin.math.roundToInt
 @Composable
 internal fun OverviewSection(
     bundle: OverviewData,
+    dailyGoal: DailyGoal.Progress,
     questionText: Map<String, String>,
     onOpenCard: (WeakCard) -> Unit,
     onOpenSettings: () -> Unit
@@ -50,6 +53,7 @@ internal fun OverviewSection(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        item(contentType = "daily-goal") { DailyGoalIndicator(dailyGoal) }
         item(contentType = "today") { TodayCard(bundle) }
         item(contentType = "kpis") { KpisCard(bundle) }
         item(contentType = "families") { ResultFamiliesCard() }

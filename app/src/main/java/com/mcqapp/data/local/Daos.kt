@@ -175,6 +175,18 @@ data class CardStateRow(
     val rowid: Long
 )
 
+/**
+ * One card hidden from Study, for the unsuspend route. Carries a plain-text
+ * preview so the dialog can show *which* card it is without decoding the
+ * question's elements JSON, and both flags so it can say why the card is away.
+ */
+data class SuspendedCardRow(
+    val questionId: String,
+    val text: String,
+    val suspended: Boolean,
+    val buriedUntil: Long?
+)
+
 /** Scheduling input for a question: its id and stored content hash only. */
 data class QuestionIdHash(
     val id: String,
@@ -710,10 +722,15 @@ interface QuestionDao {
             "AND (card_state.questionId IS NULL " +
             "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
             "  OR card_state.contentHash != questions.contentHash) " +
+            // Suspended/buried cards sit out Study only. Test-mode sampling
+            // deliberately keeps reading the unfiltered question pools — the
+            // owner asked for a Study exclusion, not a Test one.
+            "AND (card_state.suspended IS NULL OR card_state.suspended = 0) " +
+            "AND (card_state.buriedUntil IS NULL OR card_state.buriedUntil <= :now) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1"
     )
-    suspend fun firstNewQuestionForPaper(paperId: String): String?
+    suspend fun firstNewQuestionForPaper(paperId: String, now: Long): String?
 
     /**
      * [firstNewQuestionForPaper] restricted to an explicit category selection.
@@ -731,12 +748,15 @@ interface QuestionDao {
             "AND (card_state.questionId IS NULL " +
             "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
             "  OR card_state.contentHash != questions.contentHash) " +
+            "AND (card_state.suspended IS NULL OR card_state.suspended = 0) " +
+            "AND (card_state.buriedUntil IS NULL OR card_state.buriedUntil <= :now) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid LIMIT 1"
     )
     suspend fun firstNewQuestionForCategories(
         paperId: String,
-        categoryIds: List<String>
+        categoryIds: List<String>,
+        now: Long
     ): String?
 
     /**
@@ -753,10 +773,12 @@ interface QuestionDao {
             "AND (card_state.questionId IS NULL " +
             "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
             "  OR card_state.contentHash != questions.contentHash) " +
+            "AND (card_state.suspended IS NULL OR card_state.suspended = 0) " +
+            "AND (card_state.buriedUntil IS NULL OR card_state.buriedUntil <= :now) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
-    suspend fun newQuestionsForPaper(paperId: String): List<String>
+    suspend fun newQuestionsForPaper(paperId: String, now: Long): List<String>
 
     /**
      * [newQuestionsForPaper] restricted to an explicit category selection: the
@@ -773,12 +795,15 @@ interface QuestionDao {
             "AND (card_state.questionId IS NULL " +
             "  OR (card_state.reps = 0 AND card_state.dueAt = 0) " +
             "  OR card_state.contentHash != questions.contentHash) " +
+            "AND (card_state.suspended IS NULL OR card_state.suspended = 0) " +
+            "AND (card_state.buriedUntil IS NULL OR card_state.buriedUntil <= :now) " +
             "ORDER BY categories.sortOrder, categories.title, " +
             "questions.sortOrder, questions.rowid"
     )
     suspend fun newQuestionsForCategories(
         paperId: String,
-        categoryIds: List<String>
+        categoryIds: List<String>,
+        now: Long
     ): List<String>
 
     /** Observation variant of [getRefsByCategories]: list surfaces re-emit. */
@@ -1709,12 +1734,54 @@ interface CardStateDao {
     @Query(
         "SELECT COUNT(*) FROM card_state " +
             "WHERE (:paperId IS NULL OR paperId = :paperId) " +
-            "AND dueAt <= :now AND cardState != 'NEW' AND stability > 0"
+            "AND dueAt <= :now AND cardState != 'NEW' AND stability > 0 " +
+            "AND suspended = 0 AND (buriedUntil IS NULL OR buriedUntil <= :now)"
     )
     suspend fun countAtRisk(paperId: String?, now: Long): Int
 
     @Query("SELECT * FROM card_state WHERE paperId = :paperId AND questionId = :questionId")
     suspend fun get(paperId: String, questionId: String): CardStateEntity?
+
+    // --- Suspend / bury (v30) ---------------------------------------------
+    // These flags are card state, not grades: no review_log row is written
+    // and no scheduling field moves. Every write is scoped by paper because a
+    // question reused in two papers is scheduled independently.
+
+    @Query(
+        "UPDATE card_state SET suspended = 1 WHERE paperId = :paperId " +
+            "AND questionId = :questionId"
+    )
+    suspend fun setSuspended(paperId: String, questionId: String): Int
+
+    @Query(
+        "UPDATE card_state SET buriedUntil = :until WHERE paperId = :paperId " +
+            "AND questionId = :questionId"
+    )
+    suspend fun setBuriedUntil(paperId: String, questionId: String, until: Long): Int
+
+    /** One action clears both: the learner asked for the card back in the pool. */
+    @Query(
+        "UPDATE card_state SET suspended = 0, buriedUntil = NULL " +
+            "WHERE paperId = :paperId AND questionId = :questionId"
+    )
+    suspend fun clearSuspension(paperId: String, questionId: String): Int
+
+    /**
+     * Cards currently hidden from Study: explicitly suspended, or buried until
+     * a boundary still in the future. Used only by the unsuspend route — Study
+     * pulls never read it, so a suspended card cannot be served by accident.
+     */
+    @Query(
+        "SELECT q.id AS questionId, q.searchText AS text, " +
+            "cs.suspended AS suspended, cs.buriedUntil AS buriedUntil " +
+            "FROM card_state cs " +
+            "INNER JOIN questions q ON q.id = cs.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
+            "AND (cs.suspended = 1 OR (cs.buriedUntil IS NOT NULL AND cs.buriedUntil > :now)) " +
+            "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
+    )
+    suspend fun suspendedCards(paperId: String, now: Long): List<SuspendedCardRow>
 
     /**
      * Scheduling for a known set of questions — what an Anki export needs for
@@ -1854,10 +1921,10 @@ interface CardStateDao {
         "INSERT OR IGNORE INTO card_state " +
             "(paperId, questionId, ease, intervalDays, dueAt, reps, lapses, leech, " +
             "lastReviewedAt, contentHash, difficulty, stability, stabilityFast, " +
-            "cardState, reviewCount) " +
+            "cardState, reviewCount, suspended, buriedUntil) " +
             "SELECT :targetPaperId, questionId, ease, intervalDays, dueAt, reps, lapses, " +
             "leech, lastReviewedAt, contentHash, difficulty, stability, stabilityFast, " +
-            "cardState, reviewCount FROM card_state " +
+            "cardState, reviewCount, suspended, buriedUntil FROM card_state " +
             "WHERE questionId IN (:questionIds) AND paperId != :targetPaperId"
     )
     suspend fun rekeyToPaper(questionIds: Collection<String>, targetPaperId: String)
@@ -1909,25 +1976,39 @@ interface CardStateDao {
      * `paperId` is the index key here; the categories join only proves the
      * question still belongs to the paper. A paper with no rows yields one
      * all-zero row (the COALESCEs keep the sums from coming back null).
+     *
+     * Suspended and actively buried rows are left out of every bucket, but
+     * [StudyPopulation.storedRows] still counts them: the caller's
+     * `fresh = questions - storedRows + newish` then excludes them from the
+     * new count too, without a second query or a drifting question count.
      */
     @Query(
         "SELECT " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS learning, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS due, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
             "  THEN 1 ELSE 0 END), 0) AS leeches, " +
-            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
-            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COALESCE(SUM(CASE WHEN ((cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
+            "  THEN 1 ELSE 0 END), 0) AS newish, " +
             "COUNT(*) AS storedRows " +
             "FROM card_state cs " +
             "INNER JOIN questions q ON q.id = cs.questionId " +
@@ -1946,20 +2027,29 @@ interface CardStateDao {
         "SELECT " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS learning, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS due, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
             "  THEN 1 ELSE 0 END), 0) AS leeches, " +
-            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
-            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COALESCE(SUM(CASE WHEN ((cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
+            "  THEN 1 ELSE 0 END), 0) AS newish, " +
             "COUNT(*) AS storedRows " +
             "FROM card_state cs " +
             "INNER JOIN questions q ON q.id = cs.questionId " +
@@ -1985,20 +2075,29 @@ interface CardStateDao {
         "SELECT q.categoryId AS categoryId, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS learning, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash " +
             "  AND cs.cardState NOT IN ('LEARNING','RELEARNING') AND cs.leech = 0 " +
             "  THEN 1 ELSE 0 END), 0) AS due, " +
             "COALESCE(SUM(CASE WHEN cs.dueAt <= :now " +
             "  AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "  AND cs.contentHash = q.contentHash AND cs.leech = 1 " +
             "  THEN 1 ELSE 0 END), 0) AS leeches, " +
-            "COALESCE(SUM(CASE WHEN (cs.reps = 0 AND cs.dueAt = 0) " +
-            "  OR cs.contentHash != q.contentHash THEN 1 ELSE 0 END), 0) AS newish, " +
+            "COALESCE(SUM(CASE WHEN ((cs.reps = 0 AND cs.dueAt = 0) " +
+            "  OR cs.contentHash != q.contentHash) " +
+            "  AND cs.suspended = 0 " +
+            "  AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
+            "  THEN 1 ELSE 0 END), 0) AS newish, " +
             "COUNT(*) AS storedRows " +
             "FROM card_state cs " +
             "INNER JOIN questions q ON q.id = cs.questionId " +
@@ -2055,6 +2154,8 @@ interface CardStateDao {
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
     )
@@ -2072,6 +2173,8 @@ interface CardStateDao {
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND q.categoryId IN (:categoryIds) " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
     )
@@ -2094,6 +2197,8 @@ interface CardStateDao {
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState IN ('LEARNING','RELEARNING') " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
@@ -2112,6 +2217,8 @@ interface CardStateDao {
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND q.categoryId IN (:categoryIds) " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState IN ('LEARNING','RELEARNING') " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid LIMIT 1"
@@ -2138,6 +2245,8 @@ interface CardStateDao {
             "INNER JOIN categories c ON c.id = q.categoryId " +
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"
@@ -2156,6 +2265,8 @@ interface CardStateDao {
             "WHERE cs.paperId = :paperId AND c.paperId = :paperId " +
             "AND q.categoryId IN (:categoryIds) " +
             "AND cs.dueAt <= :now AND NOT (cs.reps = 0 AND cs.dueAt = 0) " +
+            "AND cs.suspended = 0 " +
+            "AND (cs.buriedUntil IS NULL OR cs.buriedUntil <= :now) " +
             "AND cs.contentHash = q.contentHash " +
             "AND cs.cardState NOT IN ('LEARNING','RELEARNING') " +
             "ORDER BY c.sortOrder, c.title, q.sortOrder, q.rowid"

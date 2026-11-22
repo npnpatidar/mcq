@@ -6,8 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.R
+import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.SuspendSchedule
+import com.mcqapp.data.repository.SuspendStore
+import com.mcqapp.data.repository.SuspendedCard
 import com.mcqapp.domain.CategorySelection
+import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
@@ -215,7 +220,17 @@ data class StudyUiState(
      * Last, not next to [paperTitle]: two adjacent String fields invite a later
      * positional `copy(...)` to rebind the wrong one.
      */
-    val scopeLabel: ScopeLabel = ScopeLabel.WholePaper
+    val scopeLabel: ScopeLabel = ScopeLabel.WholePaper,
+    /** Cards hidden from this paper's Study pool, for the header's indicator. */
+    val suspendedCount: Int = 0,
+    /** A bury/suspend write is in flight; the card is claimed like a grade. */
+    val cardActionInProgress: Boolean = false,
+    /** A hidden-card write failed; rendered next to the grade error. */
+    val cardActionError: String? = null,
+    /** Whether the unsuspend dialog is open. */
+    val showSuspendedDialog: Boolean = false,
+    /** The rows shown in that dialog, refreshed after every unsuspend. */
+    val suspendedCards: List<SuspendedCard> = emptyList()
 ) {
     val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
@@ -349,6 +364,15 @@ class StudyViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /**
+     * Suspend/bury writes go through their own store on the same database
+     * singleton as [repository], so no grading path is involved and a flag is
+     * never mistaken for a review.
+     */
+    private val suspendStore = SuspendStore(
+        AppDatabase.get(application.applicationContext)
+    )
 
     private val _state = MutableStateFlow(StudyUiState())
     val state: StateFlow<StudyUiState> = _state.asStateFlow()
@@ -541,6 +565,15 @@ class StudyViewModel(
                         categoryIds = scopeIds
                     )
                 }
+                // One cheap indexed read for the header's "N suspended"
+                // indicator; never a driver of the pull, which reads its own
+                // pools. A failure here must not stop the session loading.
+                val hidden = try {
+                    suspendStore.suspendedCards(paperId, System.currentTimeMillis()).size
+                } catch (e: Exception) {
+                    Logger.e("STUDY", "suspendedCards($paperId) failed", e)
+                    0
+                }
                 // The card on screen is fetched when it is pulled, not the
                 // whole paper up front: a 169k-question paper never fits.
                 Logger.i(
@@ -556,7 +589,8 @@ class StudyViewModel(
                         simplified = repository.simplifiedStudy().first(),
                         confirmGradeBeforeNext = repository.confirmGradeBeforeNext().first(),
                         introduceNewCards = config?.introduceNewCards ?: true,
-                        scopeLabel = label
+                        scopeLabel = label,
+                        suspendedCount = hidden
                     )
                 }
                 // One read per sitting, before the first pull: see the field.
@@ -1488,6 +1522,122 @@ class StudyViewModel(
     }
 
     /**
+     * Bury the current card until the next study-day boundary. No grade and no
+     * `review_log` row: the FSRS schedule is left exactly as it was, and the
+     * card comes back automatically when the boundary passes.
+     */
+    fun buryCurrent() = actOnCurrent("bury") { questionId ->
+        val hour = config?.dayStartHour ?: DayBoundary.DEFAULT_DAY_START_HOUR
+        val deadline = SuspendSchedule.nextBoundary(System.currentTimeMillis(), hour)
+        suspendStore.bury(paperId, questionId, deadline)
+    }
+
+    /** Suspend the current card until the learner explicitly unsuspends it. */
+    fun suspendCurrent() = actOnCurrent("suspend") { questionId ->
+        suspendStore.suspend(paperId, questionId)
+    }
+
+    /**
+     * Shared claim/write/pull path for the two card actions. The write is
+     * durable ([sessionScope]) like a grade, but never calls the grading path:
+     * a buried or suspended card must not gain a review or move its due date.
+     */
+    private fun actOnCurrent(action: String, write: suspend (String) -> Unit) {
+        val current = _state.value
+        val question = current.question ?: return
+        if (current.grading || current.cardActionInProgress || current.finished) return
+        pauseQuestionClock()
+        _state.update {
+            it.copy(
+                grading = true,
+                cardActionInProgress = true,
+                cardActionError = null
+            )
+        }
+        gradeWriteJob = sessionScope.launch {
+            try {
+                write(question.id)
+                refreshSuspendedCount()
+                // A stop (or a bare clear) that landed during the write owns
+                // the exit; do not reopen the sitting with another card.
+                if (sittingEnded()) {
+                    endSitting()
+                    _state.update { it.copy(grading = false) }
+                    return@launch
+                }
+                pullCard()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        cardActionError = friendly(R.string.suspend_action_failed)
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "$action(${question.id}) failed", e)
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        cardActionError = friendly(R.string.suspend_action_failed)
+                    )
+                }
+            } finally {
+                _state.update { it.copy(cardActionInProgress = false) }
+            }
+        }
+    }
+
+    /** Re-reads the header indicator after a flag write. */
+    private suspend fun refreshSuspendedCount() {
+        val count = try {
+            suspendStore.suspendedCards(paperId, System.currentTimeMillis()).size
+        } catch (e: Exception) {
+            Logger.e("STUDY", "suspendedCards($paperId) refresh failed", e)
+            _state.value.suspendedCount
+        }
+        _state.update { it.copy(suspendedCount = count) }
+    }
+
+    /** Opens the unsuspend route with a fresh list for this paper. */
+    fun openSuspendedDialog() {
+        viewModelScope.launch {
+            try {
+                val rows = suspendStore.suspendedCards(paperId, System.currentTimeMillis())
+                _state.update {
+                    it.copy(showSuspendedDialog = true, suspendedCards = rows, suspendedCount = rows.size)
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "openSuspendedDialog failed", e)
+                _state.update { it.copy(cardActionError = friendly(R.string.suspend_action_failed)) }
+            }
+        }
+    }
+
+    fun closeSuspendedDialog() {
+        _state.update { it.copy(showSuspendedDialog = false) }
+    }
+
+    /**
+     * Restores one card to the pool. The list is reloaded in the same call so
+     * the dialog never shows a card that is already back in Study.
+     */
+    fun unsuspend(questionId: String) {
+        viewModelScope.launch {
+            try {
+                suspendStore.unsuspend(paperId, questionId)
+                val rows = suspendStore.suspendedCards(paperId, System.currentTimeMillis())
+                _state.update {
+                    it.copy(suspendedCards = rows, suspendedCount = rows.size)
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "unsuspend($questionId) failed", e)
+                _state.update { it.copy(cardActionError = friendly(R.string.suspend_action_failed)) }
+            }
+        }
+    }
+
+    /**
      * Flips the bookmark on the card on screen. The observer above repaints
      * the icon; a failure stays off the card because a lost bookmark must not
      * interrupt a review.
@@ -1660,6 +1810,9 @@ class StudyViewModel(
                         // A failed write reported on the old summary must not
                         // follow the learner into the fresh sitting.
                         gradeError = null,
+                        cardActionError = null,
+                        cardActionInProgress = false,
+                        showSuspendedDialog = false,
                         isGuess = false,
                         questionStartedAt = 0L,
                         questionElapsedMillis = 0L,

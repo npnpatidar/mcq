@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.R
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.FsrsScheduler
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.stats.CardsData
@@ -19,8 +20,12 @@ import com.mcqapp.domain.stats.WorkloadData
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,6 +93,22 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * The reporting-only goal gauge. The count is the overview tab's own
+     * "today" bucket (04:00 study-day boundary, self-graded cards included),
+     * so opening Statistics costs no extra query. Goal preferences are
+     * collected here but never applied to the aggregator or its range.
+     */
+    val dailyGoal: StateFlow<DailyGoal.Progress> = combine(
+        repository.dailyGoalEnabled(),
+        repository.dailyGoalCount(),
+        _state.map { it.overview?.today?.reviews ?: 0 }
+    ) { enabled, count, reviews -> DailyGoal.progress(reviews, count, enabled) }
+        .stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            DailyGoal.progress(0, DailyGoal.DEFAULT_COUNT, DailyGoal.DEFAULT_ENABLED)
+        )
 
     /** The drill-down sheet's content; null while closed. */
     data class CardDetail(

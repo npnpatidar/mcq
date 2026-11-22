@@ -357,6 +357,16 @@ internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
     !state.grading && state.stagedGrading && state.revealed &&
         state.pendingGrade != null && state.question != null
 
+/**
+ * Pure gate for the Study header's Bury/Suspend actions, shared by the menu and
+ * the ViewModel. A card action hides the current card and pulls the next one, so
+ * it must stand down while a grade is being written or is merely staged — a tap
+ * in that window would silently discard the learner's grade decision.
+ */
+internal fun studyCanActOnCard(state: StudyUiState): Boolean =
+    state.question != null && !state.finished && !state.grading &&
+        !state.cardActionInProgress && state.pendingGrade == null
+
 class StudyViewModel(
     application: Application,
     private val paperId: String,
@@ -1447,13 +1457,16 @@ class StudyViewModel(
         }
         if (!current.simplified) {
             // Opt-in four-button flow: persist the staged grade through the
-            // same write path. grade() sees the stop latch and ends without
-            // pulling another card (consolidated_bugs.md I4); the summary
-            // waits for that write so the tally is already in it.
+            // exact path Next uses. grade() sees the stop latch and neither
+            // pulls another card nor writes twice (consolidated_bugs.md I4).
+            // The card it graded is still in state though, so close the sitting
+            // with it cleared: nothing may sit behind the summary waiting to be
+            // graded a second time. The summary waits for the write so the tally
+            // is already in it.
             grade(proposed)
             sessionScope.launch {
                 gradeWriteJob?.join()
-                finishSession()
+                finishSession(clearCard = true)
             }
             return
         }
@@ -1502,18 +1515,38 @@ class StudyViewModel(
         }
     }
 
-    /** Closes the sitting into the summary, with the tally and the times frozen. */
-    private fun finishSession() {
+    /**
+     * Closes the sitting into the summary, with the tally and the times frozen.
+     * [clearCard] is set only by the opt-in staged-stop path: that card has just
+     * been graded but was never advanced, so leaving it in state would show a
+     * second gradeable card behind the summary. Other exits keep the card — a
+     * graded-and-stuck stop, for instance, must still report the card it holds.
+     */
+    private fun finishSession(clearCard: Boolean = false) {
         val totalSeconds = _sessionSeconds.value
         endSitting()
-        _state.update {
-            it.copy(
+        _state.update { state ->
+            val base = if (clearCard) {
+                state.copy(
+                    current = null,
+                    question = null,
+                    passage = null,
+                    previews = emptyMap(),
+                    pendingGrade = null,
+                    proposedGrade = null,
+                    gradeEdited = false,
+                    selection = emptySet(),
+                    revealed = false,
+                    lastResult = null
+                )
+            } else state
+            base.copy(
                 grading = false,
                 finished = true,
                 sessionTotalSeconds = totalSeconds,
                 emptyReason = when {
                     // Work was done: a finished sitting with its tally.
-                    it.reviewed > 0 -> EmptyReason.None
+                    state.reviewed > 0 -> EmptyReason.None
                     // Stopped before the first review. "Session complete /
                     // 0 reviewed" claimed a sitting that never happened; the
                     // summary says what actually did.
@@ -1546,8 +1579,8 @@ class StudyViewModel(
      */
     private fun actOnCurrent(action: String, write: suspend (String) -> Unit) {
         val current = _state.value
+        if (!studyCanActOnCard(current)) return
         val question = current.question ?: return
-        if (current.grading || current.cardActionInProgress || current.finished) return
         pauseQuestionClock()
         _state.update {
             it.copy(

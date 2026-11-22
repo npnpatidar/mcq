@@ -882,13 +882,16 @@ private fun StudyStickyHeader(
                         onDismissRequest = { cardMenuExpanded = false },
                         modifier = Modifier.testTag("study-card-actions-menu")
                     ) {
+                        // A card action hides this card and pulls the next, so
+                        // it must stand down while a grade is in flight or only
+                        // staged — otherwise a tap loses the learner's decision.
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.suspend_action_bury)) },
                             onClick = {
                                 cardMenuExpanded = false
                                 onBury()
                             },
-                            enabled = !state.cardActionInProgress
+                            enabled = studyCanActOnCard(state)
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.suspend_action_suspend)) },
@@ -896,7 +899,7 @@ private fun StudyStickyHeader(
                                 cardMenuExpanded = false
                                 onSuspend()
                             },
-                            enabled = !state.cardActionInProgress
+                            enabled = studyCanActOnCard(state)
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.suspend_action_open_list)) },

@@ -131,7 +131,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     /** Re-reads today's reviews on first composition and on every resume. */
     fun refreshDailyGoal() {
         viewModelScope.launch {
-            if (!dailyGoalEnabled.value) {
+            // Read the preference, not the WhileSubscribed state mirror: at init
+            // (and whenever the screen is off-screen) that mirror still holds its
+            // default, so a returning learner would see 0 / 20 even with the goal
+            // on. Statistics reads the same preference directly for this reason.
+            if (!repository.dailyGoalEnabled().first()) {
                 _dailyGoalReviews.value = 0
                 return@launch
             }

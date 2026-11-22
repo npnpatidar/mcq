@@ -16,7 +16,8 @@ class UxRulingsStructureTest {
 
     private fun source(path: String): String = File("src/main/$path").readText()
     private fun strings(path: String): Set<String> =
-        Regex("""<string name="([a-z0-9_]+)">""")
+        // Tolerate attributes such as tools:ignore="PluralsCandidate".
+        Regex("""<string name="([a-z0-9_]+)"[^>]*>""")
             .findAll(File("src/main/res/$path").readText())
             .map { it.groupValues[1] }.toSet()
 

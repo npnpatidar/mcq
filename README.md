@@ -1907,15 +1907,27 @@ Choose:
 
 Each selection produces a minimal draft-2020-12 schema (`additionalProperties: false` throughout), a short prompt to copy into the AI agent, and a tiny example. Actions: **Copy prompt**, **Save schema**, **Share**. A character count helps keep the request small; it is an approximation, not an exact token count.
 
-Example of the smallest shape (flashcards, text only, paperless):
+Example of the smallest generator output (flashcards, text only, paperless):
 
 ```json
 {
   "questions": [
-    { "question": "Capital of France?", "explanation": "Paris" }
+    {
+      "id": "q1",
+      "question_elements": [
+        { "type": "text", "content": "Capital of France?" }
+      ],
+      "explanation_elements": [
+        { "type": "text", "content": "Paris" }
+      ]
+    }
   ]
 }
 ```
+
+The importer also accepts the older shorthand `{ "question": "…", "explanation": "…" }`,
+but the generator uses typed elements so the same shape extends to tables,
+formulas and images.
 
 All generated examples are parsed by the app's own JSON reader in tests.
 

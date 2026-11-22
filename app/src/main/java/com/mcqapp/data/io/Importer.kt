@@ -15,6 +15,7 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
+import com.mcqapp.data.repository.resetForNewContent
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.backFromSingleOption
 import com.mcqapp.domain.mergedBackContent
@@ -503,8 +504,19 @@ class Importer(
                                     ) {
                                         // The refreshed key (or image) invalidates the
                                         // schedule the stored content earned, even though
-                                        // the question was matched by text.
+                                        // the question was matched by text. The learner's
+                                        // own hide flags are not part of that schedule:
+                                        // keep them on a flag-only row so a suspended card
+                                        // does not silently reappear in Study.
+                                        val hidden = db.cardStateDao()
+                                            .getForQuestionsChunked(listOf(sameContentId))
+                                            .filter { it.suspended || it.buriedUntil != null }
                                         db.cardStateDao().deleteByQuestion(sameContentId)
+                                        hidden.forEach { state ->
+                                            db.cardStateDao().upsert(
+                                                state.resetForNewContent(stored.contentHash)
+                                            )
+                                        }
                                     }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                                     // Keep the stored option rows, so map the file's
@@ -631,10 +643,20 @@ class Importer(
                             false
                         }
                         if (contentChanged) {
-                            // Reset means the schedule row disappears: the
+                            // Reset means the schedule memory disappears: the
                             // question is now indistinguishable from one nobody
-                            // has studied. Review history stays.
+                            // has studied. Review history stays, and so does the
+                            // learner's suspend/bury choice — capture the flags
+                            // before the delete and re-write them on a fresh row.
+                            val hidden = db.cardStateDao()
+                                .getForQuestionsChunked(listOf(effectiveQuestionId))
+                                .filter { it.suspended || it.buriedUntil != null }
                             db.cardStateDao().deleteByQuestion(effectiveQuestionId)
+                            hidden.forEach { state ->
+                                db.cardStateDao().upsert(
+                                    state.resetForNewContent(contentHash)
+                                )
+                            }
                             Logger.i(
                                 "IMPORT",
                                 "  Content changed for id=$effectiveQuestionId, schedule reset"

@@ -193,6 +193,9 @@ class StudyConfirmGradeToggleSessionTest {
         })
         assertTrue("Stop ends the sitting", awaitCondition { vm.state.value.finished })
         assertNull("Stop must not serve another card", vm.state.value.current?.questionId)
+        assertEquals("exactly one grade, not a Next-shaped duplicate", 1, runBlocking { reviews("q1").size })
+        assertEquals("the next card must never be pulled or graded", 0, runBlocking { reviews("q2").size })
+        assertTrue("the summary tallies the staged review", vm.state.value.reviewed == 1)
     }
 
     @Test

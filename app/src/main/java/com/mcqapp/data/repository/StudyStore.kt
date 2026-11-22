@@ -10,6 +10,7 @@ import com.mcqapp.data.local.dueForCategoriesChunked
 import com.mcqapp.data.local.dueReviewsForCategoriesChunked
 import com.mcqapp.data.local.firstDueLearningForCategoriesChunked
 import com.mcqapp.data.local.firstNewQuestionForCategoriesChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.newQuestionsForCategoriesChunked
 import com.mcqapp.domain.CardStateKind
 import com.mcqapp.util.Logger
@@ -331,7 +332,7 @@ internal class StudyStore(
         // invalidates the schedule, not the learner's choice to keep the card
         // out of Study; a plain delete used to silently unsuspend it.
         val newHashes = stale.associate { it.id to it.contentHash }
-        val hidden = db.cardStateDao().getForQuestions(stale.map { it.id })
+        val hidden = db.cardStateDao().getForQuestionsChunked(stale.map { it.id })
             .filter { it.suspended || it.buriedUntil != null }
         db.cardStateDao().deleteByQuestionsChunked(stale.map { it.id })
         hidden.forEach { state ->

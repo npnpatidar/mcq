@@ -18,6 +18,7 @@ import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.replaceQuestionTags
+import com.mcqapp.data.repository.resetForNewContent
 import com.mcqapp.util.Logger
 import androidx.room.withTransaction
 import kotlinx.serialization.json.Json
@@ -596,8 +597,18 @@ internal class StreamingImportSession(
                         CardContent.of(scaledQuestion)
                     ) {
                         // The key or an image changed: the stored schedule
-                        // describes content the learner no longer sees.
+                        // describes content the learner no longer sees. The
+                        // hide flags are the learner's choice, not part of the
+                        // invalidated schedule, so keep them on a flag-only row.
+                        val hidden = db.cardStateDao()
+                            .getForQuestionsChunked(listOf(sameContentId))
+                            .filter { it.suspended || it.buriedUntil != null }
                         db.cardStateDao().deleteByQuestion(sameContentId)
+                        hidden.forEach { state ->
+                            db.cardStateDao().upsert(
+                                state.resetForNewContent(candidate.entity.contentHash)
+                            )
+                        }
                     }
                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                     // The stored option rows keep their ids: translate the
@@ -687,9 +698,16 @@ internal class StreamingImportSession(
                 false
             }
             if (contentChanged) {
-                // Absent is "never studied": delete the schedule rather than
-                // writing a NEW row, and keep the review log.
+                // Absent is "never studied": delete the schedule memory rather
+                // than writing a NEW row, and keep the review log. The v30 hide
+                // flags survive on a flag-only row so the card stays hidden.
+                val hidden = db.cardStateDao()
+                    .getForQuestionsChunked(listOf(effectiveQuestionId))
+                    .filter { it.suspended || it.buriedUntil != null }
                 db.cardStateDao().deleteByQuestion(effectiveQuestionId)
+                hidden.forEach { state ->
+                    db.cardStateDao().upsert(state.resetForNewContent(contentHash))
+                }
             }
             val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                 if (!maxSortLoaded) {

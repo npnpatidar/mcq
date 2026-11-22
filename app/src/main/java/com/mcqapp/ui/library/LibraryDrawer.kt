@@ -94,7 +94,7 @@ internal fun DrawerContent(
             modifier = Modifier.padding(16.dp)
         )
         Divider()
-        LazyColumn(modifier = Modifier.weight(1f)) {
+        LazyColumn(modifier = Modifier.weight(1f).testTag("drawer-list")) {
             item(contentType = "action") {
                 Row(
                     modifier = Modifier

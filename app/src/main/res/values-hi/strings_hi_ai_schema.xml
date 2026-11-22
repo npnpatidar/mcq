@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="ai_schemas">AI स्कीमाएँ</string>
     <string name="ai_schema_settings_title">AI प्रश्न स्कीमाएँ</string>
     <string name="ai_schema_settings_help">AI प्रश्न बैंक के लिए छोटा JSON Schema, प्रॉम्प्ट और उदाहरण बनाएँ।</string>
@@ -28,7 +28,7 @@
     <string name="ai_schema_output_schema">JSON Schema</string>
     <string name="ai_schema_output_prompt">प्रॉम्प्ट</string>
     <string name="ai_schema_output_example">उदाहरण JSON</string>
-    <string name="ai_schema_size">%1$d अक्षर — छोटा मतलब कम टोकन</string>
+    <string name="ai_schema_size" tools:ignore="PluralsCandidate">%1$d अक्षर — छोटा मतलब कम टोकन</string>
     <string name="ai_schema_copy_prompt">प्रॉम्प्ट कॉपी करें</string>
     <string name="ai_schema_save">स्कीमा सहेजें</string>
     <string name="ai_schema_share">शेयर करें</string>

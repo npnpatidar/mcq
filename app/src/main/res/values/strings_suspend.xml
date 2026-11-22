@@ -4,7 +4,7 @@
   screen can offer the actions without touching the shared string catalog.
   Every name is paired one-for-one in values-hi/strings_hi_suspend.xml.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Overflow menu on the Study header. -->
     <string name="suspend_card_actions">Card actions</string>
     <string name="suspend_action_bury">Bury until tomorrow</string>
@@ -13,7 +13,7 @@
     <string name="suspend_action_failed">That card could not be updated. Please try again.</string>
 
     <!-- Suspended indicator shown under the paper title when cards are hidden. -->
-    <string name="suspend_indicator_count">%1$d suspended</string>
+    <string name="suspend_indicator_count" tools:ignore="PluralsCandidate">%1$d suspended</string>
     <string name="suspend_indicator">Suspended</string>
     <string name="suspend_indicator_buried">Buried until tomorrow</string>
 

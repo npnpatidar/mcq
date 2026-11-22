@@ -22,6 +22,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -229,10 +231,26 @@ class StudyAndSelectionUiTest {
     /** Scrolls the drawer's list until [tag] is on screen, and returns it. */
     private fun drawerNode(tag: String) = compose.onNodeWithTag(tag).performScrollTo()
 
+    /**
+     * Drawer rows below the fold are not composed at all — the list is a
+     * LazyColumn — so a plain [waitForTag] never sees them. The extra navigation
+     * rows (including AI schemas) pushed the paper rows down; swipe the list in
+     * bounded steps until the row exists, then let [drawerNode] bring it fully
+     * into view. This keeps the test's selection assertions untouched.
+     */
+    private fun waitForDrawerRow(tag: String) {
+        repeat(16) {
+            if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onNodeWithTag("drawer-list").performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+        waitForTag(tag)
+    }
+
     /** Opens the drawer and scrolls [paperId]'s row into view. */
     private fun openDrawer(paperId: String) {
         compose.onNodeWithContentDescription("Open menu").performClick()
-        waitForTag("drawer-paper-$paperId")
+        waitForDrawerRow("drawer-paper-$paperId")
         drawerNode("drawer-paper-$paperId")
     }
 

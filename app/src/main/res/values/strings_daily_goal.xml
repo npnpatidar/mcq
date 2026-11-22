@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="daily_goal_title">Daily goal (reporting only)</string>
     <string name="daily_goal_switch_help">Shows today’s review count. It never limits Study or Tests.</string>
     <string name="daily_goal_count_label">Daily question count</string>
     <string name="daily_goal_count_help">Target shown in Library and Statistics</string>
-    <string name="daily_goal_progress">%1$d / %2$d reviews today</string>
+    <string name="daily_goal_progress" tools:ignore="PluralsCandidate">%1$d / %2$d reviews today</string>
     <string name="daily_goal_progress_help">Reporting only — you can keep studying past this number.</string>
 </resources>

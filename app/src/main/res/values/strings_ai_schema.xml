@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="ai_schemas">AI schemas</string>
     <string name="ai_schema_settings_title">AI question schemas</string>
     <string name="ai_schema_settings_help">Build a small JSON Schema, prompt and example for an AI question bank.</string>
@@ -28,7 +28,7 @@
     <string name="ai_schema_output_schema">JSON Schema</string>
     <string name="ai_schema_output_prompt">Prompt</string>
     <string name="ai_schema_output_example">Example JSON</string>
-    <string name="ai_schema_size">%1$d characters — smaller = fewer tokens</string>
+    <string name="ai_schema_size" tools:ignore="PluralsCandidate">%1$d characters — smaller = fewer tokens</string>
     <string name="ai_schema_copy_prompt">Copy prompt</string>
     <string name="ai_schema_save">Save schema</string>
     <string name="ai_schema_share">Share</string>

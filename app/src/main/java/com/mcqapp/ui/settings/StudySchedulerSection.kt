@@ -58,6 +58,8 @@ fun StudySchedulerSection(
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
+    confirmGradeBeforeNext: Boolean,
+    onConfirmGradeBeforeNextChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -102,6 +104,8 @@ fun StudySchedulerSection(
                 onReset = onReset,
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = onSimplifiedChange,
+                confirmGradeBeforeNext = confirmGradeBeforeNext,
+                onConfirmGradeBeforeNextChange = onConfirmGradeBeforeNextChange,
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimizeState,
                 fsrs7Notice = fsrs7Notice,
@@ -134,6 +138,8 @@ private fun AnkiSchedulerBody(
     onReset: () -> Unit,
     simplifiedStudy: Boolean,
     onSimplifiedChange: (Boolean) -> Unit,
+    confirmGradeBeforeNext: Boolean,
+    onConfirmGradeBeforeNextChange: (Boolean) -> Unit,
     fsrsReviewCount: Int,
     fsrsOptimizeState: FsrsOptimizeState,
     fsrs7Notice: Boolean,
@@ -190,6 +196,16 @@ private fun AnkiSchedulerBody(
         checked = simplifiedStudy,
         onChange = onSimplifiedChange,
         testTag = "setting-simplified-anki"
+    )
+    Spacer(Modifier.height(12.dp))
+    // Opt-in: a last-chance correction before a four-button grade is written.
+    // Simplified already stages its grade and ignores this flag.
+    SwitchSettingRow(
+        label = stringResource(R.string.confirm_grade_before_next),
+        help = stringResource(R.string.confirm_grade_before_next_help),
+        checked = confirmGradeBeforeNext,
+        onChange = onConfirmGradeBeforeNextChange,
+        testTag = "setting-confirm-grade-before-next"
     )
     Spacer(Modifier.height(12.dp))
 

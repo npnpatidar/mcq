@@ -53,6 +53,7 @@ fun SettingsScreen(
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
+    val confirmGradeBeforeNext by viewModel.confirmGradeBeforeNext.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val hapticsEnabled by viewModel.hapticsEnabled.collectAsStateWithLifecycle()
@@ -241,6 +242,8 @@ fun SettingsScreen(
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
+                confirmGradeBeforeNext = confirmGradeBeforeNext,
+                onConfirmGradeBeforeNextChange = { viewModel.setConfirmGradeBeforeNext(it) },
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimize,
                 fsrs7Notice = fsrs7Notice,

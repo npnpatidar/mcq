@@ -147,7 +147,13 @@ fun StudyScreen(
     // Resolve the verdict string during composition with stringResource, which
     // is configuration-aware; the effect only speaks the resolved text.
     val verdictMessage = if (lastResult != null) {
-        stringResource(studyVerdictRes(lastResult.correct))
+        if (state.canAutoGrade) {
+            stringResource(studyVerdictRes(lastResult.correct))
+        } else {
+            // A self-graded question has no key, so "Correct"/"Incorrect" would
+            // be a claim the app cannot make. Speak the staged grade instead.
+            stringResource(R.string.marked_x, stringResource(studyGradeLabelRes(lastResult.grade)))
+        }
     } else {
         null
     }
@@ -299,9 +305,12 @@ private fun StudyBody(
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed && !state.selfGraded) {
-                    // A self-graded question has no result card: the app has no
-                    // verdict it could honestly claim.
+                    // Simplified result card, as before.
                     SimplifiedResultBlock(state = state)
+                } else if (state.confirmGradeBeforeNext && state.pendingGrade != null) {
+                    // Opt-in self-graded flow: the staged grade gets a neutral
+                    // card (no correctness claim) above Change grade / Next.
+                    StagedResultBlock(state = state)
                 }
             }
             SimplifiedFooter(state = state, viewModel = viewModel)
@@ -332,6 +341,11 @@ private fun StudyBody(
                     passage = state.passage,
                     modifier = cardPositioned
                 )
+                if (state.confirmGradeBeforeNext && state.pendingGrade != null) {
+                    // Opt-in Classic flow: the staged grade and its interval sit
+                    // with the answer, then Change grade / Next in the footer.
+                    StagedResultBlock(state = state)
+                }
             }
             Column(
                 modifier = Modifier
@@ -359,15 +373,20 @@ private fun StudyBody(
                     ) {
                         Text(stringResource(R.string.show_answer))
                     }
+                } else if (state.pendingGrade != null) {
+                    // Opt-in Classic flow: the grade is on screen but not yet
+                    // written. Same footer controls Simplified has always used.
+                    StagedResultActions(state = state, viewModel = viewModel)
                 } else {
-                    // The same grading write as Simplified's self-graded footer:
-                    // a self-reported grade is persisted and the next card
-                    // pulled, so a keyless question behaves the same in either
-                    // mode.
+                    // Default: a self-reported grade is persisted and the next
+                    // card pulled in one tap, exactly as before.
                     GradeButtons(
                         enabled = !state.grading,
                         previews = state.previews,
-                        onGrade = { viewModel.grade(it) }
+                        onGrade = {
+                            if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
+                            else viewModel.grade(it)
+                        }
                     )
                 }
             }
@@ -420,6 +439,93 @@ private fun SimplifiedResultBlock(state: StudyUiState) {
 }
 
 /**
+ * The staged result, shared by all three modes. A question the app can grade
+ * gets the verdict card; a self-graded one gets the same grade + interval
+ * without any correctness claim. Both are read in the scrollable answer area.
+ */
+@Composable
+private fun StagedResultBlock(state: StudyUiState) {
+    val result = state.lastResult ?: return
+    if (state.selfGraded) {
+        SelfGradedResultCard(result = result)
+    } else {
+        SimplifiedResultCard(result = result)
+    }
+}
+
+/** A self-graded result: what the learner chose and when it comes back. */
+@Composable
+private fun SelfGradedResultCard(result: com.mcqapp.ui.study.StudyResult) {
+    val gradeLabel = stringResource(studyGradeLabelRes(result.grade))
+    Card(modifier = Modifier.fillMaxWidth().testTag("study-result")) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.marked_x, gradeLabel),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.study_next_in, result.nextIn),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * The last-chance correction controls, shared by Simplified and by the opt-in
+ * Classic/self-graded flows. Change grade edits the staged proposal; Next is
+ * the only path that writes it. The controls stand down during a grade write.
+ */
+@Composable
+private fun StagedResultActions(state: StudyUiState, viewModel: StudyViewModel) {
+    val haptics = rememberHaptics()
+    val question = state.question
+    var showPicker by remember(question?.id) { mutableStateOf(false) }
+    if (showPicker) {
+        GradeButtons(
+            enabled = !state.grading,
+            previews = state.previews,
+            onGrade = {
+                viewModel.changeGrade(it)
+                showPicker = false
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(
+            onClick = { showPicker = !showPicker },
+            // The picker itself is gated on !state.grading; the toggle
+            // must stand down in that same frame, or a tap can rewrite
+            // pendingGrade after Next captured it (S4).
+            enabled = !state.grading,
+            modifier = Modifier.testTag("study-change-grade")
+        ) {
+            Text(stringResource(R.string.change_grade))
+        }
+        Spacer(Modifier.width(8.dp))
+        Button(
+            onClick = {
+                haptics.tick()
+                viewModel.next()
+            },
+            modifier = Modifier.weight(1f).testTag("study-next"),
+            // The card is graded and stuck: re-tapping Next would
+            // double-persist it (consolidated_bugs.md I3).
+            enabled = !state.grading && !state.gradedAndStuck
+        ) {
+            Text(stringResource(R.string.next))
+        }
+    }
+}
+
+/**
  * The always-visible Simplified actions, mirroring test mode's fixed footer:
  * Guess + Check before reveal, Next after. None of these ever scrolls away.
  *
@@ -462,14 +568,20 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 ) {
                     Text(stringResource(R.string.show_answer))
                 }
+            } else if (state.pendingGrade != null) {
+                // Opt-in self-graded flow: the staged grade gets Change grade
+                // and Next before anything is written.
+                StagedResultActions(state = state, viewModel = viewModel)
             } else {
-                // One prompt, one answer: the chosen grade is persisted and the
-                // next card pulled in the same tap, so there is no Next step and
-                // nothing to change afterwards.
+                // Default: one prompt, one answer — the chosen grade is
+                // persisted and the next card pulled in the same tap.
                 GradeButtons(
                     enabled = !state.grading,
                     previews = state.previews,
-                    onGrade = { viewModel.grade(it) }
+                    onGrade = {
+                        if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
+                        else viewModel.grade(it)
+                    }
                 )
             }
         } else if (!state.revealed) {
@@ -520,47 +632,9 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Text(stringResource(R.string.check))
             }
         } else {
-            val question = state.question
-            var showPicker by remember(question?.id) { mutableStateOf(false) }
-            if (showPicker) {
-                GradeButtons(
-                    enabled = !state.grading,
-                    previews = state.previews,
-                    onGrade = {
-                        viewModel.changeGrade(it)
-                        showPicker = false
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = { showPicker = !showPicker },
-                    // The picker itself is gated on !state.grading; the toggle
-                    // must stand down in that same frame, or a tap can rewrite
-                    // pendingGrade after Next captured it (S4).
-                    enabled = !state.grading,
-                    modifier = Modifier.testTag("study-change-grade")
-                ) {
-                    Text(stringResource(R.string.change_grade))
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        haptics.tick()
-                        viewModel.next()
-                    },
-                    modifier = Modifier.weight(1f).testTag("study-next"),
-                    // The card is graded and stuck: re-tapping Next would
-                    // double-persist it (consolidated_bugs.md I3).
-                    enabled = !state.grading && !state.gradedAndStuck
-                ) {
-                    Text(stringResource(R.string.next))
-                }
-            }
+            // One staged-actions composable for all three modes: Simplified
+            // always, and Classic/self-graded when the learner opted in.
+            StagedResultActions(state = state, viewModel = viewModel)
         }
     }
 }

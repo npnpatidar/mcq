@@ -1,5 +1,6 @@
 package com.mcqapp.ui.common
 
+import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -35,6 +36,50 @@ class UiMessageHostTest {
         assertEquals(UiMessageTone.Success, first.tone)
         assertEquals("Could not export", second.text)
         assertEquals(UiMessageTone.Error, second.tone)
+    }
+
+    @Test
+    fun eachToneCarriesADistinctIconAndRoleButLeavesTheTextAlone() {
+        // Colour is a second signal, never a replacement for the message.
+        assertEquals(ToneIcon.Warning, UiMessageTone.Error.icon)
+        assertEquals(ToneRole.Error, UiMessageTone.Error.role)
+        assertEquals(ToneIcon.Check, UiMessageTone.Success.icon)
+        assertEquals(ToneRole.Primary, UiMessageTone.Success.role)
+        assertEquals(ToneIcon.Info, UiMessageTone.Info.icon)
+        assertEquals(ToneRole.Secondary, UiMessageTone.Info.role)
+
+        val message = UiMessage("Could not export", UiMessageTone.Error)
+        assertEquals("Could not export", message.text)
+        assertEquals(ToneIcon.Warning, message.tone.icon)
+    }
+
+    @Test
+    fun theHostRendersTheToneIconWithoutRewritingTheText() {
+        val nav = File("src/main/java/com/mcqapp/ui/navigation/McqNavHost.kt").readText()
+        val host = File("src/main/java/com/mcqapp/ui/common/UiMessageSnackbar.kt").readText()
+        assertTrue(
+            "the nav host must use the tone-aware snackbar host",
+            nav.contains("ToneSnackbarHost(") && nav.contains("tone = currentTone")
+        )
+        assertTrue(
+            "the presenter must hand the message tone to the host",
+            nav.contains("currentTone = message.tone")
+        )
+        assertTrue(
+            "the snackbar text must remain the sender's text",
+            nav.contains("message = message.text")
+        )
+        assertTrue(
+            "the snackbar must render a leading icon before the text",
+            host.contains("toneImageVector(tone.icon)") &&
+                host.indexOf("toneImageVector(tone.icon)") < host.indexOf("Text(data.visuals.message)")
+        )
+        assertTrue(
+            "the tint must come from a Material 3 role, not a literal",
+            host.contains("MaterialTheme.colorScheme.primary") &&
+                host.contains("MaterialTheme.colorScheme.secondary") &&
+                host.contains("MaterialTheme.colorScheme.error")
+        )
     }
 
     @Test

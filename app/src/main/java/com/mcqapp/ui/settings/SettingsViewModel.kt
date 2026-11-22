@@ -405,6 +405,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _simplifiedStudy = MutableStateFlow(true)
     val simplifiedStudy: StateFlow<Boolean> = _simplifiedStudy.asStateFlow()
 
+    private val _confirmGradeBeforeNext = MutableStateFlow(false)
+    val confirmGradeBeforeNext: StateFlow<Boolean> = _confirmGradeBeforeNext.asStateFlow()
+
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
@@ -417,6 +420,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.simplifiedStudy().collect { _simplifiedStudy.value = it }
+        }
+        viewModelScope.launch {
+            repository.confirmGradeBeforeNext().collect { _confirmGradeBeforeNext.value = it }
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
@@ -443,6 +449,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setSimplifiedStudy(enabled: Boolean) {
         viewModelScope.launch { repository.setSimplifiedStudy(enabled) }
+    }
+
+    fun setConfirmGradeBeforeNext(enabled: Boolean) {
+        viewModelScope.launch { repository.setConfirmGradeBeforeNext(enabled) }
     }
 
     fun setShuffleOptions(enabled: Boolean) {

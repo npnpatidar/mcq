@@ -49,6 +49,8 @@
     <string name="grade_good">अच्छा</string>
     <string name="grade_hard">कठिन</string>
     <string name="grade_study_cards_automatically_from_your_answers_instead_of_">हर कार्ड के बाद Again, Hard, Good या Easy चुनने के बजाय, अपने उत्तरों के आधार पर अध्ययन कार्डों को स्वतः ग्रेड करें।</string>
+    <string name="confirm_grade_before_next">अगले कार्ड से पहले ग्रेड की पुष्टि करें</string>
+    <string name="confirm_grade_before_next_help">क्लासिक अध्ययन में Again, Hard, Good और Easy तथा स्व-ग्रेड वाले कार्डों पर ग्रेड और उसका अंतराल पहले दिखाएँ, ताकि सहेजने से पहले आप उसे बदल सकें। डिफ़ॉल्ट रूप से बंद।</string>
     <string name="guessed_right_marked_again">अनुमान से सही — Again माना गया, जल्दी वापस मिलेंगे।</string>
     <string name="guessed_right_marked_x">अनुमान से सही — %1$s माना गया।</string>
     <string name="guessing">अनुमान लगा रहे हैं</string>

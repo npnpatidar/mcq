@@ -120,6 +120,13 @@ data class StudyUiState(
      */
     val simplified: Boolean = true,
     /**
+     * Opt-in last-chance grade confirmation for the four-button flows (Classic
+     * and self-graded). Off by default, so their one-tap grade-and-advance is
+     * unchanged until the learner enables it in Settings. Simplified always
+     * stages its grade and ignores this flag.
+     */
+    val confirmGradeBeforeNext: Boolean = false,
+    /**
      * The learner declared this attempt a guess before answering. Locked at
      * reveal and reset on every advance, so it can never be set retroactively.
      */
@@ -212,6 +219,14 @@ data class StudyUiState(
 ) {
     val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
+
+    /**
+     * Whether a grade is staged before it is written. Simplified always does;
+     * the four-button flows do only when the learner opted in. This one flag
+     * drives the result card, Change grade, Next and the stop-time write, so
+     * the three modes cannot disagree about when a review is persisted.
+     */
+    val stagedGrading: Boolean get() = simplified || confirmGradeBeforeNext
 
     /**
      * A zero-option question is a flashcard: the stem is the front and the
@@ -322,7 +337,7 @@ internal class StudyGradeGateForTests {
  * Keeping the predicate here makes that negative case JVM-testable.
  */
 internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
-    !state.grading && state.simplified && state.revealed &&
+    !state.grading && state.stagedGrading && state.revealed &&
         state.pendingGrade != null && state.question != null
 
 class StudyViewModel(
@@ -539,6 +554,7 @@ class StudyViewModel(
                         paperTitle = paper?.title ?: "Study",
                         gradingHintDismissed = gradingHintDismissed,
                         simplified = repository.simplifiedStudy().first(),
+                        confirmGradeBeforeNext = repository.confirmGradeBeforeNext().first(),
                         introduceNewCards = config?.introduceNewCards ?: true,
                         scopeLabel = label
                     )
@@ -1112,6 +1128,43 @@ class StudyViewModel(
     }
 
     /**
+     * Stages the learner's own grade (Classic MCQ, keyless MCQ or flashcard)
+     * when the opt-in "Confirm grade before next card" setting is on. Nothing
+     * is written here: the result card, Change grade and Next all work on this
+     * staged proposal, and [next] writes it through [grade]. With the setting
+     * off this method is never called by the screen, so the existing one-tap
+     * behaviour is untouched.
+     */
+    fun stageGrade(grade: ReviewGrade) {
+        val current = _state.value
+        val question = current.question ?: return
+        if (current.grading) return
+        // Reveal is required exactly as in grade(): a learner cannot grade an
+        // answer they have not been shown.
+        if (current.selfGraded && !current.revealed) return
+        if (!current.revealed) return
+        pauseQuestionClock()
+        val paused = _state.value
+        // Classic has no Check, so this is where the dwell freezes. It is the
+        // same frozen value a later grade change and Next persist.
+        val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
+        _state.update {
+            it.copy(
+                revealed = true,
+                gradedDwellSeconds = dwellSeconds,
+                pendingGrade = grade,
+                proposedGrade = null,
+                gradeEdited = false,
+                lastResult = buildResult(
+                    question, it.selection, grade, it.isGuess, dwellSeconds,
+                    System.currentTimeMillis()
+                )
+            )
+        }
+        Logger.d("STUDY", "staged ${question.id} -> $grade (confirm before next)")
+    }
+
+    /**
      * Persists the proposed grade and pulls the next card. Guarded like [grade]:
      * the write is async, so a second tap would persist two reviews for one
      * question.
@@ -1120,8 +1173,15 @@ class StudyViewModel(
         val current = _state.value
         val question = current.question ?: return
         val proposed = current.pendingGrade ?: return
-        if (!current.simplified || !current.revealed) return
+        if (!current.stagedGrading || !current.revealed) return
         if (current.grading) return
+        if (!current.simplified) {
+            // Opt-in four-button flow: the staged grade is written by the exact
+            // same one-tap grade path, only later. review_log semantics — CHOSEN,
+            // no app proposal, null correctness for self-graded — do not change.
+            grade(proposed)
+            return
+        }
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         val dwellSeconds = _state.value.gradedDwellSeconds
@@ -1338,14 +1398,27 @@ class StudyViewModel(
         val current = _state.value
         val question = current.question
         val proposed = current.pendingGrade
-        if (!current.simplified || !current.revealed || current.grading ||
+        if (!current.stagedGrading || !current.revealed || current.grading ||
             question == null || proposed == null || current.gradedAndStuck
         ) {
-            // Nothing to write: classic mode persists on each grade button, an
-            // unchecked card has no decision to keep, and a grade that was
-            // already persisted before a failed pull must not be written again —
-            // a second review would double the tally, FSRS state and review_log.
+            // Nothing staged to write: classic mode persists on each grade
+            // button unless the learner opted in, an unchecked card has no
+            // decision to keep, and a grade already persisted before a failed
+            // pull must not be written again — a second review would double the
+            // tally, FSRS state and review_log.
             finishSession()
+            return
+        }
+        if (!current.simplified) {
+            // Opt-in four-button flow: persist the staged grade through the
+            // same write path. grade() sees the stop latch and ends without
+            // pulling another card (consolidated_bugs.md I4); the summary
+            // waits for that write so the tally is already in it.
+            grade(proposed)
+            sessionScope.launch {
+                gradeWriteJob?.join()
+                finishSession()
+            }
             return
         }
         _state.update { it.copy(grading = true, gradeError = null) }

@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 import org.junit.rules.ExternalResource
 
 /**
- * The six process-wide preference keys that these tests must not inherit from
+ * The process-wide preference keys that these tests must not inherit from
  * a neighbour. They are removed before *and* after every test:
  *
  *  - `correctness_only` and `grading_rules_version` are the measurement rule
@@ -28,6 +28,8 @@ import org.junit.rules.ExternalResource
  *    The former's unset default is on, so an inherited false value would
  *    fail a default-state assertion; the latter's value would seed another
  *    test's request.
+ *  - `confirm_grade_before_next` is an opt-in study flag; an inherited true
+ *    would change the default one-tap grading path in an unrelated test.
  *
  * The DataStore file is process-wide under Robolectric, so "before only" is
  * not enough: a class that fails mid-test would otherwise leak into the next.
@@ -90,6 +92,7 @@ class SettingsResetRule : ExternalResource() {
                     prefs.remove(booleanPreferencesKey("install_first_start_new"))
                     prefs.remove(booleanPreferencesKey("haptics_enabled"))
                     prefs.remove(intPreferencesKey("last_test_length"))
+                    prefs.remove(booleanPreferencesKey("confirm_grade_before_next"))
                 }
             }
         }

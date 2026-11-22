@@ -194,6 +194,21 @@ internal class SettingsStore(
     }
 
     /**
+     * Opt-in last-chance grade confirmation for the four-button (Classic and
+     * self-graded) flows. Off by default so the existing one-tap grade-and-
+     * advance behaviour is untouched for current learners. Simplified mode
+     * always stages a grade and is unaffected by this flag.
+     */
+    private val confirmGradeBeforeNextKey = booleanPreferencesKey("confirm_grade_before_next")
+
+    fun confirmGradeBeforeNext(): Flow<Boolean> =
+        context.dataStore.data.map { it[confirmGradeBeforeNextKey] ?: false }
+
+    suspend fun setConfirmGradeBeforeNext(enabled: Boolean) {
+        context.editPreferences { it[confirmGradeBeforeNextKey] = enabled }
+    }
+
+    /**
      * One-time Study hint that explains correctness-only grading, the clock's
      * role and when Easy/Hard can appear. False until the learner dismisses it;
      * once written it is never cleared, so a rotation or a process kill cannot

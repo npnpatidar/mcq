@@ -249,6 +249,10 @@ class McqRepository internal constructor(
     fun simplifiedStudy(): Flow<Boolean> = settings.simplifiedStudy()
     suspend fun setSimplifiedStudy(enabled: Boolean) = settings.setSimplifiedStudy(enabled)
 
+    fun confirmGradeBeforeNext(): Flow<Boolean> = settings.confirmGradeBeforeNext()
+    suspend fun setConfirmGradeBeforeNext(enabled: Boolean) =
+        settings.setConfirmGradeBeforeNext(enabled)
+
     fun shuffleOptions(): Flow<Boolean> = settings.shuffleOptions()
     suspend fun setShuffleOptions(enabled: Boolean) = settings.setShuffleOptions(enabled)
 

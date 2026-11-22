@@ -62,7 +62,12 @@ object LegacyParser {
                 entry["cardState"]?.jsonPrimitive?.takeIf { it.isString }?.content,
                 entry["stability"]?.jsonPrimitive?.doubleOrNull ?: 0.0
             ).name,
-            reviewCount = entry["reviewCount"]?.jsonPrimitive?.intOrNull ?: 0
+            reviewCount = entry["reviewCount"]?.jsonPrimitive?.intOrNull ?: 0,
+            // v30 flags. Without these the wide reader kept the row but turned a
+            // hidden card back into an ordinary studyable one. Files written
+            // before v30 omit them, so both default to "not hidden".
+            suspended = entry["suspended"]?.jsonPrimitive?.booleanOrNull ?: false,
+            buriedUntil = entry["buriedUntil"]?.jsonPrimitive?.longOrNull
         )
     } catch (_: Exception) {
         // Keep the rest of the progress.

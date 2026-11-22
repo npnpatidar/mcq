@@ -173,7 +173,11 @@ class Exporter(private val db: AppDatabase) {
             if (page.isEmpty()) break
             for (row in page) {
                 val state = row.state
-                if (state.reps <= 0 && state.dueAt <= 0L) continue
+                // The same rule as the DTO builder: a card hidden from Study
+                // with no grade still has a schedule worth exporting. The old
+                // studied-only test here dropped every flag-only row, so a
+                // suspended or buried new card came back studyable.
+                if (!shouldExportSchedule(state)) continue
                 val schedule = json.encodeToString(
                     CardScheduleDto.serializer(),
                     state.toCardScheduleDto()

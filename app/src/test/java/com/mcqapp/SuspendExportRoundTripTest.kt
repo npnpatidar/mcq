@@ -131,6 +131,10 @@ class SuspendExportRoundTripTest {
         SuspendStore(source).suspend("p1", "q1")
         // A question reused in two papers is scheduled independently; the
         // second paper's row is flag-only too, so it counts for the alias rule.
+        // card_state has a foreign key on papers.id, so the second paper must
+        // exist before its schedule row can be inserted. (Question ids are
+        // global, so the same q1 cannot be re-saved under p2.)
+        McqRepository(source, context).ensurePaperAndCategory("p2", "Paper 2", "c2", "Cat 2")
         source.cardStateDao().upsert(
             CardStateEntity(
                 paperId = "p2", questionId = "q1", ease = 2.5, intervalDays = 0,

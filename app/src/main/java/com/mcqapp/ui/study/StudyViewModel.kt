@@ -1511,7 +1511,10 @@ class StudyViewModel(
                     it.copy(gradeError = friendly(R.string.study_grade_save_failed))
                 }
             }
-            finishSession()
+            // Simplified graded this card in one tap, then the scheduler served
+            // the next one. Close with no card behind the summary too — the
+            // grade itself and its provenance are unchanged.
+            finishSession(clearCard = true)
         }
     }
 

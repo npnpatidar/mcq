@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.mcqapp.AppLanguageCache
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.flow.Flow
@@ -194,6 +195,23 @@ internal class SettingsStore(
     }
 
     /**
+     * Opt-in last-chance grade confirmation for the four-button Classic flow,
+     * including self-graded cards there. Off by default so the existing one-
+     * tap grade-and-advance behaviour is untouched. Simplified ignores it: a
+     * Simplified result card already offers Change grade, so staging here
+     * would send a self-graded card down the simplified commit path and
+     * fabricate correctness that the regression from 0.0.66 removed.
+     */
+    private val confirmGradeBeforeNextKey = booleanPreferencesKey("confirm_grade_before_next")
+
+    fun confirmGradeBeforeNext(): Flow<Boolean> =
+        context.dataStore.data.map { it[confirmGradeBeforeNextKey] ?: false }
+
+    suspend fun setConfirmGradeBeforeNext(enabled: Boolean) {
+        context.editPreferences { it[confirmGradeBeforeNextKey] = enabled }
+    }
+
+    /**
      * One-time Study hint that explains correctness-only grading, the clock's
      * role and when Easy/Hard can appear. False until the learner dismisses it;
      * once written it is never cleared, so a rotation or a process kill cannot
@@ -336,6 +354,28 @@ internal class SettingsStore(
 
     suspend fun setFontScale(scale: Float) {
         context.editPreferences { it[fontScaleKey] = scale }
+    }
+
+    // --- Reporting-only daily goal (owner ruling) ---
+    // Two plain preferences: the generic backup snapshot/restore already
+    // carries every boolean/int key, so neither needs a special path. Nothing
+    // in the scheduler reads them — the goal only feeds a label and a bar.
+
+    private val dailyGoalEnabledKey = booleanPreferencesKey("daily_goal_enabled")
+    private val dailyGoalCountKey = intPreferencesKey("daily_goal_count")
+
+    fun dailyGoalEnabled(): Flow<Boolean> =
+        context.dataStore.data.map { it[dailyGoalEnabledKey] ?: DailyGoal.DEFAULT_ENABLED }
+
+    suspend fun setDailyGoalEnabled(enabled: Boolean) {
+        context.editPreferences { it[dailyGoalEnabledKey] = enabled }
+    }
+
+    fun dailyGoalCount(): Flow<Int> =
+        context.dataStore.data.map { it[dailyGoalCountKey] ?: DailyGoal.DEFAULT_COUNT }
+
+    suspend fun setDailyGoalCount(count: Int) {
+        context.editPreferences { it[dailyGoalCountKey] = DailyGoal.normalizeCount(count) }
     }
 
     // --- Scheduler settings ---

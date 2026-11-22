@@ -173,6 +173,23 @@ class FlashcardStudyStructureTest {
         assertTrue("the grade must persist and advance", selfGradedBranch.contains("viewModel.grade(it)"))
         assertFalse("a self-graded question has no Check", selfGradedBranch.contains("viewModel.check()"))
         assertFalse("a self-graded question has no guess switch", selfGradedBranch.contains("study-guess"))
+        // These used to be asserted through the "study-next"/"study-change-grade"
+        // tags, which live inside StagedResultActions — a branch that never
+        // calls that helper passes for the wrong reason. Assert the real rule:
+        // Simplified self-graded grades in one tap and never stages. Its result
+        // card owns Change grade, so the toggle must not be consulted here.
+        assertFalse(
+            "Simplified self-graded must never stage a grade",
+            selfGradedBranch.contains("stageGrade")
+        )
+        assertFalse(
+            "Simplified self-graded has no staged result actions",
+            selfGradedBranch.contains("StagedResultActions")
+        )
+        assertTrue(
+            "one tap commits straight through grade()",
+            selfGradedBranch.contains("viewModel.grade(it)")
+        )
         assertFalse("a self-graded question has no Next step", selfGradedBranch.contains("study-next"))
         assertFalse(
             "a self-graded question has no change-grade control",

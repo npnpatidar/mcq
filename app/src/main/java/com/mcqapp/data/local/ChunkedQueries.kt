@@ -386,16 +386,18 @@ internal suspend fun QuestionDao.minBlockSizeForCategoriesChunked(
 /** The first new question in serving order: the first found chunk's first row. */
 internal suspend fun QuestionDao.firstNewQuestionForCategoriesChunked(
     paperId: String,
-    categoryIds: List<String>
+    categoryIds: List<String>,
+    now: Long
 ): String? =
-    categoryIds.chunks().firstNotNullOfOrNull { firstNewQuestionForCategories(paperId, it) }
+    categoryIds.chunks().firstNotNullOfOrNull { firstNewQuestionForCategories(paperId, it, now) }
 
 /** The scope's new questions, concatenated in chunk order (same caveat as [dueForCategoriesChunked]). */
 internal suspend fun QuestionDao.newQuestionsForCategoriesChunked(
     paperId: String,
-    categoryIds: List<String>
+    categoryIds: List<String>,
+    now: Long
 ): List<String> =
-    categoryIds.chunks().flatMap { newQuestionsForCategories(paperId, it) }
+    categoryIds.chunks().flatMap { newQuestionsForCategories(paperId, it, now) }
 
 /**
  * Escapes [prefix] for a `LIKE :pattern ESCAPE '\\'` query so `%`, `_` and the

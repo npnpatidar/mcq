@@ -44,10 +44,26 @@ class Round2StudyGradingGuardTest {
 
     @Test
     fun otherIneligibleStatesAreStillRejected() {
-        assertFalse("classic mode has no change-grade control", studyCanChangeGrade(eligible(false).copy(simplified = false)))
+        assertFalse("classic mode keeps one-tap grading until the learner opts in", studyCanChangeGrade(eligible(false).copy(simplified = false)))
         assertFalse("the answer must be revealed first", studyCanChangeGrade(eligible(false).copy(revealed = false)))
         assertFalse("there must be a proposal to change", studyCanChangeGrade(eligible(false).copy(pendingGrade = null)))
         assertFalse("a card must be on screen", studyCanChangeGrade(eligible(false).copy(question = null)))
+    }
+
+    @Test
+    fun optingInOpensChangeGradeForFourButtonFlows() {
+        assertTrue(
+            "the opt-in toggle must let Classic correct a staged grade",
+            studyCanChangeGrade(eligible(false).copy(simplified = false, confirmGradeBeforeNext = true))
+        )
+        assertTrue(
+            "Simplified is unaffected by the toggle",
+            studyCanChangeGrade(eligible(false).copy(confirmGradeBeforeNext = true))
+        )
+        assertFalse(
+            "a write already in flight still owns the proposal",
+            studyCanChangeGrade(eligible(true).copy(simplified = false, confirmGradeBeforeNext = true))
+        )
     }
 
     @Test
@@ -71,7 +87,8 @@ class Round2StudyGradingGuardTest {
         )
         assertTrue(
             "the picker buttons must still be gated too",
-            screen.contains("enabled = !state.grading,\n                    previews = state.previews,\n                    onGrade = {\n                        viewModel.changeGrade(it)")
+            Regex("""enabled = !state\.grading,\s+previews = state\.previews,\s+onGrade = \{\s+viewModel\.changeGrade\(it\)""")
+                .containsMatchIn(screen)
         )
     }
 }

@@ -3,18 +3,34 @@ package com.mcqapp.ui.common
 import androidx.compose.runtime.compositionLocalOf
 import kotlinx.coroutines.channels.Channel
 
+/** Which leading glyph a tone uses. Pure so the mapping is JVM-testable. */
+enum class ToneIcon { Check, Info, Warning }
+
+/**
+ * Which Material 3 *role* colours a tone. A role, never a hex value, so every
+ * custom theme keeps its own palette and contrast.
+ */
+enum class ToneRole { Primary, Secondary, Error }
+
 /**
  * One transient piece of feedback for the learner: a plain [text], a [tone]
- * that only changes how long it is shown, and an optional single [onAction]
- * (with [actionLabel]) for the Snackbar's action button.
+ * and an optional single [onAction] (with [actionLabel]) for the Snackbar's
+ * action button.
  *
- * The three tones deliberately carry no colour or icon of their own: the
- * Material 3 Snackbar owns the visual treatment. Keeping the type small and
- * pure means the host can be reasoned about and unit-tested without Compose.
+ * A tone now carries a leading [icon] and a Material 3 [role] as well as the
+ * duration. The text is never changed by the tone: colour is a second signal,
+ * not the only one, so a learner who cannot distinguish the tint still reads
+ * the same message. The mapping stays small and pure so it can be unit-tested
+ * without Compose; [com.mcqapp.ui.common.ToneSnackbarHost] turns it into the
+ * actual icon and colour.
  *
  * See https://developer.android.com/develop/ui/compose/components/snackbar
  */
-enum class UiMessageTone { Error, Success, Info }
+enum class UiMessageTone(val icon: ToneIcon, val role: ToneRole) {
+    Error(ToneIcon.Warning, ToneRole.Error),
+    Success(ToneIcon.Check, ToneRole.Primary),
+    Info(ToneIcon.Info, ToneRole.Secondary)
+}
 
 /** A transient message. [text] is already user-facing copy, never a raw exception. */
 data class UiMessage(

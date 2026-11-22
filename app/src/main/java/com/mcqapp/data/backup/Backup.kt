@@ -144,7 +144,10 @@ object McqBackupFormat {
         /** FSRS-7's fast trace; backups written before v27 decode this as 0. */
         val stabilityFast: Double = 0.0,
         val cardState: String = "NEW",
-        val reviewCount: Int = 0
+        val reviewCount: Int = 0,
+        /** Suspend / bury (v30). Older backups decode these as ordinary cards. */
+        val suspended: Boolean = false,
+        val buriedUntil: Long? = null
     )
 
     @Serializable
@@ -561,7 +564,9 @@ object McqBackupFormat {
         stability = entity.stability,
         stabilityFast = entity.stabilityFast,
         cardState = entity.cardState.name,
-        reviewCount = entity.reviewCount
+        reviewCount = entity.reviewCount,
+        suspended = entity.suspended,
+        buriedUntil = entity.buriedUntil
     )
 
     fun logRow(entity: com.mcqapp.data.local.ReviewLogEntity): ReviewLogRow = ReviewLogRow(
@@ -919,7 +924,9 @@ class BackupSource(private val db: AppDatabase) {
         stability = stability,
         stabilityFast = stabilityFast,
         cardState = cardState.name,
-        reviewCount = reviewCount
+        reviewCount = reviewCount,
+        suspended = suspended,
+        buriedUntil = buriedUntil
     )
 
     internal fun ReviewLogEntity.toRow() = McqBackupFormat.ReviewLogRow(
@@ -1353,7 +1360,9 @@ class BackupRestorer(private val db: AppDatabase) {
         stability = stability,
         stabilityFast = stabilityFast,
         cardState = com.mcqapp.domain.CardStateKind.valueOf(cardState),
-        reviewCount = reviewCount
+        reviewCount = reviewCount,
+        suspended = suspended,
+        buriedUntil = buriedUntil
     )
 
     /** Restores the grading versions with their original ids, then sittings. */

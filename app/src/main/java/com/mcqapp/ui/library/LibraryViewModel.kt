@@ -15,6 +15,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.editCategoryAtomic
 import com.mcqapp.domain.CategoryCounts
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.ExclusionMode
@@ -30,6 +31,7 @@ import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import java.io.InputStream
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +102,58 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     val avoidRecentQuestions: StateFlow<Boolean> = repository.avoidRecentQuestions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    // --- Reporting-only daily goal ---
+    // The count is the overview tab's existing today bucket: review_log rows in
+    // the current study day (04:00 boundary), self-graded cards included. No
+    // new SQL and no separate "goal reached" gate — this flow only feeds the
+    // small gauge at the top of the paper list.
+    private val dailyGoalEnabled: StateFlow<Boolean> = repository.dailyGoalEnabled()
+        .stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            DailyGoal.DEFAULT_ENABLED
+        )
+    private val dailyGoalCount: StateFlow<Int> = repository.dailyGoalCount()
+        .stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            DailyGoal.DEFAULT_COUNT
+        )
+    private val _dailyGoalReviews = MutableStateFlow(0)
+
+    val dailyGoalProgress: StateFlow<DailyGoal.Progress> = combine(
+        dailyGoalEnabled, dailyGoalCount, _dailyGoalReviews
+    ) { enabled, count, reviews -> DailyGoal.progress(reviews, count, enabled) }
+        .stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            DailyGoal.progress(0, DailyGoal.DEFAULT_COUNT, DailyGoal.DEFAULT_ENABLED)
+        )
+
+    /** Re-reads today's reviews on first composition and on every resume. */
+    fun refreshDailyGoal() {
+        viewModelScope.launch {
+            // Read the preference, not the WhileSubscribed state mirror: at init
+            // (and whenever the screen is off-screen) that mirror still holds its
+            // default, so a returning learner would see 0 / 20 even with the goal
+            // on. Statistics reads the same preference directly for this reason.
+            if (!repository.dailyGoalEnabled().first()) {
+                _dailyGoalReviews.value = 0
+                return@launch
+            }
+            try {
+                _dailyGoalReviews.value = DailyGoal.todayReviews(
+                    load = { scope, range, at ->
+                        repository.statsOverview(scope, range, at).today.reviews
+                    },
+                    now = System.currentTimeMillis()
+                )
+            } catch (e: Exception) {
+                // A gauge must never break the library: leave the last count.
+                Logger.e("LIB", "Could not load the daily goal count", e)
+            }
+        }
+    }
+
+    init { refreshDailyGoal() }
 
     // Library editor state lives here, not in the screen's `remember`: the
     // ViewModel survives configuration changes, so an edit dialog or a pending

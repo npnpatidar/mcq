@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -41,6 +42,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -147,7 +150,13 @@ fun StudyScreen(
     // Resolve the verdict string during composition with stringResource, which
     // is configuration-aware; the effect only speaks the resolved text.
     val verdictMessage = if (lastResult != null) {
-        stringResource(studyVerdictRes(lastResult.correct))
+        if (state.canAutoGrade) {
+            stringResource(studyVerdictRes(lastResult.correct))
+        } else {
+            // A self-graded question has no key, so "Correct"/"Incorrect" would
+            // be a claim the app cannot make. Speak the staged grade instead.
+            stringResource(R.string.marked_x, stringResource(studyGradeLabelRes(lastResult.grade)))
+        }
     } else {
         null
     }
@@ -215,7 +224,10 @@ fun StudyScreen(
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },
-                    onToggleBookmark = { viewModel.toggleBookmarkCurrent() }
+                    onToggleBookmark = { viewModel.toggleBookmarkCurrent() },
+                    onBury = { viewModel.buryCurrent() },
+                    onSuspend = { viewModel.suspendCurrent() },
+                    onOpenSuspended = { viewModel.openSuspendedDialog() }
                 )
             } else {
                 BackOnlyBar(onBack = { navController.popBackStack() })
@@ -243,6 +255,15 @@ fun StudyScreen(
                 else -> StudyBody(
                     state = state,
                     viewModel = viewModel
+                )
+            }
+            // The unsuspend route. A suspended card never reaches the pull, so
+            // this dialog is the only way back into the pool from the UI.
+            if (state.showSuspendedDialog) {
+                SuspendedCardsDialog(
+                    cards = state.suspendedCards,
+                    onUnsuspend = { viewModel.unsuspend(it) },
+                    onDismiss = { viewModel.closeSuspendedDialog() }
                 )
             }
         }
@@ -299,9 +320,12 @@ private fun StudyBody(
                 )
                 Spacer(Modifier.height(12.dp))
                 if (state.revealed && !state.selfGraded) {
-                    // A self-graded question has no result card: the app has no
-                    // verdict it could honestly claim.
+                    // Simplified result card, as before.
                     SimplifiedResultBlock(state = state)
+                } else if (state.confirmGradeBeforeNext && state.pendingGrade != null) {
+                    // Opt-in self-graded flow: the staged grade gets a neutral
+                    // card (no correctness claim) above Change grade / Next.
+                    StagedResultBlock(state = state)
                 }
             }
             SimplifiedFooter(state = state, viewModel = viewModel)
@@ -332,6 +356,11 @@ private fun StudyBody(
                     passage = state.passage,
                     modifier = cardPositioned
                 )
+                if (state.confirmGradeBeforeNext && state.pendingGrade != null) {
+                    // Opt-in Classic flow: the staged grade and its interval sit
+                    // with the answer, then Change grade / Next in the footer.
+                    StagedResultBlock(state = state)
+                }
             }
             Column(
                 modifier = Modifier
@@ -339,6 +368,7 @@ private fun StudyBody(
                     .padding(16.dp)
             ) {
                 GradeError(state.gradeError)
+                GradeError(state.cardActionError)
                 if (state.gradedAndStuck) {
                     // The grade is already stored; re-grading would double it.
                     // Only the next card is missing (consolidated_bugs.md I3).
@@ -359,15 +389,20 @@ private fun StudyBody(
                     ) {
                         Text(stringResource(R.string.show_answer))
                     }
+                } else if (state.pendingGrade != null) {
+                    // Opt-in Classic flow: the grade is on screen but not yet
+                    // written. Same footer controls Simplified has always used.
+                    StagedResultActions(state = state, viewModel = viewModel)
                 } else {
-                    // The same grading write as Simplified's self-graded footer:
-                    // a self-reported grade is persisted and the next card
-                    // pulled, so a keyless question behaves the same in either
-                    // mode.
+                    // Default: a self-reported grade is persisted and the next
+                    // card pulled in one tap, exactly as before.
                     GradeButtons(
                         enabled = !state.grading,
                         previews = state.previews,
-                        onGrade = { viewModel.grade(it) }
+                        onGrade = {
+                            if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
+                            else viewModel.grade(it)
+                        }
                     )
                 }
             }
@@ -420,6 +455,93 @@ private fun SimplifiedResultBlock(state: StudyUiState) {
 }
 
 /**
+ * The staged result, shared by all three modes. A question the app can grade
+ * gets the verdict card; a self-graded one gets the same grade + interval
+ * without any correctness claim. Both are read in the scrollable answer area.
+ */
+@Composable
+private fun StagedResultBlock(state: StudyUiState) {
+    val result = state.lastResult ?: return
+    if (state.selfGraded) {
+        SelfGradedResultCard(result = result)
+    } else {
+        SimplifiedResultCard(result = result)
+    }
+}
+
+/** A self-graded result: what the learner chose and when it comes back. */
+@Composable
+private fun SelfGradedResultCard(result: com.mcqapp.ui.study.StudyResult) {
+    val gradeLabel = stringResource(studyGradeLabelRes(result.grade))
+    Card(modifier = Modifier.fillMaxWidth().testTag("study-result")) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.marked_x, gradeLabel),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.study_next_in, result.nextIn),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * The last-chance correction controls, shared by Simplified and by the opt-in
+ * Classic/self-graded flows. Change grade edits the staged proposal; Next is
+ * the only path that writes it. The controls stand down during a grade write.
+ */
+@Composable
+private fun StagedResultActions(state: StudyUiState, viewModel: StudyViewModel) {
+    val haptics = rememberHaptics()
+    val question = state.question
+    var showPicker by remember(question?.id) { mutableStateOf(false) }
+    if (showPicker) {
+        GradeButtons(
+            enabled = !state.grading,
+            previews = state.previews,
+            onGrade = {
+                viewModel.changeGrade(it)
+                showPicker = false
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(
+            onClick = { showPicker = !showPicker },
+            // The picker itself is gated on !state.grading; the toggle
+            // must stand down in that same frame, or a tap can rewrite
+            // pendingGrade after Next captured it (S4).
+            enabled = !state.grading,
+            modifier = Modifier.testTag("study-change-grade")
+        ) {
+            Text(stringResource(R.string.change_grade))
+        }
+        Spacer(Modifier.width(8.dp))
+        Button(
+            onClick = {
+                haptics.tick()
+                viewModel.next()
+            },
+            modifier = Modifier.weight(1f).testTag("study-next"),
+            // The card is graded and stuck: re-tapping Next would
+            // double-persist it (consolidated_bugs.md I3).
+            enabled = !state.grading && !state.gradedAndStuck
+        ) {
+            Text(stringResource(R.string.next))
+        }
+    }
+}
+
+/**
  * The always-visible Simplified actions, mirroring test mode's fixed footer:
  * Guess + Check before reveal, Next after. None of these ever scrolls away.
  *
@@ -438,6 +560,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
             .padding(16.dp)
     ) {
         GradeError(state.gradeError)
+        GradeError(state.cardActionError)
         if (state.gradedAndStuck) {
             // The grade is already stored, so re-tapping Next would double-persist
             // it. Only the next card is missing — offer the same recovery the
@@ -463,9 +586,11 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                     Text(stringResource(R.string.show_answer))
                 }
             } else {
-                // One prompt, one answer: the chosen grade is persisted and the
-                // next card pulled in the same tap, so there is no Next step and
-                // nothing to change afterwards.
+                // Simplified self-graded: one prompt, one answer. Simplified
+                // already offers Change grade on its result card, so the
+                // confirm-before-next toggle (Classic only) must never stage
+                // here — staging would run the simplified commit path and
+                // fabricate correctness for a card that has no answer key.
                 GradeButtons(
                     enabled = !state.grading,
                     previews = state.previews,
@@ -520,47 +645,9 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Text(stringResource(R.string.check))
             }
         } else {
-            val question = state.question
-            var showPicker by remember(question?.id) { mutableStateOf(false) }
-            if (showPicker) {
-                GradeButtons(
-                    enabled = !state.grading,
-                    previews = state.previews,
-                    onGrade = {
-                        viewModel.changeGrade(it)
-                        showPicker = false
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = { showPicker = !showPicker },
-                    // The picker itself is gated on !state.grading; the toggle
-                    // must stand down in that same frame, or a tap can rewrite
-                    // pendingGrade after Next captured it (S4).
-                    enabled = !state.grading,
-                    modifier = Modifier.testTag("study-change-grade")
-                ) {
-                    Text(stringResource(R.string.change_grade))
-                }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        haptics.tick()
-                        viewModel.next()
-                    },
-                    modifier = Modifier.weight(1f).testTag("study-next"),
-                    // The card is graded and stuck: re-tapping Next would
-                    // double-persist it (consolidated_bugs.md I3).
-                    enabled = !state.grading && !state.gradedAndStuck
-                ) {
-                    Text(stringResource(R.string.next))
-                }
-            }
+            // One staged-actions composable for all three modes: Simplified
+            // always, and Classic/self-graded when the learner opted in.
+            StagedResultActions(state = state, viewModel = viewModel)
         }
     }
 }
@@ -663,7 +750,10 @@ private fun StudyStickyHeader(
     onStop: () -> Unit,
     onDismissBreak: () -> Unit,
     onToggleClock: () -> Unit,
-    onToggleBookmark: () -> Unit
+    onToggleBookmark: () -> Unit,
+    onBury: () -> Unit,
+    onSuspend: () -> Unit,
+    onOpenSuspended: () -> Unit
 ) {
     // `semantics {}` is not composable, so resolve its accessibility strings
     // during composition with stringResource and capture the plain Strings;
@@ -676,6 +766,7 @@ private fun StudyStickyHeader(
     val haptics = rememberHaptics()
     val currentBookmarked =
         state.question?.id?.let { it in state.bookmarked } == true
+    var cardMenuExpanded by remember { mutableStateOf(false) }
     // The question clock doubles as a dwell gauge: green while the card is in
     // the Easy window, amber through Good, red once it reaches Hard. Thresholds
     // are the absolute cuts from the same rule the check grades with, and the
@@ -759,6 +850,63 @@ private fun StudyStickyHeader(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("study-scope-label")
+                        )
+                    }
+                    if (state.suspendedCount > 0) {
+                        Text(
+                            stringResource(R.string.suspend_indicator_count, state.suspendedCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("study-suspended-indicator")
+                        )
+                    }
+                }
+                // Card actions live behind one overflow so the header keeps its
+                // bookmark and Done controls. Suspend and bury act on the card
+                // on screen without writing a grade; the last item opens the
+                // unsuspend route, without which a hidden card is stranded.
+                Box {
+                    IconButton(
+                        onClick = { cardMenuExpanded = true },
+                        enabled = state.question != null,
+                        modifier = Modifier.testTag("study-card-actions")
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = stringResource(R.string.suspend_card_actions)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = cardMenuExpanded,
+                        onDismissRequest = { cardMenuExpanded = false },
+                        modifier = Modifier.testTag("study-card-actions-menu")
+                    ) {
+                        // A card action hides this card and pulls the next, so
+                        // it must stand down while a grade is in flight or only
+                        // staged — otherwise a tap loses the learner's decision.
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_bury)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onBury()
+                            },
+                            enabled = studyCanActOnCard(state)
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_suspend)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onSuspend()
+                            },
+                            enabled = studyCanActOnCard(state)
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.suspend_action_open_list)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onOpenSuspended()
+                            }
                         )
                     }
                 }
@@ -1259,6 +1407,7 @@ private fun StudySummary(
         // A stop that could not write the pending review says so here rather
         // than in a session that is already gone.
         GradeError(state.gradeError)
+        GradeError(state.cardActionError)
         if (emptyText.isNotEmpty()) {
             Text(
                 emptyText,

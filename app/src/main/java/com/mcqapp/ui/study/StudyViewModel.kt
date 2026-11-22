@@ -6,8 +6,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.R
+import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.SuspendSchedule
+import com.mcqapp.data.repository.SuspendStore
+import com.mcqapp.data.repository.SuspendedCard
 import com.mcqapp.domain.CategorySelection
+import com.mcqapp.domain.DayBoundary
 import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
@@ -120,6 +125,15 @@ data class StudyUiState(
      */
     val simplified: Boolean = true,
     /**
+     * Opt-in last-chance grade confirmation for the four-button Classic flow,
+     * including self-graded cards there. Off by default, so one-tap grade-and-
+     * advance is unchanged until the learner enables it in Settings. Simplified
+     * ignores this flag entirely: its result card already offers Change grade,
+     * so a self-graded card must go straight through [grade] and keep null
+     * correctness — staging it would fabricate a "Recalled %" line.
+     */
+    val confirmGradeBeforeNext: Boolean = false,
+    /**
      * The learner declared this attempt a guess before answering. Locked at
      * reveal and reset on every advance, so it can never be set retroactively.
      */
@@ -208,10 +222,28 @@ data class StudyUiState(
      * Last, not next to [paperTitle]: two adjacent String fields invite a later
      * positional `copy(...)` to rebind the wrong one.
      */
-    val scopeLabel: ScopeLabel = ScopeLabel.WholePaper
+    val scopeLabel: ScopeLabel = ScopeLabel.WholePaper,
+    /** Cards hidden from this paper's Study pool, for the header's indicator. */
+    val suspendedCount: Int = 0,
+    /** A bury/suspend write is in flight; the card is claimed like a grade. */
+    val cardActionInProgress: Boolean = false,
+    /** A hidden-card write failed; rendered next to the grade error. */
+    val cardActionError: String? = null,
+    /** Whether the unsuspend dialog is open. */
+    val showSuspendedDialog: Boolean = false,
+    /** The rows shown in that dialog, refreshed after every unsuspend. */
+    val suspendedCards: List<SuspendedCard> = emptyList()
 ) {
     val currentSelection: Set<String> get() = selection
     val isCurrentRevealed: Boolean get() = revealed
+
+    /**
+     * Whether a grade is staged before it is written. Simplified always does;
+     * the four-button flows do only when the learner opted in. This one flag
+     * drives the result card, Change grade, Next and the stop-time write, so
+     * the three modes cannot disagree about when a review is persisted.
+     */
+    val stagedGrading: Boolean get() = simplified || confirmGradeBeforeNext
 
     /**
      * A zero-option question is a flashcard: the stem is the front and the
@@ -322,8 +354,18 @@ internal class StudyGradeGateForTests {
  * Keeping the predicate here makes that negative case JVM-testable.
  */
 internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
-    !state.grading && state.simplified && state.revealed &&
+    !state.grading && state.stagedGrading && state.revealed &&
         state.pendingGrade != null && state.question != null
+
+/**
+ * Pure gate for the Study header's Bury/Suspend actions, shared by the menu and
+ * the ViewModel. A card action hides the current card and pulls the next one, so
+ * it must stand down while a grade is being written or is merely staged — a tap
+ * in that window would silently discard the learner's grade decision.
+ */
+internal fun studyCanActOnCard(state: StudyUiState): Boolean =
+    state.question != null && !state.finished && !state.grading &&
+        !state.cardActionInProgress && state.pendingGrade == null
 
 class StudyViewModel(
     application: Application,
@@ -334,6 +376,15 @@ class StudyViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository: McqRepository = (application as McqApplication).repository
+
+    /**
+     * Suspend/bury writes go through their own store on the same database
+     * singleton as [repository], so no grading path is involved and a flag is
+     * never mistaken for a review.
+     */
+    private val suspendStore = SuspendStore(
+        AppDatabase.get(application.applicationContext)
+    )
 
     private val _state = MutableStateFlow(StudyUiState())
     val state: StateFlow<StudyUiState> = _state.asStateFlow()
@@ -423,6 +474,16 @@ class StudyViewModel(
      * pulling a second card.
      */
     private var gradeWriteJob: Job? = null
+
+    /**
+     * The question whose grade write last succeeded. stop() uses this to tell
+     * "graded, then advanced to another card" from "graded and stuck on the
+     * same card": only the former leaves a stray card behind the summary, while
+     * the latter must keep the card the learner has already paid for. Written
+     * from the durable session-scope write, read on Main, hence @Volatile.
+     */
+    @Volatile
+    private var lastPersistedGradeQuestionId: String? = null
 
     /**
      * Whether the sitting was ended while a grade was in flight: the normal
@@ -526,6 +587,15 @@ class StudyViewModel(
                         categoryIds = scopeIds
                     )
                 }
+                // One cheap indexed read for the header's "N suspended"
+                // indicator; never a driver of the pull, which reads its own
+                // pools. A failure here must not stop the session loading.
+                val hidden = try {
+                    suspendStore.suspendedCards(paperId, System.currentTimeMillis()).size
+                } catch (e: Exception) {
+                    Logger.e("STUDY", "suspendedCards($paperId) failed", e)
+                    0
+                }
                 // The card on screen is fetched when it is pulled, not the
                 // whole paper up front: a 169k-question paper never fits.
                 Logger.i(
@@ -539,8 +609,10 @@ class StudyViewModel(
                         paperTitle = paper?.title ?: "Study",
                         gradingHintDismissed = gradingHintDismissed,
                         simplified = repository.simplifiedStudy().first(),
+                        confirmGradeBeforeNext = repository.confirmGradeBeforeNext().first(),
                         introduceNewCards = config?.introduceNewCards ?: true,
-                        scopeLabel = label
+                        scopeLabel = label,
+                        suspendedCount = hidden
                     )
                 }
                 // One read per sitting, before the first pull: see the field.
@@ -1112,6 +1184,43 @@ class StudyViewModel(
     }
 
     /**
+     * Stages the learner's own grade (Classic MCQ, keyless MCQ or flashcard)
+     * when the opt-in "Confirm grade before next card" setting is on. Nothing
+     * is written here: the result card, Change grade and Next all work on this
+     * staged proposal, and [next] writes it through [grade]. With the setting
+     * off this method is never called by the screen, so the existing one-tap
+     * behaviour is untouched.
+     */
+    fun stageGrade(grade: ReviewGrade) {
+        val current = _state.value
+        val question = current.question ?: return
+        if (current.grading) return
+        // Reveal is required exactly as in grade(): a learner cannot grade an
+        // answer they have not been shown.
+        if (current.selfGraded && !current.revealed) return
+        if (!current.revealed) return
+        pauseQuestionClock()
+        val paused = _state.value
+        // Classic has no Check, so this is where the dwell freezes. It is the
+        // same frozen value a later grade change and Next persist.
+        val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
+        _state.update {
+            it.copy(
+                revealed = true,
+                gradedDwellSeconds = dwellSeconds,
+                pendingGrade = grade,
+                proposedGrade = null,
+                gradeEdited = false,
+                lastResult = buildResult(
+                    question, it.selection, grade, it.isGuess, dwellSeconds,
+                    System.currentTimeMillis()
+                )
+            )
+        }
+        Logger.d("STUDY", "staged ${question.id} -> $grade (confirm before next)")
+    }
+
+    /**
      * Persists the proposed grade and pulls the next card. Guarded like [grade]:
      * the write is async, so a second tap would persist two reviews for one
      * question.
@@ -1120,8 +1229,15 @@ class StudyViewModel(
         val current = _state.value
         val question = current.question ?: return
         val proposed = current.pendingGrade ?: return
-        if (!current.simplified || !current.revealed) return
+        if (!current.stagedGrading || !current.revealed) return
         if (current.grading) return
+        if (!current.simplified) {
+            // Opt-in four-button flow: the staged grade is written by the exact
+            // same one-tap grade path, only later. review_log semantics — CHOSEN,
+            // no app proposal, null correctness for self-graded — do not change.
+            grade(proposed)
+            return
+        }
         _state.update { it.copy(grading = true, gradeError = null) }
         pauseQuestionClock()
         val dwellSeconds = _state.value.gradedDwellSeconds
@@ -1147,6 +1263,9 @@ class StudyViewModel(
                     wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
+                // Remember which card this write graded: stop() needs to know
+                // whether the next card was served afterwards.
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
@@ -1246,6 +1365,9 @@ class StudyViewModel(
                     wasSkipped = if (selfGraded) false else current.selection.isEmpty()
                 )
                 persisted = true
+                // The one-tap grade may have advanced to another card by the
+                // time stop() runs; remember the card this write settled.
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
@@ -1338,14 +1460,37 @@ class StudyViewModel(
         val current = _state.value
         val question = current.question
         val proposed = current.pendingGrade
-        if (!current.simplified || !current.revealed || current.grading ||
+        if (!current.stagedGrading || !current.revealed || current.grading ||
             question == null || proposed == null || current.gradedAndStuck
         ) {
-            // Nothing to write: classic mode persists on each grade button, an
-            // unchecked card has no decision to keep, and a grade that was
-            // already persisted before a failed pull must not be written again —
-            // a second review would double the tally, FSRS state and review_log.
-            finishSession()
+            // Nothing staged to write: classic mode persists on each grade
+            // button unless the learner opted in, an unchecked card has no
+            // decision to keep, and a grade already persisted before a failed
+            // pull must not be written again — a second review would double the
+            // tally, FSRS state and review_log.
+            // A grade that already advanced to a different card left that card
+            // behind the summary, so clear it. When the graded card is still on
+            // screen (graded-and-stuck, or a stop that landed during the write)
+            // keep it — that is the card the learner's grade belongs to.
+            finishSession(
+                clearCard = lastPersistedGradeQuestionId != null &&
+                    lastPersistedGradeQuestionId != current.question?.id
+            )
+            return
+        }
+        if (!current.simplified) {
+            // Opt-in four-button flow: persist the staged grade through the
+            // exact path Next uses. grade() sees the stop latch and neither
+            // pulls another card nor writes twice (consolidated_bugs.md I4).
+            // The card it graded is still in state though, so close the sitting
+            // with it cleared: nothing may sit behind the summary waiting to be
+            // graded a second time. The summary waits for the write so the tally
+            // is already in it.
+            grade(proposed)
+            sessionScope.launch {
+                gradeWriteJob?.join()
+                finishSession(clearCard = true)
+            }
             return
         }
         _state.update { it.copy(grading = true, gradeError = null) }
@@ -1368,6 +1513,7 @@ class StudyViewModel(
                     ),
                     wasSkipped = current.selection.isEmpty()
                 )
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (on stop), next in " +
@@ -1389,28 +1535,167 @@ class StudyViewModel(
                     it.copy(gradeError = friendly(R.string.study_grade_save_failed))
                 }
             }
-            finishSession()
+            // Simplified graded this card in one tap, then the scheduler served
+            // the next one. Close with no card behind the summary too — the
+            // grade itself and its provenance are unchanged.
+            finishSession(clearCard = true)
         }
     }
 
-    /** Closes the sitting into the summary, with the tally and the times frozen. */
-    private fun finishSession() {
+    /**
+     * Closes the sitting into the summary, with the tally and the times frozen.
+     * [clearCard] is set only by the opt-in staged-stop path: that card has just
+     * been graded but was never advanced, so leaving it in state would show a
+     * second gradeable card behind the summary. Other exits keep the card — a
+     * graded-and-stuck stop, for instance, must still report the card it holds.
+     */
+    private fun finishSession(clearCard: Boolean = false) {
         val totalSeconds = _sessionSeconds.value
         endSitting()
-        _state.update {
-            it.copy(
+        _state.update { state ->
+            val base = if (clearCard) {
+                state.copy(
+                    current = null,
+                    question = null,
+                    passage = null,
+                    previews = emptyMap(),
+                    pendingGrade = null,
+                    proposedGrade = null,
+                    gradeEdited = false,
+                    selection = emptySet(),
+                    revealed = false,
+                    lastResult = null
+                )
+            } else state
+            base.copy(
                 grading = false,
                 finished = true,
                 sessionTotalSeconds = totalSeconds,
                 emptyReason = when {
                     // Work was done: a finished sitting with its tally.
-                    it.reviewed > 0 -> EmptyReason.None
+                    state.reviewed > 0 -> EmptyReason.None
                     // Stopped before the first review. "Session complete /
                     // 0 reviewed" claimed a sitting that never happened; the
                     // summary says what actually did.
                     else -> EmptyReason.StoppedEarly
                 }
             )
+        }
+    }
+
+    /**
+     * Bury the current card until the next study-day boundary. No grade and no
+     * `review_log` row: the FSRS schedule is left exactly as it was, and the
+     * card comes back automatically when the boundary passes.
+     */
+    fun buryCurrent() = actOnCurrent("bury") { questionId ->
+        val hour = config?.dayStartHour ?: DayBoundary.DEFAULT_DAY_START_HOUR
+        val deadline = SuspendSchedule.nextBoundary(System.currentTimeMillis(), hour)
+        suspendStore.bury(paperId, questionId, deadline)
+    }
+
+    /** Suspend the current card until the learner explicitly unsuspends it. */
+    fun suspendCurrent() = actOnCurrent("suspend") { questionId ->
+        suspendStore.suspend(paperId, questionId)
+    }
+
+    /**
+     * Shared claim/write/pull path for the two card actions. The write is
+     * durable ([sessionScope]) like a grade, but never calls the grading path:
+     * a buried or suspended card must not gain a review or move its due date.
+     */
+    private fun actOnCurrent(action: String, write: suspend (String) -> Unit) {
+        val current = _state.value
+        if (!studyCanActOnCard(current)) return
+        val question = current.question ?: return
+        pauseQuestionClock()
+        _state.update {
+            it.copy(
+                grading = true,
+                cardActionInProgress = true,
+                cardActionError = null
+            )
+        }
+        gradeWriteJob = sessionScope.launch {
+            try {
+                write(question.id)
+                refreshSuspendedCount()
+                // A stop (or a bare clear) that landed during the write owns
+                // the exit; do not reopen the sitting with another card.
+                if (sittingEnded()) {
+                    endSitting()
+                    _state.update { it.copy(grading = false) }
+                    return@launch
+                }
+                pullCard()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        cardActionError = friendly(R.string.suspend_action_failed)
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "$action(${question.id}) failed", e)
+                _state.update {
+                    it.copy(
+                        grading = false,
+                        cardActionError = friendly(R.string.suspend_action_failed)
+                    )
+                }
+            } finally {
+                _state.update { it.copy(cardActionInProgress = false) }
+            }
+        }
+    }
+
+    /** Re-reads the header indicator after a flag write. */
+    private suspend fun refreshSuspendedCount() {
+        val count = try {
+            suspendStore.suspendedCards(paperId, System.currentTimeMillis()).size
+        } catch (e: Exception) {
+            Logger.e("STUDY", "suspendedCards($paperId) refresh failed", e)
+            _state.value.suspendedCount
+        }
+        _state.update { it.copy(suspendedCount = count) }
+    }
+
+    /** Opens the unsuspend route with a fresh list for this paper. */
+    fun openSuspendedDialog() {
+        viewModelScope.launch {
+            try {
+                val rows = suspendStore.suspendedCards(paperId, System.currentTimeMillis())
+                _state.update {
+                    it.copy(showSuspendedDialog = true, suspendedCards = rows, suspendedCount = rows.size)
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "openSuspendedDialog failed", e)
+                _state.update { it.copy(cardActionError = friendly(R.string.suspend_action_failed)) }
+            }
+        }
+    }
+
+    fun closeSuspendedDialog() {
+        _state.update { it.copy(showSuspendedDialog = false) }
+    }
+
+    /**
+     * Restores one card to the pool. The list is reloaded in the same call so
+     * the dialog never shows a card that is already back in Study.
+     */
+    fun unsuspend(questionId: String) {
+        viewModelScope.launch {
+            try {
+                suspendStore.unsuspend(paperId, questionId)
+                val rows = suspendStore.suspendedCards(paperId, System.currentTimeMillis())
+                _state.update {
+                    it.copy(suspendedCards = rows, suspendedCount = rows.size)
+                }
+            } catch (e: Exception) {
+                Logger.e("STUDY", "unsuspend($questionId) failed", e)
+                _state.update { it.copy(cardActionError = friendly(R.string.suspend_action_failed)) }
+            }
         }
     }
 
@@ -1546,6 +1831,10 @@ class StudyViewModel(
                 // logged — again. Cleared only once the old sitting is fully
                 // attributed and closed.
                 stopped.set(false)
+                // A fresh sitting has no grade of its own yet. Without this the
+                // previous sitting's last grade would make this sitting's stop
+                // clear a card that was never advanced.
+                lastPersistedGradeQuestionId = null
                 // A drill restarts from the scheduler now, not from the list
                 // it loaded when the screen opened: "Study again" promises a
                 // fresh pass, and the world has moved on — cards graded
@@ -1587,6 +1876,9 @@ class StudyViewModel(
                         // A failed write reported on the old summary must not
                         // follow the learner into the fresh sitting.
                         gradeError = null,
+                        cardActionError = null,
+                        cardActionInProgress = false,
+                        showSuspendedDialog = false,
                         isGuess = false,
                         questionStartedAt = 0L,
                         questionElapsedMillis = 0L,

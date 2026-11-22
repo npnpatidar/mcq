@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="daily_goal_title">दैनिक लक्ष्य (केवल रिपोर्टिंग)</string>
+    <string name="daily_goal_switch_help">आज की समीक्षा संख्या दिखाता है। यह Study या Tests को कभी सीमित नहीं करता।</string>
+    <string name="daily_goal_count_label">दैनिक प्रश्न संख्या</string>
+    <string name="daily_goal_count_help">लाइब्रेरी और आंकड़ों में दिखने वाला लक्ष्य</string>
+    <string name="daily_goal_progress" tools:ignore="PluralsCandidate">आज %1$d / %2$d समीक्षाएँ</string>
+    <string name="daily_goal_progress_help">केवल रिपोर्टिंग — इस संख्या से आगे भी आप पढ़ना जारी रख सकते हैं।</string>
+</resources>

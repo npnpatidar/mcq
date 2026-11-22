@@ -16,6 +16,7 @@ import com.mcqapp.data.backup.RestorePartialCopy
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.FsrsFitResult
 import com.mcqapp.ui.theme.AppTheme
 import com.mcqapp.ui.theme.CustomTheme
@@ -405,6 +406,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _simplifiedStudy = MutableStateFlow(true)
     val simplifiedStudy: StateFlow<Boolean> = _simplifiedStudy.asStateFlow()
 
+    private val _confirmGradeBeforeNext = MutableStateFlow(false)
+    val confirmGradeBeforeNext: StateFlow<Boolean> = _confirmGradeBeforeNext.asStateFlow()
+
     private val _shuffleOptions = MutableStateFlow(false)
     val shuffleOptions: StateFlow<Boolean> = _shuffleOptions.asStateFlow()
 
@@ -417,6 +421,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             repository.simplifiedStudy().collect { _simplifiedStudy.value = it }
+        }
+        viewModelScope.launch {
+            repository.confirmGradeBeforeNext().collect { _confirmGradeBeforeNext.value = it }
         }
         viewModelScope.launch {
             repository.shuffleOptions().collect { _shuffleOptions.value = it }
@@ -443,6 +450,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setSimplifiedStudy(enabled: Boolean) {
         viewModelScope.launch { repository.setSimplifiedStudy(enabled) }
+    }
+
+    fun setConfirmGradeBeforeNext(enabled: Boolean) {
+        viewModelScope.launch { repository.setConfirmGradeBeforeNext(enabled) }
     }
 
     fun setShuffleOptions(enabled: Boolean) {
@@ -503,6 +514,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setAvoidRecentQuestions(enabled: Boolean) {
         viewModelScope.launch { repository.setAvoidRecentQuestions(enabled) }
+    }
+
+    // --- Reporting-only daily goal ---
+    // Two plain preferences, collected like the other switches. Neither is a
+    // scheduler knob: nothing here touches the study queue or a test sample.
+    private val _dailyGoalEnabled = MutableStateFlow(DailyGoal.DEFAULT_ENABLED)
+    val dailyGoalEnabled: StateFlow<Boolean> = _dailyGoalEnabled.asStateFlow()
+
+    private val _dailyGoalCount = MutableStateFlow(DailyGoal.DEFAULT_COUNT)
+    val dailyGoalCount: StateFlow<Int> = _dailyGoalCount.asStateFlow()
+
+    init {
+        viewModelScope.launch { repository.dailyGoalEnabled().collect { _dailyGoalEnabled.value = it } }
+        viewModelScope.launch { repository.dailyGoalCount().collect { _dailyGoalCount.value = it } }
+    }
+
+    fun setDailyGoalEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setDailyGoalEnabled(enabled) }
+    }
+
+    fun setDailyGoalCount(count: Int) {
+        viewModelScope.launch { repository.setDailyGoalCount(count) }
     }
 
     private val _loadRemoteImages = MutableStateFlow(false)

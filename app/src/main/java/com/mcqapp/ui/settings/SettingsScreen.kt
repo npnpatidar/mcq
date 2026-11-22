@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +55,9 @@ fun SettingsScreen(
     val fontScale by viewModel.fontScale.collectAsStateWithLifecycle()
     val shuffleQuestions by viewModel.shuffleQuestions.collectAsStateWithLifecycle()
     val simplifiedStudy by viewModel.simplifiedStudy.collectAsStateWithLifecycle()
+    val confirmGradeBeforeNext by viewModel.confirmGradeBeforeNext.collectAsStateWithLifecycle()
+    val dailyGoalEnabled by viewModel.dailyGoalEnabled.collectAsStateWithLifecycle()
+    val dailyGoalCount by viewModel.dailyGoalCount.collectAsStateWithLifecycle()
     val updateAnswersOnDuplicate by viewModel.updateAnswersOnDuplicate.collectAsStateWithLifecycle()
     val shuffleOptions by viewModel.shuffleOptions.collectAsStateWithLifecycle()
     val hapticsEnabled by viewModel.hapticsEnabled.collectAsStateWithLifecycle()
@@ -164,6 +169,7 @@ fun SettingsScreen(
     var testsExpanded by rememberSaveable { mutableStateOf(true) }
     var studyExpanded by rememberSaveable { mutableStateOf(true) }
     var backupExpanded by rememberSaveable { mutableStateOf(true) }
+    var aiSchemaExpanded by rememberSaveable { mutableStateOf(false) }
     var aboutExpanded by rememberSaveable { mutableStateOf(true) }
 
     Scaffold(
@@ -241,6 +247,12 @@ fun SettingsScreen(
                 onReset = { viewModel.resetSchedulerConfig() },
                 simplifiedStudy = simplifiedStudy,
                 onSimplifiedChange = { viewModel.setSimplifiedStudy(it) },
+                confirmGradeBeforeNext = confirmGradeBeforeNext,
+                onConfirmGradeBeforeNextChange = { viewModel.setConfirmGradeBeforeNext(it) },
+                dailyGoalEnabled = dailyGoalEnabled,
+                dailyGoalCount = dailyGoalCount,
+                onDailyGoalEnabledChange = { viewModel.setDailyGoalEnabled(it) },
+                onDailyGoalCountChange = { viewModel.setDailyGoalCount(it) },
                 fsrsReviewCount = fsrsReviewCount,
                 fsrsOptimizeState = fsrsOptimize,
                 fsrs7Notice = fsrs7Notice,
@@ -273,6 +285,26 @@ fun SettingsScreen(
                     viewModel.reportOperationError(titleRes, message)
                 }
             )
+
+            Spacer(Modifier.height(12.dp))
+            CollapsibleSettingsSection(
+                titleRes = R.string.ai_schema_settings_title,
+                expanded = aiSchemaExpanded,
+                onExpandedChange = { aiSchemaExpanded = it },
+                testTag = "settings-section-ai-schema"
+            ) {
+                Text(
+                    stringResource(R.string.ai_schema_settings_help),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { navController.navigate("ai-schemas") },
+                    modifier = Modifier.testTag("settings-open-ai-schemas")
+                ) {
+                    Text(stringResource(R.string.ai_schema_open))
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
             AboutSection(

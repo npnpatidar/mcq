@@ -31,12 +31,12 @@ code or copy changes.
   on pausing to think *around* the timer is out of scope, so evidence stored as `0 s` should
   be read as a genuinely quick answer, not as a paused one.
 
-## Room schema (version 29)
+## Room schema (version 30)
 
-- The database is at **Room version 29** (`app/src/main/java/com/mcqapp/data/local/AppDatabase.kt`).
+- The database is at **Room version 30** (`app/src/main/java/com/mcqapp/data/local/AppDatabase.kt`).
   Exported schemas live in `app/schemas/com.mcqapp.data.local.AppDatabase/`, one JSON per
-  version; `29.json` is the current one.
-- The live upgrade chain at the tail is **25 → 26 → 27 → 28 → 29**:
+  version; `30.json` is the current one.
+- The live upgrade chain at the tail is **25 → 26 → 27 → 28 → 29 → 30**:
   - `MIGRATION_25_26` creates the adaptive ladder (`ladder_versions`, `ladder_blocks`).
   - `MIGRATION_26_27` is FSRS-7: it adds `card_state.stabilityFast`
     (`REAL NOT NULL DEFAULT 0.0`) and `review_log.stabilityFastAfter` (nullable).
@@ -48,6 +48,12 @@ code or copy changes.
     deleted, both `questions.contentHash` and every `card_state.contentHash` rewritten in
     the same transaction so the schedule survives). A flashcard is a zero-option question;
     no type column exists.
+  - `MIGRATION_29_30` adds `card_state.suspended` (`INTEGER NOT NULL DEFAULT 0`) and
+    `card_state.buriedUntil` (nullable epoch ms). Study pools and counts exclude suspended
+    rows and rows buried past the current time; test sampling deliberately does not.
+    Bury deadline is the next study-day boundary (04:00 by default). Cards hidden this way
+    must stay recoverable from the Study menu. Backups written by v30 need not open on older
+    app builds (owner ruling).
 - **Two incompatible shapes are both called 27**, because the two parents of the
   merge that renumbered Room to 28 each used that number. A `main` v27 has
   `ladder_versions` and already has the fast-trace columns; a v27 written by the
@@ -324,7 +330,7 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   self-grading, sample reload and a refreshed demo; `0.0.65` the scrollable
   import summary and picture/table/formula answers on reveal, `0.0.64` the
   bookmark-removal clarity and the aligned Study clock, `0.0.63` the scrollable
-  export dialogs, `0.0.62` the whole round-2 review pass. Room schema is **29**.
+  export dialogs, `0.0.62` the whole round-2 review pass. Room schema is **30**.
   Round-2 review reports are in `review-reports-2/` (PR #94, merged); the fix
   work is PR #95 (merged).
 - **Flashcards.** A question with zero options is a flashcard: front = the stem

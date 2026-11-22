@@ -59,7 +59,10 @@ data class CardState(
     val stabilityFast: Double = 0.0,
     val state: CardStateKind = CardStateKind.NEW,
     /** Total grades ever applied, including failures. Mirrored into [reps]. */
-    val reviewCount: Int = 0
+    val reviewCount: Int = 0,
+    /** Suspended until the learner explicitly unsuspends; buried until [buriedUntil]. */
+    val suspended: Boolean = false,
+    val buriedUntil: Long? = null
 ) {
     /**
      * Never studied: no reviews and no due date. Any grade — Again included —

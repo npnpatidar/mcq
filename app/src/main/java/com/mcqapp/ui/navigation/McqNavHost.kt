@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -37,6 +36,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.MessageResult
+import com.mcqapp.ui.common.ToneSnackbarHost
 import com.mcqapp.ui.common.UiMessage
 import com.mcqapp.ui.common.UiMessageBus
 import com.mcqapp.ui.common.UiMessagePresenter
@@ -106,11 +106,16 @@ fun McqNavHost(repository: McqRepository) {
     // See https://developer.android.com/develop/ui/compose/components/snackbar
     val messageBus = remember { UiMessageBus() }
     val snackbarHostState = remember { SnackbarHostState() }
+    // The presenter owns one message at a time, so the host can read the tone
+    // of the message it is showing. Set in the same frame as showSnackbar; the
+    // text is untouched, only the leading icon and tint follow the tone.
+    var currentTone by remember { mutableStateOf(UiMessageTone.Info) }
     val announcer = LocalAnnouncer.current
     LaunchedEffect(messageBus, snackbarHostState, announcer) {
         UiMessagePresenter(
             announce = announcer::announce,
             show = { message ->
+                currentTone = message.tone
                 val result = snackbarHostState.showSnackbar(
                     message = message.text,
                     actionLabel = message.actionLabel,
@@ -362,6 +367,9 @@ fun McqNavHost(repository: McqRepository) {
         composable("settings") {
             SettingsScreen(repository = repository, navController = navController)
         }
+        composable("ai-schemas") {
+            com.mcqapp.ui.settings.AiSchemaScreen(navController = navController)
+        }
         composable("import/direct") {
             val bytes = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes
             val uri = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri
@@ -369,7 +377,11 @@ fun McqNavHost(repository: McqRepository) {
             ImportScreen(importBytes = bytes, importUri = uri, navController = navController)
         }
     }
-    SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
+    ToneSnackbarHost(
+        hostState = snackbarHostState,
+        tone = currentTone,
+        modifier = Modifier.align(Alignment.BottomCenter)
+    )
 
     // Round-2 E4: a blocked external exit surfaces the same leave copy the
     // editor uses. Discard drops the unsaved edit and performs the held

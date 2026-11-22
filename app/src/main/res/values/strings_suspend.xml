@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Suspend / bury (v30) study actions. Copy lives in its own file so the Study
+  screen can offer the actions without touching the shared string catalog.
+  Every name is paired one-for-one in values-hi/strings_hi_suspend.xml.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Overflow menu on the Study header. -->
+    <string name="suspend_card_actions">Card actions</string>
+    <string name="suspend_action_bury">Bury until tomorrow</string>
+    <string name="suspend_action_suspend">Suspend</string>
+    <string name="suspend_action_open_list">Suspended cards</string>
+    <string name="suspend_action_failed">That card could not be updated. Please try again.</string>
+
+    <!-- Suspended indicator shown under the paper title when cards are hidden. -->
+    <string name="suspend_indicator_count" tools:ignore="PluralsCandidate">%1$d suspended</string>
+    <string name="suspend_indicator">Suspended</string>
+    <string name="suspend_indicator_buried">Buried until tomorrow</string>
+
+    <!-- Unsuspend dialog. -->
+    <string name="suspend_dialog_title">Suspended cards</string>
+    <string name="suspend_dialog_empty">No suspended cards in this paper.</string>
+    <string name="suspend_dialog_unsuspend">Unsuspend</string>
+</resources>

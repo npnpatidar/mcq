@@ -623,6 +623,8 @@
     <string name="spaced_repetition">Spaced repetition</string>
     <string name="simplified_study">Simplified Anki</string>
     <string name="grade_study_cards_automatically_from_your_answers_instead_of_">Grade study cards automatically from your answers instead of picking Again, Hard, Good or Easy after each card.</string>
+    <string name="confirm_grade_before_next">Confirm grade before next card</string>
+    <string name="confirm_grade_before_next_help">In Classic study, show the grade and its interval first so you can change it before it is saved. This also applies to self-graded cards in Classic. Simplified already offers Change grade on its result card. Off by default.</string>
     <string name="study_day">Study day</string>
     <string name="storage">Storage</string>
     <string name="strict_exam_aids_hidden_until_submit">Strict exam — aids hidden until submit</string>

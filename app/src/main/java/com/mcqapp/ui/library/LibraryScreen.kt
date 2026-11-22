@@ -76,6 +76,7 @@ import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
 import com.mcqapp.ui.importscreen.ImportReportDetails
 import com.mcqapp.ui.importscreen.displayTitle
+import com.mcqapp.ui.common.DailyGoalIndicator
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -97,6 +98,7 @@ fun LibraryScreen(
     val papers by viewModel.papers.collectAsStateWithLifecycle()
     val mistakeCounts by viewModel.mistakeCounts.collectAsStateWithLifecycle()
     val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
+    val dailyGoalProgress by viewModel.dailyGoalProgress.collectAsStateWithLifecycle()
     val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val categoryCounts by viewModel.categoryCounts.collectAsStateWithLifecycle()
@@ -120,7 +122,10 @@ fun LibraryScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshStudyCounts()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshStudyCounts()
+                viewModel.refreshDailyGoal()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -283,6 +288,10 @@ fun LibraryScreen(
                         scope.launch { drawerState.close() }
                         navController.navigate("settings")
                     },
+                    onOpenAiSchemas = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate("ai-schemas")
+                    },
                     onStartTest = { paperId, categoryIds ->
                         scope.launch { drawerState.close() }
                         val paper = papers.firstOrNull { it.id == paperId }
@@ -396,6 +405,11 @@ fun LibraryScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // Reporting only: the gauge never gates the paper list
+                        // or the Study/Test buttons below it.
+                        item(contentType = "daily-goal") {
+                            DailyGoalIndicator(dailyGoalProgress)
+                        }
                         itemsIndexed(papers, key = { _, paper -> paper.id }) { index, paper ->
                             val dueCountBadge = studyCounts[paper.id]?.due ?: 0
                             val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0

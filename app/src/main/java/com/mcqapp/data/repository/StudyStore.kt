@@ -327,7 +327,18 @@ internal class StudyStore(
         if (!staleChecked.add(paperId)) return
         val stale = db.cardStateDao().staleForPaper(paperId)
         if (stale.isEmpty()) return
+        // Capture the hide flags before the reset deletes the rows. The edit
+        // invalidates the schedule, not the learner's choice to keep the card
+        // out of Study; a plain delete used to silently unsuspend it.
+        val newHashes = stale.associate { it.id to it.contentHash }
+        val hidden = db.cardStateDao().getForQuestions(stale.map { it.id })
+            .filter { it.suspended || it.buriedUntil != null }
         db.cardStateDao().deleteByQuestionsChunked(stale.map { it.id })
+        hidden.forEach { state ->
+            db.cardStateDao().upsert(
+                state.resetForNewContent(newHashes.getValue(state.questionId))
+            )
+        }
         Logger.i("REPO", "resetEdited($paperId): ${stale.size} edited card(s) reset")
     }
 

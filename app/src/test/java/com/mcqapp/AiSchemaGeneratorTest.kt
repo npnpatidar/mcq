@@ -274,6 +274,42 @@ class AiSchemaGeneratorTest {
         assertNotNull("paperless has no papers key", Json.parseToJsonElement(generated.example).jsonObjectOf()["questions"])
     }
 
+    /**
+     * Regression: a scalar `image`/`explanationImage` is stored and rendered
+     * verbatim (LegacyParser reads it as a plain string, not an <img> tag).
+     * Teaching the HTML form here made every generated image render broken.
+     * This assertion fails on the old example.
+     */
+    @Test
+    fun scalarImageFieldsAreBareUrlsNotHtmlTags() {
+        allOptions.filter { it.image }.forEach { options ->
+            val generated = AiSchemaGenerator.generate(options)
+            val values = scalarImageValues(Json.parseToJsonElement(generated.example))
+            assertTrue("${options}: example must carry scalar image fields", values.isNotEmpty())
+            values.forEach { value ->
+                assertFalse("${options}: HTML in scalar image '$value'", value.contains("<"))
+                assertTrue(
+                    "${options}: scalar image must be a portable URL or data URI: '$value'",
+                    value.startsWith("https://") || value.startsWith("http://") ||
+                        value.startsWith("data:") || value.startsWith("content://")
+                )
+            }
+        }
+    }
+
+    private fun scalarImageValues(element: JsonElement): List<String> = when (element) {
+        is JsonObject -> element.entries.flatMap { (key, value) ->
+            val scalar = if (key == "image" || key == "explanationImage") {
+                listOfNotNull((value as? JsonPrimitive)?.content)
+            } else {
+                emptyList()
+            }
+            scalar + scalarImageValues(value)
+        }
+        is JsonArray -> element.flatMap(::scalarImageValues)
+        else -> emptyList()
+    }
+
     @Test
     fun smallerShapesReallyHaveFewerCharacters() {
         fun sizeOf(options: SchemaOptions) = AiSchemaGenerator.generate(options).characterCount

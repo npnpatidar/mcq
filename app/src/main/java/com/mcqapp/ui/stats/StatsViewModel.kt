@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -95,20 +95,49 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     /**
-     * The reporting-only goal gauge. The count is the overview tab's own
-     * "today" bucket (04:00 study-day boundary, self-graded cards included),
-     * so opening Statistics costs no extra query. Goal preferences are
-     * collected here but never applied to the aggregator or its range.
+     * The reporting-only goal gauge. The count uses the same unscoped query as
+     * Library, NOT this page's scoped overview: selecting a paper changes the
+     * charts, never the learner's personal daily count. The two screens must
+     * read the same 18/20 even when Statistics shows only one paper's 4 reviews.
      */
+    private val _dailyGoalReviews = MutableStateFlow(0)
+
     val dailyGoal: StateFlow<DailyGoal.Progress> = combine(
         repository.dailyGoalEnabled(),
         repository.dailyGoalCount(),
-        _state.map { it.overview?.today?.reviews ?: 0 }
+        _dailyGoalReviews
     ) { enabled, count, reviews -> DailyGoal.progress(reviews, count, enabled) }
         .stateIn(
             viewModelScope, SharingStarted.WhileSubscribed(5_000),
             DailyGoal.progress(0, DailyGoal.DEFAULT_COUNT, DailyGoal.DEFAULT_ENABLED)
         )
+
+    init { refreshDailyGoal() }
+
+    /**
+     * Reads today's reviews globally (same helper and range as Library). Runs
+     * on init and on every refresh — the screen's ON_RESUME calls [refresh] —
+     * so a study session elsewhere is picked up just like the scoped charts.
+     */
+    private fun refreshDailyGoal() {
+        viewModelScope.launch {
+            if (!repository.dailyGoalEnabled().first()) {
+                _dailyGoalReviews.value = 0
+                return@launch
+            }
+            try {
+                _dailyGoalReviews.value = DailyGoal.todayReviews(
+                    load = { scope, range, at ->
+                        repository.statsOverview(scope, range, at).today.reviews
+                    },
+                    now = System.currentTimeMillis()
+                )
+            } catch (e: Exception) {
+                // A gauge must never break Statistics: keep the last count.
+                Logger.e("STATS", "Could not load the daily goal count", e)
+            }
+        }
+    }
 
     /** The drill-down sheet's content; null while closed. */
     data class CardDetail(
@@ -255,6 +284,9 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
+        // The goal is global, so it is re-read independently of the chart
+        // scope/range that the rest of this method rebuilds.
+        refreshDailyGoal()
         viewModelScope.launch {
             try {
                 // The reads are redone on demand: rows logged since the last

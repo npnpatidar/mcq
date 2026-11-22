@@ -26,7 +26,6 @@ import com.mcqapp.domain.TestType
 import com.mcqapp.domain.signals.Breadth
 import com.mcqapp.domain.signals.SelectionPreview
 import com.mcqapp.domain.signals.TestSelector
-import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
@@ -137,11 +136,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             try {
-                _dailyGoalReviews.value = repository.statsOverview(
-                    scopePaperId = null,
-                    range = StatsAggregator.Range.D30,
+                _dailyGoalReviews.value = DailyGoal.todayReviews(
+                    load = { scope, range, at ->
+                        repository.statsOverview(scope, range, at).today.reviews
+                    },
                     now = System.currentTimeMillis()
-                ).today.reviews
+                )
             } catch (e: Exception) {
                 // A gauge must never break the library: leave the last count.
                 Logger.e("LIB", "Could not load the daily goal count", e)

@@ -195,10 +195,12 @@ internal class SettingsStore(
     }
 
     /**
-     * Opt-in last-chance grade confirmation for the four-button (Classic and
-     * self-graded) flows. Off by default so the existing one-tap grade-and-
-     * advance behaviour is untouched for current learners. Simplified mode
-     * always stages a grade and is unaffected by this flag.
+     * Opt-in last-chance grade confirmation for the four-button Classic flow,
+     * including self-graded cards there. Off by default so the existing one-
+     * tap grade-and-advance behaviour is untouched. Simplified ignores it: a
+     * Simplified result card already offers Change grade, so staging here
+     * would send a self-graded card down the simplified commit path and
+     * fabricate correctness that the regression from 0.0.66 removed.
      */
     private val confirmGradeBeforeNextKey = booleanPreferencesKey("confirm_grade_before_next")
 

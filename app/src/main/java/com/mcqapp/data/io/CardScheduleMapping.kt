@@ -57,7 +57,9 @@ internal fun cardScheduleKey(paperId: String, questionId: String): String =
  * pre-version-2 reader the card's review progress. [ambiguousIds] is
  * `CardStateDao.ambiguousScheduleQuestionIds`, read once per export; an id
  * held by two papers gets no alias because an old reader could not tell the
- * two schedules apart.
+ * two schedules apart. That query counts exactly the rows [shouldExportSchedule]
+ * writes, including flag-only rows, so a hidden new card cannot gain a bare
+ * alias that collides with another paper's card.
  */
 internal fun scheduleKeysFor(
     paperId: String,
@@ -98,6 +100,15 @@ internal fun lookupCardSchedule(
         schedules[questionId] ?: schedules[composite]
     }
 }
+
+/**
+ * Which `card_state` rows the plain JSON export writes. Studied rows have
+ * grades or a due date; a suspended/buried card that has never been graded
+ * has only the two v30 flags, and those flags must travel too — a pre-v30
+ * reader simply sees an ordinary (studyable) card instead.
+ */
+internal fun shouldExportSchedule(state: CardStateEntity): Boolean =
+    state.reps > 0 || state.dueAt > 0L || state.suspended || state.buriedUntil != null
 
 internal fun CardStateEntity.toCardScheduleDto(): CardScheduleDto = CardScheduleDto(
     ease = ease,

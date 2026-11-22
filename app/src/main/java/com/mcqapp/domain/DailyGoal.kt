@@ -1,5 +1,7 @@
 package com.mcqapp.domain
 
+import com.mcqapp.domain.stats.StatsAggregator
+
 /**
  * The reporting-only daily question goal (owner ruling).
  *
@@ -56,4 +58,18 @@ object DailyGoal {
      * "can the learner keep studying?" question for the goal feature.
      */
     fun mayStudy(progress: Progress): Boolean = true
+
+    /**
+     * The one request Library and Statistics use for the personal goal. It is
+     * deliberately unscoped: a paper selected in Statistics changes the charts,
+     * never the learner's daily count. Both screens call this same helper, so
+     * the two gauges cannot drift apart again.
+     *
+     * [load] is the existing unscoped stats query; [now] is injected so the
+     * 04:00 study-day boundary is resolved from one clock per refresh.
+     */
+    suspend fun todayReviews(
+        load: suspend (scopePaperId: String?, range: StatsAggregator.Range, now: Long) -> Int,
+        now: Long
+    ): Int = load(null, StatsAggregator.Range.D30, now)
 }

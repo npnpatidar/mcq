@@ -585,20 +585,16 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 ) {
                     Text(stringResource(R.string.show_answer))
                 }
-            } else if (state.pendingGrade != null) {
-                // Opt-in self-graded flow: the staged grade gets Change grade
-                // and Next before anything is written.
-                StagedResultActions(state = state, viewModel = viewModel)
             } else {
-                // Default: one prompt, one answer — the chosen grade is
-                // persisted and the next card pulled in the same tap.
+                // Simplified self-graded: one prompt, one answer. Simplified
+                // already offers Change grade on its result card, so the
+                // confirm-before-next toggle (Classic only) must never stage
+                // here — staging would run the simplified commit path and
+                // fabricate correctness for a card that has no answer key.
                 GradeButtons(
                     enabled = !state.grading,
                     previews = state.previews,
-                    onGrade = {
-                        if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
-                        else viewModel.grade(it)
-                    }
+                    onGrade = { viewModel.grade(it) }
                 )
             }
         } else if (!state.revealed) {

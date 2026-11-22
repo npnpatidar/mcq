@@ -216,7 +216,8 @@ class MigrationTest {
         AppDatabase.MIGRATION_25_26,
         AppDatabase.MIGRATION_26_27,
         AppDatabase.MIGRATION_27_28,
-        AppDatabase.MIGRATION_28_29
+        AppDatabase.MIGRATION_28_29,
+        AppDatabase.MIGRATION_29_30
     )
 
     private fun openMigrated(): AppDatabase =
@@ -1104,18 +1105,18 @@ class MigrationTest {
     }
 
     @Test
-    fun `a fresh install lands on version 29 with no ladder tables`() {
+    fun `a fresh install lands on version 30 with no ladder tables`() {
         // The complement of the chain tests: a new install never runs a
-        // migration, so it proves the generated 29.json is what the entities
-        // create — the FSRS-7 columns, grading_versions and the flashcard back
-        // columns, with both ladder tables absent.
+        // migration, so it proves the generated 30.json is what the entities
+        // create — the FSRS-7 columns, grading_versions, the flashcard back
+        // columns and the suspend/bury fields, with both ladder tables absent.
         context.deleteDatabase("fresh-create.db")
         val fresh = AppDatabase.builder(context, "fresh-create.db")
             .allowMainThreadQueries()
             .build()
         try {
             val raw = fresh.openHelper.writableDatabase
-            assertEquals(29, raw.version)
+            assertEquals(30, raw.version)
             val tables = raw.query(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).use { cursor ->

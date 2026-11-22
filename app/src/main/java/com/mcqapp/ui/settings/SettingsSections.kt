@@ -33,7 +33,7 @@ fun sectionForSettingKey(key: String): SettingsSection? = when (key) {
     "app_language", "load_remote_images", "haptics_enabled" -> SettingsSection.APPEARANCE
     "shuffle_questions", "shuffle_options", "practice_mode",
     "strict_mode", "auto_advance", "avoid_recent_questions" -> SettingsSection.TESTS
-    "simplified_study", "scheduler_config",
+    "simplified_study", "scheduler_config", "confirm_grade_before_next",
     "daily_goal_enabled", "daily_goal_count" -> SettingsSection.STUDY
     "update_answers_on_duplicate", "pdf_two_column",
     "storage", "export", "backup", "restore" -> SettingsSection.BACKUP_DATA

@@ -284,7 +284,17 @@ internal class QuestionStore(
                 val changed = CardContent.of(existing, storedOptions, storedCorrect) !=
                     CardContent.of(question)
                 if (changed) {
+                    // The schedule describes the old content and must go, but a
+                    // suspend/bury is the learner's own decision: re-create a
+                    // flag-only row for the new content so the card stays out
+                    // of Study and still appears in the unsuspend list.
+                    val hidden = db.cardStateDao()
+                        .getForQuestions(listOf(question.id))
+                        .filter { it.suspended || it.buriedUntil != null }
                     db.cardStateDao().deleteByQuestion(question.id)
+                    hidden.forEach { state ->
+                        db.cardStateDao().upsert(state.resetForNewContent(contentHash))
+                    }
                     Logger.i("REPO", "saveQuestion(id=${question.id}): content changed, schedule reset")
                 }
             }

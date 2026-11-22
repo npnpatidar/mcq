@@ -232,7 +232,9 @@ object AiSchemaGenerator {
                     )
                     ContentBlock.MATH ->
                         s("<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>")
-                    ContentBlock.IMAGE -> s(IMAGE_CONTENT)
+                    // Only element blocks use an <img> tag: parseContentElement
+                    // extracts its src. The scalar fields below are read verbatim.
+                    ContentBlock.IMAGE -> s(imageBlockContent())
                 }
             )
         }
@@ -263,7 +265,9 @@ object AiSchemaGenerator {
                 q["correctOptionIds"] = strings("b")
             }
         }
-        if (options.image) q["image"] = s(IMAGE_CONTENT)
+        // A scalar image is read verbatim by LegacyParser, so it must be a
+        // portable URL/data URI — never the <img> tag used inside an element.
+        if (options.image) q["image"] = s(IMAGE_URL)
         return JsonObject(q)
     }
 
@@ -365,6 +369,9 @@ object AiSchemaGenerator {
         )
     }
 
-    private const val IMAGE_CONTENT =
-        "<img src=\"https://example.com/diagram.png\" alt=\"diagram\">"
+    /** Portable scalar value for `image` / `explanationImage` / passage `image`. */
+    private const val IMAGE_URL = "https://example.com/diagram.png"
+
+    /** Element blocks carry an HTML tag; the parser extracts its src. */
+    private fun imageBlockContent(): String = "<img src=\"$IMAGE_URL\" alt=\"diagram\">"
 }

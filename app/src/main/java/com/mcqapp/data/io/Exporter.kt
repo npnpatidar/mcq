@@ -259,7 +259,7 @@ class Exporter(private val db: AppDatabase) {
             // instead, which is why they are not built there.
             scheduling = if (withScheduling) {
                 val states = db.cardStateDao().getAll()
-                    .filter { it.reps > 0 || it.dueAt > 0L }
+                    .filter(::shouldExportSchedule)
                 val ambiguous = db.cardStateDao().ambiguousScheduleQuestionIds().toHashSet()
                 buildMap {
                     for (state in states) {

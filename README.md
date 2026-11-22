@@ -100,6 +100,10 @@ Settings = pop back stack. Editor back asks before discarding unsaved changes
 (Save / Cancel / Discard), and Prev/Next refuse to leave a dirty, invalid edit. Test session back opens the Submit dialog; a second back cancels the
 dialog.
 
+**Messages:** short snackbars carry a leading icon and tint for success,
+information or error alongside the same text — colour is never the only
+signal.
+
 **Haptics:** On by default. Settings → Appearance → **Haptic feedback** turns it
 off; it covers Tick (input registered), ToggleOn/ToggleOff (state change),
 Confirm (correct), Reject (wrong). No sound feedback.
@@ -843,6 +847,13 @@ verdict to give; the review is stored with no correct/wrong/guess provenance and
 statistics treat it as ungraded. The serialised review keeps `wasCorrect` and
 `wasGuess` null and `gradeSource = CHOSEN`.
 
+**Suspend / Bury:** the card screen's overflow offers **Bury until tomorrow**
+(returns at the next 04:00 study-day boundary) and **Suspend** (parked until
+unsuspended). Neither writes a grade or a review-log row. A "N suspended"
+indicator appears under the paper title; the same menu opens a dialog to
+unsuspend hidden cards. Suspended and buried cards are excluded from Study
+pools and counts, but still take part in tests.
+
 **Gestures/keys:** No keyboard shortcuts. Back = stop (not exit).
 Scroll/background pauses question clock. Haptics: Tick (reveal/advance/grade),
 Confirm (correct), Reject (wrong).
@@ -947,6 +958,8 @@ this, never midnight.
 | Setting | Default | Range / Step | What it changes |
 |---------|---------|--------------|-----------------|
 | `Simplified Anki` | **on** | switch | Auto-grades from answers instead of Again/Hard/Good/Easy. |
+| `Confirm grade before next card` | **off** | switch | On: Classic and self-graded questions show the grade, its interval, **Change grade** and **Next**, and nothing is written until Next. Off: the current one-tap write-and-advance. Simplified already stages its grade regardless of this switch. |
+| `Daily goal` | **off** (count 20) | switch + number 1–1000 | Reporting only: progress across all papers for the current study day, shown on Library and Statistics → Overview. Never caps, filters or reorders Study or Test. |
 | `Target retention` | 0.90 | slider 0.75–0.97 (21 steps, 0.01) | Higher → shorter intervals, more reviews. The percentage is shown above the slider and follows the thumb. |
 | `Optimize FSRS parameters` | — | button (unlocks at 1000 reviews library-wide) | Fits 34 weights to your review log. Shows log-loss before/after. `Restore defaults` drops fitted weights. |
 | `Ranking mode` | `Memory first` | chips: `Memory first` / `Explore new cards` | Memory first clears due before new. Explore surfaces a new card every 3 reviews (`EXPLORE_NEW_EVERY = 3`). |
@@ -1881,6 +1894,31 @@ nothing was imported.
 
 ---
 
+## AI Question Schemas
+
+Settings → **AI schemas** (also linked from the Library drawer) generates
+small, closed JSON Schemas for asking an AI agent to write an importable bank.
+Choose:
+
+- **Question type:** Flashcards / MCQ / Mixed.
+- **Content blocks:** Text is always on; Table, Math (MathML) and Image are optional. Turning a block off removes its keys from the schema, making the prompt smaller.
+- **Passage mode:** none / text-only passage / rich passage.
+- **Wrapper:** a full bank (`papers` + categories) or a **paperless** root with just `passages` and `questions`, which the app wraps into one paper on import.
+
+Each selection produces a minimal draft-2020-12 schema (`additionalProperties: false` throughout), a short prompt to copy into the AI agent, and a tiny example. Actions: **Copy prompt**, **Save schema**, **Share**. A character count helps keep the request small; it is an approximation, not an exact token count.
+
+Example of the smallest shape (flashcards, text only, paperless):
+
+```json
+{
+  "questions": [
+    { "question": "Capital of France?", "explanation": "Paris" }
+  ]
+}
+```
+
+All generated examples are parsed by the app's own JSON reader in tests.
+
 ## Editor Prev/Next Queue
 
 When opening Editor from Browse (tap Edit), an `EditorSession.Cursor` is seeded
@@ -2019,7 +2057,7 @@ same kind of data.
 {
   "format": "mcqapp-backup",
   "version": 2,
-  "dbVersion": 29,
+  "dbVersion": 30,
   "appVersion": "1.2.3",
   "exportedAt": 1700000000000,
   "papers": 3,
@@ -2270,7 +2308,7 @@ Footnote: `Review always shows the order you were given. Scoring is unaffected: 
 
 ### 3. Study / Spaced Repetition
 
-**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Study` label → `Target retention` slider → `Ranking mode` chips → `Introduce new cards` switch → `Grade on correctness only` switch → **when that switch is off**: `Minimum easy answer threshold` / `Hard answer threshold` number rows + response-time footnote (both rows are hidden while correctness-only grading is on) → FSRS-7 notice (when pending) → `Optimize FSRS parameters` block → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
+**Body order:** Heading `Spaced repetition` + `Reset` (right) → Description paragraph → `Simplified Anki` switch → `Confirm grade before next card` switch → `Daily goal` switch + number → `Study` label → `Target retention` slider → `Ranking mode` chips → `Introduce new cards` switch → `Grade on correctness only` switch → **when that switch is off**: `Minimum easy answer threshold` / `Hard answer threshold` number rows + response-time footnote (both rows are hidden while correctness-only grading is on) → FSRS-7 notice (when pending) → `Optimize FSRS parameters` block → `Advanced Anki settings` (collapsible, collapsed by default) → `Study day` group (2 rows) + `Lapses` group (2 rows).
 
 **FSRS-6 → FSRS-7 notice.** An upgraded install whose stored weights were *fitted* (not the shipped FSRS-6 defaults) shows, above the Optimize block, `Fitted FSRS-6 weights could not be converted to FSRS-7: the model changed, not just the number of weights. Scheduling is on the official defaults; press Optimize to refit.` with an `OK` that calls `repository.dismissFsrs7Notice()`. It is raised once by `SettingsStore.ensureFsrs7()` and never resurrects: the flag is cleared, not recomputed.
 

@@ -11,6 +11,7 @@ import com.mcqapp.ui.study.StudyViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -213,5 +214,70 @@ class StudyConfirmGradeToggleSessionTest {
         assertTrue(awaitCondition { runBlocking { reviews("q1").size } == 1 })
         val row = runBlocking { reviews("q1") }.single()
         assertEquals("Simplified's auto grade is unchanged", "AUTO", row.gradeSource)
+    }
+
+    /**
+     * The regression from 0.0.66: staging a Simplified self-graded grade ran
+     * the simplified commit path, which recorded a made-up correctness and
+     * counted the card as a regular review — producing a false "Recalled %"
+     * on the summary. One tap must stay honest even with the toggle on.
+     */
+    @Test
+    fun simplifiedSelfGradedToggleOnWritesHonestProvenanceAndNextDoesNotDoubleWrite() {
+        runBlocking {
+            repository.setSimplifiedStudy(true)
+            repository.setConfirmGradeBeforeNext(true)
+        }
+        seed(question("card1", flashcard = true), question("card2", flashcard = true))
+        val vm = start()
+        vm.reveal()
+        assertEquals("the session reads the toggle", true, vm.state.value.confirmGradeBeforeNext)
+        assertNull("no staging for a Simplified self-graded card", vm.state.value.pendingGrade)
+
+        vm.grade(ReviewGrade.GOOD)
+
+        assertTrue(awaitCondition { runBlocking { reviews("card1").size } == 1 })
+        val row = runBlocking { reviews("card1") }.single()
+        assertEquals("CHOSEN", row.gradeSource)
+        assertNull("a card has no answer key", row.wasCorrect)
+        assertNull("no guess declaration in the self-graded footer", row.wasGuess)
+        assertEquals("not a skip", false, row.wasSkipped)
+        assertNull("no app proposal", row.proposedRating)
+        assertEquals(1, vm.state.value.selfGradedReviewed)
+        assertFalse("the summary must omit the accuracy line", vm.state.value.showsRecallAccuracy)
+
+        // next() has nothing staged, so it must not write the review twice or
+        // reclassify it as a keyed review.
+        vm.next()
+        assertEquals(1, runBlocking { reviews("card1").size })
+        assertEquals(1, vm.state.value.selfGradedReviewed)
+        assertFalse(vm.state.value.showsRecallAccuracy)
+    }
+
+    @Test
+    fun simplifiedSelfGradedToggleOnStopKeepsTheSameProvenance() {
+        runBlocking {
+            repository.setSimplifiedStudy(true)
+            repository.setConfirmGradeBeforeNext(true)
+        }
+        seed(question("card1", flashcard = true), question("card2", flashcard = true))
+        val vm = start()
+        vm.reveal()
+        vm.grade(ReviewGrade.GOOD)
+        assertTrue(awaitCondition { runBlocking { reviews("card1").size } == 1 })
+
+        vm.stop()
+        assertTrue("Stop ends the sitting", awaitCondition { vm.state.value.finished })
+        assertNull("Stop must not serve another card", vm.state.value.current?.questionId)
+
+        val rows = runBlocking { reviews("card1") }
+        assertEquals("one honest review, not a staged duplicate", 1, rows.size)
+        val row = rows.single()
+        assertEquals("CHOSEN", row.gradeSource)
+        assertNull(row.wasCorrect)
+        assertNull(row.wasGuess)
+        assertEquals(false, row.wasSkipped)
+        assertEquals(1, vm.state.value.selfGradedReviewed)
+        assertFalse("no fabricated Recalled line", vm.state.value.showsRecallAccuracy)
     }
 }

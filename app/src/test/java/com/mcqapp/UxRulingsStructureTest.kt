@@ -78,6 +78,19 @@ class UxRulingsStructureTest {
     }
 
     @Test
+    fun goalCountIsGlobalInBothLibraryAndStatistics() {
+        val library = source("java/com/mcqapp/ui/library/LibraryViewModel.kt")
+        val stats = source("java/com/mcqapp/ui/stats/StatsViewModel.kt")
+        assertTrue("Library must use the shared unscoped read", "DailyGoal.todayReviews(" in library)
+        assertTrue("Statistics must use the shared unscoped read", "DailyGoal.todayReviews(" in stats)
+        assertFalse(
+            "the goal must not reuse the paper-filtered overview slice",
+            "_state.map { it.overview?.today?.reviews" in stats
+        )
+        assertTrue("Statistics refreshes the goal on resume", "refreshDailyGoal()" in stats)
+    }
+
+    @Test
     fun goalPreferencesAreOwnedByTheStudySettingsSection() {
         assertEquals(
             com.mcqapp.ui.settings.SettingsSection.STUDY,
@@ -86,6 +99,11 @@ class UxRulingsStructureTest {
         assertEquals(
             com.mcqapp.ui.settings.SettingsSection.STUDY,
             com.mcqapp.ui.settings.sectionForSettingKey("daily_goal_count")
+        )
+        assertEquals(
+            "confirm_grade_before_next is rendered in the study card too",
+            com.mcqapp.ui.settings.SettingsSection.STUDY,
+            com.mcqapp.ui.settings.sectionForSettingKey("confirm_grade_before_next")
         )
     }
 

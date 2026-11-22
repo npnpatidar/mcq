@@ -125,10 +125,12 @@ data class StudyUiState(
      */
     val simplified: Boolean = true,
     /**
-     * Opt-in last-chance grade confirmation for the four-button flows (Classic
-     * and self-graded). Off by default, so their one-tap grade-and-advance is
-     * unchanged until the learner enables it in Settings. Simplified always
-     * stages its grade and ignores this flag.
+     * Opt-in last-chance grade confirmation for the four-button Classic flow,
+     * including self-graded cards there. Off by default, so one-tap grade-and-
+     * advance is unchanged until the learner enables it in Settings. Simplified
+     * ignores this flag entirely: its result card already offers Change grade,
+     * so a self-graded card must go straight through [grade] and keep null
+     * correctness — staging it would fabricate a "Recalled %" line.
      */
     val confirmGradeBeforeNext: Boolean = false,
     /**

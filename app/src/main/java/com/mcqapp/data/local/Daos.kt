@@ -1800,11 +1800,13 @@ interface CardStateDao {
      * format version 2 still understand. An id under two papers must not get
      * that alias: an older reader looks up the bare id only, so the alias
      * would apply one paper's schedule to both. Only rows the export actually
-     * writes are considered, so an untouched row in another paper cannot
-     * suppress an alias that would be unambiguous.
+     * writes are considered — including flag-only rows for a hidden new card —
+     * so an untouched row in another paper cannot suppress an alias that would
+     * be unambiguous.
      */
     @Query(
-        "SELECT questionId FROM card_state WHERE reps > 0 OR dueAt > 0 " +
+        "SELECT questionId FROM card_state " +
+            "WHERE reps > 0 OR dueAt > 0 OR suspended = 1 OR buriedUntil IS NOT NULL " +
             "GROUP BY questionId HAVING COUNT(DISTINCT paperId) > 1"
     )
     suspend fun ambiguousScheduleQuestionIds(): List<String>

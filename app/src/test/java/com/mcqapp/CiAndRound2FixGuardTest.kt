@@ -52,6 +52,26 @@ class CiAndRound2FixGuardTest {
     }
 
     @Test
+    fun stopClearsTheCardOnlyWhenTheLastGradeAdvancedPastIt() {
+        val vm = source("java/com/mcqapp/ui/study/StudyViewModel.kt")
+        assertTrue("the last graded card must be tracked across threads", "@Volatile" in vm &&
+            "private var lastPersistedGradeQuestionId: String? = null" in vm)
+        val stop = vm.substringAfter("    fun stop() {").substringBefore("\n    }")
+        assertTrue(
+            "clear only when the graded card is no longer the current one",
+            "lastPersistedGradeQuestionId != current.question?.id" in stop
+        )
+        assertTrue(
+            "every grade write records the card it settled",
+            Regex("lastPersistedGradeQuestionId = question\\.id").findAll(vm).count() == 3
+        )
+        assertTrue(
+            "a fresh sitting forgets the previous sitting's grade",
+            "lastPersistedGradeQuestionId = null" in vm
+        )
+    }
+
+    @Test
     fun libraryReadsTheGoalPreferenceDirectlyLikeStatistics() {
         val library = source("java/com/mcqapp/ui/library/LibraryViewModel.kt")
         val refresh = library.substringAfter("fun refreshDailyGoal()").substringBefore("\n    }")

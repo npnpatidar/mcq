@@ -476,6 +476,16 @@ class StudyViewModel(
     private var gradeWriteJob: Job? = null
 
     /**
+     * The question whose grade write last succeeded. stop() uses this to tell
+     * "graded, then advanced to another card" from "graded and stuck on the
+     * same card": only the former leaves a stray card behind the summary, while
+     * the latter must keep the card the learner has already paid for. Written
+     * from the durable session-scope write, read on Main, hence @Volatile.
+     */
+    @Volatile
+    private var lastPersistedGradeQuestionId: String? = null
+
+    /**
      * Whether the sitting was ended while a grade was in flight: the normal
      * exit latches [stopped], a bare clear latches [cleared]. Either way the
      * persisted review has to be followed by exactly one study_sessions row,
@@ -1253,6 +1263,9 @@ class StudyViewModel(
                     wasSkipped = current.selection.isEmpty()
                 )
                 persisted = true
+                // Remember which card this write graded: stop() needs to know
+                // whether the next card was served afterwards.
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (auto), next in ${next.intervalDays}d, " +
@@ -1352,6 +1365,9 @@ class StudyViewModel(
                     wasSkipped = if (selfGraded) false else current.selection.isEmpty()
                 )
                 persisted = true
+                // The one-tap grade may have advanced to another card by the
+                // time stop() runs; remember the card this write settled.
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $grade, next in ${next.intervalDays}d, " +
@@ -1452,7 +1468,14 @@ class StudyViewModel(
             // decision to keep, and a grade already persisted before a failed
             // pull must not be written again — a second review would double the
             // tally, FSRS state and review_log.
-            finishSession()
+            // A grade that already advanced to a different card left that card
+            // behind the summary, so clear it. When the graded card is still on
+            // screen (graded-and-stuck, or a stop that landed during the write)
+            // keep it — that is the card the learner's grade belongs to.
+            finishSession(
+                clearCard = lastPersistedGradeQuestionId != null &&
+                    lastPersistedGradeQuestionId != current.question?.id
+            )
             return
         }
         if (!current.simplified) {
@@ -1490,6 +1513,7 @@ class StudyViewModel(
                     ),
                     wasSkipped = current.selection.isEmpty()
                 )
+                lastPersistedGradeQuestionId = question.id
                 Logger.i(
                     "STUDY",
                     "graded ${question.id} -> $proposed (on stop), next in " +
@@ -1807,6 +1831,10 @@ class StudyViewModel(
                 // logged — again. Cleared only once the old sitting is fully
                 // attributed and closed.
                 stopped.set(false)
+                // A fresh sitting has no grade of its own yet. Without this the
+                // previous sitting's last grade would make this sitting's stop
+                // clear a card that was never advanced.
+                lastPersistedGradeQuestionId = null
                 // A drill restarts from the scheduler now, not from the list
                 // it loaded when the screen opened: "Study again" promises a
                 // fresh pass, and the world has moved on — cards graded

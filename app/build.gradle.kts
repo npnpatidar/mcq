@@ -281,8 +281,11 @@ dependencies {
     // Robolectric pulls in ships x86_64 natives only and breaks its setup
     // with UnsatisfiedLinkError on any other host (both jars on the
     // classpath; the loader picks the matching architecture).
+    //noinspection NewerVersionAvailable
     testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0")
+    //noinspection NewerVersionAvailable
     testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-aarch_64")
+    //noinspection NewerVersionAvailable
     testImplementation("org.conscrypt:conscrypt-openjdk:2.7.0:linux-x86_64")
 }
 

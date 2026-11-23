@@ -101,11 +101,20 @@ class StudyPolishUiTest {
      * Both words are the composable's own resources, so a translation or a
      * renamed verb cannot make this silently true.
      */
-    private fun cardIsRunning(): Boolean {
-        val text = clockStateText() ?: return false
-        val pauseVerb = app.getString(R.string.r2_study_pause)
-        val pausedLabel = app.getString(R.string.clock_paused)
-        return text.startsWith(pauseVerb) && !text.contains(pausedLabel)
+    /** The live dwell value; it must advance while the clock is running. */
+    private fun clockTimeText(): String? =
+        compose.onAllNodesWithTag("study-clock-time", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .mapNotNull { node ->
+                node.config.getOrElse(SemanticsProperties.Text) { emptyList() }
+                    .joinToString("") { it.text }
+                    .takeIf { it.isNotBlank() }
+            }
+            .firstOrNull()
+
+    private fun waitForRunningClock() {
+        val start = clockTimeText()
+        compose.waitUntil(5_000) { clockTimeText() != start }
     }
 
     /**
@@ -139,11 +148,11 @@ class StudyPolishUiTest {
         compose.onNodeWithTag("study-next").performClick()
 
         waitFor("UITest ui-polish-scroll-q2?")
-        compose.waitUntil(10_000) { cardIsRunning() }
         // No performScrollTo: if the old offset survived, this node is composed
         // but off screen.
         compose.onNodeWithText("UITest ui-polish-scroll-q2?", substring = true).assertIsDisplayed()
-        assertTrue("the new card's clock is not running: ${clockStateText()}", cardIsRunning())
+        // A running clock changes its own text; a paused one stays frozen.
+        waitForRunningClock()
     }
 
     @Test

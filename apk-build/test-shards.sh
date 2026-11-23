@@ -21,7 +21,14 @@ if [ ! -d app/src/test/java/com/mcqapp ] && [ -d ../app/src/test/java/com/mcqapp
   cd ..
 fi
 
-classes=$(ls app/src/test/java/com/mcqapp/*Test.kt | sed 's|.*/||; s|\.kt$||' | sort)
+# Discover recursively: test classes may live in subpackages (e.g.
+# com.mcqapp.util.NumericInputTest). Derive the FQCN from the path relative to
+# the test source root — taking the basename would drop the package and produce
+# a --tests filter Gradle cannot match.
+test_root=app/src/test/java
+classes=$(find "$test_root" -type f -name '*Test.kt' \
+  | sed "s|^$test_root/||; s|\.kt$||; s|/|.|g" \
+  | sort)
 
 if [ -n "$durations" ] && [ -f "$durations" ]; then
   tmp=$(mktemp)
@@ -35,7 +42,11 @@ if [ -n "$durations" ] && [ -f "$durations" ]; then
   default=$(awk -F '\t' 'NF==2 && $2+0>0 {print $2}' "$durations" | sort -n | awk '{a[NR]=$1} END {if (NR==0) print 1000; else print a[int((NR+1)/2)]}')
   awk -F '\t' -v def="$default" '
     NR==FNR {
-      if (NF==2 && $1!="") { name=$1; sub(/^com\.mcqapp\./, "", name); w[name]=$2+0 }
+      # The manifest keys are FQCNs (writeTestDurations reads the JUnit testsuite
+      # name), which now match the discovered classes verbatim — including
+      # subpackages. Do not strip a package prefix or subpackage classes lose
+      # their measured weight.
+      if (NF==2 && $1!="") { w[$1]=$2+0 }
       next
     }
     { print $1 "\t" (($1 in w) ? w[$1] : def) }
@@ -59,4 +70,4 @@ else
   per=$(( (count + total - 1) / total ))
   start=$(( idx * per + 1 ))
   echo "$classes" | sed -n "${start},$((start + per - 1))p"
-fi | sed 's/^/--tests com.mcqapp./'
+fi | sed 's/^/--tests /'

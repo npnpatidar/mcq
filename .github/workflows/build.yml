@@ -256,7 +256,8 @@ jobs:
     # the classes over a 4-way parallel matrix shrinks the state one worker
     # accumulates (the process-wide DataStore actor is the coupling), halves
     # the wall clock, and makes one bad shard report alone instead of holding
-    # the branch. No test is skipped: the four shards are a partition.
+    # the branch. No test is skipped: the four shards are a partition, including
+    # subpackage classes (asserted by TestShardScriptTest).
     # Deliberately NOT `needs: test-durations`: that probe is a nightly/main
     # measurement, absent on PRs, and a hung/failed unsharded pass must never
     # skip the shards. The manifest is restored from cache below instead.

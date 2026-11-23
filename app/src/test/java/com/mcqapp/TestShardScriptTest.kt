@@ -17,6 +17,12 @@ import java.io.File
  * INCIDENT: CI used to call the two-argument form unconditionally, so the
  * duration-aware path was dead code. The probe must also never be a mandatory
  * PR gate: a hung unsharded pass used to skip every shard.
+ *
+ * INCIDENT 2: discovery used a non-recursive `ls` of the top-level com/mcqapp
+ * directory, so test classes in subpackages were in no shard and never ran in
+ * CI. Discovery is now recursive and yields FQCNs; these tests assert the union
+ * of all shards is the full discovered set, including the known subpackage
+ * classes.
  */
 class TestShardScriptTest {
 
@@ -29,10 +35,34 @@ class TestShardScriptTest {
             ?: throw AssertionError("cannot find apk-build/test-shards.sh from ${File(".").absolutePath}")
     }
 
-    private fun classesDir(): File = listOf(
-        File("app/src/test/java/com/mcqapp"),
-        File("../app/src/test/java/com/mcqapp")
+    private fun testRoot(): File = listOf(
+        File("app/src/test/java"),
+        File("../app/src/test/java")
     ).first { it.isDirectory }
+
+    /** FQCNs of every *Test.kt under the test source root, mirroring the script's find. */
+    private fun discoveredClasses(): Set<String> =
+        testRoot().walkTopDown()
+            .filter { it.isFile && it.name.endsWith("Test.kt") }
+            .map { file ->
+                file.relativeTo(testRoot()).path
+                    .removeSuffix(".kt")
+                    .replace(File.separatorChar, '.')
+            }
+            .toSet()
+
+    /** Subpackage classes were silently absent from the old basename-only discovery. */
+    private fun assertSubpackageClassesAreSharded(actual: Set<String>) {
+        val named = setOf(
+            "com.mcqapp.util.NumericInputTest",
+            "com.mcqapp.ui.history.HistoryFormatTest",
+            "com.mcqapp.ui.settings.StorageLoadTest",
+            "com.mcqapp.ui.stats.sections.CalibrationDisclosureTest"
+        )
+        named.forEach {
+            assertTrue("subpackage test class must be sharded: $it", it in actual)
+        }
+    }
 
     private fun shards(total: Int, durations: File? = null): List<List<String>> =
         (0 until total).map { index ->
@@ -68,12 +98,14 @@ class TestShardScriptTest {
 
     @Test
     fun theFallbackIsACompletePartition() {
-        val all = classesDir().listFiles { f -> f.name.endsWith("Test.kt") }!!.map { it.name.removeSuffix(".kt") }
+        val all = discoveredClasses()
         val shards = shards(4)
         val flat = shards.flatten()
+        val actual = flat.map { it.removePrefix("--tests ") }.toSet()
         assertEquals("every test class must be in exactly one shard", all.size, flat.size)
         assertEquals("no class may be duplicated across shards", flat.size, flat.toSet().size)
-        assertEquals(all.toSet(), flat.map { it.removePrefix("--tests com.mcqapp.") }.toSet())
+        assertEquals("the four shards must be the full discovered set", all, actual)
+        assertSubpackageClassesAreSharded(actual)
     }
 
     @Test
@@ -93,10 +125,9 @@ class TestShardScriptTest {
 
     @Test
     fun durationManifestKeepsTheSamePartitionWithMeasuredCosts() {
-        val all = classesDir().listFiles { f -> f.name.endsWith("Test.kt") }!!
-            .map { it.name.removeSuffix(".kt") }
-        val heavy = "StreamingImporterEquivalenceTest"
-        val heavyArg = "--tests com.mcqapp.$heavy"
+        val all = discoveredClasses()
+        val heavy = "com.mcqapp.StreamingImporterEquivalenceTest"
+        val heavyArg = "--tests $heavy"
         val durations = File.createTempFile("mcq-durations", ".tsv").apply {
             // Two distinct weights, not one: with a single weight the script's
             // fallback default (the median) equals it, so every class weighs
@@ -104,7 +135,7 @@ class TestShardScriptTest {
             // one. One enormous class against a light default for everything
             // else makes the third argument observable.
             writeText(all.joinToString("\n") { name ->
-                "com.mcqapp.$name\t${if (name == heavy) 600000 else 1000}"
+                "$name\t${if (name == heavy) 600000 else 1000}"
             } + "\n")
         }
         try {
@@ -128,12 +159,13 @@ class TestShardScriptTest {
             )
             assertEquals(
                 "measured shards must cover every test class",
-                all.toSet(),
-                measuredFlat.map { it.removePrefix("--tests com.mcqapp.") }.toSet()
+                all,
+                measuredFlat.map { it.removePrefix("--tests ") }.toSet()
             )
             assertEquals("no class may be duplicated", measuredFlat.size, measuredFlat.toSet().size)
             assertTrue("the measured class must still be present", heavyArg in measuredFlat)
             assertEquals("the heavy class must appear exactly once", 1, measuredFlat.count { it == heavyArg })
+            assertSubpackageClassesAreSharded(measuredFlat.map { it.removePrefix("--tests ") }.toSet())
 
             // A specific placement only the cost-aware algorithm produces: the
             // heavy class is moved out of the contiguous count-balanced range.

@@ -27,7 +27,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
@@ -86,6 +85,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -185,7 +185,6 @@ fun BrowseScreen(
     val sendMessage = LocalUiMessageSender.current
     // Resolved in composition so the action callbacks stay plain lambdas.
     val shareNoAppText = stringResource(R.string.share_no_app)
-    val duplicatedText = stringResource(R.string.question_duplicated)
     val selectedLabel = stringResource(R.string.r2_browse_selected)
     // Count label resolved here (not inside exportTitle) so the plain callback
     // stays non-composable; it recomposes when the captured id set changes.
@@ -330,9 +329,20 @@ fun BrowseScreen(
         topBar = {
             TopAppBar(
                 title = {
+                    val title = if (selectionMode)
+                        stringResource(R.string.n_selected, selectedIds.size)
+                    else state.paper?.title ?: stringResource(R.string.browse_title)
+                    // A long paper title used to wrap into a column of broken
+                    // words beside the actions, pushing them off a 320 dp
+                    // screen. One ellipsized line keeps the actions in place;
+                    // TalkBack still gets the untruncated title.
                     Text(
-                        if (selectionMode) stringResource(R.string.n_selected, selectedIds.size)
-                        else state.paper?.title ?: stringResource(R.string.browse_title)
+                        title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .testTag("browse-title")
+                            .semantics { contentDescription = title }
                     )
                 },
                 navigationIcon = {
@@ -931,13 +941,6 @@ fun BrowseScreen(
                             pendingDeleteIds = BrowseDeleteConfirmation.request(
                                 pendingDeleteIds, setOf(question.id)
                             )
-                        },
-                        onDuplicate = {
-                            viewModel.duplicateQuestion(question.id) { duplicated ->
-                                if (duplicated) {
-                                    sendMessage(UiMessage(duplicatedText, UiMessageTone.Success))
-                                }
-                            }
                         }
                     )
                 }
@@ -1686,7 +1689,6 @@ private fun BrowseQuestionCard(
     onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onDuplicate: () -> Unit = {},
     highlighted: Boolean = false
 ) {
     Card(
@@ -1860,10 +1862,10 @@ private fun BrowseQuestionCard(
                             )
                         )
                     }
-                    IconButton(onClick = onDuplicate) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.duplicate_question))
-                    }
-                    IconButton(onClick = onDelete) {
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.testTag("browse-delete-${question.id}")
+                    ) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete_question))
                     }
                 }

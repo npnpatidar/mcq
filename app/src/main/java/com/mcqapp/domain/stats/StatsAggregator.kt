@@ -281,6 +281,14 @@ object StatsAggregator {
         val accumulator = CardsAccumulator(
             scopePaperId = ctx.scopePaperId,
             now = ctx.input.now,
+            // The one due definition: a card is overdue only when its due
+            // moment fell before today's study-day boundary, the same edge
+            // the overview backlog and the forecast's overdue bar use.
+            todayStart = DayBoundary.startOfDay(
+                ctx.input.now,
+                ctx.cfg.dayStartHour,
+                ctx.zone
+            ),
             paperTitleOf = ctx.input.paperTitleOf
         )
         // The cards first: the leech roll-up can only recognise a leech once
@@ -2069,6 +2077,7 @@ object StatsAggregator {
     class CardsAccumulator(
         private val scopePaperId: String?,
         private val now: Long,
+        private val todayStart: Long,
         private val paperTitleOf: Map<String, String>
     ) {
         private var learning = 0
@@ -2119,7 +2128,7 @@ object StatsAggregator {
                 counts[0]++
                 counts[bucket + 1]++
             }
-            if (state.dueAt != 0L && state.dueAt < now) {
+            if (state.dueAt != 0L && state.dueAt < todayStart) {
                 val age = floor((now - state.dueAt).toDouble() / DayBoundary.DAY_MS).toInt()
                     .coerceAtLeast(0)
                 overdue++

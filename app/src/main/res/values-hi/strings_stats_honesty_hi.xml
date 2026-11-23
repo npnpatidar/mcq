@@ -12,7 +12,7 @@
     <string name="stats_weakest_help_honest">सीखने के चरणों के बाद \'फिर से\' दिए गए उत्तरों के अनुसार क्रमांकित। उसी दिन के सीखने के लड़खड़ाहट को लैप्स नहीं माना जाता। कार्ड का इतिहास देखने के लिए टैप करें।</string>
 
     <!-- Calibration and Brier now use the cut estimator's objective evidence gate. -->
-    <string name="stats_calibration_honest_note">कैलिब्रेशन और Brier में केवल वस्तुनिष्ठ, सही ढंग से आंकलित उत्तर शामिल हैं। स्व-आंकलित, अनुमानित, छोड़े गए और अलग ढंग से आंकलित पंक्तियाँ शामिल नहीं हैं।</string>
+    <string name="stats_calibration_honest_note">कैलिब्रेशन और Brier में वस्तुनिष्ठ, सही-या-गलत उत्तर शामिल हैं — केवल दर्ज किए गए सही और गलत उत्तर गिने जाते हैं। स्व-आंकलित, अनुमानित, छोड़े गए और अलग ढंग से आंकलित पंक्तियाँ शामिल नहीं हैं।</string>
 
     <!-- One due definition: overdue is before today's study-day boundary. -->
     <string name="stats_forecast_help_aligned">अगले 30 अध्ययन दिनों के निर्धारित रिव्यू, दिन-वार समूहों में। पहली पट्टी आज की है; आज से पहले देय कार्ड नीचे बताए गए बकाया हैं, पट्टी नहीं। रेखा कुल बकाया दिखाती है यदि आप हर दिन छोड़ दें।</string>

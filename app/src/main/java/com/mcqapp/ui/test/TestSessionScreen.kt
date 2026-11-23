@@ -374,8 +374,9 @@ fun TestSessionScreen(
     // arrows move between questions, and digits are inert because a test has
     // no grade. Focus is requested on the question surface and keys are ignored
     // while a dialog/overlay owns the screen or the result is being saved. The
-    // handler only calls the existing ViewModel methods, so strict-mode and
-    // auto-advance semantics stay entirely in the ViewModel.
+    // mode flags go through TestKeyboard's reveal gate — the same ExamMode rule
+    // the on-screen button uses — so Strict-mode Space cannot expose an answer.
+    // Auto-advance stays entirely in the ViewModel.
     val keyFocus = remember { FocusRequester() }
     val keyboardBlocked = state.loading || state.loadError != null ||
         resumeOffer != null || ungradedBlocking || showSubmitDialog ||
@@ -401,7 +402,7 @@ fun TestSessionScreen(
             android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> StudyKey.RIGHT
             else -> StudyKey.OTHER
         }
-        return when (TestKeyboard.action(key, state.isCurrentRevealed)) {
+        return when (TestKeyboard.action(key, state.isCurrentRevealed, state.practiceMode, state.strictMode)) {
             StudyKeyAction.NONE -> false
             StudyKeyAction.REVEAL -> {
                 viewModel.revealCurrent()

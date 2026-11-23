@@ -859,9 +859,11 @@ then advances once a grade is staged; **1–4** grade Again / Hard / Good / Easy
 (after reveal only); **←/→** move the option selection. Test focuses its session
 surface the same way: **Space** reveals, then advances; **←/→** go to the
 previous/next question. Digits are inert in Test — a test never grades, so there
-is no Again/Hard/Good/Easy to press. Keys are ignored while a dialog owns the
-screen, a break is running in Study, or a Ctrl/Alt/Meta modifier is held.
-Back = stop (not exit).
+is no Again/Hard/Good/Easy to press. A strict exam cannot be revealed: Space is
+ignored there, just as the on-screen **Show answer** button is hidden. Keys are
+ignored while a dialog owns the screen, a break is running in Study, or a
+Ctrl/Alt/Meta modifier is held. Neither surface has a text-entry field, so a
+shortcut never competes with typing. Back = stop (not exit).
 Scroll/background pauses question clock. Haptics: Tick (reveal/advance/grade),
 Confirm (correct), Reject (wrong).
 

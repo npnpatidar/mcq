@@ -93,12 +93,7 @@ class AnkiApkgImporter(
             // deck's dropped cards and unresolved media left no trace. The
             // reasons ride both as typed report notes (what the learner reads)
             // and as warnings on the file shape, so nothing is discarded.
-            val notes = buildList {
-                if (tail.droppedStems > 0) {
-                    add(ImportNote.AnkiDroppedCards(tail.droppedStems))
-                }
-                add(ImportNote.AnkiMissingMedia)
-            }
+            val notes = ankiImportNotes(tail.droppedStems, tail.missingMedia)
             session.finish(
                 LegacyParser.StreamedFile(
                     version = 1,
@@ -110,8 +105,8 @@ class AnkiApkgImporter(
                         when (note) {
                             is ImportNote.AnkiDroppedCards ->
                                 "Anki: ${note.count} card(s) dropped (blank front or answer)"
-                            ImportNote.AnkiMissingMedia ->
-                                "Anki: a referenced picture missing from the package could not be brought across"
+                            is ImportNote.AnkiMissingMedia ->
+                                "Anki: ${note.count} picture(s) referenced but missing from the package could not be brought across"
                         }
                     }
                 )
@@ -127,3 +122,15 @@ class AnkiApkgImporter(
         }
     }
 }
+
+/**
+ * The typed reasons an Anki deck did not come across verbatim. Kept pure so the
+ * "only say it when it happened" rule is testable without a database: a clean
+ * deck emits no notes, and a missing-picture note carries its own count rather
+ * than a blanket warning on every import.
+ */
+internal fun ankiImportNotes(droppedStems: Int, missingMedia: Int): List<ImportNote> =
+    buildList {
+        if (droppedStems > 0) add(ImportNote.AnkiDroppedCards(droppedStems))
+        if (missingMedia > 0) add(ImportNote.AnkiMissingMedia(missingMedia))
+    }

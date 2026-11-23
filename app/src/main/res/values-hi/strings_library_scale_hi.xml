@@ -63,9 +63,11 @@
         <item quantity="other">%1$d प्रतिलिपियाँ</item>
     </plurals>
     <string name="duplicates_compare">सामने-सामने तुलना करें</string>
-    <string name="duplicates_keep_one">यही रखें</string>
+    <string name="duplicates_keep_numbered">#%1$d रखें</string>
+    <string name="duplicates_keep_candidate">प्रतिलिपि %1$d रखें: %2$s</string>
     <string name="duplicates_delete_others">बाकी हटाएँ</string>
     <string name="duplicates_merge_history">इसी में इतिहास मिलाएँ</string>
+    <string name="duplicates_merge_history_into">%1$s में इतिहास मिलाएँ</string>
     <string name="duplicates_kept_schedule">जो कार्ड आप रखते हैं उसका पढ़ाई शेड्यूल और समीक्षा इतिहास सुरक्षित रहता है।</string>
     <string name="duplicates_column_original">मूल</string>
     <string name="duplicates_column_copy">प्रतिलिपि</string>

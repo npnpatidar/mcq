@@ -275,6 +275,51 @@ class AnkiPackageReaderTest {
     }
 
     @Test
+    fun missingPackageLocalMediaIsCountedButInlineAndRemoteRefsAreNot() {
+        // One picture the package promised but did not carry (zip entry "9"),
+        // plus an already-inline data URI and an author-hosted remote image.
+        // Only the first is a loss the app caused.
+        val front = "Count me?<img src=\"9\">" +
+            "<img src=\"$png1x1\"><img src=\"https://example.com/x.png\">"
+        val apkg = legacyPackage(notes = listOf("$front${us}An answer${us}" to 1L))
+
+        val result = AnkiPackageReader.read(apkg)
+
+        assertEquals(1, result.missingMedia)
+    }
+
+    @Test
+    fun aDeckWhosePicturesResolveReportsNoMissingMedia() {
+        val apkg = legacyPackage(
+            notes = listOf("Which one?${us}<img src=\"0\">An answer${us}" to 1L),
+            media = mapOf("0" to "a.png"),
+            mediaBytes = mapOf("0" to pngBytes)
+        )
+
+        assertEquals(0, AnkiPackageReader.read(apkg).missingMedia)
+    }
+
+    @Test
+    fun theStreamedReaderCountsMissingMediaToo() = runBlocking {
+        val apkg = legacyPackage(
+            notes = listOf("Q?<img src=\"9\">${us}An answer${us}" to 1L)
+        )
+        val sink = object : AnkiPackageReader.StreamSink {
+            override suspend fun onPaper(header: LegacyParser.PaperHeader) = Unit
+            override suspend fun onCategory(category: CategoryDto) = Unit
+            override suspend fun onQuestions(
+                categoryId: String,
+                questions: List<QuestionDto>,
+                schedules: Map<String, CardScheduleDto>
+            ) = Unit
+        }
+
+        val tail = AnkiPackageReader.stream(ByteArrayInputStream(apkg), sink)
+
+        assertEquals(1, tail.missingMedia)
+    }
+
+    @Test
     fun aNoteWithASingleChoiceCountsAsAFlashcard() {
         // One option cannot be a multiple-choice card: the importer normalises
         // it into a flashcard, so the report's "imported as flashcards" count

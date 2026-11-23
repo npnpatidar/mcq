@@ -662,7 +662,8 @@ internal const val IMPORT_REPORT_ANKI_NOTES_TAG = "import-report-anki-notes"
 internal fun importNoteRes(note: ImportNote): Pair<Int, List<Any>> = when (note) {
     is ImportNote.AnkiDroppedCards ->
         R.string.data_honesty_anki_note_blank to listOf(note.count)
-    ImportNote.AnkiMissingMedia -> R.string.data_honesty_anki_note_media to emptyList()
+    is ImportNote.AnkiMissingMedia ->
+        R.string.data_honesty_anki_note_media to listOf(note.count)
 }
 
 /**

@@ -71,8 +71,8 @@ internal fun countPaper(isNewPaper: Boolean, skipped: Boolean): Pair<Int, Int> =
 sealed interface ImportNote {
     /** Cards a reader dropped because their front or answer was blank. */
     data class AnkiDroppedCards(val count: Int) : ImportNote
-    /** The deck referenced pictures it did not carry, so they could not come across. */
-    data object AnkiMissingMedia : ImportNote
+    /** Distinct package-local pictures a card referenced but the deck did not carry. */
+    data class AnkiMissingMedia(val count: Int) : ImportNote
 }
 
 data class ImportReport(

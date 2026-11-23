@@ -12,7 +12,7 @@
     <string name="stats_weakest_help_honest">Ranked by answers given Again after the learning steps. Same-day learning stumbles are not counted as lapses. Tap for the card\'s history.</string>
 
     <!-- Calibration and Brier now use the cut estimator's objective evidence gate. -->
-    <string name="stats_calibration_honest_note">Calibration and Brier use only objective, correctly graded answers. Self-graded, guessed, skipped and differently graded rows are left out.</string>
+    <string name="stats_calibration_honest_note">Calibration and Brier use objective, right-or-wrong answers: only correct and incorrect answers that were actually recorded count. Self-graded, guessed, skipped and differently graded rows are left out.</string>
 
     <!-- One due definition: overdue is before today's study-day boundary. -->
     <string name="stats_forecast_help_aligned">Scheduled reviews for the next 30 study days, bucketed by day. The first bar is today; cards due before today are the overdue count shown below, not a bar. The line is the total outstanding if you skip every day.</string>

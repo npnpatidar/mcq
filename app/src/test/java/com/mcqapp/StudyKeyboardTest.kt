@@ -4,8 +4,6 @@ import com.mcqapp.ui.study.StudyKey
 import com.mcqapp.ui.study.StudyKeyAction
 import com.mcqapp.ui.study.StudyKeyboard
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Pure-JVM coverage for the keyboard-shortcut decision seam. */
@@ -82,7 +80,7 @@ class StudyKeyboardTest {
     }
 
     @Test
-    fun arrowsNavigateAndTextEntryIsDetected() {
+    fun arrowsNavigateTheOptionSelection() {
         assertEquals(
             StudyKeyAction.SELECT_PREVIOUS_OPTION,
             StudyKeyboard.action(StudyKey.LEFT, false, false, true)
@@ -91,7 +89,5 @@ class StudyKeyboardTest {
             StudyKeyAction.SELECT_NEXT_OPTION,
             StudyKeyboard.action(StudyKey.RIGHT, false, false, true)
         )
-        assertTrue(StudyKeyboard.isTextEntry("TextField"))
-        assertFalse(StudyKeyboard.isTextEntry("Button"))
     }
 }

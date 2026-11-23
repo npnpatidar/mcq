@@ -1,6 +1,7 @@
 package com.mcqapp.data.io
 
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.droppedParserMessage
 
 /**
  * A small, hand-written RFC-4180 reader for question banks.
@@ -121,7 +122,16 @@ object CsvTsvParser {
         text: String,
         paperTitle: String? = null,
         categoryTitle: String? = null,
-        rowWarning: (Int) -> String = { "Invalid answer in row $it." }
+        rowWarning: (Int) -> String = { "Invalid answer in row $it." },
+        /**
+         * A row with no question is dropped too, but for a different reason than
+         * a bad answer — the warning must not blame the answer column. Tagged
+         * here so `ImportViewModel`'s DROPPED count includes it even when a
+         * caller does not supply its own formatter.
+         */
+        blankRowWarning: (Int) -> String = {
+            droppedParserMessage("Row $it has no question and was skipped.")
+        }
     ): Result {
         val delimiter = detectDelimiter(text)
         val rows = parseRows(text, delimiter)
@@ -147,6 +157,10 @@ object CsvTsvParser {
             val rowNumber = index + if (hasHeader) 2 else 1
             val questionText = cell(row, "question")
             if (questionText.isBlank()) {
+                // Under-reported before: `skipped` grew but no warning was
+                // emitted, so the completion report's rows-skipped count (which
+                // counts DROPPED warnings) quietly left this row out.
+                warnings += blankRowWarning(rowNumber)
                 skipped++
                 return@forEachIndexed
             }

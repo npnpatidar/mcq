@@ -15,7 +15,7 @@
     <!-- Anki import notes: reasons a deck did not come across verbatim. -->
     <string name="data_honesty_anki_notes_title">Anki import notes</string>
     <string name="data_honesty_anki_note_blank" tools:ignore="PluralsCandidate">%1$d card(s) were left out because their front or answer was blank.</string>
-    <string name="data_honesty_anki_note_media">Pictures a card referenced but the package did not contain could not be brought across.</string>
+    <string name="data_honesty_anki_note_media" tools:ignore="PluralsCandidate">%1$d picture(s) a card referenced but the package did not contain could not be brought across.</string>
 
     <!-- Rows the JSON/DOCX reader skipped while parsing. -->
     <plurals name="data_honesty_rows_skipped">

@@ -1908,10 +1908,12 @@ class McqRepository internal constructor(
     /**
      * A bounded pool for a tag/mistake-scoped Study sitting. Only the given
      * ids are read, so the cost is the pool's size rather than the paper's.
+     * The input's iteration order is preserved for the new cards, so the tag
+     * scope keeps its authored `(sortOrder, rowid)` order.
      */
     suspend fun getStudyQueueForQuestions(
         paperId: String,
-        questionIds: Set<String>,
+        questionIds: Collection<String>,
         now: Long = System.currentTimeMillis()
     ): List<com.mcqapp.domain.StudyCard> =
         studyStore.getScopedStudyQueue(paperId, questionIds, now)

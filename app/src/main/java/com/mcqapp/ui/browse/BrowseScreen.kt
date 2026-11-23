@@ -117,6 +117,16 @@ import com.mcqapp.R
 internal fun duplicateGroupKeeperKey(questionIds: Collection<String>): String =
     questionIds.sorted().joinToString("\u0000")
 
+/**
+ * Short name for one duplicate candidate, used on its keeper chip's content
+ * description and in the merge action. A blank preview must fall back to the
+ * id, otherwise every unloaded candidate reads as the same empty label.
+ */
+internal fun duplicateCandidatePreview(preview: String?, id: String): String {
+    val text = preview?.takeUnless { it.isNullOrBlank() }?.trim() ?: id
+    return if (text.length > 24) text.take(23) + "…" else text
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BrowseScreen(
@@ -1472,14 +1482,36 @@ fun BrowseScreen(
                                         }
                                     }
                                 }
+                                val keeperPreview = duplicateCandidatePreview(
+                                    duplicatePreviews[keeper], keeper
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    group.questionIds.forEach { id ->
+                                    group.questionIds.forEachIndexed { index, id ->
+                                        // Identical "Keep this one" chips were
+                                        // indistinguishable beyond the first two
+                                        // previews. Number every candidate and
+                                        // name it in the accessibility label.
+                                        val candidate = duplicateCandidatePreview(duplicatePreviews[id], id)
+                                        val description = stringResource(
+                                            R.string.duplicates_keep_candidate,
+                                            index + 1, candidate
+                                        )
                                         FilterChip(
                                             selected = id == keeper,
                                             onClick = {
                                                 duplicateKeepers = duplicateKeepers + (keeperKey to id)
                                             },
-                                            label = { Text(stringResource(R.string.duplicates_keep_one)) }
+                                            label = {
+                                                Text(
+                                                    stringResource(
+                                                        R.string.duplicates_keep_numbered,
+                                                        index + 1
+                                                    )
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .testTag("duplicates-keeper-chip-$index")
+                                                .semantics { contentDescription = description }
                                         )
                                     }
                                     TextButton(onClick = {
@@ -1488,7 +1520,14 @@ fun BrowseScreen(
                                                 UiMessage(mergeText, UiMessageTone.Success)
                                             )
                                         }
-                                    }) { Text(stringResource(R.string.duplicates_merge_history)) }
+                                    }) {
+                                        Text(
+                                            stringResource(
+                                                R.string.duplicates_merge_history_into,
+                                                keeperPreview
+                                            )
+                                        )
+                                    }
                                     TextButton(onClick = {
                                         viewModel.resolveDuplicates(group, keeper, merge = false) { changed ->
                                             if (changed > 0) sendMessage(

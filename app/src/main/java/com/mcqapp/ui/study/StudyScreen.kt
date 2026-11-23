@@ -100,6 +100,8 @@ import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.StudyStepLabel
 import com.mcqapp.domain.studyStepLabel
 import com.mcqapp.domain.Scoring
+import com.mcqapp.domain.StudyScopeMenuChoice
+import com.mcqapp.domain.studyScopeMenuSelection
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.isFlashcard
 import com.mcqapp.ui.StudyViewModelFactory
@@ -236,14 +238,16 @@ fun StudyScreen(
     // Tag/mistake scope is entered from the header and applied by navigating to
     // a new route. Remembered so rotation cannot strand an open picker.
     var showScopeDialog by rememberSaveable { mutableStateOf(false) }
-    fun scopeRoute(nextTag: String, nextMistakes: Boolean): String =
-        com.mcqapp.ui.navigation.studyRoute(
+    fun scopeRoute(choice: StudyScopeMenuChoice, foldedTag: String = ""): String {
+        val selection = studyScopeMenuSelection(categoryIds, choice, foldedTag)
+        return com.mcqapp.ui.navigation.studyRoute(
             paperId,
-            categoryIds,
-            leechesOnly = leechesOnly,
-            tag = nextTag,
-            mistakes = nextMistakes
+            selection.categoryIds,
+            leechesOnly = selection.leechesOnly,
+            tag = selection.tag,
+            mistakes = selection.mistakes
         )
+    }
 
     // Keyboard shortcuts: Space reveal / advance, 1-4 grades, arrows move the
     // option selection. Focus is requested on the card surface and keys are
@@ -388,15 +392,15 @@ fun StudyScreen(
                     loadTags = { pid, cats -> repository.tagCountsForStudyScope(pid, cats) },
                     onPickWhole = {
                         showScopeDialog = false
-                        navController.navigate(scopeRoute("", false))
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.WHOLE))
                     },
                     onPickTag = { folded ->
                         showScopeDialog = false
-                        navController.navigate(scopeRoute(folded, false))
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.TAG, folded))
                     },
                     onPickMistakes = {
                         showScopeDialog = false
-                        navController.navigate(scopeRoute("", true))
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.MISTAKES))
                     },
                     onSaveMistakes = {
                         scope.launch {

@@ -1,6 +1,5 @@
 package com.mcqapp
 
-import com.mcqapp.ui.settings.restoreConfirmCanProceed
 import com.mcqapp.ui.settings.restoreConfirmShouldClose
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -12,12 +11,6 @@ import org.junit.Test
  * over an archive we had never inspected. Pure gate so the rule runs on ARM64.
  */
 class RestoreConfirmGateTest {
-
-    @Test
-    fun confirmIsDisabledUntilTheManifestIsReady() {
-        assertFalse(restoreConfirmCanProceed(manifestReady = false))
-        assertTrue(restoreConfirmCanProceed(manifestReady = true))
-    }
 
     @Test
     fun aFailedManifestReadClosesTheConfirm() {

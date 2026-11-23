@@ -4,9 +4,11 @@ package com.mcqapp.ui.study
  * Pure keyboard-shortcut decisions for Study (and reusable by Test).
  *
  * Keeping the key -> action mapping free of Compose and Android types makes the
- * "never fire inside a text field or a dialog" rule testable on the JVM. The UI
- * layer owns the focus check and decides whether a dialog is open; this object
- * only decides what a key means for a given screen state.
+ * mode rules — reveal, staged grades and the break lock — testable on the JVM.
+ * The UI layer owns focus and decides whether a dialog is open; neither Study
+ * nor Test has a text-entry surface on its keyed card/session area, so a
+ * shortcut never competes with typing. This object only decides what a key
+ * means for a given screen state.
  */
 internal enum class StudyKey {
     SPACE, ONE, TWO, THREE, FOUR, LEFT, RIGHT, OTHER
@@ -61,12 +63,4 @@ internal object StudyKeyboard {
             StudyKey.OTHER -> StudyKeyAction.NONE
         }
     }
-
-    /**
-     * True when a key belongs to a text entry field and must never be stolen.
-     * The UI checks the focused element's role; this helper covers the software
-     * keyboard's own "is editor" signal used on both platforms.
-     */
-    fun isTextEntry(role: String?): Boolean =
-        role?.let { it.contains("Text", ignoreCase = true) || it.contains("Edit", ignoreCase = true) } == true
 }

@@ -15,7 +15,7 @@
     <!-- एंकि आयात नोट्स: डेक पूरी तरह न आने के कारण। -->
     <string name="data_honesty_anki_notes_title">एंकि आयात नोट्स</string>
     <string name="data_honesty_anki_note_blank" tools:ignore="PluralsCandidate">%1$d कार्ड छोड़ दिए गए क्योंकि उनका सामने वाला भाग या उत्तर खाली था।</string>
-    <string name="data_honesty_anki_note_media">जिन चित्रों का कार्ड ने संदर्भ दिया पर पैकेज में नहीं थे, उन्हें लाया नहीं जा सका।</string>
+    <string name="data_honesty_anki_note_media" tools:ignore="PluralsCandidate">%1$d चित्रों का कार्ड ने संदर्भ दिया पर वे पैकेज में नहीं थे, उन्हें लाया नहीं जा सका।</string>
 
     <!-- JSON/DOCX रीडर ने पार्स करते समय जो पंक्तियाँ छोड़ीं। -->
     <plurals name="data_honesty_rows_skipped">

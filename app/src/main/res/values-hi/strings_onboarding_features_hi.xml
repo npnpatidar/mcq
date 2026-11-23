@@ -51,6 +51,7 @@
     <!-- CSV / TSV import -->
     <string name="of_import_csv_hint" tools:ignore="UnusedResources">कॉलम: प्रश्न, विकल्प a, विकल्प b, विकल्प c, विकल्प d, उत्तर, स्पष्टीकरण, टैग। अल्पविराम या टैब इस्तेमाल करें।</string>
     <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">पंक्ति %1$d में उत्तर a, b, c या d होना चाहिए।</string>
+    <string name="of_csv_blank_question" tools:ignore="PluralsCandidate">पंक्ति %1$d में कोई प्रश्न नहीं है, इसलिए उसे छोड़ दिया गया।</string>
     <string name="of_csv_no_questions">उस फ़ाइल में कोई प्रश्न नहीं मिला।</string>
 
     <!-- Quick capture from shared text -->

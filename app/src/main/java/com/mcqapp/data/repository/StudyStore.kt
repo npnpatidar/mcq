@@ -169,16 +169,20 @@ internal class StudyStore(
      * are read, so a scoped sitting over a million-question paper still costs
      * the size of the pool. The same pools and scheduler build the cards, so a
      * scoped session grades and orders them exactly like a whole-paper one.
+     * The input's iteration order is kept for the new cards it builds: the tag
+     * index returns authored `(sortOrder, rowid)` order, and a HashSet here
+     * would serve those cards in hash order instead.
      */
     suspend fun getScopedStudyQueue(
         paperId: String,
-        questionIds: Set<String>,
+        questionIds: Collection<String>,
         now: Long = System.currentTimeMillis()
     ): List<com.mcqapp.domain.StudyCard> {
-        if (questionIds.isEmpty()) return emptyList()
+        val orderedIds = LinkedHashSet(questionIds).toList()
+        if (orderedIds.isEmpty()) return emptyList()
         val config = settings.schedulerConfigNow()
         resetEdited(paperId)
-        val inPaper = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
+        val inPaper = db.cardStateDao().getForQuestionsChunked(orderedIds)
             .filter { it.paperId == paperId }
         // "Known" means a schedule row exists, whatever its visibility. A
         // suspended or buried card is hidden from both pools below, not
@@ -191,7 +195,7 @@ internal class StudyStore(
         }
         val pools = poolsOf(config, rows, now)
         val fresh = if (config.introduceNewCards) {
-            (questionIds - knownIds).map { id ->
+            orderedIds.filter { it !in knownIds }.map { id ->
                 com.mcqapp.domain.StudyCard(
                     id,
                     com.mcqapp.domain.StudyReason.NEW,

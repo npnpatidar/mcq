@@ -108,11 +108,14 @@ internal fun QuickCaptureDialog(
                     modifier = Modifier.fillMaxWidth().testTag("quick-capture-back")
                 )
                 Spacer(Modifier.height(8.dp))
+                // A selector, never an editor: it only mirrors the chosen paper.
+                // Binding it to newPaperTitle when nothing is chosen put two
+                // editable "Paper" fields on screen for the same value.
                 Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
-                        value = selectedPaper?.title ?: newPaperTitle,
-                        onValueChange = { newPaperTitle = it },
-                        readOnly = selectedPaper != null,
+                        value = selectedPaper?.title.orEmpty(),
+                        onValueChange = {},
+                        readOnly = true,
                         label = { Text(stringResource(R.string.of_quick_capture_paper)) },
                         trailingIcon = {
                             IconButton(onClick = { paperExpanded = true }) {
@@ -146,7 +149,7 @@ internal fun QuickCaptureDialog(
                     OutlinedTextField(
                         value = newPaperTitle,
                         onValueChange = { newPaperTitle = it },
-                        label = { Text(stringResource(R.string.of_quick_capture_paper)) },
+                        label = { Text(stringResource(R.string.of_quick_capture_new_paper)) },
                         modifier = Modifier.fillMaxWidth().testTag("quick-capture-new-paper")
                     )
                 }

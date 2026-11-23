@@ -51,6 +51,7 @@
     <!-- CSV / TSV import -->
     <string name="of_import_csv_hint" tools:ignore="UnusedResources">Columns: question, option a, option b, option c, option d, answer, explanation, tags. Use commas or tabs.</string>
     <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">The answer in row %1$d must be a, b, c or d.</string>
+    <string name="of_csv_blank_question" tools:ignore="PluralsCandidate">Row %1$d has no question and was skipped.</string>
     <string name="of_csv_no_questions">No questions were found in that file.</string>
 
     <!-- Quick capture from shared text -->

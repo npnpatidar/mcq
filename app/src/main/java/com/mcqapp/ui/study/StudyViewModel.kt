@@ -24,6 +24,7 @@ import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.isFlashcard
+import com.mcqapp.domain.mistakeIdsInScope
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CompletableDeferred
@@ -622,19 +623,7 @@ class StudyViewModel(
                         categoryIds = scopeIds
                     )
                 } else if (studyScope.isRestricted) {
-                    // Resolve the pool's ids from the existing exact-tag index
-                    // or the mistake standings, then build only those cards.
-                    // No schema change and no schedule rewrite.
-                    val allowed = when (studyScope.kind) {
-                        com.mcqapp.domain.StudyScopeKind.TAG ->
-                            repository.questionIdsForStudyTagInScope(paperId, scopeIds, studyScope.tag)
-                                .toHashSet()
-                        com.mcqapp.domain.StudyScopeKind.MISTAKES ->
-                            repository.getMistakenQuestions(paperId)
-                                .mapTo(HashSet()) { it.id }
-                        else -> emptySet()
-                    }
-                    drillCards = repository.getStudyQueueForQuestions(paperId, allowed)
+                    drillCards = resolveScopedDrillCards()
                 }
                 // One cheap indexed read for the header's "N suspended"
                 // indicator; never a driver of the pull, which reads its own
@@ -685,6 +674,25 @@ class StudyViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Resolves a tag/mistake pool from live data, in the source's order: the
+     * tag index's authored `(sortOrder, rowid)` order, or the standings'
+     * most-recently-missed-first order. Both load and "Study again" call this
+     * — a fixed snapshot would replay a card suspended mid-sitting, or a
+     * question that is no longer wrong. The ids stay a List: a HashSet here
+     * used to scramble the authored order of the tag's new cards.
+     */
+    private suspend fun resolveScopedDrillCards(): List<StudyCard> {
+        val allowed: List<String> = when (studyScope.kind) {
+            com.mcqapp.domain.StudyScopeKind.TAG ->
+                repository.questionIdsForStudyTagInScope(paperId, scopeIds, studyScope.tag)
+            com.mcqapp.domain.StudyScopeKind.MISTAKES ->
+                mistakeIdsInScope(repository.getMistakenQuestions(paperId), scopeIds)
+            else -> emptyList()
+        }
+        return repository.getStudyQueueForQuestions(paperId, allowed)
     }
 
     /** Re-runs a failed load after the user asks for it. */
@@ -1970,6 +1978,11 @@ class StudyViewModel(
                         leechesOnly = true,
                         categoryIds = scopeIds
                     )
+                } else if (studyScope.isRestricted) {
+                    // Tag and mistake pools are snapshots too: a card suspended
+                    // mid-sitting, or a question answered correctly since, must
+                    // not be replayed by "Study again".
+                    drillCards = resolveScopedDrillCards()
                 }
                 drillIndex = 0
                 // "Study again" is a new sitting, so it draws a new option

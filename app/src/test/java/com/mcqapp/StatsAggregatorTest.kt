@@ -530,7 +530,10 @@ class StatsAggregatorTest {
     @Test
     fun overdueAgeBucketsPastDueScheduledCardsAndSkipsNew() {
         val cards = listOf(
-            card("q1", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 6 * hour),
+            // Under the one due definition, overdue means before today's
+            // 04:00 boundary — not merely before the current instant. 02:00
+            // is still under a day old, so it belongs in the "<1d" bin.
+            card("q1", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = todayStart - 2 * hour),
             card("q2", state = CardStateKind.REVIEW, intervalDays = 10, dueAt = now - 8 * day),
             card("q4", state = CardStateKind.REVIEW, intervalDays = 30, dueAt = now - 20 * day),
             card("q3", state = CardStateKind.NEW, dueAt = now - 30 * day)

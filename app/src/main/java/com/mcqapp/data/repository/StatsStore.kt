@@ -596,6 +596,13 @@ internal class StatsStore(
         val accumulator = StatsAggregator.CardsAccumulator(
             scopePaperId = scopePaperId,
             now = now,
+            // Same overdue edge as the in-memory build, the overview backlog
+            // and the forecast: a card due earlier today is due now, not overdue.
+            todayStart = DayBoundary.startOfDay(
+                now,
+                config.dayStartHour,
+                DayBoundary.defaultZone()
+            ),
             paperTitleOf = db.paperDao().getAll().associate { it.id to it.title }
         )
         pageCardsInto(accumulator::addCard)

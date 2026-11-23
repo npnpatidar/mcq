@@ -1,8 +1,11 @@
 package com.mcqapp
 
+import com.mcqapp.domain.StudyScopeMenuChoice
+import com.mcqapp.domain.studyScopeMenuSelection
 import com.mcqapp.ui.navigation.decodeCategoryList
 import com.mcqapp.ui.navigation.studyRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,5 +37,34 @@ class StudyScopeRouteTest {
             route.substringAfter("categories=", "").substringBefore("&")
         )
         assertEquals(listOf("c1", "c2"), categories)
+    }
+
+    @Test
+    fun switchingFromADrillBuildsAFreshTagRouteWithoutTheDrillFlag() {
+        val selection = studyScopeMenuSelection(
+            currentCategoryIds = listOf("c1"),
+            choice = StudyScopeMenuChoice.TAG,
+            foldedTag = "Physics"
+        )
+        val route = studyRoute(
+            "p1", selection.categoryIds, selection.leechesOnly, selection.tag, selection.mistakes
+        )
+        assertFalse(route, route.contains("leechesOnly"))
+        assertTrue(route, route.contains("tag=Physics"))
+        assertTrue(route, route.contains("categories="))
+    }
+
+    @Test
+    fun switchingToWholeFromACategoryScopeBuildsThePlainRoute() {
+        val selection = studyScopeMenuSelection(
+            currentCategoryIds = listOf("c1", "c2"),
+            choice = StudyScopeMenuChoice.WHOLE
+        )
+        assertEquals(
+            "study/p1",
+            studyRoute(
+                "p1", selection.categoryIds, selection.leechesOnly, selection.tag, selection.mistakes
+            )
+        )
     }
 }

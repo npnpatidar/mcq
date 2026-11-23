@@ -1,5 +1,6 @@
 package com.mcqapp
 
+import com.mcqapp.data.io.CsvTsvParser
 import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
 import com.mcqapp.data.io.LegacyParser
 import java.io.ByteArrayInputStream
@@ -9,6 +10,7 @@ import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.parserWarningSeverity
 import com.mcqapp.domain.parserWarningText
 import com.mcqapp.ui.importscreen.csvBadAnswerRowWarning
+import com.mcqapp.ui.importscreen.csvDroppedRowWarning
 import com.mcqapp.ui.importscreen.typedParserWarnings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -46,6 +48,39 @@ class Round2ImportParsingTest {
         assertEquals("The answer in row 4 must be a, b, c or d.", warning.message)
         // The hidden producer tag never leaks into the learner-facing text.
         assertTrue(!warning.message.contains("r2-dropped"))
+    }
+
+    /**
+     * A blank-question row used to increase `skippedRows` without emitting a
+     * warning. `withRowsSkipped` counts DROPPED warnings, so the completion
+     * report silently under-counted it. Both kinds of dropped row must reach
+     * that count.
+     */
+    @Test
+    fun csvBlankQuestionAndBadAnswerRowsBothCountAsSkipped() {
+        val text = "question,a,answer\n" +
+            ",x,a\n" +          // row 2: no question
+            "Keep?,y,z\n" +     // row 3: unresolvable answer
+            "Fine?,ok,a\n"      // row 4: good
+        val result = CsvTsvParser.parse(
+            text,
+            rowWarning = csvBadAnswerRowWarning { "The answer in row $it must be a, b, c or d." },
+            blankRowWarning = csvDroppedRowWarning { "Row $it has no question and was skipped." }
+        )
+
+        assertEquals(2, result.skippedRows)
+        assertEquals(2, result.warnings.size)
+        val dropped = typedParserWarnings(result.warnings).count {
+            it.severity == ImportWarningSeverity.DROPPED
+        }
+        assertEquals("the report must count both kinds of dropped row", 2, dropped)
+        val questions = result.file.papers.single().categories.single().questions
+        assertEquals(1, questions.size)
+        assertEquals("Fine?", questions.single().text)
+        assertTrue(
+            "the blank-row warning must not blame the answer",
+            typedParserWarnings(result.warnings).any { "no question" in it.message }
+        )
     }
 
     @Test

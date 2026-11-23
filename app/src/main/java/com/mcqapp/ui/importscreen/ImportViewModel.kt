@@ -156,8 +156,11 @@ internal fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
  * the warning the preview already showed. Kept pure so the producer/consumer
  * contract is testable without a ViewModel or Android resources.
  */
-internal fun csvBadAnswerRowWarning(format: (Int) -> String): (Int) -> String =
+internal fun csvDroppedRowWarning(format: (Int) -> String): (Int) -> String =
     { row -> droppedParserMessage(format(row)) }
+
+internal fun csvBadAnswerRowWarning(format: (Int) -> String): (Int) -> String =
+    csvDroppedRowWarning(format)
 
 object ImportDataHolder {
     /**
@@ -1012,7 +1015,8 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     val parsed = CsvTsvParser.parse(
                         text,
                         paperTitle = fileName?.let { docxPaperTitle(it) },
-                        rowWarning = csvBadAnswerRowWarning { msg(R.string.of_csv_bad_answer, it) }
+                        rowWarning = csvBadAnswerRowWarning { msg(R.string.of_csv_bad_answer, it) },
+                        blankRowWarning = csvDroppedRowWarning { msg(R.string.of_csv_blank_question, it) }
                     )
                     val warnings = parsed.warnings.toMutableList()
                     if (parsed.file.papers.firstOrNull()

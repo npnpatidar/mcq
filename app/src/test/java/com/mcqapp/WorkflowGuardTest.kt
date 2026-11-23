@@ -244,8 +244,13 @@ class WorkflowGuardTest {
             "setup-java's own cache would be an unsaved exact hit",
             Regex("""(?m)^[ \t]*cache: gradle[ \t]*$""").containsMatchIn(build)
         )
-        val cacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
+        val allCacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
             .filter { it.contains("uses: actions/cache@") }
+        // The duration manifest has its own cross-run cache; exclude it here so
+        // this guard stays about the rotating Gradle dependency caches.
+        val cacheSteps = allCacheSteps.filter {
+            it.contains("gradle-nightly-") || it.contains("gradle-run-")
+        }
         assertTrue(
             "one rotating Gradle cache step per Gradle job, got ${cacheSteps.size}",
             cacheSteps.size == 6
@@ -267,22 +272,47 @@ class WorkflowGuardTest {
         )
     }
 
-    /** INCIDENT: the duration manifest was written nowhere, so CI always used the dead 2-arg call. */
+    /**
+     * The duration probe is a measurement, not a gate. It used to run on every
+     * PR and `unit-test` had a hard `needs` edge on it, so the whole unsharded
+     * suite ran twice and a hung probe skipped every shard. Now only nightly
+     * and main refresh the manifest into a cross-run cache; PR shards restore
+     * it and fall back to the 2-arg balanced-by-count call when it is absent.
+     */
     @Test
-    fun durationAwareShardingIsWiredEndToEnd() {
+    fun durationAwareShardingIsWiredWithoutBlockingPRs() {
         assertTrue("a prior job must write the manifest", build.contains(":app:writeTestDurations"))
-        assertTrue("the manifest must be uploaded for the shards", build.contains("name: test-durations"))
+        assertTrue("the manifest must be uploaded for inspection", build.contains("name: test-durations"))
+
+        val probe = build.substringAfter("  test-durations:\n").substringBefore("\n  build:\n")
         assertTrue(
-            "the unit-test job must wait for the manifest",
-            build.contains("needs: [wrapper-validation, test-durations]")
+            "the probe must run only on schedule or a push to main",
+            probe.contains(
+                "if: github.event_name == 'schedule' || github.event_name == 'push'"
+            )
         )
-        assertTrue("the shards must download the manifest", build.contains("actions/download-artifact@"))
+
+        val shardJob = build.substringAfter("  unit-test:\n").substringBefore("\n  release-build:\n")
+        val needs = Regex("""(?m)^[ \t]*needs:.*$""").find(shardJob)?.value.orEmpty()
+        assertTrue(
+            "the shard job must depend only on wrapper-validation: $needs",
+            needs.trim() == "needs: wrapper-validation"
+        )
+        assertFalse(
+            "a hard needs edge on the probe would gate every PR on the unsharded suite",
+            needs.contains("test-durations")
+        )
+        assertTrue(
+            "the shards must restore a manifest cached by an earlier main/nightly run",
+            shardJob.contains("uses: actions/cache/restore@") &&
+                shardJob.contains("restore-keys: test-durations-")
+        )
         assertTrue(
             "the shard call must pass the measured durations as its third argument",
             build.contains("4 apk-build/test-durations.tsv")
         )
-        assertFalse(
-            "the two-argument-only CI call is gone; the local fallback stays in the script",
+        assertTrue(
+            "CI must fall back to the two-argument balanced-by-count call when no manifest is cached",
             build.contains("test-shards.sh \${{ matrix.shard }} 4)")
         )
     }

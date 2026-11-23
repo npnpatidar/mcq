@@ -223,6 +223,14 @@ class StatsHonestyGuardTest {
         assertEquals(0, bundle.forecast.days[0].learning)
         assertEquals(bundle.today.backlog, bundle.forecast.overdue)
         assertEquals(bundle.today.dueNow, bundle.forecast.dueToday)
+        // The Cards tab used `dueAt < now`, so the earlier-today card landed
+        // in its overdue-age chart too: a fourth, conflicting definition.
+        assertEquals(1, bundle.overdueAge.overdue)
+        assertEquals(
+            0,
+            build(cards = listOf(card("earlier-today", dueAt = now - hour)))
+                .overdueAge.overdue
+        )
     }
 
     // --- 6. lapses, not first-day stumbles ----------------------------------
@@ -340,6 +348,18 @@ class StatsHonestyGuardTest {
     }
 
     // --- copy: new files, aligned across locales ----------------------------
+
+    @Test
+    fun calibrationNoteNamesRecordedRightOrWrongAnswersInBothLocales() {
+        val english = File("src/main/res/values/strings_stats_honesty.xml").readText()
+        val hindi = File("src/main/res/values-hi/strings_stats_honesty_hi.xml").readText()
+        assertFalse("the old correctly-graded gate is gone", english.contains("correctly graded"))
+        assertFalse("the old correctly-graded gate is gone", hindi.contains("सही ढंग से आंकलित"))
+        assertTrue(english, english.contains("right-or-wrong answers"))
+        assertTrue(english, english.contains("actually recorded count"))
+        assertTrue(hindi, hindi.contains("सही-या-गलत उत्तर"))
+        assertTrue(hindi, hindi.contains("दर्ज किए गए सही और गलत उत्तर"))
+    }
 
     @Test
     fun honestyCopyDeclaresTheSameNamesAndPlaceholdersInBothLocales() {

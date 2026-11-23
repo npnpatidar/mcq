@@ -63,9 +63,11 @@
         <item quantity="other">%1$d copies</item>
     </plurals>
     <string name="duplicates_compare">Compare side by side</string>
-    <string name="duplicates_keep_one">Keep this one</string>
+    <string name="duplicates_keep_numbered">Keep #%1$d</string>
+    <string name="duplicates_keep_candidate">Keep copy %1$d: %2$s</string>
     <string name="duplicates_delete_others">Delete the others</string>
     <string name="duplicates_merge_history">Merge history into this one</string>
+    <string name="duplicates_merge_history_into">Merge history into %1$s</string>
     <string name="duplicates_kept_schedule">The card you keep keeps its study schedule and review history.</string>
     <string name="duplicates_column_original">Original</string>
     <string name="duplicates_column_copy">Copy</string>

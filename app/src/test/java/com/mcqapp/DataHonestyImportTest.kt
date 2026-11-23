@@ -4,6 +4,7 @@ import com.mcqapp.data.io.ContentHash
 import com.mcqapp.data.io.ImportNote
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.io.ankiImportNotes
 import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.QuestionEntity
@@ -172,9 +173,28 @@ class DataHonestyImportTest {
         val (resId, args) = importNoteRes(ImportNote.AnkiDroppedCards(4))
         assertEquals(R.string.data_honesty_anki_note_blank, resId)
         assertEquals(listOf(4), args)
+        val (mediaRes, mediaArgs) = importNoteRes(ImportNote.AnkiMissingMedia(3))
+        assertEquals(R.string.data_honesty_anki_note_media, mediaRes)
+        assertEquals(listOf(3), mediaArgs)
+
+        // The media note used to be emitted unconditionally, so a clean deck
+        // always claimed pictures were left behind. Nothing happened: say
+        // nothing. The regression test below pins the count-carrying sides.
+        assertTrue(
+            "a clean deck emits no notes",
+            ankiImportNotes(droppedStems = 0, missingMedia = 0).isEmpty()
+        )
         assertEquals(
-            R.string.data_honesty_anki_note_media to emptyList<Any>(),
-            importNoteRes(ImportNote.AnkiMissingMedia)
+            listOf(ImportNote.AnkiDroppedCards(2)),
+            ankiImportNotes(droppedStems = 2, missingMedia = 0)
+        )
+        assertEquals(
+            listOf(ImportNote.AnkiMissingMedia(3)),
+            ankiImportNotes(droppedStems = 0, missingMedia = 3)
+        )
+        assertEquals(
+            listOf(ImportNote.AnkiDroppedCards(2), ImportNote.AnkiMissingMedia(3)),
+            ankiImportNotes(droppedStems = 2, missingMedia = 3)
         )
     }
 }

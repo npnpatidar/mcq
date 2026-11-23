@@ -234,6 +234,46 @@ class AnkiStreamEquivalenceTest {
         assertSameDatabase(apkgOf(paper, scheduling, passages), "own export")
     }
 
+    /**
+     * The missing-picture note used to be emitted for every `.apkg`, so a clean
+     * deck told the learner pictures were left behind. This pins the end-to-end
+     * result: reader tail -> typed notes -> import report.
+     */
+    @Test
+    fun aCleanDeckEmitsNoDataHonestyNotes() = runBlocking {
+        val paper = PaperDto(
+            id = "p1",
+            title = "Science",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Biology",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Which organelle makes ATP?",
+                            options = listOf(
+                                OptionDto("a", "Mitochondrion"),
+                                OptionDto("b", "Ribosome")
+                            ),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+        val db = newDb()
+
+        val report = AnkiApkgImporter(db).import(
+            { ByteArrayInputStream(apkgOf(paper)) }, nowMillis = NOW
+        )
+
+        assertTrue(
+            "a clean deck must not claim lost cards or pictures",
+            report.importNotes.isEmpty()
+        )
+    }
+
     // ---- a foreign, hand-built package ------------------------------------
 
     /**

@@ -99,8 +99,12 @@ jobs:
     # `apk-build/test-shards.sh` can partition by measured cost, but a manifest
     # has to exist first. One unsharded pass produces the JUnit XML, and
     # `writeTestDurations` turns it into `test-durations.tsv`, which the four
-    # shards download and pass as the script's third argument. Without an
-    # artifact from a prior job the shards keep the old balanced-by-count call.
+    # shards restore from a cross-run cache and pass as the script's third
+    # argument. This is a measurement pass, not a PR gate: running the whole
+    # unsharded suite on every PR doubled the work and a hung probe skipped the
+    # shards entirely. Nightly and main builds refresh the manifest; PR shards
+    # reuse the newest one and fall back to balanced-by-count when none exists.
+    if: github.event_name == 'schedule' || github.event_name == 'push'
     needs: wrapper-validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -151,6 +155,24 @@ jobs:
           name: test-durations
           path: app/build/test-durations.tsv
           if-no-files-found: error
+
+      - name: Stage duration manifest for cross-run cache
+        # PR runs have no probe of their own, so the manifest has to survive
+        # into later runs. Stage it under a path the shard jobs restore as-is.
+        if: always()
+        shell: bash
+        run: cp app/build/test-durations.tsv apk-build/test-durations.tsv || true
+
+      - name: Cache measured test durations
+        # A run-scoped key always misses (actions/cache does not save on a hit),
+        # and the stable `test-durations-` prefix lets PR jobs restore the most
+        # recently written manifest. The probe's own artifact stays for humans.
+        if: always()
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: apk-build/test-durations.tsv
+          key: test-durations-${{ github.run_id }}
+          restore-keys: test-durations-
 
   build:
     needs: wrapper-validation
@@ -235,7 +257,10 @@ jobs:
     # accumulates (the process-wide DataStore actor is the coupling), halves
     # the wall clock, and makes one bad shard report alone instead of holding
     # the branch. No test is skipped: the four shards are a partition.
-    needs: [wrapper-validation, test-durations]
+    # Deliberately NOT `needs: test-durations`: that probe is a nightly/main
+    # measurement, absent on PRs, and a hung/failed unsharded pass must never
+    # skip the shards. The manifest is restored from cache below instead.
+    needs: wrapper-validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -274,14 +299,16 @@ jobs:
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
-      - name: Download measured test durations
-        # The duration-probe job writes this from a real JUnit XML run. The
-        # shard script still accepts two arguments locally (balanced by count)
-        # when the file is absent, so local runs are unchanged.
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Restore measured test durations
+        # The probe only runs on nightly/main, so a PR has no artifact in this
+        # run. Restore the newest manifest an earlier such run cached. With no
+        # cache yet (a first PR) the shard step below uses the two-argument
+        # balanced-by-count call instead — no shard waits on the probe.
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
         with:
-          name: test-durations
-          path: apk-build
+          path: apk-build/test-durations.tsv
+          key: test-durations-${{ github.run_id }}
+          restore-keys: test-durations-
 
       - name: Run unit test shard
         # Sentinel: if this shard wedges, dump the worker's stacks from the
@@ -297,7 +324,13 @@ jobs:
             done ) &
           WATCH=$!
           trap 'kill "$WATCH" 2>/dev/null || true' EXIT
-          ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4 apk-build/test-durations.tsv)
+          if [ -f apk-build/test-durations.tsv ]; then
+            ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4 apk-build/test-durations.tsv)
+          else
+            # No cached manifest yet: the original balanced-by-count partition.
+            # This keeps every class in exactly one shard, just not cost-weighted.
+            ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4)
+          fi
           sh gradlew :app:testDebugUnitTest $ARGS --no-daemon
 
       - name: Upload unit test results

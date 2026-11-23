@@ -119,3 +119,50 @@ data class StudyScope(
     }
 }
 
+/** The three mutually exclusive choices in Study's scope menu. */
+enum class StudyScopeMenuChoice { WHOLE, TAG, MISTAKES }
+
+/** Fresh route arguments for a scope-menu choice; no Uri encoding. */
+data class StudyScopeMenuSelection(
+    val categoryIds: List<String> = emptyList(),
+    val leechesOnly: Boolean = false,
+    val tag: String = "",
+    val mistakes: Boolean = false
+)
+
+/**
+ * A scope-menu choice always starts a fresh scope. It never inherits the
+ * previous sitting's [StudyScopeMenuSelection.leechesOnly]: load checks the
+ * drill before [StudyScope.isRestricted], so a carried drill flag silently
+ * wins over the tag or mistake pool the learner just picked. "Whole paper"
+ * clears the category filter too. Tag and mistake pools stay inside the
+ * current categories — that is how their pickers and their queries are scoped.
+ */
+fun studyScopeMenuSelection(
+    currentCategoryIds: List<String>,
+    choice: StudyScopeMenuChoice,
+    foldedTag: String = ""
+): StudyScopeMenuSelection = when (choice) {
+    StudyScopeMenuChoice.WHOLE -> StudyScopeMenuSelection()
+    StudyScopeMenuChoice.TAG -> StudyScopeMenuSelection(
+        categoryIds = currentCategoryIds,
+        tag = foldedTag
+    )
+    StudyScopeMenuChoice.MISTAKES -> StudyScopeMenuSelection(
+        categoryIds = currentCategoryIds,
+        mistakes = true
+    )
+}
+
+/**
+ * Mistake ids restricted to the resolved category scope, in the source's
+ * most-recently-missed-first order. An empty [scopeIds] means the whole paper,
+ * matching the SQL `:scopeAll = 1 OR categoryId IN (:categoryIds)` used by the
+ * tag pool. A paper-wide `getMistakenQuestions(paperId)` used to ignore the
+ * category the sitting was opened in.
+ */
+fun mistakeIdsInScope(questions: List<Question>, scopeIds: List<String>): List<String> {
+    val inScope = scopeIds.toSet()
+    return questions.filter { inScope.isEmpty() || it.categoryId in inScope }.map { it.id }
+}
+

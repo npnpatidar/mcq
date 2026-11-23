@@ -1,8 +1,8 @@
 package com.mcqapp
 
+import com.mcqapp.domain.ExamMode
 import com.mcqapp.ui.study.StudyKey
 import com.mcqapp.ui.study.StudyKeyAction
-import com.mcqapp.ui.study.StudyKeyboard
 import com.mcqapp.ui.test.TestKeyboard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,7 +12,8 @@ import org.junit.Test
 /**
  * Pure-JVM coverage for the Test keyboard seam. A test has no grades, so the
  * digit keys must stay inert here while Space and the arrows still work — the
- * one-line regression for "digits only where a grade exists".
+ * one-line regression for "digits only where a grade exists". Space's reveal
+ * follows the same exam-mode matrix as the on-screen button.
  */
 class TestKeyboardTest {
 
@@ -25,6 +26,55 @@ class TestKeyboardTest {
         assertEquals(
             StudyKeyAction.NEXT,
             TestKeyboard.action(StudyKey.SPACE, revealed = true)
+        )
+    }
+
+    @Test
+    fun spaceNeverRevealsInStrictModeEvenWhenPracticeIsOn() {
+        // Strict overrides practice, so neither strict combination may reveal.
+        assertFalse(ExamMode.canReveal(practiceMode = false, strictMode = true))
+        assertFalse(ExamMode.canReveal(practiceMode = true, strictMode = true))
+        assertEquals(
+            StudyKeyAction.NONE,
+            TestKeyboard.action(StudyKey.SPACE, revealed = false, practiceMode = false, strictMode = true)
+        )
+        assertEquals(
+            StudyKeyAction.NONE,
+            TestKeyboard.action(StudyKey.SPACE, revealed = false, practiceMode = true, strictMode = true)
+        )
+    }
+
+    @Test
+    fun practiceAlsoHidesRevealButNormalModeAllowsIt() {
+        // Practice gives live feedback, so its reveal guard is hidden too —
+        // the same ExamMode matrix the on-screen button follows.
+        assertFalse(ExamMode.canReveal(practiceMode = true, strictMode = false))
+        assertEquals(
+            StudyKeyAction.NONE,
+            TestKeyboard.action(StudyKey.SPACE, revealed = false, practiceMode = true, strictMode = false)
+        )
+        assertTrue(ExamMode.canReveal(practiceMode = false, strictMode = false))
+        assertEquals(
+            StudyKeyAction.REVEAL,
+            TestKeyboard.action(StudyKey.SPACE, revealed = false, practiceMode = false, strictMode = false)
+        )
+    }
+
+    @Test
+    fun theStrictGuardOnlyBlocksReveal() {
+        // Navigation stays available in a test, and a card that is already shown
+        // still advances on Space — Strict mode must not freeze the session.
+        assertEquals(
+            StudyKeyAction.SELECT_PREVIOUS_OPTION,
+            TestKeyboard.action(StudyKey.LEFT, revealed = false, practiceMode = false, strictMode = true)
+        )
+        assertEquals(
+            StudyKeyAction.SELECT_NEXT_OPTION,
+            TestKeyboard.action(StudyKey.RIGHT, revealed = false, practiceMode = false, strictMode = true)
+        )
+        assertEquals(
+            StudyKeyAction.NEXT,
+            TestKeyboard.action(StudyKey.SPACE, revealed = true, practiceMode = false, strictMode = true)
         )
     }
 
@@ -49,14 +99,5 @@ class TestKeyboardTest {
             assertEquals(StudyKeyAction.NONE, TestKeyboard.action(key, revealed = true))
         }
         assertEquals(StudyKeyAction.NONE, TestKeyboard.action(StudyKey.OTHER, revealed = false))
-    }
-
-    @Test
-    fun theSharedTextFieldGuardStillDetectsTextEntry() {
-        // The screen never steals a key while a text field or dialog owns focus;
-        // the role check is the shared one Study uses too.
-        assertTrue(StudyKeyboard.isTextEntry("TextField"))
-        assertTrue(StudyKeyboard.isTextEntry("EditText"))
-        assertFalse(StudyKeyboard.isTextEntry("Button"))
     }
 }

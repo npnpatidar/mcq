@@ -7,8 +7,9 @@
 # partitioned greedily by measured cost — the slowest unassigned class goes to
 # the currently lightest shard. That replaces the old class-name ranges, which
 # put every slow guard/Robolectric class in one alphabetical corner and left a
-# different shard idle. Without the file the original balanced-by-count range
-# partitioning is kept, so CI's two-argument call is unchanged.
+# different shard idle. Without the file (no manifest cached from a nightly or
+# main run yet) the original balanced-by-count range partitioning is kept; CI
+# calls the two-argument form explicitly in that case, and local runs always do.
 set -eu
 idx=$1
 total=$2

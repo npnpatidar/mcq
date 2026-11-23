@@ -398,7 +398,7 @@ fun SettingsScreen(
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(
-                    enabled = restoreConfirmCanProceed(restorePreview != null),
+                    enabled = restorePreview != null,
                     onClick = {
                         showRestoreConfirm = false
                         viewModel.clearRestorePreview()
@@ -496,12 +496,6 @@ fun SettingsScreen(
         )
     }
 }
-
-/**
- * Pure gate for the restore confirmation: the wipe button only becomes usable
- * once the picked backup's manifest has actually been read.
- */
-internal fun restoreConfirmCanProceed(manifestReady: Boolean): Boolean = manifestReady
 
 /**
  * A failed manifest read must close the confirm and drop the picked uri; other

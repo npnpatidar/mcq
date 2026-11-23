@@ -66,10 +66,12 @@ class WrapperValidationTest {
             usesWrapperValidation(build)
         )
         // build, release-build, ui-test, the 4-way unit-test matrix (one YAML
-        // job with one `needs:` line) and the nightly refresh job.
+        // job with one `needs:` line), the nightly refresh job and the
+        // nightly/main duration probe. The probe no longer gates the shards,
+        // but both still wait for wrapper validation before using the wrapper.
         assertEquals(
             "every gradle-running job must wait for validation",
-            5,
+            6,
             build.split("needs: wrapper-validation").size - 1
         )
         assertTrue(

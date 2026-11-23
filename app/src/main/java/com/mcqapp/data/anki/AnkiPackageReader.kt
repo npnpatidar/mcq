@@ -47,7 +47,9 @@ data class AnkiReadResult(
      */
     val scheduling: Map<String, com.mcqapp.data.io.CardScheduleDto> = emptyMap(),
     /** Card instances dropped for a blank stem or a blank answer, for the import report. */
-    val droppedStems: Int = 0
+    val droppedStems: Int = 0,
+    /** Distinct package-local pictures referenced by a field but absent from the package. */
+    val missingMedia: Int = 0
 )
 
 /** Raised when a package cannot be read at all. */
@@ -239,7 +241,8 @@ object AnkiPackageReader {
             recallCount = recallCount,
             deckCount = decks.size,
             scheduling = scheduling,
-            droppedStems = droppedStems[0]
+            droppedStems = droppedStems[0],
+            missingMedia = media.missingCount
         )
     }
 
@@ -268,7 +271,9 @@ object AnkiPackageReader {
         val noteCount: Int,
         val recallCount: Int,
         /** Card instances dropped for a blank stem or blank answer, for the import report. */
-        val droppedStems: Int = 0
+        val droppedStems: Int = 0,
+        /** Distinct package-local pictures referenced by a field but absent from the package. */
+        val missingMedia: Int = 0
     )
 
     /**
@@ -312,9 +317,13 @@ object AnkiPackageReader {
                 } catch (e: Exception) {
                     throw AnkiPackageException("Could not read the Anki collection: ${e.message}", e)
                 }
+                // One index for the whole walk: its missing-media counter is
+                // read at the end, so a picture several fields reference is
+                // counted once rather than once per rewrite.
+                val media = work.mediaIndex()
                 try {
                     streamCollection(
-                        db, work.mediaIndex(), sink, batchSize, nowMillis, parameters, leechThreshold
+                        db, media, sink, batchSize, nowMillis, parameters, leechThreshold
                     )
                 } finally {
                     db.close()
@@ -436,7 +445,10 @@ object AnkiPackageReader {
             "Streamed Anki package: ${decks.size} decks, $noteCount questions, " +
                 "$recallCount without options, $droppedStems dropped (blank stem or answer)"
         )
-        return AnkiStreamTail(passages.values.toList(), decks.size, noteCount, recallCount, droppedStems)
+        return AnkiStreamTail(
+            passages.values.toList(), decks.size, noteCount, recallCount, droppedStems,
+            missingMedia = media.missingCount
+        )
     }
 
     private class DeckCounts(val total: Int, val recall: Int, val dropped: Int = 0)
@@ -1580,6 +1592,15 @@ private class MediaIndex(
 
     private val resolved: HashMap<String, String?>? = if (cache) HashMap() else null
 
+    /**
+     * Package-local image references that could not be resolved. A set, not a
+     * plain counter: the same picture is rewritten by several fields (and twice
+     * within `htmlToElements`), so a count of lookup failures would over-report
+     * a single missing file many times.
+     */
+    private val missing = LinkedHashSet<String>()
+    val missingCount: Int get() = missing.size
+
     fun rewrite(html: String?): String? {
         if (html == null || !html.contains("<img", ignoreCase = true)) return html
         return IMG_TAG.replace(html) { match ->
@@ -1595,10 +1616,26 @@ private class MediaIndex(
     }
 
     private fun encode(src: String): String? {
+        // A data URI is already inline and a remote URL is the author's own
+        // business: neither is a picture the package promised to carry, so
+        // neither counts as missing media.
+        if (isInlineOrRemote(src)) return null
         val zipName = zipNameByFilename[src] ?: src
         // Newer packages compress each media entry as well as the manifest.
-        val bytes = decodeIfZstd(lookup(zipName) ?: return null)
+        val bytes = lookup(zipName)?.let { decodeIfZstd(it) } ?: run {
+            missing += src
+            return null
+        }
         return "data:${mimeOf(bytes)};base64,${Base64.encode(bytes)}"
+    }
+
+    private fun isInlineOrRemote(src: String): Boolean {
+        val value = src.trim().lowercase()
+        return value.startsWith("data:") ||
+            value.startsWith("http://") ||
+            value.startsWith("https://") ||
+            value.startsWith("//") ||
+            value.startsWith("file:")
     }
 }
 

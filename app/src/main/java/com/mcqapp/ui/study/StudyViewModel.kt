@@ -998,15 +998,7 @@ class StudyViewModel(
     fun resumeQuestionClock() {
         val current = _state.value
         if (current.clockRunning) return
-        if (!clockCanRun(current)) {
-            Logger.i(
-                "STUDY",
-                "clock refused: pausedByUser=$clockPausedByUser inView=$questionInView " +
-                    "revealed=${current.revealed} loading=${current.loading} " +
-                    "finished=${current.finished} onBreak=${current.onBreak}"
-            )
-            return
-        }
+        if (!clockCanRun(current)) return
         val now = SystemClock.elapsedRealtime()
         _state.update { it.copy(questionStartedAt = now, clockRunning = true) }
         publishDwell()
@@ -1050,13 +1042,6 @@ class StudyViewModel(
      */
     fun setQuestionVisible(visible: Boolean) {
         questionInView = visible
-        Logger.i(
-            "STUDY",
-            "visibility=$visible running=${_state.value.clockRunning} " +
-                "pausedByUser=$clockPausedByUser revealed=${_state.value.revealed} " +
-                "finished=${_state.value.finished} onBreak=${_state.value.onBreak} " +
-                "question=${_state.value.current?.questionId}"
-        )
         if (visible) resumeQuestionClock() else pauseQuestionClock()
     }
 

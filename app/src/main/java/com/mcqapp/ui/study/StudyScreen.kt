@@ -517,15 +517,7 @@ private fun StudyBody(
         // to be shown, and nothing would clear the reading again.
         if (container.size.height <= 0 || card.size.height <= 0) return
         val top = card.localPositionOf(container, Offset.Zero).y
-        val visible = top < container.size.height && top + card.size.height > 0f
-        if (visible != questionOnScreen) {
-            com.mcqapp.util.Logger.i(
-                "STUDY",
-                "geometry card=${question.id} top=$top containerH=${container.size.height} " +
-                    "cardH=${card.size.height} -> $visible"
-            )
-        }
-        questionOnScreen = visible
+        questionOnScreen = top < container.size.height && top + card.size.height > 0f
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
     // The pull clocked this card from the PREVIOUS card's reading, so a new
@@ -540,6 +532,11 @@ private fun StudyBody(
     // and that one "hidden" reading would stick, because no key changes again.
     // Re-read the geometry once this card's own frame has been laid out.
     LaunchedEffect(question.id) {
+        // Force this card to its own top before reading the viewport: a
+        // focus/scroll restoration from the previous card can otherwise apply
+        // its offset to the new scroll state, and the single geometry read
+        // would stick as "hidden".
+        scrollState.scrollTo(0)
         withFrameNanos { }
         reportVisibility()
     }

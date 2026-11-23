@@ -163,13 +163,21 @@ class StudyPolishUiTest {
      * Taking the break banks the clocks and offers Resume; it must NOT open the
      * summary or drop the card. Dismiss beside it stays only a suggestion
      * silencer, so both buttons remain reachable at the ten-review marker.
+     *
+     * Twelve cards, not eleven: the counter assertion below reads the header,
+     * and grading the LAST card ends the sitting, replacing the header with the
+     * summary ("11 reviewed · …"). The eleventh review really was written —
+     * the log says so — but its "Reviewed 11 this session" line was never on
+     * screen to be found, which made the old test fail for the fixture, not the
+     * break. With a twelfth card waiting, the sitting stays open and the
+     * counter is what the learner sees.
      */
     @Test
     fun takeABreakPausesTheSittingWithoutEndingIt() {
         runBlocking { repository.setSimplifiedStudy(true) }
         seedPaper(
             "ui-polish-break",
-            *(1..11).map { question("ui-polish-break-q$it", "ui-polish-break-cat") }.toTypedArray()
+            *(1..12).map { question("ui-polish-break-q$it", "ui-polish-break-cat") }.toTypedArray()
         )
         compose.setContent { McqNavHost(repository = repository) }
         compose.onNodeWithTag("paper-study-ui-polish-break").performClick()
@@ -198,10 +206,13 @@ class StudyPolishUiTest {
             compose.onAllNodesWithTag("study-resume-break").fetchSemanticsNodes().isEmpty()
         }
         // Answering still works after the resume: Check stages the simplified
-        // grade, and Next persists it and pulls the eleventh review.
+        // grade, and Next persists it and pulls the eleventh review. A twelfth
+        // card is still waiting, so the sitting stays open and the header's
+        // counter is what proves the eleventh review landed.
         compose.onNodeWithText("Alpha", substring = false).performClick()
         compose.onNodeWithTag("study-check").performClick()
         compose.onNodeWithTag("study-next").performClick()
         waitFor("Reviewed 11 this session")
+        waitFor("UITest ui-polish-break-q12?")
     }
 }

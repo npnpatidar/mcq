@@ -1,7 +1,12 @@
 package com.mcqapp
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -9,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.CategoryNode
@@ -64,16 +70,26 @@ class LibraryCategoryRevealUiTest {
         val card = paper()
         compose.setContent {
             MaterialTheme {
-                PaperCard(
-                    paper = card,
-                    onStart = {},
-                    onBrowse = {},
-                    onExport = {},
-                    onDelete = {},
-                    onAddCategory = {},
-                    onEditQuestion = { _, _ -> },
-                    onAddQuestion = {}
-                )
+                // The library's real list scrolls a card taller than the
+                // screen. A bare card here had no scrollable ancestor, so the
+                // seventh row existed below the surface and could never be
+                // brought into view.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    PaperCard(
+                        paper = card,
+                        onStart = {},
+                        onBrowse = {},
+                        onExport = {},
+                        onDelete = {},
+                        onAddCategory = {},
+                        onEditQuestion = { _, _ -> },
+                        onAddQuestion = {}
+                    )
+                }
             }
         }
 
@@ -91,8 +107,10 @@ class LibraryCategoryRevealUiTest {
 
         // Expand: all seven rows, and "Show less" must stay tappable.
         compose.onNodeWithTag("card-more-$revealKey").performClick()
-        compose.onNodeWithText("Sibling 7", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Sibling 7", substring = true)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("card-more-$revealKey")
+            .performScrollTo()
             .assertIsDisplayed()
             .assertTextEquals(app.getString(R.string.of_show_less))
 

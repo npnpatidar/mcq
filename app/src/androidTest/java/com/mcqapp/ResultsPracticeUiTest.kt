@@ -138,6 +138,12 @@ class ResultsPracticeUiTest {
             .performScrollToNode(hasText("Targeted practice", substring = true))
         waitFor("Targeted practice")
         compose.onNodeWithText("Targeted practice", substring = true).assertIsDisplayed()
+        // The header line ("Practice · Weakest topics · …") sits above this
+        // card, so scrolling to the card carried it off the top of the list.
+        // Scroll back to the type line instead of assuming it is still on
+        // screen: it exists either way, and the page still names the type.
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasText("Weakest topics", substring = true))
         compose.onNodeWithText("Weakest topics", substring = true).assertIsDisplayed()
 
         // The review list is below the header cards: scroll to the tags.

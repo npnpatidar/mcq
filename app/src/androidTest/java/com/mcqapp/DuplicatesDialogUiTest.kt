@@ -72,14 +72,18 @@ class DuplicatesDialogUiTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
 
-        // Both destructive/merge actions sit on their own row below the chips.
+        // Both destructive/merge actions sit in their own stacked block below
+        // the chips, each label wrapping inside the dialog. They are inside the
+        // scrolling body, so scroll to them.
         compose.onNodeWithTag("duplicates-merge").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("duplicates-delete-others").performScrollTo().assertIsDisplayed()
 
         // One way out, not two identical ones: "Done" closes the dialog and a
         // second "Cancel" beside it said the same thing twice. Back/outside tap
-        // still dismisses through onDismissRequest.
-        compose.onNodeWithTag("duplicates-done").performScrollTo().assertIsDisplayed()
+        // still dismisses through onDismissRequest. Done lives in the dialog's
+        // button row, outside the scrolling body, so it is always on screen —
+        // there is no scrollable ancestor to scroll through.
+        compose.onNodeWithTag("duplicates-done").assertIsDisplayed()
         val exitActions = compose.onAllNodesWithTag("duplicates-done").fetchSemanticsNodes().size
         assertTrue("the dialog should offer exactly one exit action, found $exitActions", exitActions == 1)
         assertTrue(

@@ -79,6 +79,9 @@ internal fun QuickCaptureDialog(
     var paperExpanded by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
     var frontError by remember { mutableStateOf(false) }
+    // A second tap can land before the owner recomposes the dialog away. Guard
+    // on the tap itself so one dialog can submit at most one card.
+    var submitted by remember { mutableStateOf(false) }
     val selectedPaper = papers.firstOrNull { it.id == selectedPaperId }
     val categories = selectedPaper?.categories.orEmpty()
 
@@ -197,10 +200,12 @@ internal fun QuickCaptureDialog(
         confirmButton = {
             TextButton(
                 onClick = {
+                    if (submitted) return@TextButton
                     if (front.isBlank()) {
                         frontError = true
                         return@TextButton
                     }
+                    submitted = true
                     // Hand the fields to the owner on the tap. The owner clears
                     // the offered snippet immediately and lets the ViewModel
                     // finish the write in its own scope, so a rotation here

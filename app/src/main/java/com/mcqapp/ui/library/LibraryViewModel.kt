@@ -347,9 +347,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         contentResolver: android.content.ContentResolver,
         onDocx: (bytes: ByteArray, name: String) -> Unit,
         onJsonUri: (Uri) -> Unit,
-        onJsonBytes: (ByteArray) -> Unit
+        onJsonBytes: (ByteArray, name: String?) -> Unit
     ) {
         viewModelScope.launch {
+            // One display-name read for every route: the Word and CSV paths name
+            // the new paper after the picked file, and a flat CSV has no title of
+            // its own. Content Urls carry an opaque row id in lastPathSegment, so
+            // only the provider's display name is usable.
+            val pickedName = contentResolver.displayName(picked)
             // Read a bounded prefix first. It is enough to tell a zip from
             // JSON and to keep a small bank in memory, but it never allocates
             // the whole large bank: a bigger JSON is streamed from the Uri.
@@ -432,7 +437,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         // rarely names its own paper). The provider's display
                         // name, not the opaque row id a content Uri carries in
                         // lastPathSegment.
-                        onDocx(bytes, contentResolver.displayName(picked) ?: "")
+                        onDocx(bytes, pickedName ?: "")
                     }
                     kind == com.mcqapp.ui.library.PickedArchive.BACKUP -> {
                         // Restore is the reverse of export: it replaces the
@@ -443,7 +448,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     pickedArchiveIsAnki(kind) -> {
                         // The deck is streamed straight from the Uri by the
                         // importer, so the archive is never held as bytes.
-                        val title = contentResolver.displayName(picked) ?: "deck.apkg"
+                        val title = pickedName ?: "deck.apkg"
                         importAnkiPackage(title) {
                             contentResolver.openInputStream(picked)
                         }
@@ -468,8 +473,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } catch (e: Exception) {
                     "unknown"
                 }
-                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
-                onJsonBytes(bytes)
+                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint, name=$pickedName")
+                onJsonBytes(bytes, pickedName)
             }
         }
     }
@@ -1087,14 +1092,15 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     suspend fun saveMistakesAsTag(paperId: String): Int = withContext(Dispatchers.IO) {
         try {
             val mistakes = repository.getMistakenQuestions(paperId)
-            mistakes.forEach { question ->
-                val merged = (question.tags + listOf(MISTAKES_POOL_TAG)).distinct()
-                repository.bulkUpdateQuestions(listOf(question.id), null, null, merged)
-            }
+            // One transaction for the whole pool: a half-tagged bank was
+            // possible when each question was its own write, and a big pool
+            // paid one transaction per row.
+            repository.addTagToQuestions(mistakes.map { it.id }, MISTAKES_POOL_TAG)
             mistakes.size
         } catch (e: Exception) {
             Logger.e("LIBVM", "Could not save the mistakes pool", e)
-            _exportError.value = msg(R.string.final_import_failed)
+            // Not an import: say what actually failed.
+            _exportError.value = msg(R.string.of_mistakes_pool_failed)
             0
         }
     }
@@ -1112,8 +1118,17 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * the write runs in [viewModelScope], and this event is buffered even if
      * no collector is attached during the rotation gap.
      */
-    private val _quickCaptureSaved = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    private val _quickCaptureSaved = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 1)
     val quickCaptureSaved: SharedFlow<String> = _quickCaptureSaved.asSharedFlow()
+
+    /**
+     * Clears the replayed completion after the NavHost has shown it. Without
+     * this, a configuration change would replay an old "saved" message again;
+     * without the replay buffer, a save that finished while no collector was
+     * attached (the rotation gap) was lost entirely.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun consumeQuickCaptureSaved() = _quickCaptureSaved.resetReplayCache()
 
     /**
      * Saves a shared snippet straight into the bank as a flashcard. A blank
@@ -1169,7 +1184,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     resolvedPaperId
                 } catch (e: Exception) {
                     Logger.e("LIBVM", "Quick capture failed", e)
-                    _exportError.value = msg(R.string.final_import_failed)
+                    // Not an import: naming "Import failed" for a snippet save
+                    // sent the learner looking for a file they never picked.
+                    _exportError.value = msg(R.string.of_quick_capture_failed)
                     null
                 }
             }

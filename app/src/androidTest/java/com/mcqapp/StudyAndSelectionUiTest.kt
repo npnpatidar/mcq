@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -1514,6 +1515,11 @@ class StudyAndSelectionUiTest {
         waitFor("All categories")
         compose.onNodeWithText("All categories", substring = false).performClick()
         waitFor("UITest ui-cbrowse-q1?")
+        // The unfiltered list puts the other root's card first: q2 now sits
+        // below the fold on the CI AVD, and a lazy list does not compose a row
+        // it has not scrolled to. Scroll it in, then assert it is really there.
+        compose.onNodeWithTag("browse-list")
+            .performScrollToNode(hasText("UITest ui-cbrowse-q2?", substring = true))
         waitFor("UITest ui-cbrowse-q2?")
     }
 

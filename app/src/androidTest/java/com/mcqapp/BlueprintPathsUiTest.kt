@@ -117,7 +117,11 @@ class BlueprintPathsUiTest {
         // onSaved already selected it, so the chip must not be clicked again —
         // the chip toggles, and a second click would deselect it.
         waitFor("UIBlueprint · 3")
-        compose.onNodeWithText("UIBlueprint · 3", substring = false).assertIsDisplayed()
+        // The setup sheet grew an exam-conditions block below the length row,
+        // so the resolved preview sits past the fold on the CI AVD. It exists;
+        // scroll it into view before asserting it is displayed.
+        compose.onNodeWithText("UIBlueprint · 3", substring = false)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("test-setup-preset-20").performScrollTo().performClick()
         waitFor("Physics · 10 of 15 questions")
         compose.onNodeWithText("Physics · 10 of 15 questions · 50%", substring = false)

@@ -184,7 +184,7 @@
     <string name="no_questions_match_this_filter">इस फ़िल्टर से कोई प्रश्न मेल नहीं खाता</string>
     <string name="none_top_level">कोई नहीं (शीर्ष स्तर)</string>
     <string name="nothing_due">अभी कुछ देय नहीं है।</string>
-    <string name="nothing_due_in_scope">चुनी गई श्रेणियों में कुछ देय नहीं है।</string>
+    <string name="nothing_due_in_scope">इस दायरे में कुछ देय नहीं है।</string>
     <string name="nothing_tricky">अभी कोई कठिन प्रश्न नहीं है।</string>
     <string name="nothing_tricky_in_scope">चुनी गई श्रेणियों में कोई कठिन प्रश्न नहीं है।</string>
     <string name="ok">ठीक है</string>

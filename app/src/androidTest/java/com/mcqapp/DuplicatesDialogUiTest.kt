@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,6 +16,7 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.navigation.McqNavHost
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,22 +40,29 @@ class DuplicatesDialogUiTest {
     @After
     fun cleanup() = runBlocking { repository.deletePaper(paperId) }
 
+    /**
+     * A block body on purpose: `= runBlocking { ... }` as an expression body
+     * infers the lambda's non-Unit value, and JUnit then refuses the whole
+     * class with "should be void" instead of running this test.
+     */
     @Test
-    fun mergeAndDeleteStayVisibleWithManyKeeperChips() = runBlocking {
-        repository.ensurePaperAndCategory(paperId, "UIDupes", "$paperId-cat", "Cat")
-        repeat(8) { i ->
-            repository.saveQuestion(
-                Question(
-                    id = "$paperId-q$i",
-                    categoryId = "$paperId-cat",
-                    text = "Same duplicate question?",
-                    options = listOf(
-                        QuestionOption("$paperId-a", "Alpha"),
-                        QuestionOption("$paperId-b", "Beta")
-                    ),
-                    correctOptionIds = setOf("$paperId-a")
+    fun mergeAndDeleteStayVisibleWithManyKeeperChips() {
+        runBlocking {
+            repository.ensurePaperAndCategory(paperId, "UIDupes", "$paperId-cat", "Cat")
+            repeat(8) { i ->
+                repository.saveQuestion(
+                    Question(
+                        id = "$paperId-q$i",
+                        categoryId = "$paperId-cat",
+                        text = "Same duplicate question?",
+                        options = listOf(
+                            QuestionOption("$paperId-a", "Alpha"),
+                            QuestionOption("$paperId-b", "Beta")
+                        ),
+                        correctOptionIds = setOf("$paperId-a")
+                    )
                 )
-            )
+            }
         }
         compose.setContent { McqNavHost(repository = repository) }
         compose.onNodeWithTag("paper-browse-$paperId").performClick()
@@ -63,13 +72,20 @@ class DuplicatesDialogUiTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
 
-        // The keeper preview in this label is dynamic; match the fixed prefix.
-        val mergePrefix = app.getString(R.string.duplicates_merge_history_into, "").trimEnd()
-        compose.onNodeWithText(mergePrefix, substring = true)
-            .performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText(
-            app.getString(R.string.duplicates_delete_others),
-            substring = false
-        ).performScrollTo().assertIsDisplayed()
+        // Both destructive/merge actions sit on their own row below the chips.
+        compose.onNodeWithTag("duplicates-merge").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("duplicates-delete-others").performScrollTo().assertIsDisplayed()
+
+        // One way out, not two identical ones: "Done" closes the dialog and a
+        // second "Cancel" beside it said the same thing twice. Back/outside tap
+        // still dismisses through onDismissRequest.
+        compose.onNodeWithTag("duplicates-done").performScrollTo().assertIsDisplayed()
+        val exitActions = compose.onAllNodesWithTag("duplicates-done").fetchSemanticsNodes().size
+        assertTrue("the dialog should offer exactly one exit action, found $exitActions", exitActions == 1)
+        assertTrue(
+            "a second (Cancel) exit is still rendered",
+            compose.onAllNodesWithText(app.getString(R.string.cancel), substring = false)
+                .fetchSemanticsNodes().isEmpty()
+        )
     }
 }

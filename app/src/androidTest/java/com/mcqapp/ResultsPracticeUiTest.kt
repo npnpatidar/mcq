@@ -3,6 +3,7 @@ package com.mcqapp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -127,6 +128,14 @@ class ResultsPracticeUiTest {
         }
 
         // The practice headline leads with the recorded target, not the score.
+        // The new "next step" hero sits above this card, so on the CI AVD the
+        // practice card is no longer inside the first viewport — a lazy list
+        // does not compose it until it is scrolled to.
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("results-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasText("Targeted practice", substring = true))
         waitFor("Targeted practice")
         compose.onNodeWithText("Targeted practice", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Weakest topics", substring = true).assertIsDisplayed()

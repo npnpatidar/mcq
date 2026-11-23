@@ -160,6 +160,11 @@ class SearchUiTest {
          */
         const val MANY = 260
         const val FEW = 3
-        val COUNT_LABEL = Regex("""^\d+ matches?$""")
+        /**
+         * Both live forms: the exact total ("260 matches") and the bounded one
+         * ("200+ matches") that shows while the full walk is still counting.
+         * Pinning only the exact form left the "+" unobservable.
+         */
+        val COUNT_LABEL = Regex("""^\d+\+? matches?$""")
     }
 }

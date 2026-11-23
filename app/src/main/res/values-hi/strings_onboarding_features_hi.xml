@@ -53,6 +53,7 @@
     <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">पंक्ति %1$d में उत्तर a, b, c या d होना चाहिए।</string>
     <string name="of_csv_blank_question" tools:ignore="PluralsCandidate">पंक्ति %1$d में कोई प्रश्न नहीं है, इसलिए उसे छोड़ दिया गया।</string>
     <string name="of_csv_no_questions">उस फ़ाइल में कोई प्रश्न नहीं मिला।</string>
+    <string name="of_csv_too_large">वह CSV/TSV बैंक 4 MB आयात सीमा से अधिक है। उसे छोटी फ़ाइलों में बाँटें, या JSON के रूप में आयात करें।</string>
 
     <!-- Quick capture from shared text -->
     <string name="of_quick_capture_title">बैंक में सहेजें</string>
@@ -65,6 +66,8 @@
     <string name="of_quick_capture_saved">कार्ड आपके बैंक में सहेजा गया</string>
     <string name="of_quick_capture_new_paper">नया पेपर</string>
     <string name="of_quick_capture_missing_front">सहेजने से पहले सामने का हिस्सा भरें।</string>
+    <string name="of_quick_capture_failed">कार्ड सहेजा नहीं जा सका। फिर से कोशिश करें।</string>
+    <string name="of_mistakes_pool_failed">गलतियों का पूल सहेजा नहीं जा सका। फिर से कोशिश करें।</string>
 
     <!-- Keyboard shortcuts -->
     <string name="of_keyboard_hint" tools:ignore="UnusedResources">कीबोर्ड: स्पेस दिखाएँ / आगे · 1–4 ग्रेड · तीर कुंजियाँ नेविगेट करें</string>

@@ -53,6 +53,7 @@
     <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">The answer in row %1$d must be a, b, c or d.</string>
     <string name="of_csv_blank_question" tools:ignore="PluralsCandidate">Row %1$d has no question and was skipped.</string>
     <string name="of_csv_no_questions">No questions were found in that file.</string>
+    <string name="of_csv_too_large">That CSV/TSV bank is over the 4 MB import limit. Split it into smaller files, or import it as JSON.</string>
 
     <!-- Quick capture from shared text -->
     <string name="of_quick_capture_title">Save to bank</string>
@@ -65,6 +66,8 @@
     <string name="of_quick_capture_saved">Card saved to your bank</string>
     <string name="of_quick_capture_new_paper">New paper</string>
     <string name="of_quick_capture_missing_front">Add a front before saving.</string>
+    <string name="of_quick_capture_failed">Could not save the card. Please try again.</string>
+    <string name="of_mistakes_pool_failed">Could not save the mistakes pool. Please try again.</string>
 
     <!-- Keyboard shortcuts -->
     <string name="of_keyboard_hint" tools:ignore="UnusedResources">Keyboard: Space reveal / next · 1–4 grade · arrow keys navigate</string>

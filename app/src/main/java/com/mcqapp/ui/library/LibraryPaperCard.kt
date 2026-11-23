@@ -69,6 +69,7 @@ import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.rollUpCategoryCounts
 import com.mcqapp.domain.totalCategoryCounts
+import com.mcqapp.ui.importscreen.displayTitle
 import com.mcqapp.util.Logger
 
 /** How a paper card's category area is presented (D1): one state, not two booleans. */
@@ -197,7 +198,10 @@ internal fun PaperCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        paper.title,
+                        // A fallback import title is a stable token in storage
+                        // ("Imported Questions"); the learning-facing card
+                        // shows it in the active locale instead of English.
+                        displayTitle(paper.title),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.testTag("paper-title-${paper.id}")
                     )

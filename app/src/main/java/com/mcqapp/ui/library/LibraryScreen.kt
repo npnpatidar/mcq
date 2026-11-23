@@ -281,8 +281,9 @@ fun LibraryScreen(
                 com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonUri = it
                 navController.navigate("import/direct")
             },
-            onJsonBytes = {
-                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = it
+            onJsonBytes = { bytes, name ->
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonBytes = bytes
+                com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonName = name
                 navController.navigate("import/direct")
             }
         )

@@ -63,7 +63,6 @@
         <item quantity="other">%1$d प्रतिलिपियाँ</item>
     </plurals>
     <!-- पुराना लेबल: अब डायलॉग में ही सामने-सामने तुलना दिखती है, यह कोई एक्शन नहीं है। -->
-    <string name="duplicates_compare" tools:ignore="UnusedResources">सामने-सामने तुलना करें</string>
     <string name="duplicates_done">हो गया</string>
     <string name="duplicates_keep_numbered">#%1$d रखें</string>
     <string name="duplicates_keep_candidate">प्रतिलिपि %1$d रखें: %2$s</string>

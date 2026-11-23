@@ -80,20 +80,32 @@ class StudyPolishUiTest {
         }
     }
 
-    /** The variable clock line lives inside a clickable parent with semantics. */
-    private fun clockStateText(): String? {
-        val nodes = compose.onAllNodesWithTag("study-clock-state", useUnmergedTree = true)
+    /**
+     * The variable clock line, read from the node that actually renders text.
+     * The tag sits on a Text inside a merged, clickable parent, so the unmerged
+     * tree is required; taking the first node blindly could read a stale or
+     * blank stand-in, which is why the first *text-bearing* node wins.
+     */
+    private fun clockStateText(): String? =
+        compose.onAllNodesWithTag("study-clock-state", useUnmergedTree = true)
             .fetchSemanticsNodes()
-        if (nodes.isEmpty()) return null
-        return nodes.first().config
-            .getOrElse(SemanticsProperties.Text) { emptyList() }
-            .joinToString("") { it.text }
-    }
+            .mapNotNull { node ->
+                node.config.getOrElse(SemanticsProperties.Text) { emptyList() }
+                    .joinToString("") { it.text }
+                    .takeIf { it.isNotBlank() }
+            }
+            .firstOrNull()
 
+    /**
+     * Running means the clock offers "Pause" and carries no "Paused" label.
+     * Both words are the composable's own resources, so a translation or a
+     * renamed verb cannot make this silently true.
+     */
     private fun cardIsRunning(): Boolean {
-        val text = clockStateText().orEmpty()
-        val paused = app.getString(R.string.clock_paused)
-        return text.contains(app.getString(R.string.r2_study_pause)) && !text.contains(paused)
+        val text = clockStateText() ?: return false
+        val pauseVerb = app.getString(R.string.r2_study_pause)
+        val pausedLabel = app.getString(R.string.clock_paused)
+        return text.startsWith(pauseVerb) && !text.contains(pausedLabel)
     }
 
     /**
@@ -185,9 +197,11 @@ class StudyPolishUiTest {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("study-resume-break").fetchSemanticsNodes().isEmpty()
         }
-        // Answering still works after the resume.
+        // Answering still works after the resume: Check stages the simplified
+        // grade, and Next persists it and pulls the eleventh review.
         compose.onNodeWithText("Alpha", substring = false).performClick()
         compose.onNodeWithTag("study-check").performClick()
+        compose.onNodeWithTag("study-next").performClick()
         waitFor("Reviewed 11 this session")
     }
 }

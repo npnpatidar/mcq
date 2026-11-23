@@ -663,6 +663,10 @@ fun BrowseScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                // Stable anchor for tests that must scroll a row into view: a
+                // lazy list only composes what the viewport holds, so a row
+                // below the fold has no semantics until the list is scrolled.
+                .testTag("browse-list")
                 .padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1564,13 +1568,16 @@ fun BrowseScreen(
                                 // destructive/merge actions on their own row so
                                 // they never sit off the right edge.
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick = {
-                                        viewModel.resolveDuplicates(group, keeper, merge = true) { changed ->
-                                            if (changed > 0) sendMessage(
-                                                UiMessage(mergeText, UiMessageTone.Success)
-                                            )
-                                        }
-                                    }) {
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.resolveDuplicates(group, keeper, merge = true) { changed ->
+                                                if (changed > 0) sendMessage(
+                                                    UiMessage(mergeText, UiMessageTone.Success)
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("duplicates-merge")
+                                    ) {
                                         Text(
                                             stringResource(
                                                 R.string.duplicates_merge_history_into,
@@ -1578,13 +1585,16 @@ fun BrowseScreen(
                                             )
                                         )
                                     }
-                                    TextButton(onClick = {
-                                        viewModel.resolveDuplicates(group, keeper, merge = false) { changed ->
-                                            if (changed > 0) sendMessage(
-                                                UiMessage(deleteOthersText, UiMessageTone.Success)
-                                            )
-                                        }
-                                    }) { Text(stringResource(R.string.duplicates_delete_others)) }
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.resolveDuplicates(group, keeper, merge = false) { changed ->
+                                                if (changed > 0) sendMessage(
+                                                    UiMessage(deleteOthersText, UiMessageTone.Success)
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("duplicates-delete-others")
+                                    ) { Text(stringResource(R.string.duplicates_delete_others)) }
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
@@ -1592,16 +1602,15 @@ fun BrowseScreen(
                     }
                 },
                 confirmButton = {
-                    // The groups already sit side by side in the dialog body;
-                    // this button is simply the way out, not a second "compare"
-                    // action. Keep one clear primary action and a plain label.
-                    TextButton(onClick = { showDuplicatesDialog = false }) {
+                    // One way out. The groups already sit side by side in the
+                    // dialog body, so "Done" is the only exit: a second
+                    // "Cancel" beside it said the same thing twice. Back and an
+                    // outside tap still dismiss through onDismissRequest.
+                    TextButton(
+                        onClick = { showDuplicatesDialog = false },
+                        modifier = Modifier.testTag("duplicates-done")
+                    ) {
                         Text(stringResource(R.string.duplicates_done))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDuplicatesDialog = false }) {
-                        Text(stringResource(R.string.cancel))
                     }
                 }
             )

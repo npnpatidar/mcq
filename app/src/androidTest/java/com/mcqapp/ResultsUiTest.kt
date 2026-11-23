@@ -2,12 +2,12 @@ package com.mcqapp
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescriptionExactly
-import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -175,17 +175,22 @@ class ResultsUiTest {
         setContentCapturingMessages {}
         waitForSpoken(Verdict.CORRECT)
 
-        compose.onNodeWithTag("results-list").performScrollToNode(
-            hasText(chipLabel(ReviewFilters.CORRECT), substring = false)
-        )
+        // Addressed by tag, not by label: a chip's word ("Skipped") is also the
+        // verdict word on the row it filters, so text matched two nodes.
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasTestTag("results-filter-${ReviewFilters.CORRECT}"))
         listOf(
             ReviewFilters.ALL, ReviewFilters.CORRECT, ReviewFilters.WRONG,
             ReviewFilters.SKIPPED, ReviewFilters.UNGRADED
         ).forEach { key ->
-            compose.onNodeWithText(chipLabel(key), substring = false).assertIsDisplayed()
+            compose.onNodeWithTag("results-filter-$key").assertIsDisplayed()
+            // The visible label is still the localized word, so the chip is
+            // not just a nameless box.
+            compose.onNodeWithTag("results-filter-$key")
+                .assertTextContains(chipLabel(key))
         }
 
-        compose.onNodeWithText(chipLabel(ReviewFilters.CORRECT), substring = false).performClick()
+        compose.onNodeWithTag("results-filter-${ReviewFilters.CORRECT}").performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.CORRECT), substring = false)
                 .fetchSemanticsNodes().isNotEmpty() &&
@@ -200,7 +205,7 @@ class ResultsUiTest {
             .assertIsDisplayed()
 
         // Going back to All restores the other verdict rows.
-        compose.onNodeWithText(chipLabel(ReviewFilters.ALL), substring = false).performClick()
+        compose.onNodeWithTag("results-filter-${ReviewFilters.ALL}").performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithContentDescription(spoken(Verdict.WRONG), substring = false)
                 .fetchSemanticsNodes().isNotEmpty()

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -98,6 +99,11 @@ class PassageMemberDeepLinkUiTest {
             compose.onAllNodesWithText(MEMBER_STEM, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
+        // Scroll it in and prove it is on screen before tapping: a touch at an
+        // off-window coordinate is dropped without an error, which reads as
+        // "tapping a member does nothing".
+        compose.onNodeWithText(MEMBER_STEM, substring = true)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(MEMBER_STEM, substring = true).performClick()
 
         val landed = "BROWSE $PAPER $QUESTION"

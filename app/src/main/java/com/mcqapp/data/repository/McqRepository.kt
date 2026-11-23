@@ -1892,6 +1892,13 @@ class McqRepository internal constructor(
         difficulty: com.mcqapp.domain.Difficulty?,
         tags: List<String>?
     ) = questionStore.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
+
+    /**
+     * Adds one tag to many questions in a single transaction, keeping their
+     * existing tags. Returns how many rows changed.
+     */
+    suspend fun addTagToQuestions(questionIds: Collection<String>, tag: String): Int =
+        questionStore.addTagToQuestions(questionIds, tag)
     suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean =
         questionStore.swapQuestionOrder(firstId, secondId)
 
@@ -1914,9 +1921,11 @@ class McqRepository internal constructor(
     suspend fun getStudyQueueForQuestions(
         paperId: String,
         questionIds: Collection<String>,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /** Overrides the stored new-card toggle; see [StudyStore]. */
+        introduceNewCards: Boolean? = null
     ): List<com.mcqapp.domain.StudyCard> =
-        studyStore.getScopedStudyQueue(paperId, questionIds, now)
+        studyStore.getScopedStudyQueue(paperId, questionIds, now, introduceNewCards)
 
     /**
      * The card a pull-based session serves next, or null when nothing is due.

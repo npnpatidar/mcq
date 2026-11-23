@@ -69,6 +69,7 @@
     <string name="stats_calibration_contrast_disclosed">%1$s: %2$s, 90%% अंतराल %3$s से %4$s — %5$s</string>
     <string name="stats_calibration_easy_vs_good">आसान बनाम अच्छा</string>
     <string name="stats_calibration_empty">कैलिब्रेशन के लिए ऐसे कार्डों की समीक्षा चाहिए जिनका पहले से स्मरण स्तर रहा हो।</string>
+    <string name="stats_calibration_empty_timed">कैलिब्रेशन के लिए सही या गलत के आधार पर ग्रेड किए गए उत्तर चाहिए। यह इंस्टॉल आंशिक रूप से उत्तर देने के समय से ग्रेड करता है, इसलिए वे समीक्षाएँ शामिल नहीं की जातीं। यह प्रमाण जमा करने के लिए सेटिंग्स → अध्ययन / अंतरालित दोहराव में “केवल सही-गलत के आधार पर ग्रेड करें” चालू करें।</string>
     <string name="stats_calibration_excluded">%1$d संभावित जोड़े बाहर रखे गए (ओवरराइड, अनुमान, छोड़े गए, नए कार्ड, गुम पूर्वानुमान या परिणाम)</string>
     <string name="stats_calibration_first_exposure">पहली बार: %1$s %2$d, याद रखा %3$s (समय सारणी 90%% मानी गई)</string>
     <string name="stats_calibration_follow_up">अनुवर्ती (देय लेबल): %1$s %2$s, कुल %3$d</string>

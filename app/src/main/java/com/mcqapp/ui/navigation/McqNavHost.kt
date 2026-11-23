@@ -156,6 +156,7 @@ fun McqNavHost(repository: McqRepository) {
         libraryViewModel.quickCaptureSaved.collect {
             quickCaptureText = null
             messageBus.send(UiMessage(quickCaptureSavedText))
+            libraryViewModel.consumeQuickCaptureSaved()
         }
     }
     val importErrorMessage = if (importFailure != null) {
@@ -175,8 +176,9 @@ fun McqNavHost(repository: McqRepository) {
                 ImportDataHolder.pendingJsonUri = it
                 navigateWithGuard("import/direct", false)
             },
-            onJsonBytes = {
-                ImportDataHolder.pendingJsonBytes = it
+            onJsonBytes = { bytes, name ->
+                ImportDataHolder.pendingJsonBytes = bytes
+                ImportDataHolder.pendingJsonName = name
                 navigateWithGuard("import/direct", false)
             }
         )

@@ -401,6 +401,12 @@ fun ResultsScreen(
                         FilterChip(
                             selected = filterValue == key,
                             onClick = { viewModel.updateFilter(key) },
+                            // The chip's label is also a row's verdict word
+                            // ("Skipped" appears on a skipped question and on
+                            // this chip), so text alone cannot address the
+                            // chip. The tag is the filter key, the same stable
+                            // token the paging source compares.
+                            modifier = Modifier.testTag("results-filter-$key"),
                             label = { Text(stringResource(key.labelRes)) }
                         )
                     }

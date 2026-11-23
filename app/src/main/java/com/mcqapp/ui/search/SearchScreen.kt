@@ -202,17 +202,10 @@ fun SearchScreen(
                         // A bounded lower bound shows "N+" while the full
                         // walk finishes, then settles on the exact total from
                         // the same two-phase pipeline the pages use.
-                        if (resultCount!!.exact) {
-                            pluralStringResource(
-                                R.plurals.search_result_count,
-                                resultCount!!.lowerBound, resultCount!!.lowerBound
-                            )
-                        } else {
-                            pluralStringResource(
-                                R.plurals.search_result_count_more,
-                                resultCount!!.lowerBound, resultCount!!.lowerBound
-                            )
-                        },
+                        pluralStringResource(
+                            searchCountLabelRes(resultCount!!.exact),
+                            resultCount!!.lowerBound, resultCount!!.lowerBound
+                        ),
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
@@ -361,4 +354,14 @@ fun SearchScreen(
 internal fun backSnippetLabelRes(isFlashcard: Boolean): Int =
     if (isFlashcard) R.string.r2_browse_answer_snippet
     else R.string.r2_browse_explanation_snippet
+
+/**
+ * The live result-count line: the exact total once the full walk finished, or
+ * the bounded "N+" form while it is still counting. A pure choice so both
+ * branches are unit-testable without a composition — the "+" is the only
+ * visible difference, and it used to be decided inline in the composable.
+ */
+@androidx.annotation.PluralsRes
+internal fun searchCountLabelRes(exact: Boolean): Int =
+    if (exact) R.plurals.search_result_count else R.plurals.search_result_count_more
 

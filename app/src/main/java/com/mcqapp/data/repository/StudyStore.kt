@@ -176,7 +176,13 @@ internal class StudyStore(
     suspend fun getScopedStudyQueue(
         paperId: String,
         questionIds: Collection<String>,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /**
+         * Overrides the stored introduce-new-cards toggle. The empty state asks
+         * the opposite question ("would this scope have new cards if it were
+         * on?"), so it can offer exactly the flip. Null reads the config.
+         */
+        introduceNewCards: Boolean? = null
     ): List<com.mcqapp.domain.StudyCard> {
         val orderedIds = LinkedHashSet(questionIds).toList()
         if (orderedIds.isEmpty()) return emptyList()
@@ -194,7 +200,7 @@ internal class StudyStore(
                 (row.buriedUntil == null || row.buriedUntil <= now)
         }
         val pools = poolsOf(config, rows, now)
-        val fresh = if (config.introduceNewCards) {
+        val fresh = if (introduceNewCards ?: config.introduceNewCards) {
             orderedIds.filter { it !in knownIds }.map { id ->
                 com.mcqapp.domain.StudyCard(
                     id,

@@ -406,7 +406,9 @@ private fun CategoryTree(
                 }
             }
         }
-        if (line.hiddenAfter > 0) {
+        // Once revealed, hiddenAfter drops to 0 — keep the toggle on screen via
+        // the reveal key so "Show less" can fold the level back again.
+        if (line.hiddenAfter > 0 || node.id in expandedMore) {
             TextButton(
                 onClick = { onToggleMore(node.id) },
                 modifier = Modifier

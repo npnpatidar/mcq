@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.TestType
 import com.mcqapp.domain.UnfinishedTest
 
 /**
@@ -47,8 +48,15 @@ fun UnfinishedTestCard(
                     style = MaterialTheme.typography.titleSmall
                 )
                 Spacer(Modifier.height(4.dp))
+                // The stored token is a raw enum name; the setup sheet's own
+                // localised label is the one place that names a test type. A
+                // legacy/unknown token still reads as no subtitle, not as a
+                // made-up "Random".
                 Text(
-                    saved.snapshot.testType?.let { it.lowercase().replace('_', ' ') }.orEmpty(),
+                    saved.snapshot.testType
+                        ?.let { TestType.fromStorage(it) }
+                        ?.let { testTypeLabelText(it) }
+                        .orEmpty(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -138,12 +138,10 @@ fun McqNavHost(repository: McqRepository) {
     val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
     // Plain text shared from another app becomes a flashcard through a small
     // front/back dialog, not an import preview. Held in saveable state so a
-    // rotation cannot drop the shared snippet.
+    // rotation cannot drop the shared snippet — until Save is tapped, when
+    // it is cleared immediately so a rotation mid-write cannot re-offer it.
     val pendingQuickCapture by SharedImport.pendingText.collectAsStateWithLifecycle()
     var quickCaptureText by rememberSaveable { mutableStateOf<String?>(null) }
-    // Save completion and dismissal live here, not in the dialog: a dialog
-    // launched from a rotation-old composition cannot dismiss the new one.
-    var quickCaptureSaved by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pendingQuickCapture) {
         val captured = SharedImport.consumeText() ?: return@LaunchedEffect
         quickCaptureText = captured.text
@@ -151,11 +149,14 @@ fun McqNavHost(repository: McqRepository) {
     // Resolve in the composable body: LaunchedEffect's block is not @Composable.
     val importFailure = pendingImportError
     val quickCaptureSavedText = stringResource(R.string.of_quick_capture_saved)
-    LaunchedEffect(quickCaptureSaved) {
-        if (!quickCaptureSaved) return@LaunchedEffect
-        quickCaptureSaved = false
-        quickCaptureText = null
-        messageBus.send(UiMessage(quickCaptureSavedText))
+    // Completion is a one-shot event from the activity-scoped ViewModel, not a
+    // saveable flag in this composition. It is buffered in the VM, so a Save
+    // that finishes during a rotation is still reported once to the new side.
+    LaunchedEffect(Unit) {
+        libraryViewModel.quickCaptureSaved.collect {
+            quickCaptureText = null
+            messageBus.send(UiMessage(quickCaptureSavedText))
+        }
     }
     val importErrorMessage = if (importFailure != null) {
         stringResource(importFailure.resId, *importFailure.args.toTypedArray())
@@ -415,9 +416,11 @@ fun McqNavHost(repository: McqRepository) {
             papers = capturePapers,
             sharedText = text,
             onSave = { pid, pt, cid, ct, front, back, tag ->
+                // Dismiss on the tap, not after the write: the VM owns the
+                // write in its own scope and emits a one-shot event when done.
+                quickCaptureText = null
                 libraryViewModel.saveQuickCapture(pid, pt, cid, ct, front, back, tag)
             },
-            onSaved = { quickCaptureSaved = true },
             onDismiss = { quickCaptureText = null }
         )
     }

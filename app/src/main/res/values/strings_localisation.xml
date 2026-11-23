@@ -79,7 +79,7 @@
         <item quantity="one">%1$d match</item>
         <item quantity="other">%1$d matches</item>
     </plurals>
-    <plurals name="search_result_count_more" tools:ignore="UnusedResources">
+    <plurals name="search_result_count_more">
         <item quantity="one">%1$d+ match</item>
         <item quantity="other">%1$d+ matches</item>
     </plurals>

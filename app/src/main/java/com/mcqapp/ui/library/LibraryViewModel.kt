@@ -32,7 +32,10 @@ import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import java.io.InputStream
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -1102,11 +1105,24 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * One-shot notification that a quick-capture write finished, consumed by
+     * the NavHost to dismiss the dialog and show the confirmation. Living in
+     * the activity-scoped ViewModel (not in a dialog tied to one composition)
+     * is what makes a Save survive rotation: the dialog is closed on the tap,
+     * the write runs in [viewModelScope], and this event is buffered even if
+     * no collector is attached during the rotation gap.
+     */
+    private val _quickCaptureSaved = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val quickCaptureSaved: SharedFlow<String> = _quickCaptureSaved.asSharedFlow()
+
+    /**
      * Saves a shared snippet straight into the bank as a flashcard. A blank
      * paper/category name creates one, so capturing is a two-field action even
-     * on a fresh install. Returns the paper id for the confirmation snackbar.
+     * on a fresh install. Fire-and-forget by design: the caller closes the
+     * dialog on the tap, and completion is reported through [quickCaptureSaved]
+     * so a rotation mid-write cannot re-offer the snippet and write it twice.
      */
-    suspend fun saveQuickCapture(
+    fun saveQuickCapture(
         paperId: String?,
         paperTitle: String,
         categoryId: String?,
@@ -1114,45 +1130,50 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         front: String,
         back: String,
         tag: String
-    ): String? = withContext(Dispatchers.IO) {
-        try {
-            val resolvedPaperId = if (paperId.isNullOrBlank()) {
-                val id = "paper-" + System.currentTimeMillis().toString(36)
-                repository.savePaper(
-                    Paper(id = id, title = paperTitle.trim().ifBlank {
-                        com.mcqapp.data.io.FALLBACK_PAPER_TITLE
-                    })
-                )
-                id
-            } else paperId
-            val resolvedCategoryId = if (categoryId.isNullOrBlank()) {
-                repository.addCategory(
-                    resolvedPaperId,
-                    categoryTitle.trim().ifBlank {
-                        com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
-                    },
+    ) {
+        viewModelScope.launch {
+            val savedPaperId = withContext(Dispatchers.IO) {
+                try {
+                    val resolvedPaperId = if (paperId.isNullOrBlank()) {
+                        val id = "paper-" + System.currentTimeMillis().toString(36)
+                        repository.savePaper(
+                            Paper(id = id, title = paperTitle.trim().ifBlank {
+                                com.mcqapp.data.io.FALLBACK_PAPER_TITLE
+                            })
+                        )
+                        id
+                    } else paperId
+                    val resolvedCategoryId = if (categoryId.isNullOrBlank()) {
+                        repository.addCategory(
+                            resolvedPaperId,
+                            categoryTitle.trim().ifBlank {
+                                com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+                            },
+                            null
+                        )
+                    } else categoryId
+                    val id = "q-" + System.currentTimeMillis().toString(36) + "-" +
+                        (0..9999).random()
+                    repository.saveQuestion(
+                        com.mcqapp.domain.Question(
+                            id = id,
+                            categoryId = resolvedCategoryId,
+                            text = front.trim(),
+                            options = emptyList(),
+                            correctOptionIds = emptySet(),
+                            explanation = back.trim(),
+                            tags = if (tag.isBlank()) emptyList() else listOf(tag.trim())
+                        )
+                    )
+                    refreshStudyCounts()
+                    resolvedPaperId
+                } catch (e: Exception) {
+                    Logger.e("LIBVM", "Quick capture failed", e)
+                    _exportError.value = msg(R.string.final_import_failed)
                     null
-                )
-            } else categoryId
-            val id = "q-" + System.currentTimeMillis().toString(36) + "-" +
-                (0..9999).random()
-            repository.saveQuestion(
-                com.mcqapp.domain.Question(
-                    id = id,
-                    categoryId = resolvedCategoryId,
-                    text = front.trim(),
-                    options = emptyList(),
-                    correctOptionIds = emptySet(),
-                    explanation = back.trim(),
-                    tags = if (tag.isBlank()) emptyList() else listOf(tag.trim())
-                )
-            )
-            refreshStudyCounts()
-            resolvedPaperId
-        } catch (e: Exception) {
-            Logger.e("LIBVM", "Quick capture failed", e)
-            _exportError.value = msg(R.string.final_import_failed)
-            null
+                }
+            }
+            if (savedPaperId != null) _quickCaptureSaved.emit(savedPaperId)
         }
     }
 

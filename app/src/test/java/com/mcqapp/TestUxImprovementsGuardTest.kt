@@ -271,4 +271,17 @@ class TestUxImprovementsGuardTest {
             "unfinished-test-card" in File("src/main/java/com/mcqapp/ui/common/UnfinishedTestCard.kt").readText()
         )
     }
+
+    @Test
+    fun unfinishedCardNamesTheTestTypeThroughTheLocalisedLabel() {
+        val card = File("src/main/java/com/mcqapp/ui/common/UnfinishedTestCard.kt").readText()
+        assertTrue(
+            "the card must reuse the setup sheet's label map",
+            "testTypeLabelText" in card && "TestType.fromStorage" in card
+        )
+        assertFalse(
+            "a raw enum name lowercased is not localised copy",
+            "lowercase().replace('_', ' ')" in card
+        )
+    }
 }

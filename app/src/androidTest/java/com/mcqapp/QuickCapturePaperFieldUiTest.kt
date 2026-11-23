@@ -31,8 +31,7 @@ class QuickCapturePaperFieldUiTest {
             QuickCaptureDialog(
                 papers = emptyList(),
                 sharedText = "Shared front",
-                onSave = { _, _, _, _, _, _, _ -> null },
-                onSaved = {},
+                onSave = { _, _, _, _, _, _, _ -> },
                 onDismiss = {}
             )
         }

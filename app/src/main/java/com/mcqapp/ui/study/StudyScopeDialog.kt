@@ -32,6 +32,14 @@ import com.mcqapp.data.local.TagCount
 internal enum class ScopeChoice { WHOLE, TAG, MISTAKES }
 
 /**
+ * A TAG scope is only actionable once a concrete tag is selected. Kept as a
+ * pure seam so the guard can be tested on the JVM; the dialog both disables the
+ * Start button with it and re-checks inside the click handler.
+ */
+internal fun canStartScope(choice: ScopeChoice, selectedTag: String): Boolean =
+    choice != ScopeChoice.TAG || selectedTag.isNotBlank()
+
+/**
  * Reuses the exact-tag picker already used by the Test setup sheet: folded tag
  * identity, chip label with a count. Choosing a scope navigates to a fresh
  * Study route, so the ViewModel key changes and the sitting is rebuilt from the
@@ -140,6 +148,7 @@ internal fun StudyScopeDialog(
         },
         confirmButton = {
             TextButton(
+                enabled = canStartScope(choice, selectedTag),
                 onClick = {
                     when (choice) {
                         ScopeChoice.WHOLE -> onPickWhole()

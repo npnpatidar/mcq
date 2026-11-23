@@ -23,7 +23,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -32,7 +31,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.Paper
-import kotlinx.coroutines.launch
 
 /**
  * The paper field starts on the first real paper, but the papers flow can still
@@ -54,12 +52,11 @@ internal fun initialQuickCapturePaperId(current: String, papers: List<Paper>): S
 internal fun QuickCaptureDialog(
     papers: List<Paper>,
     sharedText: String,
-    onSave: suspend (
+    onSave: (
         paperId: String?, paperTitle: String,
         categoryId: String?, categoryTitle: String,
         front: String, back: String, tag: String
-    ) -> String?,
-    onSaved: (String) -> Unit,
+    ) -> Unit,
     onDismiss: () -> Unit
 ) {
     // Every field the learner typed is saveable: a rotation used to clear the
@@ -81,11 +78,7 @@ internal fun QuickCaptureDialog(
     var selectedCategoryId by rememberSaveable { mutableStateOf("") }
     var paperExpanded by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
     var frontError by remember { mutableStateOf(false) }
-    // Tied to this composition: on rotation the in-flight save is cancelled
-    // instead of writing through a detached MainScope into a dead composition.
-    val saveScope = rememberCoroutineScope()
     val selectedPaper = papers.firstOrNull { it.id == selectedPaperId }
     val categories = selectedPaper?.categories.orEmpty()
 
@@ -203,30 +196,24 @@ internal fun QuickCaptureDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = !saving,
                 onClick = {
                     if (front.isBlank()) {
                         frontError = true
                         return@TextButton
                     }
-                    saving = true
-                    saveScope.launch {
-                        val paperId = onSave(
-                            selectedPaperId.ifBlank { null },
-                            newPaperTitle,
-                            selectedCategoryId.ifBlank { null },
-                            newCategoryTitle,
-                            front,
-                            back,
-                            tag
-                        )
-                        saving = false
-                        // The NavHost owns dismissal through its saveable flag.
-                        // Dismissing here reached a dead composition after a
-                        // rotation and left the shared text queued for a second
-                        // Save — which wrote a duplicate card.
-                        if (paperId != null) onSaved("saved")
-                    }
+                    // Hand the fields to the owner on the tap. The owner clears
+                    // the offered snippet immediately and lets the ViewModel
+                    // finish the write in its own scope, so a rotation here
+                    // cannot re-offer this dialog and save a second card.
+                    onSave(
+                        selectedPaperId.ifBlank { null },
+                        newPaperTitle,
+                        selectedCategoryId.ifBlank { null },
+                        newCategoryTitle,
+                        front,
+                        back,
+                        tag
+                    )
                 },
                 modifier = Modifier.testTag("quick-capture-save")
             ) { Text(stringResource(R.string.of_quick_capture_save)) }

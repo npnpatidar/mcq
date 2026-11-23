@@ -66,7 +66,7 @@ fun SearchScreen(
     // The query the visible rows were actually produced for. The snippet below
     // explains a row's match, so it must use this, not the live text field.
     val committedQuery by viewModel.committedQuery.collectAsStateWithLifecycle()
-    val exactCount by viewModel.resultCount.collectAsStateWithLifecycle()
+    val resultCount by viewModel.resultCount.collectAsStateWithLifecycle()
     val papers by viewModel.papers.collectAsStateWithLifecycle()
     val chips by viewModel.chips.collectAsStateWithLifecycle()
     val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
@@ -189,20 +189,30 @@ fun SearchScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = announced
                     )
-                refresh is LoadState.NotLoading && exactCount == 0 && state.query.isNotBlank() ->
+                refresh is LoadState.NotLoading &&
+                    resultCount?.exact == true && resultCount!!.lowerBound == 0 &&
+                    state.query.isNotBlank() ->
                     Text(
                         stringResource(R.string.no_matches),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = announced
                     )
-                exactCount != null && exactCount!! > 0 ->
+                resultCount != null && resultCount!!.lowerBound > 0 ->
                     Text(
-                        // An exact total from the repository's count of the
-                        // same two-phase pipeline the pages use — no "120+".
-                        pluralStringResource(
-                            R.plurals.search_result_count,
-                            exactCount!!, exactCount!!
-                        ),
+                        // A bounded lower bound shows "N+" while the full
+                        // walk finishes, then settles on the exact total from
+                        // the same two-phase pipeline the pages use.
+                        if (resultCount!!.exact) {
+                            pluralStringResource(
+                                R.plurals.search_result_count,
+                                resultCount!!.lowerBound, resultCount!!.lowerBound
+                            )
+                        } else {
+                            pluralStringResource(
+                                R.plurals.search_result_count_more,
+                                resultCount!!.lowerBound, resultCount!!.lowerBound
+                            )
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )

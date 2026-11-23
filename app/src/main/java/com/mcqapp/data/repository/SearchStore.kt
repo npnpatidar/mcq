@@ -23,12 +23,43 @@ internal fun QuestionSearch.Hit.matches(filter: SearchScopeFilter): Boolean =
         (filter.categoryIds.isEmpty() || question.categoryId in filter.categoryIds)
 
 /**
- * The exact total for the committed search request. It walks the same two-phase
- * pipeline the pager walks — [McqRepository.searchPage] (SQL candidate window
- * followed by the in-memory [QuestionSearch.filter]) — and then applies the
- * paper/category chips. Counting this way (rather than trusting Paging's
- * `itemCount`, which only knows loaded pages) is why the header can print an
- * exact number instead of "120+". Runs on IO so a broad query does not jank.
+ * A count for the search header. [lowerBound] is always the number of matching
+ * hits walked so far; [exact] is true only when the whole candidate set was
+ * exhausted. While it is false the UI shows "N+" so a broad query paints a
+ * header immediately instead of blocking on the full walk.
+ */
+data class SearchCount(val lowerBound: Int, val exact: Boolean)
+
+/**
+ * Walks at most [maxWindows] candidate windows of the same two-phase pipeline
+ * the pager walks — [McqRepository.searchPage] (SQL candidate window followed
+ * by the in-memory [QuestionSearch.filter]) — and applies the paper/category
+ * chips. Extracted from the repository so the bounded/count-only path is a
+ * pure, JVM-testable seam: a fake `fetch` can assert how far the walk went.
+ * The bound is what keeps the header non-blocking; callers that need the exact
+ * total call again with the default (unbounded) setting.
+ */
+internal suspend fun countSearchHits(
+    fetch: suspend (offset: Int, limit: Int) -> GlobalSearchPage,
+    matches: (QuestionSearch.Hit) -> Boolean,
+    maxWindows: Int = Int.MAX_VALUE
+): SearchCount {
+    var offset = 0
+    var count = 0
+    repeat(maxWindows) {
+        val page = fetch(offset, SEARCH_COUNT_WINDOW)
+        count += page.hits.count(matches)
+        offset = page.nextOffset ?: return SearchCount(count, true)
+    }
+    return SearchCount(count, false)
+}
+
+/**
+ * The exact total for the committed search request, used once the cheap pass
+ * has already shown a lower bound. Counting this way (rather than trusting
+ * Paging's `itemCount`, which only knows loaded pages) is why the header can
+ * settle on an exact number instead of a permanent "120+". Runs on IO so a
+ * broad query does not jank.
  */
 internal suspend fun McqRepository.searchCount(
     query: String,
@@ -36,17 +67,32 @@ internal suspend fun McqRepository.searchCount(
     filter: SearchScopeFilter = SearchScopeFilter()
 ): Int = withContext(Dispatchers.IO) {
     if (query.isBlank()) return@withContext 0
-    var offset = 0
-    var count = 0
-    while (true) {
-        val page = searchPage(query, scope, offset, SEARCH_COUNT_WINDOW)
-        count += page.hits.count { it.matches(filter) }
-        offset = page.nextOffset ?: break
-    }
-    count
+    countSearchHits(
+        fetch = { offset, limit -> searchPage(query, scope, offset, limit) },
+        matches = { it.matches(filter) }
+    ).lowerBound
+}
+
+/**
+ * The prompt, bounded first pass for a broad query. One SQL window (with its
+ * two chunked provenance lookups) is enough to show "N+" while the exact walk
+ * continues off the critical path.
+ */
+internal suspend fun McqRepository.searchCountBounded(
+    query: String,
+    scope: QuestionSearch.Scope,
+    filter: SearchScopeFilter = SearchScopeFilter()
+): SearchCount = withContext(Dispatchers.IO) {
+    if (query.isBlank()) return@withContext SearchCount(0, true)
+    countSearchHits(
+        fetch = { offset, limit -> searchPage(query, scope, offset, limit) },
+        matches = { it.matches(filter) },
+        maxWindows = SEARCH_BOUNDED_WINDOWS
+    )
 }
 
 private const val SEARCH_COUNT_WINDOW = 200
+private const val SEARCH_BOUNDED_WINDOWS = 1
 
 /**
  * A paging source that narrows the repository's already-filtered hits by the

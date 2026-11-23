@@ -497,7 +497,9 @@ internal fun PaperCard(
                                     rolled = rolled,
                                     onToggle = onToggleCategory
                                 )
-                                if (line.hiddenAfter > 0) {
+                                // A revealed level has hiddenAfter == 0; the
+                                // reveal key keeps its "Show less" toggle alive.
+                                if (line.hiddenAfter > 0 || line.node.id in showMoreIds) {
                                     TextButton(
                                         onClick = {
                                             val key = line.node.id

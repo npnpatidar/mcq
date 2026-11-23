@@ -62,7 +62,9 @@
         <item quantity="one">%1$d copy</item>
         <item quantity="other">%1$d copies</item>
     </plurals>
-    <string name="duplicates_compare">Compare side by side</string>
+    <!-- Legacy label: the dialog body now compares side by side, so this is no longer an action. -->
+    <string name="duplicates_compare" tools:ignore="UnusedResources">Compare side by side</string>
+    <string name="duplicates_done">Done</string>
     <string name="duplicates_keep_numbered">Keep #%1$d</string>
     <string name="duplicates_keep_candidate">Keep copy %1$d: %2$s</string>
     <string name="duplicates_delete_others">Delete the others</string>

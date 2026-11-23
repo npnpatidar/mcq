@@ -11,8 +11,10 @@ import com.mcqapp.McqApplication
 import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.repository.FilteredSearchPagingSource
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.SearchCount
 import com.mcqapp.data.repository.SearchScopeFilter
 import com.mcqapp.data.repository.searchCount
+import com.mcqapp.data.repository.searchCountBounded
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.QuestionSearch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,6 +33,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -132,11 +135,29 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         .map { it.query }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    /** The exact number of hits for the committed request, or null until it resolves. */
-    val resultCount: StateFlow<Int?> = committed
-        .map { request ->
-            if (request.query.isBlank()) 0
-            else repository.searchCount(request.query, request.scope, request.filter)
+    /**
+     * The header count for the committed request: a bounded "N+" first so a
+     * broad query shows something immediately, then the exact total. Null only
+     * before the first committed request resolves.
+     */
+    val resultCount: StateFlow<SearchCount?> = committed
+        .transform { request ->
+            if (request.query.isBlank()) {
+                emit(SearchCount(0, true))
+            } else {
+                val bounded = repository.searchCountBounded(
+                    request.query, request.scope, request.filter
+                )
+                emit(bounded)
+                if (!bounded.exact) {
+                    emit(
+                        SearchCount(
+                            repository.searchCount(request.query, request.scope, request.filter),
+                            true
+                        )
+                    )
+                }
+            }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 

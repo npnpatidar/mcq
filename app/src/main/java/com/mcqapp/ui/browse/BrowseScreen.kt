@@ -1592,8 +1592,11 @@ fun BrowseScreen(
                     }
                 },
                 confirmButton = {
+                    // The groups already sit side by side in the dialog body;
+                    // this button is simply the way out, not a second "compare"
+                    // action. Keep one clear primary action and a plain label.
                     TextButton(onClick = { showDuplicatesDialog = false }) {
-                        Text(stringResource(R.string.duplicates_compare))
+                        Text(stringResource(R.string.duplicates_done))
                     }
                 },
                 dismissButton = {

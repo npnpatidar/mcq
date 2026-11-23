@@ -67,6 +67,30 @@ class CategoryTreePagerTest {
         )
         assertEquals(11, revealed.size)
         assertEquals(0, revealed.last().hiddenAfter)
+        // The toggle must survive the reveal: its key row stays on screen (now
+        // in the middle) so the call sites can still render "Show less".
+        assertTrue(
+            "the reveal key must remain on screen so the toggle can fold it again",
+            revealed.any { it.node.id == "child6" }
+        )
+    }
+
+    @Test
+    fun collapsingARevealedLevelRestoresTheBoundedPage() {
+        val tree = listOf(node("p", (1..10).map { node("child$it") }))
+        val allIds = CategoryTreePager.allIds(tree)
+        val revealed = CategoryTreePager.page(
+            tree, expanded = allIds, revealed = setOf("child6"), limit = 6
+        )
+        assertTrue(revealed.any { it.node.id == "child6" })
+        // Tapping the toggle removes the key from `revealed`; the pager folds
+        // back to six siblings and re-reports the hidden count on the last row.
+        val collapsed = CategoryTreePager.page(
+            tree, expanded = allIds, revealed = emptySet(), limit = 6
+        )
+        assertEquals(7, collapsed.size)
+        assertEquals(4, collapsed.last().hiddenAfter)
+        assertEquals("child6", collapsed.last().node.id)
     }
 
     @Test

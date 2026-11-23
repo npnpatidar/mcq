@@ -101,8 +101,8 @@ class StudyPolishUiTest {
      * Both words are the composable's own resources, so a translation or a
      * renamed verb cannot make this silently true.
      */
-    /** The live dwell value; it must advance while the clock is running. */
-    private fun clockTimeText(): String? =
+    /** Every rendered dwell value; at least one must advance while running. */
+    private fun clockTimeTexts(): Set<String> =
         compose.onAllNodesWithTag("study-clock-time", useUnmergedTree = true)
             .fetchSemanticsNodes()
             .mapNotNull { node ->
@@ -110,11 +110,12 @@ class StudyPolishUiTest {
                     .joinToString("") { it.text }
                     .takeIf { it.isNotBlank() }
             }
-            .firstOrNull()
+            .toSet()
 
     private fun waitForRunningClock() {
-        val start = clockTimeText()
-        compose.waitUntil(5_000) { clockTimeText() != start }
+        compose.waitForIdle()
+        val start = clockTimeTexts()
+        compose.waitUntil(5_000) { clockTimeTexts() != start }
     }
 
     /**

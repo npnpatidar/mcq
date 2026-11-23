@@ -517,7 +517,15 @@ private fun StudyBody(
         // to be shown, and nothing would clear the reading again.
         if (container.size.height <= 0 || card.size.height <= 0) return
         val top = card.localPositionOf(container, Offset.Zero).y
-        questionOnScreen = top < container.size.height && top + card.size.height > 0f
+        val visible = top < container.size.height && top + card.size.height > 0f
+        if (visible != questionOnScreen) {
+            com.mcqapp.util.Logger.i(
+                "STUDY",
+                "geometry card=${question.id} top=$top containerH=${container.size.height} " +
+                    "cardH=${card.size.height} -> $visible"
+            )
+        }
+        questionOnScreen = visible
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
     // The pull clocked this card from the PREVIOUS card's reading, so a new

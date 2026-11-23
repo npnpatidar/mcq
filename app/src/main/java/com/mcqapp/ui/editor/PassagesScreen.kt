@@ -604,48 +604,66 @@ fun PassagesScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            // The question in its paper, focused:
-                                            // the same arrival a search hit gets.
-                                            // The member's own paper, not the
-                                            // passage's, in case a question ever
-                                            // sits in another category's paper.
-                                            val memberPaperId =
-                                                paperByCategoryId[member.categoryId]?.id ?: paperId
-                                            navController.navigate(
-                                                com.mcqapp.ui.navigation.browseRoute(
-                                                    memberPaperId, member.id
-                                                )
-                                            )
-                                        }
                                         .padding(vertical = 6.dp, horizontal = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        stringResource(R.string.editor_index, index + 1),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        modifier = Modifier.padding(end = 8.dp)
-                                    )
-                                    Text(
-                                        member.text,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    // A zero-option question is a flashcard; the
-                                    // ref's answer-key count cannot say so (a
-                                    // keyless MCQ has none either), hence the
-                                    // option count. Rendered text, not a
-                                    // description only.
-                                    if (member.optionCount == 0) {
+                                    // The member's own tap target is its text
+                                    // block, with its own tag. The unassign
+                                    // button used to sit inside this clickable
+                                    // row, so the row was one merged node whose
+                                    // bounds included a destructive control:
+                                    // a tap aimed at the row could land on the
+                                    // button, and a screen reader read "1 stem,
+                                    // Unassign" as a single button. The two are
+                                    // siblings now — the row opens the question,
+                                    // the button unassigns it.
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                // The question in its paper, focused:
+                                                // the same arrival a search hit gets.
+                                                // The member's own paper, not the
+                                                // passage's, in case a question ever
+                                                // sits in another category's paper.
+                                                val memberPaperId =
+                                                    paperByCategoryId[member.categoryId]?.id ?: paperId
+                                                navController.navigate(
+                                                    com.mcqapp.ui.navigation.browseRoute(
+                                                        memberPaperId, member.id
+                                                    )
+                                                )
+                                            }
+                                            .padding(vertical = 6.dp)
+                                            .testTag("passage-member-${member.id}"),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            stringResource(R.string.r2_flashcard_label),
+                                            stringResource(R.string.editor_index, index + 1),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier.padding(start = 8.dp)
+                                            modifier = Modifier.padding(end = 8.dp)
                                         )
+                                        Text(
+                                            member.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 2,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        // A zero-option question is a flashcard; the
+                                        // ref's answer-key count cannot say so (a
+                                        // keyless MCQ has none either), hence the
+                                        // option count. Rendered text, not a
+                                        // description only.
+                                        if (member.optionCount == 0) {
+                                            Text(
+                                                stringResource(R.string.r2_flashcard_label),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.padding(start = 8.dp)
+                                            )
+                                        }
                                     }
                                     TextButton(onClick = {
                                         viewModel.memberResetCards(setOf(member.id)) { cards ->

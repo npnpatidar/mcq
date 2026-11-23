@@ -29,6 +29,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -756,7 +757,14 @@ internal fun TestSetupSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Open at the expanded anchor. The setup form is taller than half a phone,
+    // so the default partial anchor clipped its own Start action (and the
+    // resolved blueprint tree) behind a drag; the sheet's viewport was taller
+    // than the part of it on screen, which also made a scrolled-to row exist
+    // but stay hidden. The learner opens this sheet to set a test up, not to
+    // peek at it, so it starts at full height.
+    val setupSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = setupSheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

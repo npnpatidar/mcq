@@ -1565,9 +1565,13 @@ fun BrowseScreen(
                                     }
                                 }
                                 // N chips can wrap to several lines; keep the
-                                // destructive/merge actions on their own row so
-                                // they never sit off the right edge.
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // destructive/merge actions on their own block
+                                // so they never sit off the right edge. The
+                                // merge label carries the keeper's preview, so
+                                // side by side on a phone it pushed Delete
+                                // others past the dialog's edge. Stacked, each
+                                // label wraps inside the dialog instead.
+                                Column {
                                     TextButton(
                                         onClick = {
                                             viewModel.resolveDuplicates(group, keeper, merge = true) { changed ->

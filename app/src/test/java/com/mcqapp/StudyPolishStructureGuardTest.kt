@@ -53,8 +53,24 @@ class StudyPolishStructureGuardTest {
         // of view before advancing to the next one.
         assertEquals(2, Regex("""\.testTag\("study-question-scroll"\)""").findAll(body).count())
         // Visibility is reported from the same onGloballyPositioned callbacks,
-        // and the report still drives the VM gate.
-        assertTrue(body.contains("viewModel.setQuestionVisible(questionOnScreen)"))
+        // and the report still drives the VM gate. The readings are card-scoped
+        // and the flow restarts per card: a body that kept its scrolled-past
+        // "not visible" reading handed it to a card that starts at the top, and
+        // the clock stayed paused because the effect's key never changed again.
+        assertTrue(body.contains("snapshotFlow { questionOnScreen }"))
+        assertTrue(body.contains("viewModel.setQuestionVisible(it)"))
+        assertTrue(
+            "the viewport reading must be keyed on the card",
+            body.contains("var questionOnScreen by remember(question.id) { mutableStateOf(true) }")
+        )
+        assertTrue(
+            "an arriving card must re-read its own geometry after its frame",
+            body.contains("withFrameNanos { }")
+        )
+        assertTrue(
+            "an unplaced container must not read as a hidden card",
+            body.contains("if (container.size.height <= 0 || card.size.height <= 0) return")
+        )
     }
 
     @Test

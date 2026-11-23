@@ -69,6 +69,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -498,19 +500,40 @@ private fun StudyBody(
     // The dwell clock only charges while the question card is actually in the
     // viewport: scrolling a long passage — or, after reveal, the answer — past
     // the card pauses it, the same rule the test screen applies to dialogs.
-    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var cardCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var questionOnScreen by remember { mutableStateOf(true) }
+    //
+    // All three belong to the card, not to the composition that happens to
+    // show it. Keying them on the id keeps a reused body from handing its
+    // predecessor's scrolled-past "not visible" reading — and its detached
+    // coordinates — to a card that starts at the top of its own scroll state.
+    var containerCoords by remember(question.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var cardCoords by remember(question.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var questionOnScreen by remember(question.id) { mutableStateOf(true) }
     fun reportVisibility() {
         val card = cardCoords
         val container = containerCoords
         if (card == null || container == null || !card.isAttached || !container.isAttached) return
+        // Zero is a pass before placement, not a viewport with nothing in it.
+        // Reading it as "hidden" would pause the clock on a card that is about
+        // to be shown, and nothing would clear the reading again.
+        if (container.size.height <= 0 || card.size.height <= 0) return
         val top = card.localPositionOf(container, Offset.Zero).y
         questionOnScreen = top < container.size.height && top + card.size.height > 0f
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
-    LaunchedEffect(questionOnScreen) {
-        viewModel.setQuestionVisible(questionOnScreen)
+    // The pull clocked this card from the PREVIOUS card's reading, so a new
+    // card must report its own. The three readings above are keyed on the card,
+    // so this flow starts at "on screen" — a card starts at the top of its own
+    // scroll state — and every laid-out reading after that (the learner scrolls
+    // the card out, or back in) flows through the same gate.
+    LaunchedEffect(question.id) {
+        snapshotFlow { questionOnScreen }.collect { viewModel.setQuestionVisible(it) }
+    }
+    // A first layout can land before this body's scroll container has a size,
+    // and that one "hidden" reading would stick, because no key changes again.
+    // Re-read the geometry once this card's own frame has been laid out.
+    LaunchedEffect(question.id) {
+        withFrameNanos { }
+        reportVisibility()
     }
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="stats_exam_source_mock">जीवनकालीन सटीकता %1$s · केवल प्रतिनिधि प्रयास (rep*)</string>
     <string name="stats_exam_source_personal">जीवनकालीन सटीकता %1$s · सभी प्रयास</string>
     <string name="stats_exam_timing_line">%1$d दिखाए गए · %2$d सही · %3$d गलत · %4$d छोड़े गए · %5$d मिनट</string>
@@ -9,7 +9,7 @@
     <string name="stats_exam_unresolved">%1$d परिणाम पंक्तियों का वर्तमान प्रश्न नहीं है (हटाया गया)।</string>
     <string name="stats_fast_fails">%1$d गलतियों के उत्तर 5 सेकंड से कम में दिए गए — इन्हें धीरे से देखना सार्थक है।</string>
     <string name="stats_forecast">पूर्वानुमान</string>
-    <string name="stats_forecast_help">अगले 30 दिनों के निर्धारित रिव्यू, दिन-वार समूहों में (पहली पट्टी आज से पहले देय सभी है)। रेखा कुल बकाया दिखाती है यदि आप हर दिन छोड़ दें।</string>
+    <string name="stats_forecast_help" tools:ignore="UnusedResources">अगले 30 दिनों के निर्धारित रिव्यू, दिन-वार समूहों में (पहली पट्टी आज से पहले देय सभी है)। रेखा कुल बकाया दिखाती है यदि आप हर दिन छोड़ दें।</string>
     <string name="stats_fsrs_default">आधिकारिक डिफ़ॉल्ट वज़नों पर चल रहा है।</string>
     <string name="stats_fsrs_fitted">वज़न आपके अपने रिव्यू इतिहास के अनुसार फिट किए गए हैं।</string>
     <string name="stats_fsrs_unlock">%1$d रिव्यू बाकी हैं कुल %2$d में से; अनुकूलन अनलॉक होगा।</string>
@@ -130,7 +130,7 @@
     <string name="stats_overdue_value">अतिदेय: %1$d</string>
     <string name="stats_overview">सारांश</string>
     <string name="stats_panels_help">वही प्रश्न बार-बार आते हैं, इसलिए बदलाव नमूने का नहीं आपका है। केवल अभ्यास।</string>
-    <string name="stats_panels_row">%1$s · %2$d प्रश्न · %3$d बार · नवीनतम %4$d%% · औसत %5$d%%</string>
+    <string name="stats_panels_row" tools:ignore="UnusedResources">%1$s · %2$d प्रश्न · %3$d बार · नवीनतम %4$d%% · औसत %5$d%%</string>
     <string name="stats_panels_title">निश्चित पैनल</string>
     <string name="stats_paper_card_counts">प्रति पेपर कार्ड</string>
     <string name="stats_paper_card_counts_help">संग्रह के कार्ड किन पेपरों में हैं। केवल सभी-पेपरों के स्तर पर दिखाया जाता है।</string>

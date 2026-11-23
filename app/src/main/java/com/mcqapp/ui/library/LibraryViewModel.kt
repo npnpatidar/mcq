@@ -103,6 +103,22 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     val avoidRecentQuestions: StateFlow<Boolean> = repository.avoidRecentQuestions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /**
+     * The unfinished test that needs a home on the Library. A saved session is
+     * not a notification or a hidden dialog: the card is re-read on every
+     * resume because the slot belongs to the process, not to this screen's
+     * backstack entry (a test started from Results changes it while we are
+     * away).
+     */
+    private val _unfinishedTest = MutableStateFlow<com.mcqapp.domain.UnfinishedTest?>(null)
+    val unfinishedTest: StateFlow<com.mcqapp.domain.UnfinishedTest?> = _unfinishedTest.asStateFlow()
+
+    fun refreshUnfinishedTest() {
+        viewModelScope.launch {
+            _unfinishedTest.value = runCatching { repository.unfinishedTest() }.getOrNull()
+        }
+    }
+
     // --- Reporting-only daily goal ---
     // The count is the overview tab's existing today bucket: review_log rows in
     // the current study day (04:00 boundary), self-graded cards included. No
@@ -153,7 +169,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    init { refreshDailyGoal() }
+    init {
+        refreshDailyGoal()
+        refreshUnfinishedTest()
+    }
 
     // Library editor state lives here, not in the screen's `remember`: the
     // ViewModel survives configuration changes, so an edit dialog or a pending

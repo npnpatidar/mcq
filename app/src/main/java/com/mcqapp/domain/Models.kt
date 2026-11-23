@@ -440,7 +440,14 @@ data class QuestionResult(
     val selectedOptionIds: Set<String>,
     val isCorrect: Boolean,
     val explanationElements: List<ContentElement> = emptyList(),
-    val explanationImage: String? = null
+    val explanationImage: String? = null,
+    /**
+     * The passage this question belonged to, resolved live by question id when
+     * the result page is read. It is not stored on the result row (no schema
+     * change): a passage edited after the attempt should show the context the
+     * learner would see today, above the stem.
+     */
+    val passage: Passage? = null
 ) {
     /** Backward-compat: the concatenated text. */
     val text: String get() = elements.textContent

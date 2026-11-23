@@ -37,7 +37,9 @@ class StatsAggregatorTest {
         intervalDaysAfter: Int? = null,
         predictedRetention: Double? = null,
         wasGuess: Boolean? = null,
-        wasCorrect: Boolean? = null
+        wasCorrect: Boolean? = null,
+        wasSkipped: Boolean? = null,
+        correctnessOnly: Boolean = true
     ) = ReplayReview(
         paperId = paperId,
         questionId = questionId,
@@ -51,7 +53,9 @@ class StatsAggregatorTest {
         predictedRetention = predictedRetention,
         intervalBeforeDays = intervalBeforeDays,
         wasGuess = wasGuess,
-        wasCorrect = wasCorrect
+        wasCorrect = wasCorrect,
+        wasSkipped = wasSkipped,
+        correctnessOnly = correctnessOnly
     )
 
     private fun card(
@@ -192,12 +196,14 @@ class StatsAggregatorTest {
         val cards = listOf(
             card("q1", state = CardStateKind.REVIEW, dueAt = now + hour),
             card("q2", state = CardStateKind.REVIEW, dueAt = todayStart - day),
+            // Due earlier today but still inside today's study day: due now,
+            // not backlog, so it is not counted twice.
             card("q3", state = CardStateKind.LEARNING, dueAt = now - 1000),
             card("q4", state = CardStateKind.NEW, dueAt = 0L)
         )
         val bundle = StatsAggregator.build(input(cards = cards), null, StatsAggregator.Range.ALL)
         assertEquals(2, bundle.today.dueNow)
-        assertEquals(2, bundle.today.backlog)
+        assertEquals(1, bundle.today.backlog)
     }
 
     // --- true retention --------------------------------------------------------
@@ -419,29 +425,31 @@ class StatsAggregatorTest {
 
     @Test
     fun calibrationBucketsPredictionsAndComputesBrier() {
+        // Every row is an objective, correctly graded answer: the chart is the
+        // cut estimator's evidence, not a replay of every grade.
         val reviews = listOf(
-            review("q1", rating = 3, reviewedAt = now - hour, predictedRetention = 0.91),
-            review("q2", rating = 3, reviewedAt = now - hour, predictedRetention = 0.93),
-            review("q3", rating = 3, reviewedAt = now - hour, predictedRetention = 0.95),
-            review("q4", rating = 1, reviewedAt = now - hour, predictedRetention = 0.32)
+            review("q1", rating = 3, reviewedAt = now - hour, predictedRetention = 0.91, wasCorrect = true),
+            review("q2", rating = 3, reviewedAt = now - hour, predictedRetention = 0.93, wasCorrect = true),
+            review("q3", rating = 3, reviewedAt = now - hour, predictedRetention = 0.95, wasCorrect = true),
+            review("q4", rating = 3, reviewedAt = now - hour, predictedRetention = 0.32, wasCorrect = true)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(4, bundle.calibration.samples)
-        assertEquals(0.029475, bundle.calibration.brier!!, 1e-9)
+        assertEquals(0.119475, bundle.calibration.brier!!, 1e-9)
         val high = bundle.calibration.bins.last()
         assertEquals(1.0, high.actualRate!!, 1e-9)
         assertEquals(3, high.count)
         val low = bundle.calibration.bins.first { it.predictedFrom == 0.3 }
-        assertEquals(0.0, low.actualRate!!, 1e-9)
+        assertEquals(1.0, low.actualRate!!, 1e-9)
         assertEquals(0.7775, bundle.calibration.predictedMean!!, 1e-9)
-        assertEquals(0.75, bundle.calibration.actualMean!!, 1e-9)
+        assertEquals(1.0, bundle.calibration.actualMean!!, 1e-9)
     }
 
     @Test
     fun calibrationIgnoresReviewsWithoutAPrediction() {
         val reviews = listOf(
             review("q1", rating = 3, reviewedAt = now - hour, predictedRetention = null),
-            review("q2", rating = 3, reviewedAt = now - hour, predictedRetention = 0.9)
+            review("q2", rating = 3, reviewedAt = now - hour, predictedRetention = 0.9, wasCorrect = true)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(1, bundle.calibration.samples)
@@ -573,9 +581,13 @@ class StatsAggregatorTest {
     @Test
     fun weakestRanksByAgainRateAndSkipsThinHistories() {
         val reviews = listOf(
-            review("bad", rating = 1, reviewedAt = now - 3 * hour),
-            review("bad", rating = 1, reviewedAt = now - 2 * hour),
-            review("bad", rating = 3, reviewedAt = now - hour),
+            // These are lapses on an established card, not first-day stumbles.
+            review("bad", rating = 1, reviewedAt = now - 3 * hour,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30),
+            review("bad", rating = 1, reviewedAt = now - 2 * hour,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30),
+            review("bad", rating = 3, reviewedAt = now - hour,
+                stateBefore = CardStateKind.REVIEW, intervalBeforeDays = 30),
             review("thin", rating = 1, reviewedAt = now - 2 * hour),
             review("thin", rating = 1, reviewedAt = now - hour),
             review("ok", rating = 3, reviewedAt = now - hour),

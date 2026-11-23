@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
+import com.mcqapp.domain.stats.CardReference
 import com.mcqapp.domain.stats.GuessBand
 import com.mcqapp.domain.stats.GuessingData
 import com.mcqapp.domain.stats.ShakyCard
@@ -60,7 +61,8 @@ import kotlin.math.roundToInt
 internal fun GuessingSection(
     bundle: GuessingData,
     questionText: Map<String, String>,
-    onOpenCard: (ShakyCard) -> Unit
+    onOpenCard: (ShakyCard) -> Unit,
+    onOpenTopicCard: (CardReference) -> Unit = {}
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -75,7 +77,7 @@ internal fun GuessingSection(
         item(contentType = "hourly") { HourlyCard(bundle) }
         item(contentType = "dwell") { DwellCard(bundle) }
         item(contentType = "cost") { CostCard(bundle) }
-        item(contentType = "topics") { TopicsCard(bundle) }
+        item(contentType = "topics") { TopicsCard(bundle, onOpenTopicCard) }
         item(contentType = "shaky") { ShakyCardList(bundle, questionText, onOpenCard) }
     }
 }
@@ -88,7 +90,15 @@ private fun KpiCard(bundle: GuessingData) {
         subtitle = { ChartSubtitle(R.string.stats_guess_kpis_help) }
     ) {
         if (!bundle.hasData) {
-            ChartEmpty()
+            // A flashcard-only library has rows but none of them carry the
+            // objective flags: say why the whole tab is empty instead of a bare
+            // "no data". A library with no reviews at all keeps that generic
+            // placeholder — there is nothing to explain yet.
+            if (bundle.unflaggedReviews > 0) {
+                ChartEmpty(R.string.stats_guess_empty_self_graded)
+            } else {
+                ChartEmpty()
+            }
             return@ChartCard
         }
         KpiGrid(
@@ -408,7 +418,10 @@ private fun CostCard(bundle: GuessingData) {
 }
 
 @Composable
-private fun TopicsCard(bundle: GuessingData) {
+private fun TopicsCard(
+    bundle: GuessingData,
+    onOpenCard: (CardReference) -> Unit
+) {
     ChartCard(
         testTag = "stats-guessing-topics",
         title = { ChartTitle(R.string.stats_guess_topics) },
@@ -418,9 +431,23 @@ private fun TopicsCard(bundle: GuessingData) {
             ChartEmpty(R.string.stats_guess_no_topics)
             return@ChartCard
         }
+        Text(
+            stringResource(R.string.stats_guess_topics_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
         val color = seriesColors()[0]
         bundle.topics.forEach { topic ->
-            Column(Modifier.padding(vertical = 4.dp)) {
+            val drill = topic.drill
+            Column(
+                Modifier
+                    .padding(vertical = 4.dp)
+                    .then(
+                        if (drill != null) Modifier.clickable { onOpenCard(drill) }
+                        else Modifier
+                    )
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

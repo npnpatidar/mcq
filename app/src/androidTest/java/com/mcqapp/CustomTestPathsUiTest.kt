@@ -90,6 +90,10 @@ class CustomTestPathsUiTest {
         waitFor("Start a test")
         compose.waitForIdle()
 
+        // Practice types sit in their own collapsible group so the three mocks
+        // are not drowned out; open it before looking for the custom chips.
+        compose.onNodeWithText("More practice types", substring = false)
+            .performScrollTo().performClick()
         // The four phase-3 custom types are offered by the one setup sheet.
         // Existence is the claim here: some of them sit below the sheet's
         // fold, and the sheet's scroll position is not what this asserts.

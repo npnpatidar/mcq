@@ -1,5 +1,6 @@
 package com.mcqapp.ui.stats.charts
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +30,11 @@ internal data class LineSeries(
     val fill: Boolean = false,
     /** Spoken name for this series, e.g. "introduced". Blank falls back to
      *  "Series N" so a caller without a label still names every line. */
-    val name: String = ""
+    val name: String = "",
+    /** Sample size behind each point; appended to the spoken/tooltip text. */
+    val counts: List<Int> = emptyList(),
+    /** Buckets below this size are drawn as faded, hollow points. */
+    val deEmphasiseBelow: Int? = null
 )
 
 /**
@@ -51,6 +56,11 @@ internal fun LineChart(
     val textMeasurer = rememberTextMeasurer()
     val grid = gridColor()
     val labelColor = axisLabelColor()
+    val surfaceColor = androidx.compose.material3.MaterialTheme.colorScheme.surface
+    // Format words consumed inside a canvas-built spoken summary. Resolved with
+    // stringResource at the composable level so they stay configuration-aware.
+    val reviewUnit = chartUnit(R.string.stats_chart_reviews_unit)
+    val reviewUnitOne = chartUnit(R.string.stats_chart_review_unit)
     // Axis labels are in sp; scale the canvas so large text cannot clip (ST6).
     val chartHeight = chartHeightDp(LocalDensity.current.fontScale).dp
 
@@ -75,7 +85,10 @@ internal fun LineChart(
     series.forEachIndexed { index, s ->
         val name = s.name.ifBlank { stringResource(R.string.a11y_chart_series, index + 1) }
         val points = labels.mapIndexedNotNull { pointIndex, label ->
-            s.values.getOrNull(pointIndex)?.let { label to yLabel(it) }
+            s.values.getOrNull(pointIndex)?.let { value ->
+                val count = s.counts.getOrNull(pointIndex) ?: 0
+                label to linePointText(yLabel(value), count, reviewUnitOne, reviewUnit)
+            }
         }
         spokenSeries.add(ChartSeriesSummary(name, points))
     }
@@ -168,6 +181,25 @@ internal fun LineChart(
             drawPath(path, s.color, style = Stroke(2.dp.toPx()))
         }
 
+        // A thin bucket is still plotted, but as a faded hollow point: a 100%
+        // day built from one review cannot look as solid as one built from
+        // fifty. The count is always in the spoken label above.
+        series.forEach { s ->
+            if (s.counts.isEmpty()) return@forEach
+            val threshold = s.deEmphasiseBelow ?: return@forEach
+            s.values.indices.forEach { i ->
+                val value = s.values[i] ?: return@forEach
+                val count = s.counts.getOrNull(i) ?: 0
+                val centre = Offset(xFor(i), yFor(value))
+                if (isSmallBucket(count, threshold)) {
+                    drawCircle(surfaceColor, 5.dp.toPx(), centre)
+                    drawCircle(s.color.copy(alpha = 0.45f), 2.5.dp.toPx(), centre)
+                } else {
+                    drawCircle(s.color, 3.dp.toPx(), centre)
+                }
+            }
+        }
+
         // Sparse x labels. Measure first so the last label can push out a
         // neighbour it would overlap instead of drawing on top of it.
         val measured = labels.map {
@@ -190,3 +222,7 @@ internal fun LineChart(
         }
     }
 }
+
+/** Resolve a localized unit word for the canvas-built spoken summary. */
+@Composable
+private fun chartUnit(@StringRes unitRes: Int): String = stringResource(unitRes)

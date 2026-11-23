@@ -32,6 +32,7 @@ import com.mcqapp.ui.stats.charts.ChartTitle
 import com.mcqapp.ui.stats.charts.LegendDot
 import com.mcqapp.ui.stats.charts.LineChart
 import com.mcqapp.ui.stats.charts.LineSeries
+import com.mcqapp.ui.stats.charts.SMALL_BUCKET_REVIEWS
 import com.mcqapp.ui.stats.charts.formatCount
 import com.mcqapp.ui.stats.charts.formatPct
 import com.mcqapp.ui.stats.charts.formatSeconds
@@ -171,14 +172,22 @@ private fun AgainRateCard(data: ProgressData) {
             labels = data.trend.map { it.label },
             series = listOf(
                 LineSeries(
-                    data.trend.map { it.againRate },
+                    values = data.trend.map { it.againRate },
                     color = MaterialTheme.colorScheme.error,
-                    fill = true
+                    fill = true,
+                    counts = data.trend.map { it.reviews },
+                    deEmphasiseBelow = SMALL_BUCKET_REVIEWS
                 )
             ),
             fixedMax = 1.0,
             yLabel = { formatPct(it) },
             emptyText = { ChartEmpty(R.string.stats_progress_empty) }
+        )
+        Text(
+            stringResource(R.string.stats_chart_small_buckets, SMALL_BUCKET_REVIEWS),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp)
         )
         Spacer(Modifier.height(8.dp))
         Text(

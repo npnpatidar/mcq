@@ -939,11 +939,17 @@ object TestReportBuilder {
         val points = (earlier + current).takeLast(TREND_POINTS)
         val previous = points.getOrNull(points.size - 2) ?: return null
         val delta = current.percentage - previous.percentage
-        val noise = (current.marginPoints ?: 0.0) + (previous.marginPoints ?: 0.0)
+        // One rule for both verdicts in the app: the change is noise when it is
+        // inside the *combined* margin of the two estimates being compared.
+        // The results screen calls the same [TestStatistics.deltaWithinNoise]
+        // for its latest-vs-previous line, so the header and the trend card can
+        // never disagree about the same two attempts.
         return TrendEvidence(
             points = points,
             deltaPoints = delta,
-            withinNoise = kotlin.math.abs(delta) <= noise,
+            withinNoise = TestStatistics.deltaWithinNoise(
+                delta, current.marginPoints, previous.marginPoints
+            ),
             freshSample = attempt.exclusionMode == ExclusionMode.RECENT_3.name
         )
     }
@@ -1255,6 +1261,30 @@ object RecommendationEngine {
     private fun reviewOnly(report: TestReport): List<RecommendedAction> = buildList {
         reviewWrong(report)?.let { add(it) }
         studyWeakest(report)?.let { add(it) }
+        if (isEmpty() && report.score.answered > 0) add(fallback(report))
+    }
+
+    /**
+     * The last-resort action when no evidence-specific rule fired — a clean
+     * run with no wrong answers, no weak topic and no unmet target. Without
+     * this the results screen had no "What to do next" at all on exactly the
+     * runs a learner most wants a next step for. The fallback never invents a
+     * problem: it simply offers another representative mock (or a repeat of
+     * the same practice focus).
+     */
+    internal fun fallback(report: TestReport): RecommendedAction {
+        val type = if (report.family == ReportFamily.PRACTICE) {
+            report.type?.takeIf { it.isPractice } ?: TestType.MIXED
+        } else {
+            TestType.RANDOM
+        }
+        return RecommendedAction(
+            rule = RecommendedAction.Rule.KeepGoing,
+            kind = RecommendedAction.Kind.TEST,
+            testType = type,
+            testCount = TestPlan.DEFAULT_LENGTH,
+            categoryIds = report.attempt.scopeCategoryIds.split(",").filter { it.isNotBlank() }
+        )
     }
 
     private fun mockActions(report: TestReport): List<RecommendedAction> = buildList {
@@ -1278,17 +1308,7 @@ object RecommendationEngine {
             )
         }
         longerMock(report)?.let { add(it) }
-        if (isEmpty()) {
-            add(
-                RecommendedAction(
-                    rule = RecommendedAction.Rule.KeepGoing,
-                    kind = RecommendedAction.Kind.TEST,
-                    testType = TestType.RANDOM,
-                    testCount = TestPlan.DEFAULT_LENGTH,
-                    categoryIds = report.attempt.scopeCategoryIds.split(",").filter { it.isNotBlank() }
-                )
-            )
-        }
+        if (isEmpty() && report.score.answered > 0) add(fallback(report))
     }
 
     /**
@@ -1383,6 +1403,7 @@ object RecommendationEngine {
         if (isEmpty() && report.score.wrong > 0) {
             reviewWrong(report)?.let { add(it) }
         }
+        if (isEmpty() && report.score.answered > 0) add(fallback(report))
     }
 
     /** Below half, the recorded targets are still the practice headline. */
@@ -1488,4 +1509,14 @@ object TestStatistics {
         }
         return margin
     }
+
+    /**
+     * The single "is this change real?" rule used by the results header, the
+     * comparable trend card and the History trend arrow. A difference of two
+     * percentages is only meaningful against the noise in *both* numbers, so
+     * the band is the sum of their margins. A missing margin contributes zero
+     * (a census has no sampling error), which keeps the rule total.
+     */
+    fun deltaWithinNoise(deltaPoints: Double, firstMargin: Double?, lastMargin: Double?): Boolean =
+        kotlin.math.abs(deltaPoints) <= (firstMargin ?: 0.0) + (lastMargin ?: 0.0)
 }

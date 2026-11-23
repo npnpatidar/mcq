@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Data-honesty pass: every loss the app causes must be visible to the learner. -->
+
+    <!-- Schedule resets: changed content throws away the card's FSRS memory. -->
+    <plurals name="data_honesty_schedules_reset">
+        <item quantity="one">• %1$d study schedule reset — that card starts again</item>
+        <item quantity="other">• %1$d study schedules reset — those cards start again</item>
+    </plurals>
+    <string name="data_honesty_badge_schedule_reset">SCHEDULE RESET</string>
+
+    <!-- Preview badge when "Refresh answers on re-import" will rewrite a key. -->
+    <string name="data_honesty_badge_answer_refresh">ANSWER REFRESH — RESETS PROGRESS</string>
+
+    <!-- Anki import notes: reasons a deck did not come across verbatim. -->
+    <string name="data_honesty_anki_notes_title">Anki import notes</string>
+    <string name="data_honesty_anki_note_blank" tools:ignore="PluralsCandidate">%1$d card(s) were left out because their front or answer was blank.</string>
+    <string name="data_honesty_anki_note_media">Pictures a card referenced but the package did not contain could not be brought across.</string>
+
+    <!-- Rows the JSON/DOCX reader skipped while parsing. -->
+    <plurals name="data_honesty_rows_skipped">
+        <item quantity="one">• %1$d row was skipped — see import notes</item>
+        <item quantity="other">• %1$d rows were skipped — see import notes</item>
+    </plurals>
+
+    <!-- A backup we write must be one we can restore (see SafeZip's caps). -->
+    <string name="data_honesty_backup_too_large">This backup would be larger than the %1$d MB restore limit. Export papers in smaller groups or remove very large pictures, then try again.</string>
+    <string name="data_honesty_backup_entry_too_large">One part of this backup is larger than the %1$d MB restore limit. Remove very large pictures, then try again.</string>
+
+    <!-- Restore confirmation: identify the file and the stake before wiping. -->
+    <string name="data_honesty_restore_file">File: %1$s</string>
+    <string name="data_honesty_restore_manifest" tools:ignore="PluralsCandidate">Backup taken %1$s — %2$d papers, %3$d questions, %4$d reviews</string>
+    <string name="data_honesty_restore_current" tools:ignore="PluralsCandidate">Current library: %1$d papers, %2$d questions, %3$d reviews</string>
+    <string name="data_honesty_restore_settings_note">The library is replaced first. Settings from the backup are applied only after that replacement has fully committed.</string>
+    <string name="data_honesty_restore_backup_first">Back up current library first…</string>
+
+    <!-- Passage edits reset every member's study schedule (PassageStore). -->
+    <plurals name="data_honesty_passage_reset_notice">
+        <item quantity="one">Saving this passage restarts the study schedule of its %1$d member question.</item>
+        <item quantity="other">Saving this passage restarts the study schedules of its %1$d member questions.</item>
+    </plurals>
+</resources>

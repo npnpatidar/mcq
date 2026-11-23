@@ -3,7 +3,7 @@
   User-facing strings, extracted from inline literals so the app can be
   localised; see audit A36. Names are derived from the English text.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name" translatable="false">MCQ App</string>
     <string name="add_block">Add block</string>
     <string name="add_category">Add category</string>
@@ -694,14 +694,14 @@
     <string name="tab_progress">Progress</string>
     <string name="stats_tests_title">Test families</string>
     <string name="stats_tests_help">A mock, a Fresh sample, a practice set, a short test and a legacy attempt are never averaged together.</string>
-    <string name="stats_tests_family_row">%1$s · %2$d attempts · latest %3$d%% · average %4$d%%</string>
+    <string name="stats_tests_family_row" tools:ignore="UnusedResources">%1$s · %2$d attempts · latest %3$d%% · average %4$d%%</string>
     <string name="stats_tests_no_attempts">No finished tests in this scope yet.</string>
     <string name="stats_practice_topics_title">Weakest practiced topics</string>
     <string name="stats_practice_topics_help">Accuracy on the recorded practice targets, weakest first.</string>
     <string name="stats_practice_topics_row">%1$s · %2$d/%3$d (%4$d%%)</string>
     <string name="stats_panels_title">Fixed panels</string>
     <string name="stats_panels_help">The same questions repeated, so a change is yours rather than the sample\'s. Practice only.</string>
-    <string name="stats_panels_row">%1$s · %2$d questions · %3$d runs · latest %4$d%% · average %5$d%%</string>
+    <string name="stats_panels_row" tools:ignore="UnusedResources">%1$s · %2$d questions · %3$d runs · latest %4$d%% · average %5$d%%</string>
     <string name="stats_practice_title">Practice progress</string>
     <string name="stats_practice_run">%1$s · target %2$d/%3$d (%4$d%%) · %5$d mistakes cleared</string>
     <string name="stats_practice_no_runs">No focus-practice runs in this scope yet.</string>
@@ -742,7 +742,7 @@
     <string name="stats_exam_sample">%1$d comparable attempts · %2$d questions shown</string>
     <string name="stats_exam_kpi_latest">Latest</string>
     <string name="stats_exam_kpi_best">Best</string>
-    <string name="stats_exam_kpi_average">Average</string>
+    <string name="stats_exam_kpi_average" tools:ignore="UnusedResources">Average</string>
     <string name="stats_exam_kpi_delta">Change</string>
     <string name="stats_exam_kpi_attempts">Attempts</string>
     <string name="stats_exam_kpi_time">Total time</string>
@@ -873,7 +873,7 @@
     <string name="stats_streak_current_days">Current streak (days)</string>
     <string name="stats_streak_longest_days">Longest streak (days)</string>
     <string name="stats_weakest_cards">Most forgotten</string>
-    <string name="stats_weakest_help">Ranked by how often these cards were answered Again. Tap for the card\'s history.</string>
+    <string name="stats_weakest_help" tools:ignore="UnusedResources">Ranked by how often these cards were answered Again. Tap for the card\'s history.</string>
     <string name="stats_scheduler">Scheduler</string>
     <string name="stats_fsrs_fitted">Weights are fitted to your own review history.</string>
     <string name="stats_fsrs_default">Running on the official default weights.</string>
@@ -936,7 +936,7 @@
     <string name="weekday_sat">Sat</string>
     <string name="weekday_sun">Sun</string>
     <string name="stats_forecast">Forecast</string>
-    <string name="stats_forecast_help">Scheduled reviews for the next 30 days, bucketed by day (the first bar is everything due before today). The line is the total outstanding if you skip every day.</string>
+    <string name="stats_forecast_help" tools:ignore="UnusedResources">Scheduled reviews for the next 30 days, bucketed by day (the first bar is everything due before today). The line is the total outstanding if you skip every day.</string>
     <string name="stats_cumulative_if_skipped">If skipped</string>
     <string name="stats_overdue_value">Overdue: %1$d</string>
     <string name="stats_due_today_value">Due today: %1$d</string>
@@ -1142,9 +1142,9 @@
     <string name="report_no_marking_note">no negative marking</string>
     <string name="report_margin_line">95%% margin ±%1$d points · %2$d-question sample (approximate)</string>
     <string name="report_previous_comparable">Last comparable: %1$d%% (±%2$d) · this result %3$d%%</string>
-    <string name="report_delta">%1$s%2$d points, %3$s the margin</string>
-    <string name="report_delta_inside">inside</string>
-    <string name="report_delta_outside">outside</string>
+    <string name="report_delta" tools:ignore="UnusedResources">%1$s%2$d points, %3$s the margin</string>
+    <string name="report_delta_inside" tools:ignore="UnusedResources">inside</string>
+    <string name="report_delta_outside" tools:ignore="UnusedResources">outside</string>
     <string name="report_first_comparable">This is your first comparable %1$d-question %2$s test.</string>
     <string name="report_not_trend_worthy">A single %1$d-question result is not a trend; 50 or more shown is needed for a line.</string>
     <string name="report_error_mix_title">Where the marks went</string>
@@ -1239,8 +1239,8 @@
     <string name="report_targeted">Targeted · this question came from a practice target</string>
     <string name="report_trend_title">Comparable trend</string>
     <string name="report_trend_line">%1$d comparable points · last %2$d%% · change %3$s%4$d points</string>
-    <string name="report_trend_noise">The change is inside the margin, so it could be noise.</string>
-    <string name="report_trend_holds">The change is outside the margin.</string>
+    <string name="report_trend_noise" tools:ignore="UnusedResources">The change is inside the margin, so it could be noise.</string>
+    <string name="report_trend_holds" tools:ignore="UnusedResources">The change is outside the margin.</string>
     <string name="report_trend_fresh_note">Fresh samples exclude a different recent set, so this line is approximate.</string>
     <string name="report_interval_title">Score interval</string>
     <string name="report_interval_line">95%% bootstrap interval %1$d%% to %2$d%% (approximate)</string>

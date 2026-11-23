@@ -31,6 +31,7 @@ import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Mastery
 import com.mcqapp.domain.NumberedResult
 import com.mcqapp.domain.Paper
+import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.QuestionResult
@@ -501,7 +502,9 @@ internal class HistoryStore(
         attemptId: Long,
         filter: String,
         slowSeconds: () -> Long = { ReviewFilters.DEFAULT_SLOW_SECONDS },
-        bookmarked: () -> Set<String>
+        bookmarked: () -> Set<String>,
+        /** Resolves each page's passage context live; empty in legacy callers. */
+        loadPassages: suspend (List<String>) -> Map<String, Passage> = { emptyMap() }
     ): PagingSource<ResultPageKey, NumberedResult> {
         // No invalidation observer here on purpose. The bookmark SET is the
         // single source of truth (read at load time by `bookmarked`); the
@@ -514,7 +517,8 @@ internal class HistoryStore(
             bookmarked = bookmarked,
             slowSeconds = slowSeconds,
             dao = db.attemptDao(),
-            map = { it.toDomainResult() }
+            loadPassages = loadPassages,
+            map = { entity, passage -> entity.toDomainResult(passage) }
         )
     }
 
@@ -544,6 +548,26 @@ internal class HistoryStore(
                 correctCount = it.correctOptionIds.split(",").count { id -> id.isNotBlank() }
             )
         }
+    }
+
+    /**
+     * Passage context for result rows, resolved **live by question id** so no
+     * result/passage schema change is needed. A passage row is shared by all
+     * its members, so the page's ids are reduced to distinct passage ids first;
+     * the read is bounded by the page the review screen is showing, never the
+     * whole attempt.
+     */
+    suspend fun passagesForQuestions(questionIds: List<String>): Map<String, Passage> {
+        if (questionIds.isEmpty()) return emptyMap()
+        val refs = db.questionDao().getSessionRefsByIdsChunked(questionIds)
+        val passageIds = refs.mapNotNull { it.passageId }.distinct()
+        if (passageIds.isEmpty()) return emptyMap()
+        val passages = db.passageDao().getByIdsChunked(passageIds)
+            .map { mapper.toPassage(it) }
+            .associateBy { it.id }
+        return refs.mapNotNull { ref ->
+            ref.passageId?.let { pid -> passages[pid]?.let { ref.id to it } }
+        }.toMap()
     }
 
     /** The option count from the as-of-attempt snapshot; 0 when unreadable. */
@@ -867,7 +891,7 @@ internal class HistoryStore(
         return ids.mapNotNull { byId[it] }
     }
 
-    private fun QuestionResultEntity.toDomainResult(): QuestionResult {
+    private fun QuestionResultEntity.toDomainResult(passage: Passage? = null): QuestionResult {
         // optionsJson arrives from an imported backup and is stored verbatim,
         // so it cannot be trusted to decode. An unguarded throw here made one
         // bad row permanently empty the History screen and mistake badges,
@@ -891,7 +915,8 @@ internal class HistoryStore(
             selectedOptionIds = selectedOptionIds.split(",").filter { it.isNotBlank() }.toSet(),
             isCorrect = isCorrect,
             explanationElements = explanation.parseContentElements(mapper.json),
-            explanationImage = explanationImage
+            explanationImage = explanationImage,
+            passage = passage
         )
     }
 
@@ -983,7 +1008,8 @@ private class ResultsPagingSource(
     private val bookmarked: () -> Set<String>,
     private val slowSeconds: () -> Long,
     private val dao: AttemptDao,
-    private val map: (QuestionResultEntity) -> QuestionResult
+    private val loadPassages: suspend (List<String>) -> Map<String, Passage>,
+    private val map: (QuestionResultEntity, Passage?) -> QuestionResult
 ) : PagingSource<ResultPageKey, NumberedResult>() {
 
     override suspend fun load(
@@ -997,8 +1023,9 @@ private class ResultsPagingSource(
         return try {
             if (filter == ReviewFilters.ALL) {
                 val window = dao.getResultsAfter(attemptId, afterId, target)
+                val passages = loadPassages(window.map { it.questionId })
                 window.forEachIndexed { offset, entity ->
-                    out += NumberedResult(index + offset, map(entity))
+                    out += NumberedResult(index + offset, map(entity, passages[entity.questionId]))
                 }
                 index += window.size
                 if (window.isNotEmpty()) afterId = window.last().id
@@ -1015,9 +1042,15 @@ private class ResultsPagingSource(
                     val matchedIds = window.filter { matches(it) }.map { it.id }.toHashSet()
                     if (matchedIds.isNotEmpty()) {
                         val full = dao.getResultsByIds(matchedIds.toList()).associateBy { it.id }
+                        val passages = loadPassages(full.values.map { it.questionId })
                         window.forEachIndexed { offset, scan ->
                             if (scan.id in matchedIds) {
-                                full[scan.id]?.let { out += NumberedResult(index + offset, map(it)) }
+                                full[scan.id]?.let { entity ->
+                                    out += NumberedResult(
+                                        index + offset,
+                                        map(entity, passages[entity.questionId])
+                                    )
+                                }
                             }
                         }
                     }

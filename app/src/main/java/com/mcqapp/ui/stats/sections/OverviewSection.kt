@@ -54,6 +54,7 @@ internal fun OverviewSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item(contentType = "daily-goal") { DailyGoalIndicator(dailyGoal) }
+        item(contentType = "honest-headline") { HonestHeadlineCard(bundle) }
         item(contentType = "today") { TodayCard(bundle) }
         item(contentType = "kpis") { KpisCard(bundle) }
         item(contentType = "families") { ResultFamiliesCard() }
@@ -64,6 +65,71 @@ internal fun OverviewSection(
         }
         item(contentType = "scheduler") { SchedulerCard(bundle, onOpenSettings) }
     }
+}
+
+/**
+ * The one headline that can be defended: mature true retention from objective
+ * answers only, the signed gap to the learner's target, and the sample size.
+ * The KPI grid below still shows the broader rating-based figures with their
+ * existing labels; this card says exactly which rows its own number uses.
+ */
+@Composable
+private fun HonestHeadlineCard(bundle: OverviewData) {
+    val kpis = bundle.kpis
+    ChartCard(
+        testTag = "stats-honest-headline",
+        title = { ChartTitle(R.string.stats_honest_headline_title) }
+    ) {
+        val retention = kpis.objectiveMatureRetention
+        if (retention == null || kpis.objectiveMatureReviews == 0) {
+            Text(
+                stringResource(R.string.stats_honest_headline_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                stringResource(
+                    R.string.stats_honest_headline_value,
+                    formatPct(retention)
+                ),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(Modifier.height(4.dp))
+            kpis.objectiveRetentionGap?.let { gap ->
+                Text(
+                    stringResource(
+                        R.string.stats_honest_headline_gap,
+                        formatPct(kpis.desiredRetention),
+                        signedPoints(gap)
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (gap < 0.0) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                stringResource(
+                    R.string.stats_honest_headline_reviews,
+                    kpis.objectiveMatureReviews
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            stringResource(R.string.stats_honest_headline_help),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** A signed difference in percentage points, e.g. "-3 pts" or "+2 pts". */
+private fun signedPoints(value: Double): String {
+    val points = (value * 100).roundToInt()
+    return if (points >= 0) "+$points pts" else "$points pts"
 }
 
 @Composable
@@ -239,7 +305,7 @@ private fun WeakestCard(
     ChartCard(
         testTag = "stats-weakest",
         title = { ChartTitle(R.string.stats_weakest_cards) },
-        subtitle = { ChartSubtitle(R.string.stats_weakest_help) }
+        subtitle = { ChartSubtitle(R.string.stats_weakest_help_honest) }
     ) {
         bundle.weakest.forEach { card ->
             WeakCardRow(

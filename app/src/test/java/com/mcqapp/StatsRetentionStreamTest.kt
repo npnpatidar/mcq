@@ -117,6 +117,9 @@ class StatsRetentionStreamTest {
         }
     }
 
+    /** Rows are logged under a clock-neutral version so they can back calibration. */
+    private var correctnessVersionId: Int = 0
+
     private suspend fun log(
         questionId: String,
         rating: Int,
@@ -135,7 +138,9 @@ class StatsRetentionStreamTest {
                 stateBefore = stateBefore,
                 stabilityAfter = stabilityAfter,
                 difficultyAfter = 5.0,
-                intervalDaysAfter = 8
+                intervalDaysAfter = 8,
+                wasCorrect = rating != 1,
+                gradingVersion = correctnessVersionId
             )
         )
     }
@@ -144,6 +149,12 @@ class StatsRetentionStreamTest {
     private suspend fun seedLog() {
         db.paperDao().insertIgnore(PaperEntity(id = "p1", title = "Paper One"))
         db.paperDao().insertIgnore(PaperEntity(id = "p2", title = "Paper Two"))
+        correctnessVersionId = db.gradingRulesDao().insertVersion(
+            GradingVersionEntity(
+                easySeconds = 6, slowSeconds = 60, effectiveFrom = 0,
+                reason = "prior", correctnessOnly = true
+            )
+        ).toInt()
         // Categories and tags so the new §6.2/§6.3 slices have data on both
         // build paths: q1 carries two tags, q2 one, q3 none.
         db.categoryDao().upsert(CategoryEntity("c1", "p1", "Alpha"))

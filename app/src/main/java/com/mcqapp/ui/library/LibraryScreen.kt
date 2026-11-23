@@ -77,6 +77,8 @@ import com.mcqapp.domain.TestType
 import com.mcqapp.ui.importscreen.ImportReportDetails
 import com.mcqapp.ui.importscreen.displayTitle
 import com.mcqapp.ui.common.DailyGoalIndicator
+import com.mcqapp.ui.common.UnfinishedTestCard
+import com.mcqapp.ui.common.unfinishedTestRoute
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
@@ -100,6 +102,17 @@ fun LibraryScreen(
     val studyCounts by viewModel.studyCounts.collectAsStateWithLifecycle()
     val dailyGoalProgress by viewModel.dailyGoalProgress.collectAsStateWithLifecycle()
     val avoidRecentQuestions by viewModel.avoidRecentQuestions.collectAsStateWithLifecycle()
+    val unfinishedTest by viewModel.unfinishedTest.collectAsStateWithLifecycle()
+    // The setup sheet must describe the conditions the run will actually use,
+    // not a remembered default. These are the same flows the test screen reads.
+    val strictMode by remember(repository) { repository.strictMode() }
+        .collectAsStateWithLifecycle(false)
+    val autoAdvance by remember(repository) { repository.autoAdvance() }
+        .collectAsStateWithLifecycle(false)
+    val practiceMode by remember(repository) { repository.practiceMode() }
+        .collectAsStateWithLifecycle(false)
+    val shuffleQuestions by remember(repository) { repository.shuffleQuestions() }
+        .collectAsStateWithLifecycle(false)
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val categoryCounts by viewModel.categoryCounts.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
@@ -125,6 +138,7 @@ fun LibraryScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshStudyCounts()
                 viewModel.refreshDailyGoal()
+                viewModel.refreshUnfinishedTest()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -410,6 +424,14 @@ fun LibraryScreen(
                         item(contentType = "daily-goal") {
                             DailyGoalIndicator(dailyGoalProgress)
                         }
+                        if (unfinishedTest != null) {
+                            item(contentType = "unfinished-test") {
+                                UnfinishedTestCard(
+                                    saved = unfinishedTest!!,
+                                    onResume = { navController.navigate(unfinishedTestRoute(unfinishedTest!!)) }
+                                )
+                            }
+                        }
                         itemsIndexed(papers, key = { _, paper -> paper.id }) { index, paper ->
                             val dueCountBadge = studyCounts[paper.id]?.due ?: 0
                             val leechCountBadge = studyCounts[paper.id]?.leeches ?: 0
@@ -615,6 +637,17 @@ fun LibraryScreen(
                 viewModel.updateBlueprint(blueprintId, name, sections)
             },
             onDeleteBlueprint = { blueprintId -> viewModel.deleteBlueprint(blueprintId) },
+            strictMode = strictMode,
+            autoAdvance = autoAdvance,
+            practiceMode = practiceMode,
+            shuffleQuestions = shuffleQuestions,
+            negativeMarking = request.paper.negativeMarking,
+            savedTest = unfinishedTest,
+            onOpenSettings = { navController.navigate("settings") },
+            onKeepSavedTest = {
+                viewModel.setPendingTestSetup(null)
+                unfinishedTest?.let { navController.navigate(unfinishedTestRoute(it)) }
+            },
             onDismiss = { viewModel.setPendingTestSetup(null) },
             onStart = { type, requestedCount, minutes, exclusion, breadth, variant ->
                 // The ViewModel clears the sheet, remembers the length, resolves

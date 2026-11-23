@@ -12,6 +12,7 @@ import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.data.backup.McqBackupFormat.BackupTooLargeException
 import com.mcqapp.data.backup.RestorePartialCopy
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
@@ -27,6 +28,7 @@ import com.mcqapp.ui.theme.MAX_THEME_FILE_BYTES
 import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
+import com.mcqapp.util.stampedFileName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +61,21 @@ sealed interface FsrsOptimizeState {
 
 /** A Backup & data failure: the title's string resource plus the friendly copy. */
 data class SettingsOperationError(val titleRes: Int, val message: String)
+
+/**
+ * What a picked backup claims, read before the wipe so the confirmation can
+ * name the file and show its counts next to the library they will replace.
+ */
+internal data class RestorePreviewInfo(
+    val fileName: String,
+    val exportedAt: Long,
+    val papers: Int,
+    val questions: Int,
+    val reviews: Int,
+    val currentPapers: Int,
+    val currentQuestions: Int,
+    val currentReviews: Int
+)
 
 /** A built share intent waiting for the (possibly recreated) Activity to show it. */
 internal data class ShareRequest(val intent: Intent, val id: Long)
@@ -192,6 +209,55 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val busy: StateFlow<Boolean> get() = operations.busy
     val operationError: StateFlow<SettingsOperationError?> get() = operations.error
     val restoreReport: StateFlow<String?> get() = operations.restoreReport
+
+    private val _restorePreview = MutableStateFlow<RestorePreviewInfo?>(null)
+    internal val restorePreview: StateFlow<RestorePreviewInfo?> = _restorePreview.asStateFlow()
+
+    fun clearRestorePreview() {
+        _restorePreview.value = null
+    }
+
+    /**
+     * Reads only the picked archive's manifest and the current library counts.
+     * Nothing is wiped here: the learner decides after seeing both sides. A
+     * failed read surfaces as a normal Backup & data error instead of leaving
+     * the confirmation with blank, misleading details.
+     */
+    fun prepareRestore(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val info = withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val name = uri.lastPathSegment?.substringAfterLast('/') ?: "backup.zip"
+                    val input = app.contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException(msg(R.string.final_read_file_failed))
+                    val manifest = input.use { stream ->
+                        McqBackupFormat.readManifest(
+                            boundedStream(stream, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES)
+                        )
+                    }
+                    val db = repository.db()
+                    RestorePreviewInfo(
+                        fileName = name,
+                        exportedAt = manifest.exportedAt,
+                        papers = manifest.papers,
+                        questions = manifest.questions,
+                        reviews = manifest.reviews,
+                        currentPapers = db.paperDao().getAll().size,
+                        currentQuestions = db.questionDao().countQuestions(),
+                        currentReviews = db.reviewLogDao().countAll()
+                    )
+                }
+                _restorePreview.value = info
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Could not read backup manifest", e)
+                operations.fail(
+                    R.string.restore_failed,
+                    msg(R.string.final_restore_failed)
+                )
+            }
+        }
+    }
 
     private val _shareRequest = MutableStateFlow<ShareRequest?>(null)
     internal val shareRequest: StateFlow<ShareRequest?> = _shareRequest.asStateFlow()
@@ -826,6 +892,23 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Actionable, localized copy for a backup that would exceed a restore cap. */
+    private fun backupTooLargeMessage(e: BackupTooLargeException): String {
+        val bytes = if (e.entry) {
+            com.mcqapp.data.SafeZip.MAX_ENTRY_BYTES
+        } else {
+            com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES
+        }
+        return msg(
+            if (e.entry) {
+                R.string.data_honesty_backup_entry_too_large
+            } else {
+                R.string.data_honesty_backup_too_large
+            },
+            (bytes / (1024 * 1024)).toInt()
+        )
+    }
+
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             operations.begin()
@@ -995,16 +1078,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
-                operations.fail(
-                    R.string.backup_failed,
-                    msg(
-                        if (e.message == BACKUP_RULE_MOVED) {
-                            R.string.final_backup_rule_moved
-                        } else {
-                            R.string.final_backup_failed
-                        }
-                    )
-                )
+                // A backup beyond the restore caps is refused with the concrete
+                // limit and a way out — "generic failure" left the learner with
+                // no idea why a large library could not be backed up.
+                val message = when {
+                    e.message == BACKUP_RULE_MOVED -> msg(R.string.final_backup_rule_moved)
+                    e is BackupTooLargeException -> backupTooLargeMessage(e)
+                    else -> msg(R.string.final_backup_failed)
+                }
+                operations.fail(R.string.backup_failed, message)
             } finally {
                 // H4: the original fix was this `finally`; keep clearing busy here.
                 operations.finish()
@@ -1031,6 +1113,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val intent = try {
                 build()
+            } catch (e: BackupTooLargeException) {
+                operations.fail(failureTitleRes, backupTooLargeMessage(e))
+                null
             } finally {
                 operations.finish()
             }
@@ -1051,7 +1136,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return withContext(Dispatchers.IO) {
             try {
                 val app = getApplication<Application>()
-                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcq-export.json")
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir, stampedFileName("mcq-export", "json")
+                )
                 java.io.FileOutputStream(file).use { out ->
                     Exporter(repository.db()).exportAllTo(
                         java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
@@ -1075,7 +1162,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return withContext(Dispatchers.IO) {
             try {
                 val app = getApplication<Application>()
-                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcqapp-backup.zip")
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir, stampedFileName("mcqapp-backup", "zip")
+                )
                 val appVersion = try {
                     app.packageManager.getPackageInfo(app.packageName, 0).versionName
                 } catch (_: Exception) {
@@ -1139,6 +1228,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
                 Logger.i("SETTINGS", "Shared backup '${file.name}' (${file.length()} bytes)")
                 com.mcqapp.util.shareIntent(app, file, "application/zip")
+            } catch (e: BackupTooLargeException) {
+                // Let share() map this to the actionable cap message instead of
+                // the generic "share failed".
+                Logger.e("SETTINGS", "Share backup too large", e)
+                throw e
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Share backup failed", e)
                 null

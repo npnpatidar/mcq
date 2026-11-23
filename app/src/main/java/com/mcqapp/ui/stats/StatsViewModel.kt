@@ -17,6 +17,7 @@ import com.mcqapp.domain.stats.RetentionData
 import com.mcqapp.domain.stats.SessionsData
 import com.mcqapp.domain.stats.StatsAggregator
 import com.mcqapp.domain.stats.WorkloadData
+import com.mcqapp.data.repository.toStatsHistoryEntry
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -196,7 +197,13 @@ class StatsViewModel(application: Application) : AndroidViewModel(application) {
         openCardWithLoader(paperId, questionId) {
             val question = repository.getQuestion(questionId)
             val cardState = repository.cardState(paperId, questionId)
-            val history = repository.reviewHistory(questionId)
+            // The schedule is keyed by (paper, question); the history was read
+            // by question alone, so the sheet mixed two papers' logs for a
+            // question reused across them. Read the scoped rows here. The
+            // repository's question-only delegate stays for its other callers.
+            val history = repository.db().reviewLogDao()
+                .historyForCard(paperId, questionId)
+                .map { it.toStatsHistoryEntry() }
             val retrievability = cardState?.takeIf { it.stability > 0.0 }?.let { state ->
                 val config = repository.schedulerConfigNow()
                 FsrsScheduler(

@@ -72,7 +72,7 @@ private fun ForecastCard(bundle: WorkloadData) {
     ChartCard(
         testTag = "stats-forecast",
         title = { ChartTitle(R.string.stats_forecast) },
-        subtitle = { ChartSubtitle(R.string.stats_forecast_help) }
+        subtitle = { ChartSubtitle(R.string.stats_forecast_help_aligned) }
     ) {
         StackedBarChart(
             points = forecast.days.map { day ->

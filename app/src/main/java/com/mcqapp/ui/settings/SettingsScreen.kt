@@ -40,6 +40,12 @@ import com.mcqapp.AppLocale
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.ui.common.LocalAnnouncer
+import com.mcqapp.util.stampedFileName
+
+/** The backup date as shown in the restore confirmation, in the device's zone. */
+internal fun formatBackupDate(exportedAt: Long): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(exportedAt))
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +89,7 @@ fun SettingsScreen(
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val operationError by viewModel.operationError.collectAsStateWithLifecycle()
     val restoreReport by viewModel.restoreReport.collectAsStateWithLifecycle()
+    val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
     val shareRequest by viewModel.shareRequest.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
@@ -142,13 +149,22 @@ fun SettingsScreen(
     }
     var showRestoreConfirm by rememberSaveable { mutableStateOf(false) }
     var restoreUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    // "Back up current library first" from inside the confirm dialog opens a
+    // second document picker; the restore choice stays pending meanwhile.
+    val backupBeforeRestoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let { viewModel.backupAll(it) }
+    }
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        // The picked uri rides in state; the confirmation reads it.
+        // The picked uri rides in state; the confirmation reads the manifest
+        // the ViewModel loads for it before the learner agrees to a wipe.
         if (uri != null) {
             restoreUri = uri
             showRestoreConfirm = true
+            viewModel.prepareRestore(uri)
         }
     }
 
@@ -276,8 +292,8 @@ fun SettingsScreen(
                 onUpdateAnswersChange = { viewModel.setUpdateAnswersOnDuplicate(it) },
                 onPdfTwoColumnChange = { viewModel.setPdfTwoColumn(it) },
                 onRefreshStorage = { viewModel.refreshStorage() },
-                onExportClick = { exportLauncher.launch("mcq-export.json") },
-                onBackupClick = { backupLauncher.launch("mcqapp-backup.zip") },
+                onExportClick = { exportLauncher.launch(stampedFileName("mcq-export", "json")) },
+                onBackupClick = { backupLauncher.launch(stampedFileName("mcqapp-backup", "zip")) },
                 onShareAllClick = { viewModel.shareAll() },
                 onShareBackupClick = { viewModel.shareBackup() },
                 onRestoreClick = { restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
@@ -316,20 +332,70 @@ fun SettingsScreen(
 
     if (showRestoreConfirm) {
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showRestoreConfirm = false },
+            onDismissRequest = {
+                showRestoreConfirm = false
+                viewModel.clearRestorePreview()
+            },
             title = { Text(stringResource(R.string.restore_backup)) },
             text = {
-                Text(stringResource(R.string.restore_backup_confirm))
+                Column {
+                    Text(stringResource(R.string.restore_backup_confirm))
+                    Spacer(Modifier.height(8.dp))
+                    val preview = restorePreview
+                    if (preview == null) {
+                        Text(
+                            stringResource(R.string.measuring),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Text(
+                            stringResource(R.string.data_honesty_restore_file, preview.fileName),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(
+                                R.string.data_honesty_restore_manifest,
+                                formatBackupDate(preview.exportedAt),
+                                preview.papers, preview.questions, preview.reviews
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            stringResource(
+                                R.string.data_honesty_restore_current,
+                                preview.currentPapers, preview.currentQuestions, preview.currentReviews
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.data_honesty_restore_settings_note),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     showRestoreConfirm = false
+                    viewModel.clearRestorePreview()
                     restoreUri?.let { uri -> viewModel.restoreBackup(uri) }
                 }) { Text(stringResource(R.string.restore_replace_everything)) }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showRestoreConfirm = false }) {
-                    Text(stringResource(R.string.cancel))
+                Column {
+                    TextButton(
+                        modifier = Modifier.testTag("restore-backup-first"),
+                        onClick = {
+                            backupBeforeRestoreLauncher.launch(
+                                stampedFileName("mcqapp-backup", "zip")
+                            )
+                        }
+                    ) { Text(stringResource(R.string.data_honesty_restore_backup_first)) }
+                    TextButton(onClick = {
+                        showRestoreConfirm = false
+                        viewModel.clearRestorePreview()
+                    }) { Text(stringResource(R.string.cancel)) }
                 }
             }
         )

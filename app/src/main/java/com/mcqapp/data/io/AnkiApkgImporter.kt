@@ -89,6 +89,16 @@ class AnkiApkgImporter(
                     leechThreshold = schedulerConfig.leechThreshold
                 )
             }
+            // The reader used to hand the session an empty warning list, so a
+            // deck's dropped cards and unresolved media left no trace. The
+            // reasons ride both as typed report notes (what the learner reads)
+            // and as warnings on the file shape, so nothing is discarded.
+            val notes = buildList {
+                if (tail.droppedStems > 0) {
+                    add(ImportNote.AnkiDroppedCards(tail.droppedStems))
+                }
+                add(ImportNote.AnkiMissingMedia)
+            }
             session.finish(
                 LegacyParser.StreamedFile(
                     version = 1,
@@ -96,14 +106,24 @@ class AnkiApkgImporter(
                     bookmarks = emptyList(),
                     attempts = emptyList(),
                     scheduling = emptyMap(),
-                    warnings = emptyList()
+                    warnings = notes.map { note ->
+                        when (note) {
+                            is ImportNote.AnkiDroppedCards ->
+                                "Anki: ${note.count} card(s) dropped (blank front or answer)"
+                            ImportNote.AnkiMissingMedia ->
+                                "Anki: a referenced picture missing from the package could not be brought across"
+                        }
+                    }
                 )
             )
             // The reader owns the dropped count (a blank stem or answer is a
             // reader decision, not a database outcome). The card count itself
             // comes from the shared session — every card actually written —
             // so it cannot disagree with a JSON or backup import.
-            session.report().copy(droppedAnkiStems = tail.droppedStems)
+            session.report().copy(
+                droppedAnkiStems = tail.droppedStems,
+                importNotes = notes
+            )
         }
     }
 }

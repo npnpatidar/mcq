@@ -138,6 +138,7 @@ internal class StreamingImportSession(
     private var restoredBookmarks = 0
     private var restoredAttempts = 0
     private var restoredSchedules = 0
+    private var schedulesReset = 0
     private var questionsSeen = 0
     /** Cards actually written: questions with no options after normalisation. */
     private var importedCards = 0
@@ -358,6 +359,7 @@ internal class StreamingImportSession(
         restoredAttempts = restoredAttempts,
         restoredSchedules = restoredSchedules,
         recallConverted = importedCards,
+        schedulesReset = schedulesReset,
         progressRestoreSkipped = scheduleBudget.exhausted
     )
 
@@ -600,15 +602,9 @@ internal class StreamingImportSession(
                         // describes content the learner no longer sees. The
                         // hide flags are the learner's choice, not part of the
                         // invalidated schedule, so keep them on a flag-only row.
-                        val hidden = db.cardStateDao()
-                            .getForQuestionsChunked(listOf(sameContentId))
-                            .filter { it.suspended || it.buriedUntil != null }
-                        db.cardStateDao().deleteByQuestion(sameContentId)
-                        hidden.forEach { state ->
-                            db.cardStateDao().upsert(
-                                state.resetForNewContent(candidate.entity.contentHash)
-                            )
-                        }
+                        schedulesReset += resetScheduleFor(
+                            sameContentId, candidate.entity.contentHash
+                        )
                     }
                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                     // The stored option rows keep their ids: translate the
@@ -701,13 +697,7 @@ internal class StreamingImportSession(
                 // Absent is "never studied": delete the schedule memory rather
                 // than writing a NEW row, and keep the review log. The v30 hide
                 // flags survive on a flag-only row so the card stays hidden.
-                val hidden = db.cardStateDao()
-                    .getForQuestionsChunked(listOf(effectiveQuestionId))
-                    .filter { it.suspended || it.buriedUntil != null }
-                db.cardStateDao().deleteByQuestion(effectiveQuestionId)
-                hidden.forEach { state ->
-                    db.cardStateDao().upsert(state.resetForNewContent(contentHash))
-                }
+                schedulesReset += resetScheduleFor(effectiveQuestionId, contentHash)
             }
             val resolvedSortOrder = if (existingQuestion == null || ownedElsewhere) {
                 if (!maxSortLoaded) {
@@ -809,6 +799,29 @@ internal class StreamingImportSession(
                 }
             }
         }
+    }
+
+    /**
+     * Deletes one card's schedule because its content changed, preserving the
+     * learner's hide flags on a fresh empty row. Returns 1 only when a schedule
+     * actually existed so the report never claims a reset for an unstudied card.
+     */
+    private suspend fun resetScheduleFor(questionId: String, newHash: String): Int {
+        val states = db.cardStateDao().getForQuestionsChunked(listOf(questionId))
+        if (states.isEmpty()) return 0
+        val hidden = states.filter { it.suspended || it.buriedUntil != null }
+        db.cardStateDao().deleteByQuestion(questionId)
+        hidden.forEach { state ->
+            db.cardStateDao().upsert(state.resetForNewContent(newHash))
+        }
+        return 1
+    }
+
+    /** The passage-body version of [resetScheduleFor], for a whole member group. */
+    private suspend fun resetSchedulesForQuestions(questionIds: List<String>): Int {
+        val withSchedule = db.cardStateDao().getForQuestionsChunked(questionIds).size
+        db.cardStateDao().deleteByQuestionsChunked(questionIds)
+        return withSchedule
     }
 
     private suspend fun candidates(
@@ -915,7 +928,7 @@ internal class StreamingImportSession(
             if (passageChanged) {
                 val members = db.passageDao().memberIds(passageId)
                 if (members.isNotEmpty()) {
-                    db.cardStateDao().deleteByQuestionsChunked(members)
+                    schedulesReset += resetSchedulesForQuestions(members)
                 }
             }
         }

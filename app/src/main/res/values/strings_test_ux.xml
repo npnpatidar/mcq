@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Finding 1: the exam conditions a test will run under, shown before Start. -->
+    <string name="test_ux_conditions_title">Before you start</string>
+    <string name="test_ux_condition_strict">Strict exam mode: answers stay hidden until you submit.</string>
+    <string name="test_ux_condition_not_strict">Live feedback: you see each verdict as you go.</string>
+    <string name="test_ux_condition_auto_advance">Auto-advance: answering moves straight to the next question.</string>
+    <string name="test_ux_condition_no_auto_advance">You move between questions yourself.</string>
+    <string name="test_ux_condition_practice">Practice mode: the explanation appears right away.</string>
+    <string name="test_ux_condition_not_practice">Exam style: explanations come after the test.</string>
+    <string name="test_ux_condition_shuffle">Questions are shuffled.</string>
+    <string name="test_ux_condition_no_shuffle">Questions follow the paper order.</string>
+    <string name="test_ux_condition_negative">Negative marking: minus %1$s for a wrong answer.</string>
+    <string name="test_ux_condition_no_negative">No negative marking.</string>
+    <string name="test_ux_condition_settings">Change these in Settings</string>
+
+    <!-- Finding 2: representative mocks and the collapsed practice group. -->
+    <string name="test_ux_group_mocks">Mock tests</string>
+    <string name="test_ux_group_practice">Practice tests</string>
+    <string name="test_ux_practice_more">More practice types</string>
+    <string name="test_ux_practice_less">Fewer practice types</string>
+
+    <!-- Finding 3: the unfinished test has a home and a replacement warning. -->
+    <string name="test_ux_unfinished_line" tools:ignore="PluralsCandidate">Unfinished test - %1$d answered</string>
+    <string name="test_ux_unfinished_resume">Resume test</string>
+    <string name="test_ux_replace_notice">Starting this test replaces your saved unfinished test.</string>
+    <string name="test_ux_replace_dismiss">Got it</string>
+    <string name="test_ux_replace_keep">Keep the saved test</string>
+
+    <!-- Finding 4: numbered, feedback-free navigation in strict mode. -->
+    <string name="test_ux_jump_grid">Jump to question</string>
+    <string name="test_ux_jump_grid_hide">Hide question grid</string>
+    <string name="test_ux_jump_go">Go to question %1$d</string>
+
+    <!-- Finding 5: one margin rule and one wording everywhere. -->
+    <string name="test_ux_delta_line" tools:ignore="PluralsCandidate">%1$s%2$d points since the previous test - %3$s</string>
+    <string name="test_ux_delta_within">within the combined margin (could be noise)</string>
+    <string name="test_ux_delta_beyond">beyond the combined margin</string>
+
+    <!-- Finding 6: the History arrow is explicitly since the first attempt. -->
+    <string name="test_ux_history_delta_line">%1$s %2$s pts since first attempt</string>
+    <string name="test_ux_history_delta_within">No clear change - inside the margin</string>
+    <string name="test_ux_history_delta_spoken_improved">Improved by %1$s points since the first attempt</string>
+    <string name="test_ux_history_delta_spoken_declined">Declined by %1$s points since the first attempt</string>
+    <string name="test_ux_history_delta_spoken_unchanged">No clear change since the first attempt</string>
+
+    <!-- Finding 7: the passage above the stem in a result card. -->
+    <string name="test_ux_passage_label">Passage</string>
+
+    <!-- Finding 8: the next step is the first thing a learner sees on results. -->
+    <string name="test_ux_next_step">Next step</string>
+    <string name="test_ux_next_step_go">Do it</string>
+</resources>

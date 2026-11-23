@@ -27,8 +27,22 @@ object Trends {
         val attempts: Int,
         val latestPercent: Double,
         val bestPercent: Double,
-        val deltaPoints: Double
+        /** Latest minus first — the History card labels this "since first attempt". */
+        val deltaPoints: Double,
+        /** The two endpoints' own margins, for the shared noise rule. */
+        val firstMarginPoints: Double? = null,
+        val latestMarginPoints: Double? = null
     ) {
+        /**
+         * History suppresses its arrow when the first-to-latest change sits
+         * inside the two endpoints' combined margin — the same rule the
+         * results header and the comparable trend card use.
+         */
+        val withinNoise: Boolean
+            get() = TestStatistics.deltaWithinNoise(
+                deltaPoints, firstMarginPoints, latestMarginPoints
+            )
+
         /** True when this line is the whole paper rather than a topic subset. */
         val isWholePaper: Boolean get() = scopeKey == ScopeKey.wholePaper(paperId)
 
@@ -100,10 +114,21 @@ object Trends {
                 // percentages would be the exact mixing section 11.5 forbids.
                 if (family == ReportFamily.LEGACY) return@mapNotNull null
                 val percents = ordered.map { it.percentage }
+                val latest = ordered.last()
+                // No finite-population correction here: a History trend groups
+                // attempts by scope but does not carry a scope size. The Wilson
+                // half-width alone is a consistent, conservative band for the
+                // two endpoints it compares.
+                val firstMargin = TestStatistics.marginPoints(
+                    first.accuracyOnShown, first.totalQuestions, null
+                )
+                val latestMargin = TestStatistics.marginPoints(
+                    latest.accuracyOnShown, latest.totalQuestions, null
+                )
                 FamilyTrend(
                     key = key,
                     paperId = first.paperId,
-                    title = ordered.last().title,
+                    title = latest.title,
                     family = family,
                     type = TestType.fromStorage(first.testType),
                     requestedCount = first.requestedCount,
@@ -114,7 +139,9 @@ object Trends {
                     attempts = ordered.size,
                     latestPercent = percents.last(),
                     bestPercent = percents.max(),
-                    deltaPoints = percents.last() - percents.first()
+                    deltaPoints = percents.last() - percents.first(),
+                    firstMarginPoints = firstMargin,
+                    latestMarginPoints = latestMargin
                 )
             }
             .sortedWith(compareBy({ it.title }, { it.family.ordinal }, { it.requestedCount }))

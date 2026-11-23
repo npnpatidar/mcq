@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="PluralsCandidate">
+    <!-- One honest headline: mature, objective-only true retention vs the target. -->
+    <string name="stats_honest_headline_title">True retention, honestly</string>
+    <string name="stats_honest_headline_value">%1$s mature true retention · objective answers only</string>
+    <string name="stats_honest_headline_gap">Target %1$s · %2$s against target</string>
+    <string name="stats_honest_headline_reviews">Based on %1$d objective mature reviews</string>
+    <string name="stats_honest_headline_empty">Not enough objective mature reviews yet</string>
+    <string name="stats_honest_headline_help">Only mature cards with a recorded right or wrong answer count. Self-graded, guessed and skipped rows are left out.</string>
+
+    <!-- The "Most forgotten" list ranks lapses, not first-day learning stumbles. -->
+    <string name="stats_weakest_help_honest">Ranked by answers given Again after the learning steps. Same-day learning stumbles are not counted as lapses. Tap for the card\'s history.</string>
+
+    <!-- Calibration and Brier now use the cut estimator's objective evidence gate. -->
+    <string name="stats_calibration_honest_note">Calibration and Brier use only objective, correctly graded answers. Self-graded, guessed, skipped and differently graded rows are left out.</string>
+
+    <!-- One due definition: overdue is before today's study-day boundary. -->
+    <string name="stats_forecast_help_aligned">Scheduled reviews for the next 30 study days, bucketed by day. The first bar is today; cards due before today are the overdue count shown below, not a bar. The line is the total outstanding if you skip every day.</string>
+
+    <!-- Thin buckets are plotted but visibly de-emphasised, and always spoken with n. -->
+    <string name="stats_chart_small_buckets">Faded points come from fewer than %1$d reviews. Each point\'s review count is in its spoken label.</string>
+    <string name="stats_chart_review_unit">review</string>
+    <string name="stats_chart_reviews_unit">reviews</string>
+
+    <!-- Group weakness bars open the weakest card behind the aggregate. -->
+    <string name="stats_group_bar_hint">Tap a bar to open its weakest card.</string>
+    <string name="stats_guess_topics_hint">Tap a topic to open its weakest card.</string>
+
+    <!-- A flashcard-only library has no flagged guess evidence to show. -->
+    <string name="stats_guess_empty_self_graded">Nothing to show yet. Self-graded flashcards record no right or wrong answer, so they are left out of these figures by design. Guess figures appear once keyed questions carry the guess flag.</string>
+
+    <!-- Tests' "average" is an unweighted mean; say so, next to Exam's pooled one. -->
+    <string name="stats_tests_family_row_unweighted">%1$s · %2$d attempts · latest %3$d%% · unweighted avg %4$d%%</string>
+    <string name="stats_panels_row_unweighted">%1$s · %2$d questions · %3$d runs · latest %4$d%% · unweighted avg %5$d%%</string>
+    <string name="stats_tests_average_help">The average here is the unweighted mean of each attempt\'s percentage, so a 10-question run counts as much as a 50-question one. The Exam section\'s average pools correct answers over all questions instead.</string>
+    <string name="stats_exam_kpi_average_pooled">Average (pooled)</string>
+</resources>

@@ -60,6 +60,11 @@ private fun FamiliesCard(data: TestProgressData) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Text(
+                stringResource(R.string.stats_tests_average_help),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(8.dp))
             if (data.families.isEmpty()) {
                 Text(
@@ -70,7 +75,7 @@ private fun FamiliesCard(data: TestProgressData) {
                 data.families.forEach { family ->
                     Text(
                         stringResource(
-                            R.string.stats_tests_family_row,
+                            R.string.stats_tests_family_row_unweighted,
                             familyLabel(family.family),
                             family.attempts,
                             family.latestPercent.roundToInt(),
@@ -176,7 +181,7 @@ private fun PanelsCard(data: TestProgressData) {
             data.panels.forEach { panel ->
                 Text(
                     stringResource(
-                        R.string.stats_panels_row,
+                        R.string.stats_panels_row_unweighted,
                         panel.name,
                         panel.size,
                         panel.attempts,

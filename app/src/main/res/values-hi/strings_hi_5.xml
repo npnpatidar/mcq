@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="sessions_line">%1$s · %2$s याद रखे गए · %3$s कार्डों पर</string>
     <string name="sessions_load_error">सत्र लोड नहीं किए जा सके।</string>
     <string name="sessions_more_topics">+%1$d और</string>
@@ -136,7 +136,7 @@
     <string name="stats_exam_help">केवल तुलनीय परिणाम: स्ट्रिक्ट मॉक, फ़्रेश सैंपल और अभ्यास को कभी एक साथ औसत नहीं निकाला जाता।</string>
     <string name="stats_exam_key">%1$s · %2$s · %3$d प्रश्न</string>
     <string name="stats_exam_kpi_attempts">प्रयास</string>
-    <string name="stats_exam_kpi_average">औसत</string>
+    <string name="stats_exam_kpi_average" tools:ignore="UnusedResources">औसत</string>
     <string name="stats_exam_kpi_best">सर्वश्रेष्ठ</string>
     <string name="stats_exam_kpi_delta">परिवर्तन</string>
     <string name="stats_exam_kpi_latest">नवीनतम</string>

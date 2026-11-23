@@ -1,6 +1,7 @@
 package com.mcqapp.ui.stats.sections
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.stats.Calibration
+import com.mcqapp.domain.stats.CardReference
 import com.mcqapp.domain.stats.GroupRetention
 import com.mcqapp.domain.stats.IntervalBand
 import com.mcqapp.domain.stats.RetentionData
@@ -37,6 +39,7 @@ import com.mcqapp.ui.stats.charts.LegendDot
 import com.mcqapp.ui.stats.charts.LineChart
 import com.mcqapp.ui.stats.charts.LineSeries
 import com.mcqapp.ui.stats.charts.MeterBar
+import com.mcqapp.ui.stats.charts.SMALL_BUCKET_REVIEWS
 import com.mcqapp.ui.stats.charts.formatPct
 import java.text.DateFormat
 import java.util.Date
@@ -50,7 +53,8 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun RetentionSection(
-    bundle: RetentionData
+    bundle: RetentionData,
+    onOpenCard: (CardReference) -> Unit = {}
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -78,14 +82,24 @@ internal fun RetentionSection(
             }
         }
         if (bundle.groupRetention.isNotEmpty()) {
-            item(contentType = "group-retention") { GroupRetentionCard(bundle) }
+            item(contentType = "group-retention") { GroupRetentionCard(bundle, onOpenCard) }
         }
-        item(contentType = "interval") { IntervalCard(bundle) }
+        item(contentType = "interval") { IntervalCard(bundle, onOpenCard) }
         if (bundle.tagRetention.isNotEmpty()) {
-            item(contentType = "tag-retention") { SliceCard(bundle.tagRetention, R.string.stats_by_tag, R.string.stats_by_tag_help, "stats-tag-retention") }
+            item(contentType = "tag-retention") {
+                SliceCard(
+                    bundle.tagRetention, R.string.stats_by_tag, R.string.stats_by_tag_help,
+                    "stats-tag-retention", onOpenCard
+                )
+            }
         }
         if (bundle.categoryRetention.isNotEmpty()) {
-            item(contentType = "category-retention") { SliceCard(bundle.categoryRetention, R.string.stats_by_category_all, R.string.stats_by_category_all_help, "stats-category-retention") }
+            item(contentType = "category-retention") {
+                SliceCard(
+                    bundle.categoryRetention, R.string.stats_by_category_all,
+                    R.string.stats_by_category_all_help, "stats-category-retention", onOpenCard
+                )
+            }
         }
         item(contentType = "weekday") { WeekdayCard(bundle) }
     }
@@ -106,11 +120,14 @@ private fun TrendCard(bundle: RetentionData) {
                 LineSeries(
                     values = trend.points.map { it.value },
                     color = MaterialTheme.colorScheme.primary,
-                    fill = true
+                    fill = true,
+                    counts = trend.points.map { it.count },
+                    deEmphasiseBelow = SMALL_BUCKET_REVIEWS
                 ),
                 LineSeries(
                     values = trend.rolling.map { it.value },
-                    color = MaterialTheme.colorScheme.tertiary
+                    color = MaterialTheme.colorScheme.tertiary,
+                    counts = trend.rolling.map { it.count }
                 )
             ),
             fixedMax = 1.0,
@@ -132,6 +149,12 @@ private fun TrendCard(bundle: RetentionData) {
                 R.string.stats_desired_retention
             )
         }
+        Text(
+            stringResource(R.string.stats_chart_small_buckets, SMALL_BUCKET_REVIEWS),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp)
+        )
     }
 }
 
@@ -233,6 +256,11 @@ private fun CalibrationCard(bundle: RetentionData) {
         title = { ChartTitle(R.string.stats_calibration) },
         subtitle = { ChartSubtitle(R.string.stats_calibration_help) }
     ) {
+        Text(
+            stringResource(R.string.stats_calibration_honest_note),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         if (calibration.samples == 0) {
             ChartEmpty(R.string.stats_calibration_empty)
             return@ChartCard
@@ -515,7 +543,10 @@ internal fun formatEvidenceDate(
 private fun Double.roundTo3(): String = String.format(Locale.ENGLISH, "%.3f", this)
 
 @Composable
-private fun GroupRetentionCard(bundle: RetentionData) {
+private fun GroupRetentionCard(
+    bundle: RetentionData,
+    onOpenCard: (CardReference) -> Unit
+) {
     ChartCard(
         testTag = "stats-group-retention",
         title = {
@@ -525,31 +556,48 @@ private fun GroupRetentionCard(bundle: RetentionData) {
         },
         subtitle = { ChartSubtitle(R.string.stats_by_group_help) }
     ) {
+        DrillHint()
         bundle.groupRetention.forEach { group ->
             RetentionBar(
                 label = group.label,
                 reviews = group.reviews,
-                retention = group.retention
+                retention = group.retention,
+                onClick = group.drill?.let { ref -> { onOpenCard(ref) } }
             )
         }
     }
 }
 
 @Composable
-private fun IntervalCard(bundle: RetentionData) {
+private fun IntervalCard(
+    bundle: RetentionData,
+    onOpenCard: (CardReference) -> Unit
+) {
     ChartCard(
         testTag = "stats-interval-retention",
         title = { ChartTitle(R.string.stats_by_interval) },
         subtitle = { ChartSubtitle(R.string.stats_by_interval_help) }
     ) {
+        DrillHint()
         bundle.intervalRetention.forEach { band ->
             RetentionBar(
                 label = intervalLabel(band.band),
                 reviews = band.reviews,
-                retention = band.retention
+                retention = band.retention,
+                onClick = band.drill?.let { ref -> { onOpenCard(ref) } }
             )
         }
     }
+}
+
+@Composable
+private fun DrillHint() {
+    Text(
+        stringResource(R.string.stats_group_bar_hint),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 4.dp)
+    )
 }
 
 /** The plan's six bands, in their fixed order (plan §6.1). */
@@ -569,18 +617,21 @@ private fun SliceCard(
     rows: List<GroupRetention>,
     @StringRes titleRes: Int,
     @StringRes helpRes: Int,
-    testTag: String
+    testTag: String,
+    onOpenCard: (CardReference) -> Unit
 ) {
     ChartCard(
         testTag = testTag,
         title = { ChartTitle(titleRes) },
         subtitle = { ChartSubtitle(helpRes) }
     ) {
+        DrillHint()
         rows.forEach { row ->
             RetentionBar(
                 label = row.label,
                 reviews = row.reviews,
-                retention = row.retention
+                retention = row.retention,
+                onClick = row.drill?.let { ref -> { onOpenCard(ref) } }
             )
         }
     }
@@ -625,8 +676,18 @@ private fun WeekdayCard(bundle: RetentionData) {
 }
 
 @Composable
-private fun RetentionBar(label: String, reviews: Int, retention: Double?) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+private fun RetentionBar(
+    label: String,
+    reviews: Int,
+    retention: Double?,
+    onClick: (() -> Unit)? = null
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 6.dp)
+    ) {
         Row(Modifier.fillMaxWidth()) {
             Text(
                 label,

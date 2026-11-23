@@ -71,6 +71,14 @@ internal fun countPaper(isNewPaper: Boolean, skipped: Boolean): Pair<Int, Int> =
     else -> 0 to 1
 }
 
+/** A reason a source did not import verbatim, resolved to copy in the UI. */
+sealed interface ImportNote {
+    /** Cards a reader dropped because their front or answer was blank. */
+    data class AnkiDroppedCards(val count: Int) : ImportNote
+    /** The deck referenced pictures it did not carry, so they could not come across. */
+    data object AnkiMissingMedia : ImportNote
+}
+
 data class ImportReport(
     val newPapers: Int,
     val updatedPapers: Int,
@@ -87,6 +95,24 @@ data class ImportReport(
     val droppedAnkiStems: Int = 0,
     /** Cards actually imported: questions with no options after normalisation. */
     val recallConverted: Int = 0,
+    /**
+     * Study schedules deleted because the content the card was learned from
+     * changed (text, options, answer key, passage body). The learner is told
+     * that these cards start again — a reset must never be silent.
+     */
+    val schedulesReset: Int = 0,
+    /**
+     * Rows the JSON/DOCX reader dropped while parsing. The reasons were already
+     * shown in the preview's import notes; this count makes the completion
+     * report point at them instead of implying a clean import.
+     */
+    val rowsSkipped: Int = 0,
+    /**
+     * Short, structured reasons a source (currently Anki) did not come across
+     * verbatim. Kept as stable types rather than localized text so the report
+     * stays pure; the UI resolves each kind to the selected locale.
+     */
+    val importNotes: List<ImportNote> = emptyList(),
     /**
      * The streamed restore hit its explicit memory budget: the questions were
      * imported, but review progress was deliberately skipped (with a notice).
@@ -173,6 +199,7 @@ class Importer(
         var restoredBookmarks = 0
         var restoredAttempts = 0
         var restoredSchedules = 0
+        var schedulesReset = 0
         /** Cards actually written, i.e. questions with no options after normalisation. */
         var importedCards = 0
 
@@ -435,10 +462,13 @@ class Importer(
                         if (passageChanged) {
                             val members = db.passageDao().memberIds(effectivePassageId)
                             if (members.isNotEmpty()) {
-                                db.cardStateDao().deleteByQuestionsChunked(members)
+                                // Count only rows that really held a schedule: a
+                                // member never studied has nothing to reset, and
+                                // counting it would inflate the report.
+                                schedulesReset += resetSchedulesForQuestions(members)
                                 Logger.i(
                                     "IMPORT",
-                                    "  Passage $effectivePassageId changed, reset ${members.size} card(s)"
+                                    "  Passage $effectivePassageId changed, reset schedules for ${members.size} card(s)"
                                 )
                             }
                         }
@@ -508,15 +538,9 @@ class Importer(
                                         // own hide flags are not part of that schedule:
                                         // keep them on a flag-only row so a suspended card
                                         // does not silently reappear in Study.
-                                        val hidden = db.cardStateDao()
-                                            .getForQuestionsChunked(listOf(sameContentId))
-                                            .filter { it.suspended || it.buriedUntil != null }
-                                        db.cardStateDao().deleteByQuestion(sameContentId)
-                                        hidden.forEach { state ->
-                                            db.cardStateDao().upsert(
-                                                state.resetForNewContent(stored.contentHash)
-                                            )
-                                        }
+                                        schedulesReset += resetScheduleFor(
+                                            sameContentId, stored.contentHash
+                                        )
                                     }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
                                     // Keep the stored option rows, so map the file's
@@ -648,15 +672,7 @@ class Importer(
                             // has studied. Review history stays, and so does the
                             // learner's suspend/bury choice — capture the flags
                             // before the delete and re-write them on a fresh row.
-                            val hidden = db.cardStateDao()
-                                .getForQuestionsChunked(listOf(effectiveQuestionId))
-                                .filter { it.suspended || it.buriedUntil != null }
-                            db.cardStateDao().deleteByQuestion(effectiveQuestionId)
-                            hidden.forEach { state ->
-                                db.cardStateDao().upsert(
-                                    state.resetForNewContent(contentHash)
-                                )
-                            }
+                            schedulesReset += resetScheduleFor(effectiveQuestionId, contentHash)
                             Logger.i(
                                 "IMPORT",
                                 "  Content changed for id=$effectiveQuestionId, schedule reset"
@@ -879,8 +895,33 @@ class Importer(
             restoredBookmarks = restoredBookmarks,
             restoredAttempts = restoredAttempts,
             restoredSchedules = restoredSchedules,
-            recallConverted = importedCards
+            recallConverted = importedCards,
+            schedulesReset = schedulesReset
         )
+    }
+
+    /**
+     * Deletes one card's schedule because its content changed, keeping the
+     * learner's suspend/bury flags on a fresh, empty row. Returns 1 only when a
+     * schedule actually existed, so a card that was never studied is not counted
+     * as a reset it never had.
+     */
+    private suspend fun resetScheduleFor(questionId: String, newHash: String): Int {
+        val states = db.cardStateDao().getForQuestionsChunked(listOf(questionId))
+        if (states.isEmpty()) return 0
+        val hidden = states.filter { it.suspended || it.buriedUntil != null }
+        db.cardStateDao().deleteByQuestion(questionId)
+        hidden.forEach { state ->
+            db.cardStateDao().upsert(state.resetForNewContent(newHash))
+        }
+        return 1
+    }
+
+    /** The passage-body version of [resetScheduleFor], for a whole member group. */
+    private suspend fun resetSchedulesForQuestions(questionIds: List<String>): Int {
+        val withSchedule = db.cardStateDao().getForQuestionsChunked(questionIds).size
+        db.cardStateDao().deleteByQuestionsChunked(questionIds)
+        return withSchedule
     }
 
     /**

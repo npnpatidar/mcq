@@ -573,6 +573,31 @@ class McqRepository internal constructor(
 
     // --- in-progress test session (header in DataStore, answers in Room) ---
 
+    /**
+     * The single saved session as a Library/History card can present it: the
+     * header joined with its answer rows and the count of answered questions.
+     * A snapshot with no answers and no progress is not an unfinished test and
+     * is reported as none, so a stale header cannot create a phantom card.
+     */
+    suspend fun unfinishedTest(): com.mcqapp.domain.UnfinishedTest? {
+        val header = testProgress.snapshot() ?: return null
+        val answers = db.testProgressDao().getForPaper(header.paperId).map { entity ->
+            TestAnswer(
+                questionId = entity.questionId,
+                selection = entity.selection.split(",").filter { it.isNotBlank() }.toSet(),
+                revealed = entity.revealed,
+                flagged = entity.flagged,
+                dwellSeconds = entity.dwellSeconds
+            )
+        }
+        val merged = header.withAnswers(answers)
+        if (!merged.hasAnswers && merged.currentIndex <= 0) return null
+        return com.mcqapp.domain.UnfinishedTest(
+            snapshot = merged,
+            answeredCount = merged.selections.count { it.value.isNotEmpty() }
+        )
+    }
+
     /** The header a killed test session left behind, or null. */
     suspend fun loadTestSnapshot(): TestSnapshot? = testProgress.snapshot()
 
@@ -2014,7 +2039,19 @@ class McqRepository internal constructor(
         slowSeconds: () -> Long = { com.mcqapp.domain.ReviewFilters.DEFAULT_SLOW_SECONDS },
         bookmarked: () -> Set<String>
     ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
-        historyStore.resultPagingSource(attemptId, filter, slowSeconds, bookmarked)
+        historyStore.resultPagingSource(
+            attemptId, filter, slowSeconds, bookmarked,
+            loadPassages = { ids -> historyStore.passagesForQuestions(ids) }
+        )
+
+    /**
+     * Passage context for the result review, resolved live by question id.
+     * The result rows keep no passage column; a passage edited after the
+     * attempt is what the review now shows above the stem.
+     */
+    suspend fun passagesForQuestionIds(ids: List<String>): Map<String, com.mcqapp.domain.Passage> =
+        historyStore.passagesForQuestions(ids)
+
     suspend fun getResultAggregates(attemptId: Long) =
         historyStore.getResultAggregates(attemptId)
     suspend fun getResultCategoryBreakdown(attemptId: Long) =

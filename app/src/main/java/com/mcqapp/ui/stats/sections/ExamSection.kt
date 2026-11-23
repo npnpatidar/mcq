@@ -143,7 +143,7 @@ private fun ExamBody(exam: ExamStats) {
         items = listOf(
             KpiItem(R.string.stats_exam_kpi_latest, percent(exam.latestPercent)),
             KpiItem(R.string.stats_exam_kpi_best, percent(exam.bestPercent)),
-            KpiItem(R.string.stats_exam_kpi_average, percent(exam.averagePercent)),
+            KpiItem(R.string.stats_exam_kpi_average_pooled, percent(exam.averagePercent)),
             KpiItem(R.string.stats_exam_kpi_delta, delta(exam.deltaPoints)),
             KpiItem(R.string.stats_exam_kpi_attempts, exam.attempts.toString()),
             KpiItem(R.string.stats_exam_kpi_time, formatDuration(exam.totalMinutes * 60.0)),

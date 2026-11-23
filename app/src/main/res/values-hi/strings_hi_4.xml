@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="report_guessing_title">अटकल-संशोधित अंक (अनुमानित)</string>
     <string name="report_header_of_scope">%2$d में से %1$d प्रश्न</string>
     <plurals name="report_header_questions">
@@ -73,9 +73,9 @@
     <string name="report_topics_title">विषय</string>
     <string name="report_topics_unresolved">%1$d परिणाम अब किसी श्रेणी से मेल नहीं खाते।</string>
     <string name="report_trend_fresh_note">ताज़ा नमूने एक अलग हालिया समूह को बाहर रखते हैं, इसलिए यह रेखा अनुमानित है।</string>
-    <string name="report_trend_holds">बदलाव हाशिये के बाहर है।</string>
+    <string name="report_trend_holds" tools:ignore="UnusedResources">बदलाव हाशिये के बाहर है।</string>
     <string name="report_trend_line">%1$d तुलना योग्य अंक · पिछला %2$d%% · बदलाव %3$s%4$d अंक</string>
-    <string name="report_trend_noise">बदलाव हाशिये के भीतर है, इसलिए यह केवल उतार-चढ़ाव हो सकता है।</string>
+    <string name="report_trend_noise" tools:ignore="UnusedResources">बदलाव हाशिये के भीतर है, इसलिए यह केवल उतार-चढ़ाव हो सकता है।</string>
     <string name="report_trend_title">तुलना योग्य प्रवृत्ति</string>
     <string name="report_type_at_risk">जोखिम में</string>
     <string name="report_type_balanced">संतुलित</string>

@@ -3,6 +3,7 @@ package com.mcqapp.ui.study
 import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
@@ -60,6 +61,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -89,13 +91,17 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyReason
+import com.mcqapp.domain.StudyStepLabel
+import com.mcqapp.domain.studyStepLabel
 import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.isFlashcard
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.theme.GradePalette
 import com.mcqapp.ui.theme.clockBandColors
+import com.mcqapp.ui.theme.gradePaletteFor
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
@@ -163,6 +169,13 @@ fun StudyScreen(
     LaunchedEffect(lastResult) {
         verdictMessage?.let { announcer.announce(it) }
     }
+    // Crossing the leech threshold used to be silent: speak the same one-shot
+    // line the card shows. The flag lives on the served card, so a card that
+    // stays flagged never repeats it.
+    val leechNoticeMessage = stringResource(R.string.study_polish_leech_notice)
+    LaunchedEffect(state.justFlaggedLeech) {
+        if (state.justFlaggedLeech) announcer.announce(leechNoticeMessage)
+    }
     // A card has no result card, so nothing above speaks when its answer
     // appears. Announce the revealed heading once per reveal instead, resolved
     // during composition for the same reason as the verdict. The key pairs the
@@ -223,6 +236,8 @@ fun StudyScreen(
                     onBack = { viewModel.stop() },
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
+                    onTakeBreak = { viewModel.takeBreak() },
+                    onResumeBreak = { viewModel.resumeFromBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },
                     onToggleBookmark = { viewModel.toggleBookmarkCurrent() },
                     onBury = { viewModel.buryCurrent() },
@@ -252,10 +267,18 @@ fun StudyScreen(
                     onEnableNewCards = { viewModel.enableNewCards() },
                     onDone = { navController.popBackStack() }
                 )
-                else -> StudyBody(
-                    state = state,
-                    viewModel = viewModel
-                )
+                // The body owns the scroll position and the card's viewport-
+                // visibility flag. Without this key a long card scrolled to its
+                // answer handed its scroll offset AND its stale "not visible"
+                // report to the next card, which then started with its clock
+                // paused. A new card gets a new body: scroll at the top and a
+                // fresh visibility report before the clock can be charged.
+                else -> key(state.current?.questionId) {
+                    StudyBody(
+                        state = state,
+                        viewModel = viewModel
+                    )
+                }
             }
             // The unsuspend route. A suspended card never reaches the pull, so
             // this dialog is the only way back into the pool from the UI.
@@ -276,6 +299,12 @@ private fun StudyBody(
     viewModel: StudyViewModel
 ) {
     val question = state.question ?: return
+    // Keyed to the card, not to the composition's lifetime: with the call site
+    // keyed on the question id this is already a fresh state per card, and the
+    // explicit key keeps a future unkeyed caller from carrying scroll position
+    // into the next question. Scroll offset 0 means the card is in the viewport
+    // when its visibility is first reported, so its clock starts running.
+    val scrollState = remember(question.id) { ScrollState(0) }
     // The dwell clock only charges while the question card is actually in the
     // viewport: scrolling a long passage — or, after reveal, the answer — past
     // the card pauses it, the same rule the test screen applies to dialogs.
@@ -300,8 +329,9 @@ private fun StudyBody(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .onGloballyPositioned { containerCoords = it; reportVisibility() }
+                    .testTag("study-question-scroll")
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
@@ -309,11 +339,14 @@ private fun StudyBody(
                     StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
                     Spacer(Modifier.height(12.dp))
                 }
+                LeechNoticeBlock(show = state.justFlaggedLeech)
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.current?.reason,
+                    isLeech = state.current?.state?.leech == true,
+                    stepLabel = state.current?.state?.studyStepLabel(),
                     onToggleOption = { viewModel.toggleOption(it) },
                     passage = state.passage,
                     modifier = cardPositioned
@@ -338,8 +371,9 @@ private fun StudyBody(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .onGloballyPositioned { containerCoords = it; reportVisibility() }
+                    .testTag("study-question-scroll")
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
@@ -347,11 +381,14 @@ private fun StudyBody(
                     StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
                     Spacer(Modifier.height(12.dp))
                 }
+                LeechNoticeBlock(show = state.justFlaggedLeech)
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.current?.reason,
+                    isLeech = state.current?.state?.leech == true,
+                    stepLabel = state.current?.state?.studyStepLabel(),
                     onToggleOption = { viewModel.toggleOption(it) },
                     passage = state.passage,
                     modifier = cardPositioned
@@ -385,7 +422,8 @@ private fun StudyBody(
                             haptics.tick()
                             viewModel.reveal()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.onBreak
                     ) {
                         Text(stringResource(R.string.show_answer))
                     }
@@ -397,7 +435,7 @@ private fun StudyBody(
                     // Default: a self-reported grade is persisted and the next
                     // card pulled in one tap, exactly as before.
                     GradeButtons(
-                        enabled = !state.grading,
+                        enabled = !state.grading && !state.onBreak,
                         previews = state.previews,
                         onGrade = {
                             if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
@@ -534,7 +572,7 @@ private fun StagedResultActions(state: StudyUiState, viewModel: StudyViewModel) 
             modifier = Modifier.weight(1f).testTag("study-next"),
             // The card is graded and stuck: re-tapping Next would
             // double-persist it (consolidated_bugs.md I3).
-            enabled = !state.grading && !state.gradedAndStuck
+            enabled = !state.grading && !state.gradedAndStuck && !state.onBreak
         ) {
             Text(stringResource(R.string.next))
         }
@@ -581,7 +619,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                         haptics.tick()
                         viewModel.reveal()
                     },
-                    modifier = Modifier.fillMaxWidth().testTag("study-show-answer")
+                    modifier = Modifier.fillMaxWidth().testTag("study-show-answer"),
+                    enabled = !state.onBreak
                 ) {
                     Text(stringResource(R.string.show_answer))
                 }
@@ -592,7 +631,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 // here — staging would run the simplified commit path and
                 // fabricate correctness for a card that has no answer key.
                 GradeButtons(
-                    enabled = !state.grading,
+                    enabled = !state.grading && !state.onBreak,
                     previews = state.previews,
                     onGrade = { viewModel.grade(it) }
                 )
@@ -620,6 +659,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Switch(
                     checked = state.isGuess,
                     onCheckedChange = { viewModel.setGuess(it) },
+                    enabled = !state.onBreak,
                     modifier = Modifier.testTag("study-guess")
                 )
             }
@@ -640,7 +680,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().testTag("study-check")
+                modifier = Modifier.fillMaxWidth().testTag("study-check"),
+                enabled = !state.onBreak
             ) {
                 Text(stringResource(R.string.check))
             }
@@ -749,6 +790,8 @@ private fun StudyStickyHeader(
     onBack: () -> Unit,
     onStop: () -> Unit,
     onDismissBreak: () -> Unit,
+    onTakeBreak: () -> Unit,
+    onResumeBreak: () -> Unit,
     onToggleClock: () -> Unit,
     onToggleBookmark: () -> Unit,
     onBury: () -> Unit,
@@ -998,7 +1041,7 @@ private fun StudyStickyHeader(
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier
                         .heightIn(min = 48.dp)
-                        .clickable(onClick = onToggleClock, enabled = !state.revealed)
+                        .clickable(onClick = onToggleClock, enabled = !state.revealed && !state.onBreak)
                         .testTag("study-question-clock")
                         .semantics {
                             contentDescription = clockContentDescription
@@ -1038,7 +1081,27 @@ private fun StudyStickyHeader(
                     )
                 }
             }
-            if (state.showBreakStrip) {
+            if (state.onBreak) {
+                // An explicit break is not the end of the sitting: both clocks
+                // are banked and the only way forward is Resume. Showing Dismiss
+                // here would strand the learner with a frozen session.
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.study_polish_on_break),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("study-on-break")
+                    )
+                    TextButton(
+                        onClick = onResumeBreak,
+                        modifier = Modifier.testTag("study-resume-break")
+                    ) {
+                        Text(stringResource(R.string.study_polish_resume))
+                    }
+                }
+            } else if (state.showBreakStrip) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -1048,6 +1111,12 @@ private fun StudyStickyHeader(
                     )
                     TextButton(onClick = onDismissBreak) {
                         Text(stringResource(R.string.dismiss))
+                    }
+                    TextButton(
+                        onClick = onTakeBreak,
+                        modifier = Modifier.testTag("study-take-break")
+                    ) {
+                        Text(stringResource(R.string.study_polish_take_break))
                     }
                 }
             }
@@ -1061,6 +1130,10 @@ private fun QuestionCard(
     selection: Set<String>,
     revealed: Boolean,
     reason: StudyReason?,
+    /** The card's own flag: a leech wears the chip in the main session too. */
+    isLeech: Boolean = false,
+    /** First-exposure step vs a lapse recovery, from the card's FSRS state. */
+    stepLabel: StudyStepLabel? = null,
     onToggleOption: (String) -> Unit,
     passage: com.mcqapp.domain.Passage? = null,
     modifier: Modifier = Modifier
@@ -1089,12 +1162,15 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            // Why this card was pulled. Optional context, never a demand.
+            // Why this card was pulled, plus the card's own flag. A leech in the
+            // main session wears the same chip as one in the drill: the flag is
+            // a fact about the card, not about which surface served it.
+            if (isLeech || reason == StudyReason.LEECH) {
+                LeeChip()
+                Spacer(Modifier.height(6.dp))
+            }
             when (reason) {
-                StudyReason.LEECH -> {
-                    LeeChip()
-                    Spacer(Modifier.height(6.dp))
-                }
+                StudyReason.LEECH -> {}
                 StudyReason.NEW -> {
                     Text(
                         stringResource(R.string.new_question),
@@ -1112,8 +1188,11 @@ private fun QuestionCard(
                     Spacer(Modifier.height(6.dp))
                 }
                 StudyReason.LEARNING -> {
+                    // Both are short-term steps served by the same pull, but a
+                    // lapsed card is relearning and must not claim it is seeing
+                    // this material for the first time.
                     Text(
-                        stringResource(R.string.learning_step),
+                        stringResource(studyStepLabelRes(stepLabel)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1166,7 +1245,12 @@ private fun QuestionCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp)
+                        // The content height of a one-line option was under
+                        // 48 dp: a short label left a tap target too small and
+                        // the rows crowded together. Reserve the target and a
+                        // little more breathing room; the tag is unchanged.
+                        .padding(top = 8.dp)
+                        .heightIn(min = 48.dp)
                         .background(container, RoundedCornerShape(8.dp))
                         .testTag("study-option-" + option.id)
                         .selectable(
@@ -1177,14 +1261,12 @@ private fun QuestionCard(
                             haptics.toggle(!isSelected)
                             onToggleOption(option.id)
                         }
-                        .padding(8.dp)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                         .semantics { stateDescription = optionState },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        mark,
-                        modifier = Modifier.width(32.dp),
-                        style = MaterialTheme.typography.titleLarge,
+                    OptionMark(
+                        mark = mark,
                         color = if (verdict && isCorrect) MaterialTheme.colorScheme.primary
                         else if (verdict && isSelected) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurface
@@ -1231,6 +1313,58 @@ private fun QuestionCard(
     }
 }
 
+/**
+ * The one-shot "Now flagged as tricky" line. It sits above the card it is
+ * attached to, disappears on the next pull, and is never a claim about that
+ * next card — it reports the grade that just crossed the threshold.
+ */
+@Composable
+private fun LeechNoticeBlock(show: Boolean) {
+    if (!show) return
+    Spacer(Modifier.height(8.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("study-leech-notice")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                modifier = Modifier.height(16.dp),
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(R.string.study_polish_leech_notice),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+/**
+ * The shared option marker: one glyph slot and one typography for every Study
+ * option row. Internal so another surface can reuse the same mark later
+ * (Results uses the same glyph vocabulary and should adopt this component in a
+ * follow-up batch rather than drawing a second, drifting set).
+ */
+@Composable
+internal fun OptionMark(mark: String, color: Color) {
+    Text(
+        mark,
+        modifier = Modifier.width(32.dp),
+        style = MaterialTheme.typography.titleLarge,
+        color = color
+    )
+}
+
 @Composable
 private fun LeeChip() {
     Surface(
@@ -1271,22 +1405,22 @@ private fun GradeButtons(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GradeButtonFor(
-                ReviewGrade.AGAIN, MaterialTheme.colorScheme.error,
+                ReviewGrade.AGAIN,
                 enabled, previews[ReviewGrade.AGAIN], Modifier.weight(1f), onGrade
             )
             GradeButtonFor(
-                ReviewGrade.HARD, MaterialTheme.colorScheme.tertiary,
+                ReviewGrade.HARD,
                 enabled, previews[ReviewGrade.HARD], Modifier.weight(1f), onGrade
             )
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GradeButtonFor(
-                ReviewGrade.GOOD, MaterialTheme.colorScheme.primary,
+                ReviewGrade.GOOD,
                 enabled, previews[ReviewGrade.GOOD], Modifier.weight(1f), onGrade
             )
             GradeButtonFor(
-                ReviewGrade.EASY, MaterialTheme.colorScheme.secondary,
+                ReviewGrade.EASY,
                 enabled, previews[ReviewGrade.EASY], Modifier.weight(1f), onGrade
             )
         }
@@ -1297,7 +1431,6 @@ private fun GradeButtons(
 @Composable
 private fun GradeButtonFor(
     grade: ReviewGrade,
-    color: Color,
     enabled: Boolean,
     preview: String?,
     modifier: Modifier,
@@ -1306,7 +1439,10 @@ private fun GradeButtonFor(
     GradeButton(
         labelRes = studyGradeLabelRes(grade),
         tag = studyGradeTag(grade),
-        color = color,
+        // The fill and its text come from ONE role pair. Passing only a
+        // container left Material's onPrimary text on top of an error/tertiary
+        // fill, which is unreadable with a custom palette.
+        palette = gradePaletteFor(grade, MaterialTheme.colorScheme),
         enabled = enabled,
         preview = preview,
         modifier = modifier,
@@ -1318,7 +1454,7 @@ private fun GradeButtonFor(
 private fun GradeButton(
     @StringRes labelRes: Int,
     tag: String,
-    color: Color,
+    palette: GradePalette,
     enabled: Boolean,
     preview: String?,
     modifier: Modifier = Modifier,
@@ -1334,7 +1470,10 @@ private fun GradeButton(
         // itself; the label Text inside a Button is not the target.
         modifier = modifier.testTag("study-grade-$tag"),
         enabled = enabled,
-        colors = ButtonDefaults.buttonColors(containerColor = color)
+        colors = ButtonDefaults.buttonColors(
+            containerColor = palette.container,
+            contentColor = palette.onContainer
+        )
     ) {
         // The delay each grade would produce, as in Anki. Without it the learner
         // cannot tell "Again" from "Hard" before committing, and after Track C
@@ -1469,6 +1608,17 @@ private fun StudySummary(
                 stringResource(R.string.study_session_summary, state.reviewed, state.againCount, state.goodCount),
                 style = MaterialTheme.typography.bodyMedium
             )
+            if (state.leechesOnly && state.reviewed > 0) {
+                // The drill walks the due leeches it loaded once. Say so rather
+                // than letting the "Study again" button imply the app kept
+                // drilling cards that lapsed again during the pass.
+                Text(
+                    stringResource(R.string.study_polish_drill_one_pass),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             if (state.showsRecallAccuracy) {
                 Spacer(Modifier.height(4.dp))
                 // Stats only, no goals: how the sitting went, not a score to
@@ -1549,6 +1699,17 @@ internal fun studyOptionStateRes(
     revealed && keyKnown && isSelected -> R.string.r2_study_option_selected_wrong
     isSelected -> R.string.r2_study_option_selected
     else -> R.string.r2_study_option_not_selected
+}
+
+/**
+ * The short-term step's label. A first exposure says "Learning step"; a card
+ * that lapsed and is recovering says "Relearning after a lapse". The enum comes
+ * from the card's own FSRS state, so the two never disagree.
+ */
+@StringRes
+internal fun studyStepLabelRes(label: StudyStepLabel?): Int = when (label) {
+    StudyStepLabel.RELEARNING_AFTER_LAPSE -> R.string.study_polish_relearning_step
+    StudyStepLabel.LEARNING_STEP, null -> R.string.learning_step
 }
 
 /** Short, localized verdict spoken when a result card lands. */

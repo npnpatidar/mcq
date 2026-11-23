@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <plurals name="followup_import_duplicate_questions">
         <item quantity="one">• %1$d प्रश्न पहले से मौजूद था (छोड़ दिया गया)</item>
         <item quantity="other">• %1$d प्रश्न पहले से मौजूद थे (छोड़ दिए गए)</item>
@@ -64,7 +64,7 @@
     <string name="hides_answers_flags_and_the_question_palette">उत्तर, फ़्लैग और प्रश्न पैलेट को छिपाता है</string>
     <string name="history">इतिहास</string>
     <string name="history_correct_line">%1$d/%2$d सही</string>
-    <string name="history_delta_points">%1$s %2$s अंक</string>
+    <string name="history_delta_points" tools:ignore="UnusedResources">%1$s %2$s अंक</string>
     <string name="history_mastery_line">%1$s · %2$s · %3$d/%4$d</string>
     <string name="history_trend_attempts_best">%1$s · सर्वश्रेष्ठ %2$s</string>
     <string name="history_wrong_skipped_line">%1$s गलत · %2$s छोड़े गए · %3$d प्रयास</string>

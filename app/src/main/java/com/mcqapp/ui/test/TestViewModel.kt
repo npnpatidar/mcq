@@ -110,6 +110,12 @@ data class TestUiState(
     val resumeOfferCount: Int = 0,
     /** Whether the offered snapshot predates the bounded-Test metadata. */
     val resumeOfferLegacy: Boolean = false,
+    /**
+     * True when the single resume slot holds a *different* session of this
+     * paper. The first answer of this session will take that slot over, so the
+     * screen must say so before the learner can silently destroy saved work.
+     */
+    val replaceNotice: Boolean = false,
     val dwellSeconds: Map<String, Long> = emptyMap(),
     /** Whether the per-question clock currently accrues time. */
     val dwellActive: Boolean = false,
@@ -830,6 +836,11 @@ class TestViewModel(
         _state.update { it.copy(timeWarning = null) }
     }
 
+    /** The learner has been told the saved session will be replaced. */
+    fun dismissReplaceNotice() {
+        _state.update { it.copy(replaceNotice = false) }
+    }
+
     fun dismissSaveError() {
         _state.update { it.copy(saveError = null) }
     }
@@ -1326,6 +1337,7 @@ class TestViewModel(
             // legacy start's predecessor rows behind would join them into this
             // session on the next resume.
             dropStaleAnswersOnSave = true
+            _state.update { it.copy(replaceNotice = true) }
             return
         }
         // A document written before the answers moved to rows still carries

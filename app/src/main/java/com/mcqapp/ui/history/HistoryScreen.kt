@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -57,6 +58,8 @@ import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.Trends
+import com.mcqapp.ui.common.UnfinishedTestCard
+import com.mcqapp.ui.common.unfinishedTestRoute
 import com.mcqapp.ui.common.attemptFamilyLabel
 import com.mcqapp.ui.common.attemptTypeLine
 import com.mcqapp.ui.common.testTypeLabel
@@ -76,6 +79,7 @@ fun HistoryScreen(
     val hardest by viewModel.hardest.collectAsStateWithLifecycle()
     val weakest by viewModel.weakest.collectAsStateWithLifecycle()
     val statsState by viewModel.statsState.collectAsStateWithLifecycle()
+    val unfinishedTest by viewModel.unfinishedTest.collectAsStateWithLifecycle()
 
     // R10: resolve the ticked category ids of scoped trends to their titles so
     // the user never sees opaque database ids in a trend label.
@@ -144,7 +148,7 @@ fun HistoryScreen(
             }
             return@Scaffold
         }
-        if (attempts.isEmpty()) {
+        if (attempts.isEmpty() && unfinishedTest == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -161,6 +165,19 @@ fun HistoryScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (unfinishedTest != null) {
+                    item(contentType = "unfinished-test") {
+                        UnfinishedTestCard(
+                            saved = unfinishedTest!!,
+                            onResume = { navController.navigate(unfinishedTestRoute(unfinishedTest!!)) }
+                        )
+                    }
+                }
+                if (attempts.isEmpty()) {
+                    item(contentType = "no-attempts") {
+                        Text(stringResource(R.string.no_attempts_yet))
+                    }
+                }
                 if (statsState.loading) {
                     item(contentType = "stats-loading") {
                         androidx.compose.material3.CircularProgressIndicator(
@@ -383,9 +400,15 @@ private fun TrendCard(
                 )
                 if (trend.attempts > 1) {
                     // R5: the arrow + colour alone said nothing to TalkBack.
-                    // Keep the visual, but give it a spoken improved/declined
-                    // description from the same pure direction helper.
-                    val direction = Trends.deltaDirection(trend.deltaPoints)
+                    // The change is latest minus FIRST (not the result page's
+                    // latest minus previous), so the copy says "since first
+                    // attempt" outright. A change inside the two endpoints'
+                    // combined margin is not a direction at all: no arrow.
+                    val direction = if (trend.withinNoise) {
+                        Trends.Delta.UNCHANGED
+                    } else {
+                        Trends.deltaDirection(trend.deltaPoints)
+                    }
                     val (arrow, color) = when (direction) {
                         Trends.Delta.IMPROVED -> "▲" to verdictColors().rising
                         Trends.Delta.DECLINED -> "▼" to verdictColors().falling
@@ -394,19 +417,31 @@ private fun TrendCard(
                     val points = String.format(
                         Locale.ROOT, "%.0f", kotlin.math.abs(trend.deltaPoints)
                     )
-                    val spoken = when (direction) {
-                        Trends.Delta.IMPROVED ->
-                            stringResource(R.string.r2_res_delta_improved, points)
-                        Trends.Delta.DECLINED ->
-                            stringResource(R.string.r2_res_delta_declined, points)
-                        Trends.Delta.UNCHANGED ->
-                            stringResource(R.string.r2_res_delta_unchanged)
+                    val sign = if (trend.deltaPoints >= 0) "+" else "−"
+                    val shown = if (trend.withinNoise) {
+                        stringResource(R.string.test_ux_history_delta_within)
+                    } else {
+                        stringResource(R.string.test_ux_history_delta_line, sign, points)
+                    }
+                    val spoken = if (trend.withinNoise) {
+                        stringResource(R.string.test_ux_history_delta_spoken_unchanged)
+                    } else {
+                        when (direction) {
+                            Trends.Delta.IMPROVED ->
+                                stringResource(R.string.test_ux_history_delta_spoken_improved, points)
+                            Trends.Delta.DECLINED ->
+                                stringResource(R.string.test_ux_history_delta_spoken_declined, points)
+                            Trends.Delta.UNCHANGED ->
+                                stringResource(R.string.test_ux_history_delta_spoken_unchanged)
+                        }
                     }
                     Text(
-                        stringResource(R.string.history_delta_points, arrow, points),
+                        if (trend.withinNoise) shown else "$arrow $shown",
                         style = MaterialTheme.typography.labelSmall,
                         color = color,
-                        modifier = Modifier.semantics { contentDescription = spoken }
+                        modifier = Modifier
+                            .testTag("history-trend-delta")
+                            .semantics { contentDescription = spoken }
                     )
                 }
             }

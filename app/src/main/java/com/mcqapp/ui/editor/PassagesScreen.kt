@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -667,6 +668,7 @@ fun PassagesScreen(
             PassageEditDialog(
                 form = form!!,
                 papers = state.papers,
+                memberCount = form?.original?.id?.let { state.memberCounts[it] } ?: 0,
                 saveEnabled = !isDeciding,
                 dismissEnabled = !isDeciding,
                 onTitle = viewModel::setFormTitle,
@@ -743,6 +745,7 @@ fun PassagesScreen(
 private fun PassageEditDialog(
     form: PassageForm,
     papers: List<com.mcqapp.domain.Paper>,
+    memberCount: Int,
     saveEnabled: Boolean,
     dismissEnabled: Boolean,
     onTitle: (String) -> Unit,
@@ -803,6 +806,20 @@ private fun PassageEditDialog(
                     selectedId = effectiveCategory,
                     onSelect = onCategory
                 )
+                // Saving an edited passage body deletes every member's study
+                // schedule in PassageStore. Say how many cards that is before
+                // the learner taps Save, not after.
+                if (!form.isNew && memberCount > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        pluralStringResource(
+                            R.plurals.data_honesty_passage_reset_notice,
+                            memberCount, memberCount
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         },
         confirmButton = {

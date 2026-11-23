@@ -264,10 +264,7 @@ internal class StatsStore(
         var staleFitSeen = false
         // Which versions ignored the clock: answer-time evidence only trusts
         // dwells measured while the clock made no colour claim.
-        val correctnessOnlyVersions = db.gradingRulesDao().allVersions()
-            .filter { it.correctnessOnly }
-            .map { it.id.toInt() }
-            .toSet()
+        val correctnessOnlyVersions = correctnessOnlyVersions()
         val rows = ArrayList<Calibration.Row>()
         var afterId = 0L
         while (true) {
@@ -727,14 +724,24 @@ internal class StatsStore(
         }.toMap()
     }
 
+    /** Which grading versions ignored the clock. Read once per replay pass. */
+    private suspend fun correctnessOnlyVersions(): Set<Int> =
+        db.gradingRulesDao().allVersions()
+            .filter { it.correctnessOnly }
+            .map { it.id.toInt() }
+            .toSet()
+
     /** Replays the log a page at a time into [consume]; it is never listed. */
     private suspend fun replayInto(scheduler: FsrsScheduler, consume: (ReplayReview) -> Unit) {
         val stream = FsrsReplay.Stream(scheduler)
+        val correctnessOnlyVersions = correctnessOnlyVersions()
         var afterId = 0L
         while (true) {
             val page = db.reviewLogDao().pageAfterId(afterId, PAGE_SIZE)
             if (page.isEmpty()) break
-            page.forEach { consume(stream.accept(it.toRawReview())) }
+            page.forEach {
+                consume(stream.accept(it.toRawReview(correctnessOnlyVersions)))
+            }
             afterId = page.last().id
             if (page.size < PAGE_SIZE) break
         }
@@ -796,11 +803,19 @@ internal class StatsStore(
         return out
     }
 
-    /** One card's logged reviews, oldest first, for the drill-down sheet. */
+    /** One card's logged reviews, oldest first, for callers that only know the question. */
     suspend fun reviewHistory(questionId: String): List<ReviewHistoryEntry> =
-        db.reviewLogDao().historyForQuestion(questionId).map { it.toHistoryEntry() }
+        db.reviewLogDao().historyForQuestion(questionId).map { it.toStatsHistoryEntry() }
 
-    private fun ReviewLogEntity.toRawReview() = FsrsReplay.RawReview(
+    /**
+     * One card's logged reviews scoped to its paper. A question reused in two
+     * papers has two independent schedules and two independent histories; the
+     * sheet opened for `(p1, q)` must not show `(p2, q)`'s reviews.
+     */
+    suspend fun reviewHistoryForCard(paperId: String, questionId: String): List<ReviewHistoryEntry> =
+        db.reviewLogDao().historyForCard(paperId, questionId).map { it.toStatsHistoryEntry() }
+
+    private fun ReviewLogEntity.toRawReview(correctnessOnlyVersions: Set<Int>) = FsrsReplay.RawReview(
         id = id,
         paperId = paperId,
         questionId = questionId,
@@ -813,23 +828,10 @@ internal class StatsStore(
         intervalDaysAfter = intervalDaysAfter,
         wasGuess = wasGuess,
         wasCorrect = wasCorrect,
-        stabilityFastAfter = stabilityFastAfter
+        stabilityFastAfter = stabilityFastAfter,
+        wasSkipped = wasSkipped,
+        correctnessOnly = gradingVersion in correctnessOnlyVersions
     )
-
-    private fun ReviewLogEntity.toHistoryEntry() = ReviewHistoryEntry(
-        rating = rating,
-        reviewedAt = reviewedAt,
-        elapsedSeconds = elapsedSeconds,
-        stateBefore = stateBefore.toCardStateKind(),
-        stabilityAfter = stabilityAfter,
-        difficultyAfter = difficultyAfter,
-        intervalDaysAfter = intervalDaysAfter,
-        stabilityFastAfter = stabilityFastAfter
-    )
-
-    /** The stored enum name; an unknown name (old build's value) reads as null. */
-    private fun String?.toCardStateKind(): CardStateKind? =
-        this?.let { runCatching { CardStateKind.valueOf(it) }.getOrNull() }
 
     private fun CardStateEntity.toDomain() = CardState(
         questionId = questionId,
@@ -866,6 +868,23 @@ internal class StatsStore(
         const val CONFIG_READ_ATTEMPTS = 3
     }
 }
+
+/** The stored enum name; an unknown name (old build's value) reads as null. */
+internal fun String?.toCardStateKind(): CardStateKind? =
+    this?.let { runCatching { CardStateKind.valueOf(it) }.getOrNull() }
+
+/** One log row in the drill-down sheet's domain shape, for both history reads. */
+internal fun ReviewLogEntity.toStatsHistoryEntry() = ReviewHistoryEntry(
+    paperId = paperId,
+    rating = rating,
+    reviewedAt = reviewedAt,
+    elapsedSeconds = elapsedSeconds,
+    stateBefore = stateBefore.toCardStateKind(),
+    stabilityAfter = stabilityAfter,
+    difficultyAfter = difficultyAfter,
+    intervalDaysAfter = intervalDaysAfter,
+    stabilityFastAfter = stabilityFastAfter
+)
 
 /**
  * The grading rule could not be resolved, and a report without one would pool

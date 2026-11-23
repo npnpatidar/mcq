@@ -2367,6 +2367,17 @@ interface ReviewLogDao {
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>
 
     /**
+     * One card's review history, scoped to the paper whose card was opened.
+     * The same question can carry independent histories in two papers, so the
+     * question-only read cannot back the statistics drill-down sheet.
+     */
+    @Query(
+        "SELECT * FROM review_log WHERE paperId = :paperId AND questionId = :questionId " +
+            "ORDER BY reviewedAt ASC, id ASC"
+    )
+    suspend fun historyForCard(paperId: String, questionId: String): List<ReviewLogEntity>
+
+    /**
      * Guess evidence for a known set of questions. Only rows with a non-null
      * `wasGuess` count as observations; a pre-v19 row genuinely has no flag and
      * must not be treated as a non-guess.

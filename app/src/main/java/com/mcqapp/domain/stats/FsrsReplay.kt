@@ -47,7 +47,11 @@ object FsrsReplay {
          * written before FSRS-7; [seedState] then collapses it onto
          * [stabilityAfter], the same rule the scheduler applies.
          */
-        val stabilityFastAfter: Double? = null
+        val stabilityFastAfter: Double? = null,
+        /** Whether the learner skipped the row. Stats' evidence gates read it. */
+        val wasSkipped: Boolean? = null,
+        /** Whether the grading version that wrote this row ignored the clock. */
+        val correctnessOnly: Boolean = false
     )
 
     /**
@@ -141,6 +145,8 @@ object FsrsReplay {
                     intervalBefore[Triple(row.paperId, row.questionId, row.id)],
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
+                wasSkipped = row.wasSkipped,
+                correctnessOnly = row.correctnessOnly,
                 wouldBeGoodIntervalDays =
                     counterfactual[Triple(row.paperId, row.questionId, row.id)],
                 stabilityFastAfter = row.stabilityFastAfter
@@ -230,6 +236,8 @@ object FsrsReplay {
                 intervalBeforeDays = intervalBefore,
                 wasGuess = row.wasGuess,
                 wasCorrect = row.wasCorrect,
+                wasSkipped = row.wasSkipped,
+                correctnessOnly = row.correctnessOnly,
                 wouldBeGoodIntervalDays = wouldBeGood,
                 stabilityFastAfter = row.stabilityFastAfter
             )

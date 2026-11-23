@@ -531,11 +531,13 @@ private fun StudyBody(
     // A first layout can land before this body's scroll container has a size,
     // and that one "hidden" reading would stick, because no key changes again.
     // Re-read the geometry once this card's own frame has been laid out.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(question.id) {
-        // Force this card to its own top before reading the viewport: a
-        // focus/scroll restoration from the previous card can otherwise apply
-        // its offset to the new scroll state, and the single geometry read
-        // would stick as "hidden".
+        // Force this card to its own top before reading the viewport. A
+        // focus restoration from the previous card can otherwise bring a
+        // former option back into view and apply its offset to the new scroll
+        // state, and the single geometry read would stick as "hidden".
+        focusManager.clearFocus(force = true)
         scrollState.scrollTo(0)
         withFrameNanos { }
         reportVisibility()

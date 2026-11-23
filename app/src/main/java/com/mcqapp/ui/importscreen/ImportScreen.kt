@@ -57,11 +57,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.mcqapp.data.io.ImportNote
 import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.domain.hasVisibleContent
+import com.mcqapp.ui.common.CompletionActions
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
@@ -107,11 +109,18 @@ fun ImportScreen(
     // row that imports as a card. Ids are untouched, so a checkpoint
     // (changed/duplicate) row classifies exactly as before.
     val previewQuestions = remember(state.questions) { previewQuestionsOf(state.questions) }
-    val newQuestions = remember(previewQuestions, state.duplicateIds, state.changedIds) {
+    val newQuestions = remember(
+        previewQuestions, state.duplicateIds, state.changedIds, state.answerRefreshIds
+    ) {
         previewQuestions.filter { it.id !in state.duplicateIds && it.id !in state.changedIds }
+            .filter { it.id !in state.answerRefreshIds }
     }
-    val changedQuestions = remember(previewQuestions, state.changedIds) {
-        previewQuestions.filter { it.id in state.changedIds }
+    // An answer refresh is an in-place rewrite too, so it is shown beside the
+    // plain changed rows — with its own badge saying progress will reset.
+    val changedQuestions = remember(previewQuestions, state.changedIds, state.answerRefreshIds) {
+        previewQuestions.filter {
+            it.id in state.changedIds || it.id in state.answerRefreshIds
+        }
     }
     val dupQuestions = remember(previewQuestions, state.duplicateIds) {
         previewQuestions.filter { it.id in state.duplicateIds }
@@ -151,6 +160,33 @@ fun ImportScreen(
                         popUpTo("library") { inclusive = true }
                     }
                 }) { Text(stringResource(R.string.ok)) }
+            },
+            dismissButton = {
+                // Same follow-up actions as the Library Anki report. The VM
+                // now publishes the paper the import created/updated, so an
+                // import can go straight to studying or testing it instead of
+                // only returning to the library.
+                CompletionActions(
+                    paperId = state.importedPaperId,
+                    onStudy = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.studyRoute(id))
+                    },
+                    onTest = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.testRoute(id))
+                    },
+                    onOpenPaper = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.browseRoute(id))
+                    },
+                    onOpenLibrary = {
+                        viewModel.consumeImportResult()
+                        navController.navigate("library") {
+                            popUpTo("library") { inclusive = true }
+                        }
+                    }
+                )
             }
         )
     }
@@ -214,7 +250,9 @@ fun ImportScreen(
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
             viewModel.loadDocx(pendingDocx, pendingName)
         } else if (importBytes != null) {
-            viewModel.loadJsonBytes(importBytes)
+            val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonName
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonName = null
+            viewModel.loadJsonBytes(importBytes, pendingName)
             // Drop the global copy once consumed: the VM owns the parse now
             // (fingerprint-gated), and a 25k-question bank is ~9MB retained.
             // Identity-guarded so a newer pick made meanwhile is never lost.
@@ -531,7 +569,11 @@ fun ImportScreen(
                         PreviewQuestionCard(
                             question = question,
                             dimmed = false,
-                            badges = previewBadges(question, R.string.r2_import_badge_changed),
+                            badges = changedPreviewBadges(
+                                isFlashcard = question.options.isEmpty(),
+                                answerRefresh = question.id in state.answerRefreshIds,
+                                scheduleReset = question.id in state.scheduleResetIds
+                            ),
                             onDelete = { viewModel.deleteQuestion(question.id) },
                             onEdit = { editQuestion(question) }
                         )
@@ -615,6 +657,17 @@ internal const val IMPORT_REPORT_NOTICE_TAG = "import-report-notice"
 /** Tag for the line shown when a report has no counted line at all. */
 internal const val IMPORT_REPORT_EMPTY_TAG = "import-report-empty"
 
+/** Tag for the "Anki import notes" block under the counted lines. */
+internal const val IMPORT_REPORT_ANKI_NOTES_TAG = "import-report-anki-notes"
+
+/** Pure mapping from a report note to its copy, so the reasons are testable. */
+internal fun importNoteRes(note: ImportNote): Pair<Int, List<Any>> = when (note) {
+    is ImportNote.AnkiDroppedCards ->
+        R.string.data_honesty_anki_note_blank to listOf(note.count)
+    is ImportNote.AnkiMissingMedia ->
+        R.string.data_honesty_anki_note_media to listOf(note.count)
+}
+
 /**
  * The completion report, one plural-aware line per non-zero count. Backed by
  * [importReportLines] so what the user reads is the tested enumeration — in
@@ -654,17 +707,36 @@ internal fun ImportReportDetails(report: ImportReport, emptyMessageRes: Int? = n
                 ImportReportLineKind.UPDATED_QUESTIONS -> R.plurals.followup_import_updated_questions
                 ImportReportLineKind.DUPLICATE_QUESTIONS -> R.plurals.followup_import_duplicate_questions
                 ImportReportLineKind.ANSWERS_REFRESHED -> R.plurals.followup_import_answers_refreshed
+                ImportReportLineKind.SCHEDULES_RESET -> R.plurals.data_honesty_schedules_reset
                 ImportReportLineKind.RESTORED_SCHEDULES -> R.plurals.followup_import_restored_schedules
                 ImportReportLineKind.RESTORED_BOOKMARKS -> R.plurals.followup_import_restored_bookmarks
                 ImportReportLineKind.RESTORED_ATTEMPTS -> R.plurals.followup_import_restored_attempts
                 ImportReportLineKind.DROPPED_ANKI_STEMS -> R.plurals.followup_import_dropped_stems
                 ImportReportLineKind.RECALL_CONVERTED -> R.plurals.followup_import_recall_converted
+                ImportReportLineKind.ROWS_SKIPPED -> R.plurals.data_honesty_rows_skipped
             }
             Text(
                 text = pluralStringResource(resId, line.count, line.count),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag(importReportLineTag(line.kind))
             )
+        }
+        // Anki decks lose cards and sometimes pictures on the way in. The
+        // reader's reasons used to stop at the log; the learner now sees them
+        // beside the counts instead of assuming the deck came over verbatim.
+        if (report.importNotes.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.data_honesty_anki_notes_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.testTag(IMPORT_REPORT_ANKI_NOTES_TAG)
+            )
+            report.importNotes.forEach { note ->
+                val (resId, args) = importNoteRes(note)
+                Text(
+                    text = stringResource(resId, *args.toTypedArray()),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
         // I3: a restore that hit its progress budget still imported every
         // question. Say so plainly instead of implying a complete restore.
@@ -725,6 +797,23 @@ internal fun previewBadges(
 ): List<Int> = buildList {
     if (question.options.isEmpty()) add(R.string.r2_import_badge_flashcard)
     addAll(status.toList())
+}
+
+/**
+ * Badges for a Changed row. The two data-honesty flags are additive: a row can
+ * refresh its answer AND reset a study schedule, and hiding either would leave
+ * the learner agreeing to a loss they were never told about. The flashcard type
+ * still leads, matching [previewBadges].
+ */
+internal fun changedPreviewBadges(
+    isFlashcard: Boolean,
+    answerRefresh: Boolean,
+    scheduleReset: Boolean
+): List<Int> = buildList {
+    if (isFlashcard) add(R.string.r2_import_badge_flashcard)
+    add(R.string.r2_import_badge_changed)
+    if (answerRefresh) add(R.string.data_honesty_badge_answer_refresh)
+    if (scheduleReset) add(R.string.data_honesty_badge_schedule_reset)
 }
 
 @Composable

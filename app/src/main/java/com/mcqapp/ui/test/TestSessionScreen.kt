@@ -73,7 +73,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -98,6 +103,8 @@ import com.mcqapp.domain.TestPlan
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.study.StudyKey
+import com.mcqapp.ui.study.StudyKeyAction
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
@@ -363,6 +370,61 @@ fun TestSessionScreen(
         }
     }
 
+    // Keyboard shortcuts mirror Study: Space shows the answer then advances,
+    // arrows move between questions, and digits are inert because a test has
+    // no grade. Focus is requested on the question surface and keys are ignored
+    // while a dialog/overlay owns the screen or the result is being saved. The
+    // mode flags go through TestKeyboard's reveal gate — the same ExamMode rule
+    // the on-screen button uses — so Strict-mode Space cannot expose an answer.
+    // Auto-advance stays entirely in the ViewModel.
+    val keyFocus = remember { FocusRequester() }
+    val keyboardBlocked = state.loading || state.loadError != null ||
+        resumeOffer != null || ungradedBlocking || showSubmitDialog ||
+        state.reviewOpen || showPalette || state.saving || state.submitted ||
+        state.currentQuestion == null
+    LaunchedEffect(keyboardBlocked) {
+        if (!keyboardBlocked) keyFocus.requestFocus()
+    }
+    fun onTestKey(event: KeyEvent): Boolean {
+        if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return false
+        if (event.nativeKeyEvent.isCtrlPressed ||
+            event.nativeKeyEvent.isAltPressed ||
+            event.nativeKeyEvent.isMetaPressed
+        ) return false
+        if (keyboardBlocked) return false
+        val key = when (event.nativeKeyEvent.keyCode) {
+            android.view.KeyEvent.KEYCODE_SPACE -> StudyKey.SPACE
+            android.view.KeyEvent.KEYCODE_1 -> StudyKey.ONE
+            android.view.KeyEvent.KEYCODE_2 -> StudyKey.TWO
+            android.view.KeyEvent.KEYCODE_3 -> StudyKey.THREE
+            android.view.KeyEvent.KEYCODE_4 -> StudyKey.FOUR
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> StudyKey.LEFT
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> StudyKey.RIGHT
+            else -> StudyKey.OTHER
+        }
+        return when (TestKeyboard.action(key, state.isCurrentRevealed, state.practiceMode, state.strictMode)) {
+            StudyKeyAction.NONE -> false
+            StudyKeyAction.REVEAL -> {
+                viewModel.revealCurrent()
+                true
+            }
+            StudyKeyAction.NEXT -> {
+                viewModel.next()
+                true
+            }
+            StudyKeyAction.SELECT_PREVIOUS_OPTION -> {
+                viewModel.previous()
+                true
+            }
+            StudyKeyAction.SELECT_NEXT_OPTION -> {
+                viewModel.next()
+                true
+            }
+            // A test never grades, so these are unreachable from TestKeyboard.
+            else -> false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -511,6 +573,10 @@ fun TestSessionScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .focusRequester(keyFocus)
+                .focusable(true)
+                .onKeyEvent(::onTestKey)
+                .testTag("test-keyboard-surface")
         ) {
             // The palette is an inline Card, not a dialog, so nothing consumed
             // system Back while it was open and the NavController popped the
@@ -520,12 +586,45 @@ fun TestSessionScreen(
             if (showPalette) {
                 QuestionPalette(
                     state = state,
+                    showFeedback = ExamMode.paletteShowsFeedback(state.strictMode),
                     onPick = { index ->
                         haptics.tick()
                         viewModel.goTo(index)
                         showPalette = false
                     }
                 )
+            }
+
+            // Finding 3: the saved test is only taken over on the first answer,
+            // but the learner is told now, while the saved work still exists.
+            // "Keep the saved test" leaves without writing anything; the card on
+            // Library/History then resumes it from its own route.
+            if (state.replaceNotice) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("test-replace-notice"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            stringResource(R.string.test_ux_replace_notice),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row {
+                            TextButton(onClick = { popBack() }) {
+                                Text(stringResource(R.string.test_ux_replace_keep))
+                            }
+                            TextButton(onClick = { viewModel.dismissReplaceNotice() }) {
+                                Text(stringResource(R.string.test_ux_replace_dismiss))
+                            }
+                        }
+                    }
+                }
             }
 
             state.timeWarning?.let { warning ->
@@ -872,6 +971,25 @@ fun TestSessionScreen(
                     TextButton(onClick = { showPalette = !showPalette }) {
                         Text(stringResource(R.string.answered_progress_text, state.answeredCount, state.questionCount))
                     }
+                } else if (ExamMode.canJumpToQuestion(state.strictMode)) {
+                    // Strict mode hides feedback, not navigation. Tapping the
+                    // position opens a neutral numbered grid so a learner can
+                    // revisit Q12 from Q80 without seeing which were answered.
+                    TextButton(
+                        onClick = { showPalette = !showPalette },
+                        modifier = Modifier.testTag("test-jump-grid-toggle")
+                    ) {
+                        Text(
+                            stringResource(
+                                if (showPalette) R.string.test_ux_jump_grid_hide
+                                else R.string.test_ux_jump_grid
+                            )
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.position_progress_text, state.currentIndex + 1, state.questionCount),
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 } else {
                     Text(
                         stringResource(R.string.position_progress_text, state.currentIndex + 1, state.questionCount),
@@ -1288,6 +1406,7 @@ private fun ExplanationCard(question: Question) {
 @Composable
 private fun QuestionPalette(
     state: TestUiState,
+    showFeedback: Boolean = true,
     onPick: (Int) -> Unit
 ) {
     Card(
@@ -1314,33 +1433,38 @@ private fun QuestionPalette(
                     val current = index == state.currentIndex
                     val palette = verdictColors()
                     val bg = when {
+                        !showFeedback -> MaterialTheme.colorScheme.surfaceVariant
                         current -> MaterialTheme.colorScheme.primary
                         answered -> palette.correctContainer
                         flagged -> palette.trickyContainer
                         else -> MaterialTheme.colorScheme.surfaceVariant
                     }
                     val fg = when {
+                        !showFeedback -> MaterialTheme.colorScheme.onSurfaceVariant
                         current -> MaterialTheme.colorScheme.onPrimary
                         answered -> palette.correctOnContainer
                         flagged -> palette.trickyOnContainer
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                     val resources = LocalContext.current.resources
-                    val status = when {
-                        current -> resources.getString(R.string.palette_status_current)
-                        answered -> resources.getString(R.string.status_answered)
-                        flagged -> resources.getString(R.string.status_flagged)
-                        else -> resources.getString(R.string.status_unanswered)
+                    // In strict mode every cell is the same neutral number: only
+                    // the position is shown, never answered/flagged status.
+                    val spoken = if (showFeedback) {
+                        val status = when {
+                            current -> resources.getString(R.string.palette_status_current)
+                            answered -> resources.getString(R.string.status_answered)
+                            flagged -> resources.getString(R.string.status_flagged)
+                            else -> resources.getString(R.string.status_unanswered)
+                        }
+                        resources.getString(R.string.palette_go_to_question, index + 1, status)
+                    } else {
+                        resources.getString(R.string.test_ux_jump_go, index + 1)
                     }
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .background(bg, RoundedCornerShape(8.dp))
-                            .semantics {
-                                contentDescription = resources.getString(
-                                    R.string.palette_go_to_question, index + 1, status
-                                )
-                            }
+                            .semantics { contentDescription = spoken }
                             .clickable { onPick(index) },
                         contentAlignment = Alignment.Center
                     ) {

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- लाइब्रेरी स्केल पास: स्कोप्ड खोज, बुकमार्क, बल्क ऑपरेशन, Undo, रीऑर्डर। -->
+
+    <!-- खोज स्कोप चिप्स और सटीक कुल। -->
+    <string name="search_filter_papers" tools:ignore="UnusedResources">पेपर</string>
+    <string name="search_filter_categories" tools:ignore="UnusedResources">श्रेणियाँ</string>
+    <string name="search_filter_all_papers">सभी पेपर</string>
+    <string name="search_filter_all_categories">सभी श्रेणियाँ</string>
+
+    <!-- ब्राउज़/खोज पंक्तियों पर बुकमार्क टॉगल और बुकमार्क पंक्तियों पर उत्पत्ति। -->
+    <string name="browse_add_bookmark">इस प्रश्न को बुकमार्क करें</string>
+    <string name="browse_remove_bookmark">बुकमार्क हटाएँ</string>
+    <string name="browse_bookmark_failed">बुकमार्क बदला नहीं जा सका</string>
+    <string name="browse_assign_passage_failed">पैसेज सदस्यता बदली नहीं जा सकी</string>
+    <string name="bookmark_provenance">%1$s में</string>
+    <string name="bookmarks_filter_paper" tools:ignore="UnusedResources">पेपर अनुसार फ़िल्टर</string>
+    <string name="bookmarks_all_papers">सभी पेपर</string>
+    <string name="bookmarks_select">चुनें</string>
+    <string name="bookmarks_selected_count" tools:ignore="PluralsCandidate">%1$d चुने गए</string>
+    <string name="bookmarks_remove_selected">चुने गए हटाएँ</string>
+    <plurals name="bookmarks_removed_count">
+        <item quantity="one">%1$d बुकमार्क हटाया गया</item>
+        <item quantity="other">%1$d बुकमार्क हटाए गए</item>
+    </plurals>
+
+    <!-- ब्राउज़ में बल्क ऑपरेशन। -->
+    <string name="browse_select_range">श्रेणी चुनें</string>
+    <string name="browse_invert_selection">चयन उलटें</string>
+    <string name="browse_bulk_bookmark">बुकमार्क</string>
+    <string name="browse_bulk_unbookmark" tools:ignore="UnusedResources">बुकमार्क हटाएँ</string>
+    <string name="browse_bulk_duplicate">डुप्लिकेट</string>
+    <string name="browse_bulk_assign_passage">पैसेज में जोड़ें</string>
+    <string name="browse_bulk_unassign_passage">पैसेज से हटाएँ</string>
+    <string name="browse_move_to_position">स्थान पर ले जाएँ…</string>
+    <string name="browse_move_to_position_title">स्थान पर ले जाएँ</string>
+    <string name="browse_position_range">स्थान (1–%1$d)</string>
+    <string name="browse_position_reachable_range">स्थान (%1$d–%2$d)</string>
+    <string name="browse_moved_to_position">स्थान %1$d पर ले जाया गया</string>
+    <string name="browse_export_progress_preparing" tools:ignore="PluralsCandidate">%1$d प्रश्न तैयार किए जा रहे हैं…</string>
+    <string name="browse_export_progress_rendering">फ़ाइल बनाई जा रही है…</string>
+    <string name="browse_cancel_export">रद्द करें</string>
+
+    <!-- एक ही खुलासा जिसमें प्रभावित कार्ड के नाम हों। -->
+    <string name="browse_passage_reset_disclosure">पैसेज सदस्यता जोड़ने या हटाने से इन कार्डों का पढ़ाई शेड्यूल फिर से शुरू होता है: %1$s</string>
+    <string name="browse_passage_no_reset">इनमें से किसी कार्ड का अभी पढ़ाई शेड्यूल नहीं है।</string>
+    <string name="passage_unassign_member">पैसेज से हटाएँ</string>
+
+    <!-- विनाशकारी कार्रवाइयों के लिए Undo। -->
+    <string name="browse_delete_with_undo" tools:ignore="PluralsCandidate">%1$d प्रश्न हटाएँ? उनके शेड्यूल, समीक्षा इतिहास और बुकमार्क भी हट जाएँगे। आप स्नैकबार से Undo कर सकते हैं।</string>
+    <plurals name="browse_bulk_deleted">
+        <item quantity="one">%1$d प्रश्न हटाया गया</item>
+        <item quantity="other">%1$d प्रश्न हटाए गए</item>
+    </plurals>
+    <string name="browse_single_deleted">प्रश्न हटाया गया</string>
+    <string name="browse_undo_failed">प्रश्न वापस नहीं लाए जा सके</string>
+
+    <!-- डुप्लिकेट फ़ाइंडर। -->
+    <string name="duplicates_title">डुप्लिकेट प्रश्न</string>
+    <string name="duplicates_none">कोई ठीक डुप्लिकेट नहीं मिला</string>
+    <plurals name="duplicates_group_size">
+        <item quantity="one">%1$d प्रतिलिपि</item>
+        <item quantity="other">%1$d प्रतिलिपियाँ</item>
+    </plurals>
+    <!-- पुराना लेबल: अब डायलॉग में ही सामने-सामने तुलना दिखती है, यह कोई एक्शन नहीं है। -->
+    <string name="duplicates_done">हो गया</string>
+    <string name="duplicates_keep_numbered">#%1$d रखें</string>
+    <string name="duplicates_keep_candidate">प्रतिलिपि %1$d रखें: %2$s</string>
+    <string name="duplicates_delete_others">बाकी हटाएँ</string>
+    <string name="duplicates_merge_history">इसी में इतिहास मिलाएँ</string>
+    <string name="duplicates_merge_history_into">%1$s में इतिहास मिलाएँ</string>
+    <string name="duplicates_kept_schedule">जो कार्ड आप रखते हैं उसका पढ़ाई शेड्यूल और समीक्षा इतिहास सुरक्षित रहता है।</string>
+    <string name="duplicates_column_original">मूल</string>
+    <string name="duplicates_column_copy">प्रतिलिपि</string>
+</resources>

@@ -19,6 +19,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
+import com.mcqapp.data.io.CsvTsvParser
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.data.io.withNormalizedFlashcards
@@ -27,6 +28,7 @@ import com.mcqapp.data.io.StreamingImporter
 import com.mcqapp.data.io.interruptedImportNotice
 import com.mcqapp.data.io.scanImportPreview
 import com.mcqapp.data.io.withDownscaledImages
+import com.mcqapp.data.io.withScaledImages
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.getByIdsChunked
@@ -36,6 +38,7 @@ import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.ImportWarningSeverity
 import com.mcqapp.domain.ParserWarning
+import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.parserWarningSeverity
 import com.mcqapp.domain.parserWarningText
 import com.mcqapp.util.Logger
@@ -58,6 +61,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 const val JSON_STREAM_THRESHOLD_BYTES: Int = 4 * 1024 * 1024
 
+/** Bytes read from a large picked file to tell a flat CSV/TSV from JSON. */
+private const val CSV_HEAD_BYTES: Long = 64L * 1024
+
 /** How many questions of a large bank the preview keeps on the heap. */
 const val PREVIEW_SAMPLE_SIZE: Int = 500
 
@@ -66,7 +72,7 @@ const val PREVIEW_SAMPLE_SIZE: Int = 500
  * disclosure: a plain JSON bank or a Word document has no Anki memory state to
  * lose, so neither must show that note.
  */
-enum class ImportSource { ANKI, DOCX, JSON }
+enum class ImportSource { ANKI, DOCX, JSON, CSV }
 
 /**
  * Whether the Anki scheduling-memory disclosure applies to [source].
@@ -95,8 +101,9 @@ internal class SingleShotGuard {
 /** One line of the completion report: a count and which plural string to use. */
 internal enum class ImportReportLineKind {
     NEW_PAPERS, UPDATED_PAPERS, NEW_QUESTIONS, UPDATED_QUESTIONS,
-    DUPLICATE_QUESTIONS, ANSWERS_REFRESHED, RESTORED_SCHEDULES,
-    RESTORED_BOOKMARKS, RESTORED_ATTEMPTS, DROPPED_ANKI_STEMS, RECALL_CONVERTED
+    DUPLICATE_QUESTIONS, ANSWERS_REFRESHED, SCHEDULES_RESET, RESTORED_SCHEDULES,
+    RESTORED_BOOKMARKS, RESTORED_ATTEMPTS, DROPPED_ANKI_STEMS, RECALL_CONVERTED,
+    ROWS_SKIPPED
 }
 
 internal data class ImportReportLine(val kind: ImportReportLineKind, val count: Int)
@@ -117,11 +124,17 @@ internal fun importReportLines(report: ImportReport): List<ImportReportLine> = b
     line(ImportReportLineKind.UPDATED_QUESTIONS, report.updatedQuestions)
     line(ImportReportLineKind.DUPLICATE_QUESTIONS, report.duplicateQuestions)
     line(ImportReportLineKind.ANSWERS_REFRESHED, report.answersRefreshed)
+    line(ImportReportLineKind.SCHEDULES_RESET, report.schedulesReset)
     line(ImportReportLineKind.RESTORED_SCHEDULES, report.restoredSchedules)
     line(ImportReportLineKind.RESTORED_BOOKMARKS, report.restoredBookmarks)
     line(ImportReportLineKind.RESTORED_ATTEMPTS, report.restoredAttempts)
-    line(ImportReportLineKind.DROPPED_ANKI_STEMS, report.droppedAnkiStems)
+    // The typed Anki note below the counts already says how many cards were
+    // left out; emitting the count line too repeated the same fact.
+    if (report.importNotes.none { it is com.mcqapp.data.io.ImportNote.AnkiDroppedCards }) {
+        line(ImportReportLineKind.DROPPED_ANKI_STEMS, report.droppedAnkiStems)
+    }
     line(ImportReportLineKind.RECALL_CONVERTED, report.recallConverted)
+    line(ImportReportLineKind.ROWS_SKIPPED, report.rowsSkipped)
 }
 
 /**
@@ -144,6 +157,18 @@ private fun advisoryNotice(message: String): ParserWarning =
 internal fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
     messages.map { ParserWarning(parserWarningText(it), parserWarningSeverity(it)) }
 
+/**
+ * A CSV row whose answer cannot be resolved is *dropped*, not merely annotated.
+ * Tag it at the producer so the completion report's rows-skipped count matches
+ * the warning the preview already showed. Kept pure so the producer/consumer
+ * contract is testable without a ViewModel or Android resources.
+ */
+internal fun csvDroppedRowWarning(format: (Int) -> String): (Int) -> String =
+    { row -> droppedParserMessage(format(row)) }
+
+internal fun csvBadAnswerRowWarning(format: (Int) -> String): (Int) -> String =
+    csvDroppedRowWarning(format)
+
 object ImportDataHolder {
     /**
      * Raw bytes of a picked JSON bank. Held as bytes, never as a String: a
@@ -152,6 +177,12 @@ object ImportDataHolder {
      * parser even started.
      */
     var pendingJsonBytes: ByteArray? = null
+    /**
+     * Display name of the picked bank (its picked file name). A flat CSV/TSV has
+     * no title of its own, so the import preview uses this instead of the generic
+     * fallback — otherwise every CSV merges into one "Imported Questions" paper.
+     */
+    var pendingJsonName: String? = null
     /**
      * A JSON bank too large to hold as bytes. The import screen re-opens it
      * from here to preview a bounded sample and stream the rest, so the whole
@@ -221,7 +252,20 @@ data class ImportUiState(
     val duplicateIds: Set<String> = emptySet(),
     /** Ids whose content changed vs the library row with the same id (will UPDATE). */
     val changedIds: Set<String> = emptySet(),
+    /**
+     * Changed ids whose answer/key would be rewritten because
+     * "Refresh answers on re-import" is on. Those rows lose their study
+     * schedule, so the preview carries a dedicated badge.
+     */
+    val answerRefreshIds: Set<String> = emptySet(),
+    /**
+     * Changed ids that actually hold a study schedule today. The import will
+     * delete it, so the row is flagged before the learner commits to it.
+     */
+    val scheduleResetIds: Set<String> = emptySet(),
     val importReport: com.mcqapp.data.io.ImportReport? = null,
+    /** Paper the just-finished import created or updated, for "Study now" actions. */
+    val importedPaperId: String? = null,
     val originalFile: McqFileDto? = null,
     /**
      * Whether the picked file is a multi-paper/progress backup. A streamed large
@@ -400,12 +444,37 @@ internal fun backupRestoreNotice(
     )
 }
 
+/** The preview's classification plus the rows a key refresh would rewrite. */
+internal data class PreviewClassification(
+    val duplicates: Set<String>,
+    val changed: Set<String>,
+    val answerRefresh: Set<String>
+)
+
+/**
+ * Hashes the shape the importer stores, not the raw DTO. The importer downscales
+ * images before hashing (option images are part of the hash), so hashing the
+ * full-size twin made a re-import of our own export read as "changed" forever.
+ * [scale] is injected so the rule is testable off-device.
+ */
+internal fun previewHashOf(
+    question: QuestionDto,
+    scale: (String?) -> String?
+): Pair<QuestionDto, String> {
+    val normalized = question.normalizedFlashcard()
+    val scaled = normalized.withScaledImages(scale)
+    return normalized to com.mcqapp.data.io.ContentHash.of(scaled)
+}
+
 /**
  * Classifies preview questions exactly like the importer will: a hash already
  * in the database is a duplicate (skipped); the same id with changed content
  * or a fixed answer key is changed (updates in place); else new. Pure, so the
  * rule can be tested without an Android harness; the stored maps need only
  * cover the ids the caller deemed interesting.
+ *
+ * The two-set form is kept for callers that do not care about the answer-refresh
+ * distinction; it is exactly the detailed classification with that setting off.
  */
 internal fun classifyPreview(
     hashed: List<Pair<QuestionDto, String>>,
@@ -416,8 +485,32 @@ internal fun classifyPreview(
     storedOptionsByQuestion: Map<String, List<com.mcqapp.data.local.OptionEntity>>,
     storedIdsByHash: Map<String, List<String>> = emptyMap()
 ): Pair<Set<String>, Set<String>> {
+    val result = classifyPreviewDetailed(
+        hashed, existingHashes, existingIds, storedById, correctById,
+        storedOptionsByQuestion, storedIdsByHash, refreshAnswers = false
+    )
+    return result.duplicates to result.changed
+}
+
+/**
+ * Setting-aware twin of [classifyPreview]. With [refreshAnswers] on, a row whose
+ * stored twin shares the content hash but carries a different answer key is the
+ * one the importer refreshes — which deletes that card's schedule. It is reported
+ * separately so the preview can say so instead of calling it a plain update.
+ */
+internal fun classifyPreviewDetailed(
+    hashed: List<Pair<QuestionDto, String>>,
+    existingHashes: Set<String>,
+    existingIds: Set<String>,
+    storedById: Map<String, com.mcqapp.data.local.QuestionEntity>,
+    correctById: Map<String, Set<String>>,
+    storedOptionsByQuestion: Map<String, List<com.mcqapp.data.local.OptionEntity>>,
+    storedIdsByHash: Map<String, List<String>> = emptyMap(),
+    refreshAnswers: Boolean = false
+): PreviewClassification {
     val duplicates = HashSet<String>()
     val changed = HashSet<String>()
+    val answerRefresh = HashSet<String>()
     hashed.forEach { (q, hash) ->
         // The scaled twin, computed at most once and only when a stored row
         // matches: scaling decodes the full bitmap before it can decide the
@@ -430,36 +523,58 @@ internal fun classifyPreview(
                 scaled
             )
         } == true
-        if (hash in existingHashes && (sameContent || q.id in existingIds)) {
-            // The hash ignores the answer key and metadata: the same id with a
-            // fixed key reads as changed, exactly as the importer treats it.
-            val changedAnswer = storedById[q.id]?.let { stored ->
-                com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
-                    stored,
-                    correctById[q.id].orEmpty(),
-                    scaled
-                )
-            } == true
-            if (changedAnswer) changed.add(q.id) else duplicates.add(q.id)
-        } else if (q.id in existingIds) {
-            changed.add(q.id)
-        } else if (hash in existingHashes) {
-            // Same content under an id the library does not have: both
-            // importers deduplicate by content across the library and skip
-            // the row, so the preview must not count it as new
-            // (consolidated_bugs.md A4).
-            val sameContentElsewhere = storedIdsByHash[hash].orEmpty().any { storedId ->
-                val stored = storedById[storedId] ?: return@any false
+        // Both importers run the refresh branch before their dedup/update
+        // branch, and only when the setting is on. Find the same-content row
+        // whose non-hashed fields differ — that is the one whose key is
+        // rewritten and whose study schedule is dropped.
+        val refreshCandidate = if (refreshAnswers && hash in existingHashes) {
+            buildList {
+                if (q.id in existingIds) add(q.id)
+                addAll(storedIdsByHash[hash].orEmpty())
+            }.distinct().firstOrNull { id ->
+                val stored = storedById[id] ?: return@firstOrNull false
                 com.mcqapp.data.io.ContentHash.sameQuestionContent(
-                    stored,
-                    storedOptionsByQuestion[storedId].orEmpty(),
-                    scaled
+                    stored, storedOptionsByQuestion[id].orEmpty(), scaled
+                ) && com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
+                    stored, correctById[id].orEmpty(), scaled
                 )
             }
-            if (sameContentElsewhere) duplicates.add(q.id)
+        } else {
+            null
+        }
+        when {
+            refreshCandidate != null -> answerRefresh.add(q.id)
+            hash in existingHashes && (sameContent || q.id in existingIds) -> {
+                // The hash ignores the answer key and metadata: the same id with
+                // a fixed key reads as changed, exactly as the importer treats it.
+                val changedAnswer = storedById[q.id]?.let { stored ->
+                    com.mcqapp.data.io.ContentHash.nonHashedFieldsDiffer(
+                        stored,
+                        correctById[q.id].orEmpty(),
+                        scaled
+                    )
+                } == true
+                if (changedAnswer) changed.add(q.id) else duplicates.add(q.id)
+            }
+            q.id in existingIds -> changed.add(q.id)
+            hash in existingHashes -> {
+                // Same content under an id the library does not have: both
+                // importers deduplicate by content across the library and skip
+                // the row, so the preview must not count it as new
+                // (consolidated_bugs.md A4).
+                val sameContentElsewhere = storedIdsByHash[hash].orEmpty().any { storedId ->
+                    val stored = storedById[storedId] ?: return@any false
+                    com.mcqapp.data.io.ContentHash.sameQuestionContent(
+                        stored,
+                        storedOptionsByQuestion[storedId].orEmpty(),
+                        scaled
+                    )
+                }
+                if (sameContentElsewhere) duplicates.add(q.id)
+            }
         }
     }
-    return duplicates to changed
+    return PreviewClassification(duplicates, changed, answerRefresh)
 }
 
 /**
@@ -604,18 +719,21 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshDuplicates() {
         viewModelScope.launch {
             try {
+                // The preview must follow the same setting the importer will:
+                // with answer refresh on, a fixed key is not a plain update —
+                // it throws that card's study schedule away.
+                val refreshAnswers = repository.updateAnswersOnDuplicate().first()
                 // Hashing tens of thousands of questions blocks Main: classify off-thread.
                 val questions = _state.value.questions
                 var matchedCount = 0
-                val (dups, changed) = withContext(Dispatchers.Default) {
-                    // Hash the flashcard shape the importer will write: a
-                    // one-option question becomes a zero-option card before
-                    // the import, so hashing its raw options here would
-                    // predict a duplicate the importer never sees (and miss
-                    // one it does).
+                val classification = withContext(Dispatchers.Default) {
+                    // Hash the shape the importer stores: the flashcard form,
+                    // downscaled images included, is what a re-import compares
+                    // against the row on disk.
                     val hashed = questions.map { q ->
-                        val normalized = q.normalizedFlashcard()
-                        normalized to com.mcqapp.data.io.ContentHash.of(normalized)
+                        previewHashOf(q) { src ->
+                            src?.let { com.mcqapp.data.io.ImageDownscale.downscaleDataUri(it) }
+                        }
                     }
                     // Probe only the preview's ids and hashes, chunked, instead
                     // of snapshotting every id and hash in the database: a large
@@ -638,7 +756,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                         .distinct()
                     matchedCount = interesting.size
                     if (interesting.isEmpty()) {
-                        emptySet<String>() to emptySet()
+                        PreviewClassification(emptySet(), emptySet(), emptySet())
                     } else {
                         val storedById = repository.db().questionDao()
                             .getByIdsChunked(interesting)
@@ -650,16 +768,34 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                         val storedOptionsByQuestion = repository.db().optionDao()
                             .getForQuestionsChunked(interesting)
                             .groupBy { it.questionId }
-                        classifyPreview(
+                        classifyPreviewDetailed(
                             hashed, hashes, ids, storedById, correctById, storedOptionsByQuestion,
-                            storedIdsByHash
+                            storedIdsByHash, refreshAnswers = refreshAnswers
                         )
                     }
                 }
-                _state.update { it.copy(duplicateIds = dups, changedIds = changed) }
+                // A changed row only resets a schedule when the learner has one
+                // today. Query that small, id-scoped set so the badge is honest.
+                val resetCandidates = classification.changed + classification.answerRefresh
+                val withSchedule = if (resetCandidates.isEmpty()) {
+                    emptySet()
+                } else {
+                    repository.db().cardStateDao()
+                        .getForQuestionsChunked(resetCandidates.toList())
+                        .mapTo(HashSet()) { it.questionId }
+                }
+                _state.update {
+                    it.copy(
+                        duplicateIds = classification.duplicates,
+                        changedIds = classification.changed,
+                        answerRefreshIds = classification.answerRefresh,
+                        scheduleResetIds = withSchedule
+                    )
+                }
                 Logger.d("IMPORTVM", "refreshDuplicates: ${questions.size} preview = " +
-                    "${questions.size - dups.size - changed.size} new, ${changed.size} changed, " +
-                    "${dups.size} duplicates; stored rows fetched for $matchedCount")
+                    "${questions.size - classification.duplicates.size - classification.changed.size - classification.answerRefresh.size} new, " +
+                    "${classification.changed.size} changed, ${classification.answerRefresh.size} answer refresh, " +
+                    "${classification.duplicates.size} duplicates; stored rows fetched for $matchedCount")
             } catch (e: Exception) {
                 Logger.e("IMPORTVM", "refreshDuplicates failed", e)
             }
@@ -668,6 +804,19 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearLastEdited() {
         lastEditedQuestionId = null
+    }
+
+    /**
+     * The completion report points at the dropped rows the preview already
+     * explained. Counting the very warnings the preview rendered keeps the two
+     * honest: a row dropped by the JSON/DOCX reader is not silently a clean
+     * import just because the dialog shows only counts.
+     */
+    private fun withRowsSkipped(report: ImportReport): ImportReport {
+        val skipped = _state.value.parseWarnings.count {
+            it.severity == ImportWarningSeverity.DROPPED
+        }
+        return if (skipped == 0) report else report.copy(rowsSkipped = report.rowsSkipped + skipped)
     }
 
     // Fingerprint (not the full text: a 25k-question file is ~9MB and must
@@ -713,8 +862,18 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      * streaming so the whole DTO tree never exists; smaller files keep the
      * exact whole-file path.
      */
-    fun loadJsonBytes(bytes: ByteArray) {
+    fun loadJsonBytes(bytes: ByteArray, fileName: String? = null) {
         viewModelScope.launch {
+            // A flat bank can arrive under any extension, so classify by
+            // content before the JSON parser sees it. Only small files are
+            // inspected as text — a large bank keeps the streaming path.
+            if (bytes.size <= JSON_STREAM_THRESHOLD_BYTES) {
+                val text = bytes.toString(Charsets.UTF_8)
+                if (CsvTsvParser.looksLikeCsvTsv(text)) {
+                    loadCsvTsv(text, fileName)
+                    return@launch
+                }
+            }
             markSource(ImportSource.JSON)
             val fp = withContext(Dispatchers.Default) { fingerprint(bytes) }
             if (fp == loadedDirectFp &&
@@ -747,7 +906,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * A JSON bank too large to hold as bytes. The Uri is re-opened for the
      * bounded preview and again for the streaming import, so the pick never
-     * has to fit in the heap.
+     * has to fit in the heap. A flat CSV/TSV bank above the text threshold
+     * cannot take this path; it is recognised from the head and refused with
+     * the CSV limit rather than failing as unreadable JSON.
      */
     fun loadJsonUri(uri: Uri) {
         viewModelScope.launch {
@@ -763,6 +924,23 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             loadedDirectFp = key
             try {
                 withContext(Dispatchers.Default) {
+                    // A flat bank above the text threshold reaches this path as
+                    // a URI. It cannot be streamed like JSON, and handing it to
+                    // the JSON reader reported "couldn't read that file" for a
+                    // perfectly valid CSV. Classify from the head and say what
+                    // the limit actually is.
+                    val head = resolver.openInputStream(uri)?.use { stream ->
+                        com.mcqapp.util.readPrefix(stream, CSV_HEAD_BYTES)
+                    }
+                    if (head != null &&
+                        CsvTsvParser.looksLikeCsvTsv(head.bytes.toString(Charsets.UTF_8))
+                    ) {
+                        loadedDirectFp = null
+                        _state.update {
+                            it.copy(loading = false, error = msg(R.string.of_csv_too_large))
+                        }
+                        return@withContext
+                    }
                     loadLargeJson(
                         open = {
                             resolver.openInputStream(uri)
@@ -850,6 +1028,48 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             "${preview.totalQuestions} questions across ${preview.firstPaperCategoryCount} categories" +
             if (preview.isBackup) " (backup: ${preview.paperCount} papers)" else "")
         refreshDuplicates()
+    }
+
+    /**
+     * A CSV/TSV bank. It is converted straight to the same DTO the JSON path
+     * reads, so the preview, dedup, editor write-back and importer are reused
+     * unchanged — no second import pipeline. A picked file's name becomes the
+     * paper title (banks rarely name themselves in a flat file).
+     */
+    fun loadCsvTsv(text: String, fileName: String? = null) {
+        viewModelScope.launch {
+            markSource(ImportSource.CSV)
+            val fp = withContext(Dispatchers.Default) { fingerprint(text.toByteArray()) }
+            if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) return@launch
+            loadedDirectFp = fp
+            try {
+                withContext(Dispatchers.Default) {
+                    val parsed = CsvTsvParser.parse(
+                        text,
+                        paperTitle = fileName?.let { docxPaperTitle(it) },
+                        rowWarning = csvBadAnswerRowWarning { msg(R.string.of_csv_bad_answer, it) },
+                        blankRowWarning = csvDroppedRowWarning { msg(R.string.of_csv_blank_question, it) }
+                    )
+                    val warnings = parsed.warnings.toMutableList()
+                    if (parsed.file.papers.firstOrNull()
+                            ?.categories?.firstOrNull()?.questions.isNullOrEmpty()
+                    ) {
+                        warnings += msg(R.string.of_csv_no_questions)
+                    }
+                    parseAndLoad(
+                        parse = { parsed.file },
+                        extraWarnings = warnings,
+                        titleOverride = fileName?.let { docxPaperTitle(it) }
+                    )
+                }
+            } catch (e: Exception) {
+                loadedDirectFp = null
+                Logger.e("IMPORTVM", "Failed to parse CSV/TSV", e)
+                _state.update {
+                    it.copy(loading = false, error = msg(R.string.final_import_parse_failed))
+                }
+            }
+        }
     }
 
     fun loadJsonText(text: String) {
@@ -1135,8 +1355,14 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     importJournal.clear()
                     Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
                         "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")
+                    val importedId = repository.observePapers().first()
+                        .firstOrNull { p -> p.title.equals(s.paperTitle.trim(), ignoreCase = true) }?.id
                     _state.update {
-                        it.copy(importing = false, importDone = true, importReport = report)
+                        it.copy(
+                            importing = false, importDone = true,
+                            importReport = withRowsSkipped(report),
+                            importedPaperId = importedId
+                        )
                     }
                 } catch (e: Exception) {
                     // The run already committed. Do not tell the user no
@@ -1188,7 +1414,15 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")
-                _state.update { it.copy(importing = false, importDone = true, importReport = report) }
+                val importedId = repository.observePapers().first()
+                    .firstOrNull { p -> p.title.equals(s.paperTitle.trim(), ignoreCase = true) }?.id
+                _state.update {
+                    it.copy(
+                        importing = false, importDone = true,
+                        importReport = withRowsSkipped(report),
+                        importedPaperId = importedId
+                    )
+                }
             } catch (e: Exception) {
                 // Every sibling catch surfaces `error`, which ImportScreen
                 // renders as a dialog. Swallowing it here left the spinner

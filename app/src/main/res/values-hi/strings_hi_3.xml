@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="option_correct_missed">सही उत्तर, आपने यह नहीं चुना</string>
     <string name="option_image">विकल्प की छवि</string>
     <string name="option_label">विकल्प %1$s</string>
@@ -134,9 +134,9 @@
     <string name="report_coverage_line">%1$d/%2$d प्रश्न जाँचे गए (%3$d%%) · %4$d इस टेस्ट को दोहराए गए</string>
     <string name="report_coverage_title">कवरेज &amp; प्रगति</string>
     <string name="report_coverage_unseen">इस दायरे के %1$d प्रश्न अभी देखे ही नहीं गए।</string>
-    <string name="report_delta">%1$s%2$d अंक, मार्जिन के %3$s</string>
-    <string name="report_delta_inside">अंदर</string>
-    <string name="report_delta_outside">बाहर</string>
+    <string name="report_delta" tools:ignore="UnusedResources">%1$s%2$d अंक, मार्जिन के %3$s</string>
+    <string name="report_delta_inside" tools:ignore="UnusedResources">अंदर</string>
+    <string name="report_delta_outside" tools:ignore="UnusedResources">बाहर</string>
     <string name="report_discrimination_line">प्रश्न विभेदन r = %1$.2f</string>
     <string name="report_discrimination_review_line">प्रश्न विभेदन r = %1$.2f · इस प्रश्न की समीक्षा करें</string>
     <string name="report_discrimination_weak_line">प्रश्न विभेदन r = %1$.2f · कमज़ोर विभेदन</string>

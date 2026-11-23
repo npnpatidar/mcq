@@ -1,6 +1,7 @@
 package com.mcqapp.data.docx
 
 import com.mcqapp.domain.droppedParserMessage
+import com.mcqapp.util.Logger
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
@@ -96,7 +97,15 @@ private fun readPayload(bytes: ByteArray): String? = try {
         }
     }
     found?.takeIf { it.isNotBlank() }
-} catch (_: Exception) {
+} catch (e: Exception) {
+    // A broken hidden payload is a non-fatal degradation: the visible markers
+    // still import the bank. It used to vanish without a trace, so an edited
+    // or stripped export re-imported with less fidelity and nobody could tell.
+    Logger.warnOnce(
+        "DOCX",
+        "The document's hidden question data could not be read; using the visible markers",
+        e
+    )
     null
 }
 
@@ -178,12 +187,14 @@ private fun hardenXmlFactory(factory: DocumentBuilderFactory): Int {
     try {
         factory.isExpandEntityReferences = false
         applied++
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        Logger.warnOnce("DOCX", "XML hardening: entity expansion could not be disabled", e)
     }
     try {
         factory.isXIncludeAware = false
         applied++
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        Logger.warnOnce("DOCX", "XML hardening: XInclude could not be disabled", e)
     }
     return applied
 }
@@ -192,7 +203,12 @@ private fun setFeature(factory: DocumentBuilderFactory, name: String, value: Boo
     try {
         factory.setFeature(name, value)
         1
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        // Android's parser does not implement some of these features. That is
+        // expected and the entity resolver below covers the gap, but a feature
+        // failing on a parser that *should* support it is a security-relevant
+        // change worth one diagnostic per feature, not a silent `0`.
+        Logger.warnOnce("DOCX", "XML hardening feature unavailable: $name", e)
         0
     }
 

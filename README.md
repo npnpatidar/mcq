@@ -25,8 +25,8 @@ or Anki (.apkg).
 1. **Create a paper** — tap the `+` button on the Library screen.
 2. **Add questions** — open the paper card → **Browse** → **Select** → **Edit** or use
    the `+` in Manage mode. You can also write questions in **Word** and import them.
-3. **Import a bank** — Library drawer → **Import questions** → pick a `.docx` or `.json`
-   file. The preview shows New / Changed / Duplicate counts.
+3. **Import a bank** — Library drawer → **Import questions** → pick a `.docx`, `.json`,
+   `.csv` or `.tsv` file. The preview shows New / Changed / Duplicate counts.
 4. **Take a test** — paper card → **Test** (FactCheck icon). The sheet lets you pick
    Random, Balanced, Mistakes, focus types, a Blueprint, time, and length (shuffle
    is a Settings → Tests toggle).
@@ -57,7 +57,7 @@ or Anki (.apkg).
 12. [Browse, Search, Editor & Passages](#browse-search-editor--passages)
 13. [Bookmarks](#bookmarks)
 14. [Import: Word Documents (.docx)](#import-word-documents-docx)
-15. [Import: JSON Reference](#import-json-reference)
+15. [Import: JSON, CSV / TSV Reference](#import-json-csv--tsv-reference)
 16. [Import Semantics & Nuances](#import-semantics--nuances)
 17. [Editor Prev/Next Queue](#editor-prevnext-queue)
 18. [Export Formats](#export-formats-per-paper-per-category-bookmarks)
@@ -854,7 +854,16 @@ indicator appears under the paper title; the same menu opens a dialog to
 unsuspend hidden cards. Suspended and buried cards are excluded from Study
 pools and counts, but still take part in tests.
 
-**Gestures/keys:** No keyboard shortcuts. Back = stop (not exit).
+**Gestures/keys:** Study focuses the card surface: **Space** reveals the answer,
+then advances once a grade is staged; **1–4** grade Again / Hard / Good / Easy
+(after reveal only); **←/→** move the option selection. Test focuses its session
+surface the same way: **Space** reveals, then advances; **←/→** go to the
+previous/next question. Digits are inert in Test — a test never grades, so there
+is no Again/Hard/Good/Easy to press. A strict exam cannot be revealed: Space is
+ignored there, just as the on-screen **Show answer** button is hidden. Keys are
+ignored while a dialog owns the screen, a break is running in Study, or a
+Ctrl/Alt/Meta modifier is held. Neither surface has a text-entry field, so a
+shortcut never competes with typing. Back = stop (not exit).
 Scroll/background pauses question clock. Haptics: Tick (reveal/advance/grade),
 Confirm (correct), Reject (wrong).
 
@@ -1460,7 +1469,7 @@ and 'Exp:' markers, or a card's 'Answer:' back.`
 
 ---
 
-## Import: JSON Reference
+## Import: JSON, CSV / TSV Reference
 
 ### Bare array
 
@@ -1476,6 +1485,38 @@ The simplest shape — e.g. `simple_questions.json`:
 A bare array carries no structure, so it is wrapped for you: one paper
 `Imported Questions`, one category `Uncategorized`, and no bookmarks, attempts or
 schedules. Option ids are assigned `a`, `b`, `c`, … in order.
+
+### CSV / TSV banks
+
+The import picker also accepts flat `.csv` and `.tsv` banks. The reader is a
+small hand-written RFC-4180 one (quoted fields may contain commas, tabs, doubled
+quotes and line breaks; a UTF-8 BOM is stripped; `\n`, `\r\n` and a bare `\r`
+all end a record). The delimiter is chosen from the first line: more tabs than
+commas means TSV, otherwise CSV.
+
+The first row is a header when it names `question` and one of
+`answer`/`options`/`explanation`; otherwise the columns are positional:
+`question,a,b,c,d,answer,explanation,tags`.
+
+| Header names | Column |
+|---|---|
+| `question`, `questions` | Front / question text |
+| `a`…`d`, `option a`…`option d`, `option1`…`option4`, `opt a`, `choice a` | Options 1–4 |
+| `answer`, `correct`, `correct answer` | Answer key |
+| `explanation`, anything starting `explain`, `back` | Explanation / flashcard back |
+| `tags`, `tag` | Tags |
+
+- A row with at least one option is a multiple-choice question. The answer is a
+  letter (`a`–`d`), a number (`1`–`4`), or the exact text of one option. A blank
+  option column does not shift the letter key: `b` still means column `b`.
+- A row with no options and a blank answer is a flashcard; `explanation`/`back`
+  is its back.
+- A row with an answer but no option column has nothing to key, so it is skipped
+  with a dropped-row warning rather than written as a blank card.
+- The picked file's name becomes the paper title (`algebra.csv` → **algebra**),
+  so two differently named banks become two papers instead of merging into one.
+- A CSV/TSV bank is read as text and must be at most **4 MB**. Split a larger
+  flat bank, or import it as JSON.
 
 ### Full Schema (`McqFileDto`)
 
@@ -1838,6 +1879,7 @@ paper in DB, remapped to `"<paperId>-<originalId>"` to avoid FK cascade wipe.
 | Limit | Value | Enforcement |
 |-------|-------|-------------|
 | Max import file size | **64 MB** | `MAX_IMPORT_BYTES` in `BoundedRead.kt`; stream-enforced (`copyBounded`/`boundedStream`). |
+| Max CSV / TSV bank | **4 MB** | `JSON_STREAM_THRESHOLD_BYTES` in `ImportViewModel`; a flat bank is read as text, larger files must be JSON or split. |
 | Max manifest/settings part | **8 MB** | `MAX_PART_BYTES` in `McqBackupFormat`. |
 | JSON nesting depth | **200** | `MAX_NESTING_DEPTH` in `LegacyParser`; streaming reader aborts deeper. |
 | Export page size | **500** questions | `EXPORT_PAGE` in `Exporter`; one keyset page per batch. |
@@ -2729,7 +2771,8 @@ sh gradlew :app:assembleDebug :app:testDebugUnitTest $MCQ_AAPT2_OVERRIDE --no-da
   Robolectric native runtime is not supported on Linux (aarch64)"); CI (x86_64)
   is authoritative.
 - `run-jvm-tests.sh` selects classes by `^import org.robolectric` (not word
-  match), so a comment cannot hide a class. Full local pass ≈ 124 classes.
+  match), so a comment cannot hide a class. The current class count is printed by
+  `:app:testPureJvm` on each run.
 
 ### Build (NixOS ARM64 host, repo at `/home/naresh/repo/mcq`)
 

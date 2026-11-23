@@ -136,8 +136,29 @@ fun McqNavHost(repository: McqRepository) {
 
     val pendingImport by SharedImport.pending.collectAsStateWithLifecycle()
     val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
+    // Plain text shared from another app becomes a flashcard through a small
+    // front/back dialog, not an import preview. Held in saveable state so a
+    // rotation cannot drop the shared snippet — until Save is tapped, when
+    // it is cleared immediately so a rotation mid-write cannot re-offer it.
+    val pendingQuickCapture by SharedImport.pendingText.collectAsStateWithLifecycle()
+    var quickCaptureText by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingQuickCapture) {
+        val captured = SharedImport.consumeText() ?: return@LaunchedEffect
+        quickCaptureText = captured.text
+    }
     // Resolve in the composable body: LaunchedEffect's block is not @Composable.
     val importFailure = pendingImportError
+    val quickCaptureSavedText = stringResource(R.string.of_quick_capture_saved)
+    // Completion is a one-shot event from the activity-scoped ViewModel, not a
+    // saveable flag in this composition. It is buffered in the VM, so a Save
+    // that finishes during a rotation is still reported once to the new side.
+    LaunchedEffect(Unit) {
+        libraryViewModel.quickCaptureSaved.collect {
+            quickCaptureText = null
+            messageBus.send(UiMessage(quickCaptureSavedText))
+            libraryViewModel.consumeQuickCaptureSaved()
+        }
+    }
     val importErrorMessage = if (importFailure != null) {
         stringResource(importFailure.resId, *importFailure.args.toTypedArray())
     } else null
@@ -155,8 +176,9 @@ fun McqNavHost(repository: McqRepository) {
                 ImportDataHolder.pendingJsonUri = it
                 navigateWithGuard("import/direct", false)
             },
-            onJsonBytes = {
-                ImportDataHolder.pendingJsonBytes = it
+            onJsonBytes = { bytes, name ->
+                ImportDataHolder.pendingJsonBytes = bytes
+                ImportDataHolder.pendingJsonName = name
                 navigateWithGuard("import/direct", false)
             }
         )
@@ -333,11 +355,13 @@ fun McqNavHost(repository: McqRepository) {
             )
         }
         composable(
-            route = "study/{paperId}?categories={categories}&leechesOnly={leechesOnly}",
+            route = "study/{paperId}?categories={categories}&leechesOnly={leechesOnly}&tag={tag}&mistakes={mistakes}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },
-                navArgument("leechesOnly") { type = NavType.BoolType; defaultValue = false }
+                navArgument("leechesOnly") { type = NavType.BoolType; defaultValue = false },
+                navArgument("tag") { type = NavType.StringType; defaultValue = "" },
+                navArgument("mistakes") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
@@ -345,15 +369,20 @@ fun McqNavHost(repository: McqRepository) {
                 entry.arguments?.getString("categories").orEmpty()
             )
             val leechesOnly = entry.arguments?.getBoolean("leechesOnly") ?: false
+            val tag = entry.arguments?.getString("tag").orEmpty()
+            val mistakes = entry.arguments?.getBoolean("mistakes") ?: false
             Logger.i(
                 "NAV",
-                "study screen: paperId=$paperId, categories=$categories, leechesOnly=$leechesOnly"
+                "study screen: paperId=$paperId, categories=$categories, leechesOnly=$leechesOnly, " +
+                    "tag='$tag', mistakes=$mistakes"
             )
             StudyScreen(
                 repository = repository,
                 paperId = paperId,
                 categoryIds = categories,
                 leechesOnly = leechesOnly,
+                tag = tag,
+                mistakes = mistakes,
                 navController = navController
             )
         }
@@ -382,6 +411,21 @@ fun McqNavHost(repository: McqRepository) {
         tone = currentTone,
         modifier = Modifier.align(Alignment.BottomCenter)
     )
+
+    quickCaptureText?.let { text ->
+        val capturePapers by libraryViewModel.papers.collectAsStateWithLifecycle()
+        com.mcqapp.ui.library.QuickCaptureDialog(
+            papers = capturePapers,
+            sharedText = text,
+            onSave = { pid, pt, cid, ct, front, back, tag ->
+                // Dismiss on the tap, not after the write: the VM owns the
+                // write in its own scope and emits a one-shot event when done.
+                quickCaptureText = null
+                libraryViewModel.saveQuickCapture(pid, pt, cid, ct, front, back, tag)
+            },
+            onDismiss = { quickCaptureText = null }
+        )
+    }
 
     // Round-2 E4: a blocked external exit surfaces the same leave copy the
     // editor uses. Discard drops the unsaved edit and performs the held

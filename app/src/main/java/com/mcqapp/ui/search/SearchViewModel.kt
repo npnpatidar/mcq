@@ -8,7 +8,14 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
+import com.mcqapp.data.local.getForQuestionsChunked
+import com.mcqapp.data.repository.FilteredSearchPagingSource
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.SearchCount
+import com.mcqapp.data.repository.SearchScopeFilter
+import com.mcqapp.data.repository.searchCount
+import com.mcqapp.data.repository.searchCountBounded
+import com.mcqapp.domain.Paper
 import com.mcqapp.domain.QuestionSearch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -26,15 +33,53 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** A chip option: a paper, or a category labelled with its paper. */
+data class SearchChip(val id: String, val title: String, val paperId: String, val isPaper: Boolean)
+
 data class SearchUiState(
     val query: String = "",
-    val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL
+    val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL,
+    /** Selected paper ids; empty = all papers. */
+    val paperFilterIds: Set<String> = emptySet(),
+    /** Selected category ids; empty = all categories. */
+    val categoryFilterIds: Set<String> = emptySet()
 )
 
-internal data class SearchRequest(val query: String, val scope: QuestionSearch.Scope)
+internal data class SearchRequest(
+    val query: String,
+    val scope: QuestionSearch.Scope,
+    val paperFilterIds: Set<String> = emptySet(),
+    val categoryFilterIds: Set<String> = emptySet()
+) {
+    val filter: SearchScopeFilter get() = SearchScopeFilter(paperFilterIds, categoryFilterIds)
+    val hasScopeFilter: Boolean get() = paperFilterIds.isNotEmpty() || categoryFilterIds.isNotEmpty()
+}
+
+/**
+ * The two chip families are mutually exclusive: [SearchScopeFilter.matches]
+ * ANDs them, and categories belong to papers, so a paper id together with a
+ * category id from a different paper can only ever produce an empty result.
+ * Choosing either family therefore clears the other. Kept as pure functions so
+ * the contract is JVM-testable without an Application.
+ */
+internal fun togglePaperFilter(state: SearchUiState, paperId: String): SearchUiState =
+    state.copy(
+        paperFilterIds = if (paperId in state.paperFilterIds) emptySet() else setOf(paperId),
+        categoryFilterIds = emptySet()
+    )
+
+internal fun toggleCategoryFilter(state: SearchUiState, categoryId: String): SearchUiState {
+    val next = if (categoryId in state.categoryFilterIds) {
+        state.categoryFilterIds - categoryId
+    } else {
+        state.categoryFilterIds + categoryId
+    }
+    return state.copy(categoryFilterIds = next, paperFilterIds = emptySet())
+}
 
 /**
  * True while the live request differs from the last committed one — i.e. the
@@ -50,11 +95,13 @@ internal fun searchShowsTypeHint(query: String, debouncing: Boolean): Boolean =
     query.isBlank() && !debouncing
 
 /**
- * Cross-paper search, paged. The old path asked the repository for every hit
- * at once, which for a one-letter query over a 250k-question bank
- * materialised the entire match set (element JSON and base64 images included)
+ * Cross-paper search, paged, with paper/category chips and an exact total.
+ * The old path asked the repository for every hit at once, which for a
+ * one-letter query over a 250k-question bank materialised the entire match set
  * before showing a single row. Here the first page paints after the 300 ms
- * debounce and the rest streams in as the list is scrolled.
+ * debounce and the rest streams in as the list is scrolled; the total is
+ * computed from the same two-phase pipeline on IO, so it is exact rather than
+ * Paging's loaded-page "120+".
  */
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,22 +113,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     // The WHOLE request is debounced, not the query alone: a scope tap used
     // to re-emit immediately with the last DEBOUNCED query, painting stale
-    // results for 300 ms while the pending debounce kept running
-    // (consolidated_bugs.md B3). With the request as the unit, a scope change
-    // and a keystroke both restart the same window and commit together.
-    //
-    // Shared, not cold: the result flow, the pending cue and the row snippet
-    // all have to agree on which request is committed. A cold flow would give
-    // each collector its own debounce timer, so for a few milliseconds the
-    // rows and the snippet could be describing two different queries.
+    // results for 300 ms. With the request as the unit, every chip and every
+    // keystroke restart the same window and commit together.
     private val committed: SharedFlow<SearchRequest> = _state
-        .map { SearchRequest(it.query.trim(), it.scope) }
+        .map { it.request() }
         .distinctUntilChanged()
         .debounce(SEARCH_DEBOUNCE_MS)
         .shareIn(viewModelScope, SharingStarted.Eagerly, replay = 1)
 
-    private val currentRequest: Flow<SearchRequest> = _state
-        .map { SearchRequest(it.query.trim(), it.scope) }
+    private val currentRequest: Flow<SearchRequest> = _state.map { it.request() }
 
     val debouncing: StateFlow<Boolean> = combine(currentRequest, committed) { current, request ->
         isSearchPending(current, request)
@@ -89,20 +129,42 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * The query the visible hits were produced for: the committed (debounced)
-     * one, never the live text field. A row's "Answer: …" snippet must explain
-     * *its own* match — with the raw field, rows from the previous 300 ms
-     * window could show a snippet for text typed after they loaded.
+     * one, never the live text field.
      */
     val committedQuery: StateFlow<String> = committed
         .map { it.query }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
-     * B4 — the custom search paging source is not invalidated by Room, so a
-     * delete/edit elsewhere left stale hits on the retained back stack. Hold
-     * the one live source and invalidate it in place on any question/passage
-     * write. In-place (not rebuilding the Pager) keeps the reader's position —
-     * the same approach as BookmarksViewModel.observeBookmarkChanges.
+     * The header count for the committed request: a bounded "N+" first so a
+     * broad query shows something immediately, then the exact total. Null only
+     * before the first committed request resolves.
+     */
+    val resultCount: StateFlow<SearchCount?> = committed
+        .transform { request ->
+            if (request.query.isBlank()) {
+                emit(SearchCount(0, true))
+            } else {
+                val bounded = repository.searchCountBounded(
+                    request.query, request.scope, request.filter
+                )
+                emit(bounded)
+                if (!bounded.exact) {
+                    emit(
+                        SearchCount(
+                            repository.searchCount(request.query, request.scope, request.filter),
+                            true
+                        )
+                    )
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /**
+     * B4 — hold the one live paging source and invalidate it in place on any
+     * question/passage write. In-place (not rebuilding the Pager) keeps the
+     * reader's position.
      */
     private val invalidationRelay = SearchInvalidationRelay()
 
@@ -119,12 +181,31 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         enablePlaceholders = false
                     )
                 ) {
-                    repository.searchPagingSource(request.query, request.scope)
-                        .also { invalidationRelay.liveSource = it }
+                    FilteredSearchPagingSource(
+                        fetch = { offset, limit -> repository.searchPage(request.query, request.scope, offset, limit) },
+                        filter = request.filter
+                    ).also { invalidationRelay.liveSource = it }
                 }.flow
             }
         }
         .cachedIn(viewModelScope)
+
+    /** Papers for the chip row. */
+    val papers: StateFlow<List<Paper>> = repository.observePapers()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Categories for the chip row, paired with their owning paper's title. */
+    val chips: StateFlow<List<SearchChip>> = combine(
+        repository.observePapers(),
+        repository.db().categoryDao().observeAll()
+    ) { papers, categories ->
+        val paperById = papers.associateBy { it.id }
+        categories.mapNotNull { category ->
+            paperById[category.paperId]?.let {
+                SearchChip(category.id, category.title, category.paperId, isPaper = false)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
@@ -139,6 +220,52 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun updateScope(scope: QuestionSearch.Scope) {
         _state.update { it.copy(scope = scope) }
     }
+
+    /** One paper chip at a time; tapping the active one clears it. Choosing a paper clears the category chips. */
+    fun togglePaper(paperId: String) {
+        _state.update { togglePaperFilter(it, paperId) }
+    }
+
+    /** Several categories at once; choosing one clears a stale paper filter. */
+    fun toggleCategory(categoryId: String) {
+        _state.update { toggleCategoryFilter(it, categoryId) }
+    }
+
+    fun clearScopeFilters() {
+        _state.update { it.copy(paperFilterIds = emptySet(), categoryFilterIds = emptySet()) }
+    }
+
+    private val _bookmarkedIds = MutableStateFlow<Set<String>>(emptySet())
+    /** Bookmark state for the rows currently on screen. */
+    val bookmarkedIds: StateFlow<Set<String>> = _bookmarkedIds.asStateFlow()
+
+    /** Loads bookmark flags for the visible hits in one (chunked) query. */
+    fun observeBookmarks(ids: List<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val found = repository.db().bookmarkDao()
+                .getForQuestionsChunked(ids)
+                .map { it.questionId }.toHashSet()
+            _bookmarkedIds.update { current ->
+                // Keep flags for rows still on screen; drop the rest.
+                (current intersect ids.toSet()) + found
+            }
+        }
+    }
+
+    /** Bookmark toggle reused from the Bookmarks screen's own action. */
+    fun toggleBookmark(questionId: String) {
+        viewModelScope.launch {
+            repository.toggleBookmark(questionId)
+            _bookmarkedIds.update { current ->
+                if (questionId in current) current - questionId else current + questionId
+            }
+        }
+    }
+
+    private fun SearchUiState.request(): SearchRequest = SearchRequest(
+        query.trim(), scope, paperFilterIds, categoryFilterIds
+    )
 
     companion object {
         private const val SEARCH_DEBOUNCE_MS = 300L

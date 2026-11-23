@@ -69,6 +69,7 @@ import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.rollUpCategoryCounts
 import com.mcqapp.domain.totalCategoryCounts
+import com.mcqapp.ui.importscreen.displayTitle
 import com.mcqapp.util.Logger
 
 /** How a paper card's category area is presented (D1): one state, not two booleans. */
@@ -132,6 +133,8 @@ internal fun PaperCard(
     onAddCategory: () -> Unit,
     onEditQuestion: (String, String) -> Unit,
     onAddQuestion: (String) -> Unit,
+    /** A paper with no questions goes straight into the editor (creates a category if needed). */
+    onAddFirstQuestion: () -> Unit = {},
     onEditPaper: () -> Unit = {},
     onScopedTest: (List<String>) -> Unit = {},
     /** Opens the setup sheet with Mistakes preselected (§7.1); empty scope = whole paper. */
@@ -182,13 +185,23 @@ internal fun PaperCard(
     var expansion by rememberSaveable(stateSaver = CardExpansionSaver) {
         mutableStateOf(CardExpansion.Collapsed)
     }
+    var paperMenuOpen by rememberSaveable { mutableStateOf(false) }
+    // "Show N more" reveals for the read-only tree, keyed by the last visible
+    // node at each level (see CategoryTreePager).
+    var showMoreIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    // Every category is navigable in the card too; showMoreIds bounds only the
+    // >6 siblings, it must never fold a branch out of existence.
+    val allCategoryIds = remember(paper.categories) { CategoryTreePager.allIds(paper.categories) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        paper.title,
+                        // A fallback import title is a stable token in storage
+                        // ("Imported Questions"); the learning-facing card
+                        // shows it in the active locale instead of English.
+                        displayTitle(paper.title),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.testTag("paper-title-${paper.id}")
                     )
@@ -320,6 +333,25 @@ internal fun PaperCard(
                     )
                 }
             }
+            // The create-paper-first trap: a fresh paper cannot be studied or
+            // tested, and the old card never said why. Offer the editor here,
+            // at the point where the learner is looking at the empty paper.
+            if (paper.totalQuestions == 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.of_empty_paper_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = onAddFirstQuestion,
+                    modifier = Modifier.fillMaxWidth().testTag("paper-add-first-question-${paper.id}")
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.of_add_first_question))
+                }
+            }
             Spacer(Modifier.height(8.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -331,17 +363,16 @@ internal fun PaperCard(
                 // phone showed two or three across. Icons keep one predictable
                 // row and let the destructive and paper-level actions sit on
                 // the card itself instead of behind Manage.
-                IconButton(
+                // Primary actions carry their verb. A row of unlabelled icons
+                // made Study/Test/Browse a guessing game; their test tags stay
+                // so existing UI tests keep finding them.
+                Button(
                     onClick = { if (ticked.isEmpty()) onStart() else onScopedTest(ticked) },
                     modifier = Modifier.testTag("paper-test-${paper.id}")
                 ) {
-                    // A checked paper, not a green tick: the tick read as
-                    // "already done" or as the app's primary confirm action,
-                    // while this button starts a timed sitting.
-                    Icon(
-                        Icons.Default.FactCheck,
-                        contentDescription = stringResource(R.string.test_action)
-                    )
+                    Icon(Icons.Default.FactCheck, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.of_test))
                 }
                 if (mistakeCount > 0) {
                     // The old Mistakes button started a legacy session; it is
@@ -381,14 +412,13 @@ internal fun PaperCard(
                         contentDescription = stringResource(R.string.export)
                     )
                 }
-                IconButton(
+                Button(
                     onClick = { onBrowse(ticked) },
                     modifier = Modifier.testTag("paper-browse-${paper.id}")
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.List,
-                        contentDescription = stringResource(R.string.browse)
-                    )
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.of_browse))
                 }
                 IconButton(
                     onClick = onAddCategory,
@@ -408,37 +438,47 @@ internal fun PaperCard(
                         contentDescription = stringResource(R.string.edit_paper)
                     )
                 }
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.testTag("paper-delete-${paper.id}")
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.delete_paper)
-                    )
-                }
-                // Library reorder: up/down among the cards themselves. The
-                // store normalises the sequence, so only the edges are
-                // disabled.
-                IconButton(
-                    onClick = { onMovePaper(-1) },
-                    enabled = canMoveUp,
-                    modifier = Modifier.testTag("paper-move-up-${paper.id}")
-                ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowUp,
-                        contentDescription = stringResource(R.string.move_paper_up)
-                    )
-                }
-                IconButton(
-                    onClick = { onMovePaper(+1) },
-                    enabled = canMoveDown,
-                    modifier = Modifier.testTag("paper-move-down-${paper.id}")
-                ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.move_paper_down)
-                    )
+                // Destructive and reorder actions are uncommon and easy to
+                // mis-tap, so they sit behind one overflow. The menu items keep
+                // the exact tags the old icon buttons had.
+                Box {
+                    IconButton(
+                        onClick = { paperMenuOpen = true },
+                        modifier = Modifier.testTag("paper-overflow-${paper.id}")
+                    ) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = stringResource(R.string.of_more_actions)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = paperMenuOpen,
+                        onDismissRequest = { paperMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.move_paper_up)) },
+                            enabled = canMoveUp,
+                            onClick = { paperMenuOpen = false; onMovePaper(-1) },
+                            modifier = Modifier.testTag("paper-move-up-${paper.id}")
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.move_paper_down)) },
+                            enabled = canMoveDown,
+                            onClick = { paperMenuOpen = false; onMovePaper(+1) },
+                            modifier = Modifier.testTag("paper-move-down-${paper.id}")
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    stringResource(R.string.delete_paper),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = { paperMenuOpen = false; onDelete() },
+                            modifier = Modifier.testTag("paper-delete-${paper.id}")
+                        )
+                    }
                 }
             }
             AnimatedVisibility(visible = expansion != CardExpansion.Collapsed) {
@@ -449,14 +489,46 @@ internal fun PaperCard(
                         // Show is read-only (D7): pick what to study, manage
                         // nothing. No manage icons, no Add/Delete row.
                         CardExpansion.Show ->
-                            paper.categories.forEach { node ->
+                            CategoryTreePager.page(
+                                paper.categories,
+                                expanded = allCategoryIds,
+                                revealed = showMoreIds
+                            ).forEach { line ->
                                 ShowCategoryRow(
-                                    node = node,
-                                    depth = 0,
+                                    node = line.node,
+                                    depth = line.depth,
                                     states = states,
                                     rolled = rolled,
                                     onToggle = onToggleCategory
                                 )
+                                // A revealed level has hiddenAfter == 0; the
+                                // reveal key keeps its "Show less" toggle alive.
+                                if (line.hiddenAfter > 0 || line.node.id in showMoreIds) {
+                                    TextButton(
+                                        onClick = {
+                                            val key = line.node.id
+                                            showMoreIds = if (key in showMoreIds) {
+                                                showMoreIds - key
+                                            } else {
+                                                showMoreIds + key
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .padding(start = (line.depth * 24 + 48).dp)
+                                            .testTag("card-more-${line.node.id}")
+                                    ) {
+                                        Text(
+                                            if (line.node.id in showMoreIds) {
+                                                stringResource(R.string.of_show_less)
+                                            } else {
+                                                pluralStringResource(
+                                                    R.plurals.of_show_more_categories,
+                                                    line.hiddenAfter, line.hiddenAfter
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         CardExpansion.Manage ->
                             ManageCategoryBlock(
@@ -524,9 +596,6 @@ private fun ShowCategoryRow(
                     )
                 }
             }
-        }
-        node.children.forEach { child ->
-            ShowCategoryRow(child, depth + 1, states, rolled, onToggle)
         }
     }
 }

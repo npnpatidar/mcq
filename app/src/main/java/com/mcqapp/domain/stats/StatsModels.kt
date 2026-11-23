@@ -61,10 +61,49 @@ data class ReplayReview(
      * The fast stability trace recorded after this answer (v27). Null on rows
      * written before FSRS-7, and on rows that record no post-state at all.
      */
-    val stabilityFastAfter: Double? = null
+    val stabilityFastAfter: Double? = null,
+    /** Whether the learner skipped this row instead of answering it. */
+    val wasSkipped: Boolean? = null,
+    /**
+     * Whether the grading version that produced this row ignored the clock.
+     * Carried from `grading_versions` so the calibration chart can use the same
+     * objective evidence gate as the cut estimator.
+     */
+    val correctnessOnly: Boolean = false
 ) {
     /** Again is the only failing grade; Hard, Good and Easy are passes. */
     val passed: Boolean get() = rating != ReviewGrade.AGAIN.ordinal + 1
+
+    /**
+     * An objective answer, right or wrong, that can back a retention rate.
+     * Self-graded rows (no outcome), guesses and skips are excluded: none of
+     * them is evidence that the learner actually knew the card.
+     */
+    val hasObjectiveAnswer: Boolean
+        get() = wasCorrect != null && wasGuess != true && wasSkipped != true
+
+    /**
+     * The cut estimator's gate: an objective, correctly graded row. A cut is a
+     * boundary between right and wrong, so only the right answers that sat on
+     * one side of it can inform it.
+     */
+    val isObjectiveEvidence: Boolean
+        get() = Calibration.isObjectiveCorrectEvidence(
+            correctnessOnly = correctnessOnly,
+            wasCorrect = wasCorrect,
+            wasGuess = wasGuess,
+            wasSkipped = wasSkipped
+        )
+
+    /**
+     * The calibration chart's gate: an objective answer, right **or wrong**.
+     * A retention curve needs failures as much as passes — gating on a correct
+     * answer pins every bin's actual rate at 100% and makes the Brier score
+     * one-sided. Self-graded rows, guesses, skips and clock-graded rows are
+     * still excluded: none of them is an honest right-or-wrong outcome.
+     */
+    val isObjectiveAnswerEvidence: Boolean
+        get() = correctnessOnly && hasObjectiveAnswer
 
     /** The card had survived at least one 21-day interval before this review. */
     val matureAtReview: Boolean get() = (intervalBeforeDays ?: 0) >= MATURE_DAYS
@@ -98,6 +137,12 @@ data class CardSnapshot(val paperId: String, val state: CardState)
  * a domain shape: no replay enrichment, just what was recorded.
  */
 data class ReviewHistoryEntry(
+    /**
+     * The paper this row belongs to. The same question can be studied in two
+     * papers with independent histories; the card sheet must show only the
+     * paper whose card was opened.
+     */
+    val paperId: String = "",
     /** 1=Again, 2=Hard, 3=Good, 4=Easy. */
     val rating: Int,
     val reviewedAt: Long,
@@ -147,6 +192,13 @@ data class CardHistorySummary(
 /** Chartable single-value point; [value] null draws a gap, [count] backs tooltips. */
 data class SeriesPoint(val label: String, val value: Double?, val count: Int = 0)
 
+/**
+ * One card a group bar can open. A weakness bar is an aggregate, so it points
+ * at the weakest card inside the group rather than pretending the whole group
+ * is a card. Null when the group has no review to attribute.
+ */
+data class CardReference(val paperId: String, val questionId: String)
+
 /** Chartable stacked-bar point; [segments] aligns with the chart's legend. */
 data class StackedPoint(val label: String, val segments: List<Double>, val total: Int)
 
@@ -158,7 +210,10 @@ data class RetentionRow(
     val youngReviews: Int,
     val youngPasses: Int,
     val matureReviews: Int,
-    val maturePasses: Int
+    val maturePasses: Int,
+    /** Mature rows with an objective answer, right or wrong (never self-graded). */
+    val objectiveMatureReviews: Int = 0,
+    val objectiveMaturePasses: Int = 0
 ) {
     val allRetention: Double?
         get() = if (allReviews == 0) null else allPasses.toDouble() / allReviews
@@ -166,6 +221,10 @@ data class RetentionRow(
         get() = if (youngReviews == 0) null else youngPasses.toDouble() / youngReviews
     val matureRetention: Double?
         get() = if (matureReviews == 0) null else maturePasses.toDouble() / matureReviews
+    /** The honest mature figure: objective answers only. */
+    val objectiveMatureRetention: Double?
+        get() = if (objectiveMatureReviews == 0) null
+        else objectiveMaturePasses.toDouble() / objectiveMatureReviews
 }
 
 /**
@@ -337,7 +396,13 @@ data class CardCountsData(
 }
 
 /** Retention for one group (paper or category), for a ranked bar list. */
-data class GroupRetention(val label: String, val reviews: Int, val passes: Int) {
+data class GroupRetention(
+    val label: String,
+    val reviews: Int,
+    val passes: Int,
+    /** The weakest card in the group, for the bar's drill-down. */
+    val drill: CardReference? = null
+) {
     val retention: Double?
         get() = if (reviews == 0) null else passes.toDouble() / reviews
 }
@@ -358,7 +423,9 @@ enum class IntervalBand { FIRST, D1_7, D8_21, D22_60, D61_180, D181_PLUS }
 data class IntervalBandRetention(
     val band: IntervalBand,
     val reviews: Int,
-    val passes: Int
+    val passes: Int,
+    /** The weakest card in the band, for the bar's drill-down. */
+    val drill: CardReference? = null
 ) {
     val retention: Double?
         get() = if (reviews == 0) null else passes.toDouble() / reviews
@@ -443,7 +510,9 @@ data class GuessTopic(
     val label: String,
     val reviews: Int,
     val guessed: Int,
-    val guessedCorrect: Int
+    val guessedCorrect: Int,
+    /** The most fragile card in the topic, for the bar's drill-down. */
+    val drill: CardReference? = null
 ) {
     val guessRate: Double? get() = if (reviews == 0) null else guessed.toDouble() / reviews
     val hitRate: Double? get() = if (guessed == 0) null else guessedCorrect.toDouble() / guessed
@@ -556,8 +625,20 @@ data class OverviewKpis(
     val avgIntervalDays: Double?,
     val leeches: Int,
     val currentStreak: Int,
-    val longestStreak: Int
-)
+    val longestStreak: Int,
+    /**
+     * The one headline figure that can be defended: mature true retention over
+     * the range from rows with a recorded right/wrong answer only. Self-graded,
+     * guessed and skipped rows never enter it.
+     */
+    val objectiveMatureRetention: Double? = null,
+    /** Reviews behind [objectiveMatureRetention]. */
+    val objectiveMatureReviews: Int = 0
+) {
+    /** Signed distance from the target, in fraction points; null with no data. */
+    val objectiveRetentionGap: Double?
+        get() = objectiveMatureRetention?.let { it - desiredRetention }
+}
 
 data class RetentionTrendData(
     val points: List<SeriesPoint>,

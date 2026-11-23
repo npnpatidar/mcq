@@ -281,6 +281,14 @@ object StatsAggregator {
         val accumulator = CardsAccumulator(
             scopePaperId = ctx.scopePaperId,
             now = ctx.input.now,
+            // The one due definition: a card is overdue only when its due
+            // moment fell before today's study-day boundary, the same edge
+            // the overview backlog and the forecast's overdue bar use.
+            todayStart = DayBoundary.startOfDay(
+                ctx.input.now,
+                ctx.cfg.dayStartHour,
+                ctx.zone
+            ),
             paperTitleOf = ctx.input.paperTitleOf
         )
         // The cards first: the leech roll-up can only recognise a leech once
@@ -332,6 +340,9 @@ object StatsAggregator {
         private var youngPasses = 0
         private var mature = 0
         private var maturePasses = 0
+        /** Mature rows with an objective answer; the honest headline's base. */
+        private var objectiveMature = 0
+        private var objectiveMaturePasses = 0
 
         fun add(review: ReplayReview) {
             all++
@@ -339,7 +350,17 @@ object StatsAggregator {
                 allPasses++
                 if (review.matureAtReview) maturePasses++ else youngPasses++
             }
-            if (review.matureAtReview) mature++ else young++
+            if (review.matureAtReview) {
+                mature++
+                // A self-graded Again or a guess is a rating, not evidence of
+                // recall. Only rows that recorded an objective answer count.
+                if (review.hasObjectiveAnswer) {
+                    objectiveMature++
+                    if (review.wasCorrect == true) objectiveMaturePasses++
+                }
+            } else {
+                young++
+            }
         }
 
         fun toRow(label: String) = RetentionRow(
@@ -349,7 +370,9 @@ object StatsAggregator {
             youngReviews = young,
             youngPasses = youngPasses,
             matureReviews = mature,
-            maturePasses = maturePasses
+            maturePasses = maturePasses,
+            objectiveMatureReviews = objectiveMature,
+            objectiveMaturePasses = objectiveMaturePasses
         )
     }
 
@@ -501,12 +524,15 @@ object StatsAggregator {
             if (scopePaperId != null && snapshot.paperId != scopePaperId) return
             val state = snapshot.state
             if (state.state != CardStateKind.NEW) {
-                // Scheduled for this study day; overdue cards stay in the
-                // backlog instead of being double-counted here.
+                // One definition everywhere: a card is due now when its due
+                // moment falls inside today's study day, and it is backlog only
+                // when it fell before today began. Using `now` for the backlog
+                // put a card due at 10:00 in both buckets at 14:00. The
+                // forecast's bar 0 and its overdue count use these same edges.
                 if (state.dueAt != 0L && state.dueAt >= todayStart && state.dueAt < tomorrowStart) {
                     dueNow++
                 }
-                if (state.dueAt != 0L && state.dueAt < now) backlog++
+                if (state.dueAt != 0L && state.dueAt < todayStart) backlog++
             }
             if (state.intervalDays > 0) {
                 intervalSum += state.intervalDays
@@ -556,7 +582,11 @@ object StatsAggregator {
             avgIntervalDays = if (intervalCount == 0) null else intervalSum.toDouble() / intervalCount,
             leeches = leechCount,
             currentStreak = heatmap.currentStreak,
-            longestStreak = heatmap.longestStreak
+            longestStreak = heatmap.longestStreak,
+            // The headline reads the same objective mature sample the table's
+            // range row carries, so a card and a caption can never disagree.
+            objectiveMatureRetention = rangeRow.objectiveMatureRetention,
+            objectiveMatureReviews = rangeRow.objectiveMatureReviews
         )
 
         private fun today(): TodayStats = TodayStats(
@@ -606,7 +636,14 @@ object StatsAggregator {
                 QuestionRoll()
             }
             roll.reviews++
-            if (!review.passed) roll.lapses++
+            // A lapse is a failure after the learning steps, not the ordinary
+            // stumble of meeting a card for the first time. Counting NEW and
+            // LEARNING rows here made a card with three first-day misses and
+            // one later success top "Most forgotten" ahead of a card that
+            // actually forgot a mature interval three times.
+            if (!review.passed && review.kind != ReplayReview.ReviewKind.LEARNING) {
+                roll.lapses++
+            }
             if (roll.firstPaperId == null) roll.firstPaperId = review.paperId
             if (review.reviewedAt > roll.lastReviewedAt) roll.lastReviewedAt = review.reviewedAt
             review.elapsedSeconds?.let { seconds ->
@@ -736,14 +773,29 @@ object StatsAggregator {
         private val groups = LinkedHashMap<String, Counts>()
 
         /**
+         * Group key → its questions' counts. A weakness bar is an aggregate, so
+         * tapping one opens the weakest card inside it; these maps supply that
+         * card without a second pass over the log.
+         */
+        private val groupQuestions = LinkedHashMap<String, LinkedHashMap<String, Counts>>()
+
+        /**
          * Every in-range review per question (plan §6.2/§6.3). Bounded by the
          * log's working set, not by the library, and folded into tag/category
          * counts only after the pass.
          */
         private val questionCounts = LinkedHashMap<String, Counts>()
 
+        /** Paper of each reviewed question, for the bars' drill-down identity. */
+        private val questionPaperId = HashMap<String, String>()
+
         /** Plan §6.1: the whole-day interval carried into each review. */
         private val intervalBands = Array(IntervalBand.entries.size) { Counts() }
+
+        /** Questions behind each interval band, for its bar's drill-down. */
+        private val intervalQuestions = Array(IntervalBand.entries.size) {
+            LinkedHashMap<String, Counts>()
+        }
 
         private var earliestInRange: Long? = null
 
@@ -765,9 +817,16 @@ object StatsAggregator {
             if (rangeStart != null && reviewedAt < rangeStart) return
             val earliest = earliestInRange
             if (earliest == null || reviewedAt < earliest) earliestInRange = reviewedAt
-            countGroup(review)
+            questionPaperId.putIfAbsent(review.questionId, review.paperId)
+            val key = groupKeyOf(review)
+            groups.getOrPut(key) { Counts() }.add(review.passed)
+            groupQuestions.getOrPut(key) { LinkedHashMap() }
+                .getOrPut(review.questionId) { Counts() }.add(review.passed)
             countCalibration(review)
-            intervalBands[bandOf(review).ordinal].add(review.passed)
+            val band = bandOf(review)
+            intervalBands[band.ordinal].add(review.passed)
+            intervalQuestions[band.ordinal].getOrPut(review.questionId) { Counts() }
+                .add(review.passed)
             questionCounts.getOrPut(review.questionId) { Counts() }.add(review.passed)
             // The true-retention rule, through the shared cursor: a first
             // exposure carries no whole-day interval to qualify with, and only
@@ -816,7 +875,12 @@ object StatsAggregator {
         private fun intervalRetention(): List<IntervalBandRetention> =
             IntervalBand.entries.map { band ->
                 val counts = intervalBands[band.ordinal]
-                IntervalBandRetention(band, counts.reviews, counts.passes)
+                IntervalBandRetention(
+                    band = band,
+                    reviews = counts.reviews,
+                    passes = counts.passes,
+                    drill = weakestCardOf(intervalQuestions[band.ordinal])
+                )
             }
 
         /**
@@ -825,10 +889,10 @@ object StatsAggregator {
          */
         private fun tagRetention(tagsOfQuestion: Map<String, List<String>>): List<GroupRetention> {
             if (tagsOfQuestion.isEmpty()) return emptyList()
-            val byTag = LinkedHashMap<String, Counts>()
+            val byTag = LinkedHashMap<String, LinkedHashMap<String, Counts>>()
             questionCounts.forEach { (questionId, counts) ->
                 tagsOfQuestion[questionId]?.forEach { tag ->
-                    byTag.getOrPut(tag) { Counts() }.addAll(counts)
+                    byTag.getOrPut(tag) { LinkedHashMap() }[questionId] = counts
                 }
             }
             return weakestFirst(byTag, 15)
@@ -842,39 +906,84 @@ object StatsAggregator {
          */
         private fun categoryRetention(categoryOfQuestion: Map<String, String>): List<GroupRetention> {
             if (scopePaperId != null || categoryOfQuestion.isEmpty()) return emptyList()
-            val byCategory = LinkedHashMap<String, Counts>()
+            val byCategory = LinkedHashMap<String, LinkedHashMap<String, Counts>>()
             questionCounts.forEach { (questionId, counts) ->
                 val label = categoryOfQuestion[questionId] ?: return@forEach
-                byCategory.getOrPut(label) { Counts() }.addAll(counts)
+                byCategory.getOrPut(label) { LinkedHashMap() }[questionId] = counts
             }
             return weakestFirst(byCategory, 15)
         }
 
-        private fun weakestFirst(byLabel: Map<String, Counts>, limit: Int): List<GroupRetention> =
-            byLabel.map { (label, counts) -> GroupRetention(label, counts.reviews, counts.passes) }
-                .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
-                .take(limit)
+        private fun weakestFirst(
+            byLabel: Map<String, Map<String, Counts>>,
+            limit: Int
+        ): List<GroupRetention> = byLabel.map { (label, byQuestion) ->
+            val counts = Counts()
+            byQuestion.values.forEach(counts::addAll)
+            GroupRetention(
+                label = label,
+                reviews = counts.reviews,
+                passes = counts.passes,
+                drill = weakestCardOf(byQuestion)
+            )
+        }
+            .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
+            .take(limit)
 
-        private fun countGroup(review: ReplayReview) {
-            val key = if (scopePaperId == null) {
-                review.paperId
-            } else {
-                // Scoped to one paper the paper breakdown is a single row, so
-                // the useful unit is the category. Keying by question used to
-                // render one row per question, all wearing its category title.
-                categoryOfQuestion[review.questionId] ?: UNKNOWN_GROUP
-            }
-            groups.getOrPut(key) { Counts() }.add(review.passed)
+        private fun groupKeyOf(review: ReplayReview): String = if (scopePaperId == null) {
+            review.paperId
+        } else {
+            // Scoped to one paper the paper breakdown is a single row, so the
+            // useful unit is the category. Keying by question used to render
+            // one row per question, all wearing its category title.
+            categoryOfQuestion[review.questionId] ?: UNKNOWN_GROUP
         }
 
+        /**
+         * The weakest card behind a bar: lowest pass rate first, then the most
+         * reviews, then the id so the choice is stable across builds. A group
+         * with no attributable row has no card to open.
+         *
+         * [paperId] is the paper this bar belongs to, when known. The global
+         * [questionPaperId] map is first-writer-wins and so is unreliable for an
+         * id that exists in two papers: a paper-breakdown bar must open *its*
+         * paper's version of the card, not the other paper's copy with its own
+         * schedule and history. Bars that span papers (tag, category, interval,
+         * guess) have no single paper to claim and keep the map fallback.
+         */
+        private fun weakestCardOf(
+            byQuestion: Map<String, Counts>,
+            paperId: String? = null
+        ): CardReference? =
+            byQuestion.filterValues { it.reviews > 0 }
+                .minWithOrNull(
+                    compareBy<Map.Entry<String, Counts>> {
+                        it.value.passes.toDouble() / it.value.reviews
+                    }
+                        .thenBy { -it.value.reviews }
+                        .thenBy { it.key }
+                )
+                ?.let { entry ->
+                    (paperId ?: questionPaperId[entry.key])?.let { CardReference(it, entry.key) }
+                }
+
         private fun countCalibration(review: ReplayReview) {
+            // The chart is honest evidence, not a replay of every grade: it
+            // keeps objective answers right or wrong, and drops self-graded
+            // rows, guesses, skips and clock-graded rows. The cut estimator's
+            // correct-only gate is deliberately NOT reused here — a retention
+            // curve without failures can only ever report 100%.
+            if (!review.isObjectiveAnswerEvidence) return
             val predicted = review.predictedRetention ?: return
             val p = predicted.coerceIn(0.0, 0.999999)
             val bin = floor(p * 10).toInt().coerceIn(0, 9)
             binSums[bin] += p
             binCounts[bin]++
-            if (review.passed) binPasses[bin]++
-            val outcome = if (review.passed) 1.0 else 0.0
+            // The gate guarantees a recorded outcome, so read right/wrong from
+            // the answer rather than from the grade, which can be a self-graded
+            // Again on a card with no objective answer.
+            if (review.wasCorrect == true) binPasses[bin]++
+            val outcome = if (review.wasCorrect == true) 1.0 else 0.0
             brier += (p - outcome) * (p - outcome)
             samples++
             predictedSum += predicted
@@ -957,7 +1066,18 @@ object StatsAggregator {
                 // Scoped keys are already the category label.
                 key
             }
-            GroupRetention(label, counts.reviews, counts.passes)
+            GroupRetention(
+                label = label,
+                reviews = counts.reviews,
+                passes = counts.passes,
+                // The group key is the paper id in the all-papers view (and the
+                // scope's paper in the scoped one), so the drill-down must carry
+                // that paper rather than the global first-writer-wins map.
+                drill = weakestCardOf(
+                    groupQuestions[key].orEmpty(),
+                    paperId = if (scopePaperId == null) key else scopePaperId
+                )
+            )
         }
             .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))
             .take(15)
@@ -1973,6 +2093,7 @@ object StatsAggregator {
     class CardsAccumulator(
         private val scopePaperId: String?,
         private val now: Long,
+        private val todayStart: Long,
         private val paperTitleOf: Map<String, String>
     ) {
         private var learning = 0
@@ -2023,7 +2144,12 @@ object StatsAggregator {
                 counts[0]++
                 counts[bucket + 1]++
             }
-            if (state.dueAt != 0L && state.dueAt < now) {
+            // Study refuses to serve a suspended card, and a buried one is
+            // hidden until its boundary passes. Neither is work the learner owes
+            // right now, so neither belongs in the overdue backlog.
+            val hidden = state.suspended ||
+                (state.buriedUntil != null && state.buriedUntil > now)
+            if (!hidden && state.dueAt != 0L && state.dueAt < todayStart) {
                 val age = floor((now - state.dueAt).toDouble() / DayBoundary.DAY_MS).toInt()
                     .coerceAtLeast(0)
                 overdue++
@@ -2204,6 +2330,8 @@ object StatsAggregator {
         private val hourly = Array(24) { IntArray(3) }
         /** label → [reviews, guessed, guessedCorrect]. */
         private val topics = HashMap<String, IntArray>()
+        /** label → the questions behind it, for the fragile bar's drill-down. */
+        private val topicQuestions = HashMap<String, LinkedHashSet<String>>()
         /** questionId → [reviews, guessed, guessedCorrect, paperId, lastReviewedAt]. */
         private val cards = HashMap<String, CardGuess>()
 
@@ -2270,6 +2398,7 @@ object StatsAggregator {
             positions[position].bump()
             hourly[hour].bump()
             topics.getOrPut(topic) { IntArray(3) }.bump()
+            topicQuestions.getOrPut(topic) { LinkedHashSet() } += review.questionId
 
             val card = cards.getOrPut(review.questionId) {
                 CardGuess(review.paperId, review.questionId)
@@ -2312,6 +2441,19 @@ object StatsAggregator {
 
         /** The question ids whose chance baseline the caller must resolve. */
         fun guessedQuestionIds(): Set<String> = guessedByQuestion.keys
+
+        /**
+         * The card a fragile-topic bar opens: most guesses first, then the
+         * lowest hit rate, then the id for a stable choice across builds.
+         */
+        private fun fragileCardOf(label: String): CardReference? =
+            topicQuestions[label]?.mapNotNull { cards[it] }
+                ?.minWithOrNull(
+                    compareByDescending<CardGuess> { it.guessed }
+                        .thenBy { if (it.guessed == 0) 1.0 else it.guessedCorrect.toDouble() / it.guessed }
+                        .thenBy { it.questionId }
+                )
+                ?.let { CardReference(it.paperId, it.questionId) }
 
         fun toData(chanceOfQuestion: Map<String, Double>): GuessingData {
             var chanceSum = 0.0
@@ -2370,7 +2512,13 @@ object StatsAggregator {
                     avgGoodDays = if (costReviews == 0) null else costGoodSum / costReviews
                 ),
                 topics = topics.map { (label, counts) ->
-                    GuessTopic(label, counts[0], counts[1], counts[2])
+                    GuessTopic(
+                        label = label,
+                        reviews = counts[0],
+                        guessed = counts[1],
+                        guessedCorrect = counts[2],
+                        drill = fragileCardOf(label)
+                    )
                 }.filter { it.guessed > 0 }
                     .sortedWith(
                         compareByDescending<GuessTopic> { it.guessed }

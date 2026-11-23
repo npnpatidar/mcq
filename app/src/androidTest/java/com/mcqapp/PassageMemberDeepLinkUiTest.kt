@@ -4,8 +4,10 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -18,6 +20,7 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.ui.editor.PassagesScreen
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -37,8 +40,8 @@ class PassageMemberDeepLinkUiTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val repository
-        get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
+    private val app get() = ApplicationProvider.getApplicationContext() as McqApplication
+    private val repository get() = app.repository
 
     @Before
     fun seed() = runBlocking {
@@ -98,7 +101,24 @@ class PassageMemberDeepLinkUiTest {
             compose.onAllNodesWithText(MEMBER_STEM, substring = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText(MEMBER_STEM, substring = true).performClick()
+        // Scroll it in and prove it is on screen before tapping: a touch at an
+        // off-window coordinate is dropped without an error, which reads as
+        // "tapping a member does nothing".
+        compose.onNodeWithText(MEMBER_STEM, substring = true)
+            .performScrollTo().assertIsDisplayed()
+        // The member's own row is its own tap target, tagged by question id.
+        // It used to be one merged node that also held the Unassign button, so
+        // a tap aimed at the row's centre could land on that button and open
+        // the unassign dialog instead of Browse.
+        compose.onNodeWithTag("passage-member-$QUESTION").assertIsDisplayed()
+        // The destructive action stays reachable beside the row, not inside it.
+        assertTrue(
+            "the member's Unassign action went missing",
+            compose.onAllNodesWithText(
+                app.getString(R.string.passage_unassign_member), substring = false
+            ).fetchSemanticsNodes().isNotEmpty()
+        )
+        compose.onNodeWithTag("passage-member-$QUESTION").performClick()
 
         val landed = "BROWSE $PAPER $QUESTION"
         compose.waitUntil(20_000) {

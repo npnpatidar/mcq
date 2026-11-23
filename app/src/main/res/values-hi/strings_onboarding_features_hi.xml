@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- General improvements (0.0.69) — Hindi mirror. -->
+
+    <!-- First-run chooser -->
+    <string name="of_welcome_title">MCQ में आपका स्वागत है</string>
+    <string name="of_welcome_body">एक नमूना पेपर से शुरू करें, खुद का बनाएँ, या पहले से मौजूद बैंक आयात करें।</string>
+    <string name="of_welcome_sample">नमूना आज़माएँ</string>
+    <string name="of_welcome_create">पेपर बनाएँ</string>
+    <string name="of_welcome_import">बैंक आयात करें</string>
+    <string name="of_welcome_sample_failed" tools:ignore="UnusedResources">नमूना लोड नहीं हो सका। कृपया दोबारा प्रयास करें।</string>
+
+    <!-- Import / restore completion actions -->
+    <string name="of_study_now">अभी पढ़ें</string>
+    <string name="of_take_test">टेस्ट दें</string>
+    <string name="of_open_paper">पेपर खोलें</string>
+
+    <!-- Create-paper-first trap -->
+    <string name="of_add_first_question">अपना पहला प्रश्न जोड़ें</string>
+    <string name="of_empty_paper_hint">इस पेपर में अभी कोई प्रश्न नहीं है।</string>
+    <string name="of_empty_study_title" tools:ignore="UnusedResources">अभी पढ़ने के लिए कुछ नहीं</string>
+    <string name="of_empty_study_add">प्रश्न जोड़ें</string>
+    <string name="of_test_flashcards_only_title" tools:ignore="UnusedResources">ये फ़्लैशकार्ड हैं</string>
+    <string name="of_test_flashcards_only_body" tools:ignore="UnusedResources">फ़्लैशकार्ड टेस्ट के लिए नहीं, पढ़ाई के लिए हैं। इन्हें पढ़ें।</string>
+    <string name="of_study_these">ये पढ़ें</string>
+
+    <!-- Labelled primary paper actions -->
+    <string name="of_test">टेस्ट</string>
+    <string name="of_browse">ब्राउज़</string>
+    <string name="of_more_actions">अधिक विकल्प</string>
+
+    <!-- Large category trees -->
+    <plurals name="of_show_more_categories">
+        <item quantity="one">%1$d और दिखाएँ</item>
+        <item quantity="other">%1$d और दिखाएँ</item>
+    </plurals>
+    <string name="of_show_less">कम दिखाएँ</string>
+
+    <!-- Tag / mistake scoped Study -->
+    <string name="of_study_scope">पढ़ाई का दायरा</string>
+    <string name="of_scope_whole">पूरा पेपर</string>
+    <string name="of_scope_tag">टैग अनुसार</string>
+    <string name="of_scope_mistakes">गलत उत्तर</string>
+    <string name="of_scope_pick_tag">टैग चुनें</string>
+    <string name="of_scope_no_tags">इस पेपर में अभी कोई टैग नहीं है</string>
+    <string name="of_scope_start">पढ़ाई शुरू करें</string>
+    <string name="of_mistakes_pool" tools:ignore="UnusedResources">मेरी गलतियाँ</string>
+    <string name="of_mistakes_pool_saved" tools:ignore="PluralsCandidate">%1$d गलत उत्तर \'मेरी गलतियाँ\' पूल में सहेजे गए।</string>
+    <string name="of_save_mistakes_pool">पुनः उपयोग के लिए टैग सहेजें</string>
+
+    <!-- CSV / TSV import -->
+    <string name="of_import_csv_hint" tools:ignore="UnusedResources">कॉलम: प्रश्न, विकल्प a, विकल्प b, विकल्प c, विकल्प d, उत्तर, स्पष्टीकरण, टैग। अल्पविराम या टैब इस्तेमाल करें।</string>
+    <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">पंक्ति %1$d में उत्तर a, b, c या d होना चाहिए।</string>
+    <string name="of_csv_blank_question" tools:ignore="PluralsCandidate">पंक्ति %1$d में कोई प्रश्न नहीं है, इसलिए उसे छोड़ दिया गया।</string>
+    <string name="of_csv_no_questions">उस फ़ाइल में कोई प्रश्न नहीं मिला।</string>
+    <string name="of_csv_too_large">वह CSV/TSV बैंक 4 MB आयात सीमा से अधिक है। उसे छोटी फ़ाइलों में बाँटें, या JSON के रूप में आयात करें।</string>
+
+    <!-- Quick capture from shared text -->
+    <string name="of_quick_capture_title">बैंक में सहेजें</string>
+    <string name="of_quick_capture_front">सामने (प्रश्न)</string>
+    <string name="of_quick_capture_back">पीछे (उत्तर)</string>
+    <string name="of_quick_capture_paper">पेपर</string>
+    <string name="of_quick_capture_category">श्रेणी</string>
+    <string name="of_quick_capture_tag">टैग (वैकल्पिक)</string>
+    <string name="of_quick_capture_save">कार्ड सहेजें</string>
+    <string name="of_quick_capture_saved">कार्ड आपके बैंक में सहेजा गया</string>
+    <string name="of_quick_capture_new_paper">नया पेपर</string>
+    <string name="of_quick_capture_missing_front">सहेजने से पहले सामने का हिस्सा भरें।</string>
+    <string name="of_quick_capture_failed">कार्ड सहेजा नहीं जा सका। फिर से कोशिश करें।</string>
+    <string name="of_mistakes_pool_failed">गलतियों का पूल सहेजा नहीं जा सका। फिर से कोशिश करें।</string>
+
+    <!-- Keyboard shortcuts -->
+    <string name="of_keyboard_hint" tools:ignore="UnusedResources">कीबोर्ड: स्पेस दिखाएँ / आगे · 1–4 ग्रेड · तीर कुंजियाँ नेविगेट करें</string>
+</resources>

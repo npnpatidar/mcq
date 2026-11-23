@@ -3,7 +3,7 @@
   Round-2 results/history fixes. Additive names only; the base strings are
   never overridden. Every name is prefixed r2_res_ and mirrored in values-hi.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- R2: review-chip labels. These mirror the ReviewFilters storage keys. -->
     <string name="r2_res_filter_all">All</string>
     <string name="r2_res_filter_correct">Correct</string>
@@ -25,9 +25,9 @@
 
     <!-- R5: spoken alternatives for history row and trend semantics. -->
     <string name="r2_res_open_attempt">Open attempt</string>
-    <string name="r2_res_delta_improved">Improved by %1$s points</string>
-    <string name="r2_res_delta_declined">Declined by %1$s points</string>
-    <string name="r2_res_delta_unchanged">No change</string>
+    <string name="r2_res_delta_improved" tools:ignore="UnusedResources">Improved by %1$s points</string>
+    <string name="r2_res_delta_declined" tools:ignore="UnusedResources">Declined by %1$s points</string>
+    <string name="r2_res_delta_unchanged" tools:ignore="UnusedResources">No change</string>
     <string name="r2_res_mastery_progress">Mastery %1$s</string>
 
     <!-- R6: history top-list load failure. -->

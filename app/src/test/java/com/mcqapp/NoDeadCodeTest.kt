@@ -10,6 +10,9 @@ import java.io.File
  * Guards against the dead code the audit found, and against the escapers
  * drifting apart again. Deleting a public function is invisible to the
  * compiler; leaving it behind is how four copies of the same escaper appeared.
+ *
+ * INCIDENT: four copies of the same HTML escaper drifted apart; a legacy
+ * id-list replay kept a test-only copy that did not guard repeated ids.
  */
 class NoDeadCodeTest {
 
@@ -33,7 +36,10 @@ class NoDeadCodeTest {
             // The legacy id-list replay has one implementation now
             // (SessionOrder.reorderedTo, which guards a repeated id); the
             // test-only copy that did not guard is gone.
-            "TestSnapshot.kt" to "fun reorder("
+            "TestSnapshot.kt" to "fun reorder(",
+            // The restore wipe button used an identity wrapper, so the gate
+            // test only proved `identity(x) == x`. The source owns the rule now.
+            "SettingsScreen.kt" to "fun restoreConfirmCanProceed("
         ).forEach { (file, needle) ->
             assertFalse("$file still declares $needle", sourceOf(file).contains(needle))
         }
@@ -69,7 +75,10 @@ class NoDeadCodeTest {
                 while (at >= 0) {
                     val call = text.substring(at, minOf(text.length, at + window))
                     if (!call.contains("leechesOnly = true")) {
-                        val line = text.count { it == '\n' } + 1
+                        // Count up to the match, not the whole file: the old
+                        // expression reported the file's total line count, so
+                        // every offender pointed at a misleading line.
+                        val line = text.substring(0, at).count { it == '\n' } + 1
                         offenders += "${file.name}:$line"
                     }
                     at = text.indexOf("getStudyQueue(", at + 1)
@@ -305,6 +314,53 @@ class NoDeadCodeTest {
         )) {
             assertFalse("TestViewModel.kt resumes past the gate: $needle", test.contains(needle))
         }
+    }
+
+    /**
+     * An identity wrapper let the JVM test prove nothing about the button: the
+     * test asserted the wrapper, while the composable could have passed anything
+     * into it. Pin the expression the wipe button actually renders.
+     */
+    @Test
+    fun theRestoreWipeButtonEnablesDirectlyOnThePreview() {
+        val settings = sourceOf("SettingsScreen.kt")
+        assertTrue(
+            "the wipe button must enable on a ready manifest preview",
+            settings.contains("enabled = restorePreview != null")
+        )
+        assertFalse(
+            "the vacuous wrapper is gone",
+            settings.contains("restoreConfirmCanProceed(")
+        )
+        assertTrue(
+            "the meaningful failed-read guard stays wired",
+            settings.contains("restoreConfirmShouldClose(")
+        )
+    }
+
+    /**
+     * The keyboard seam is pure, so its JVM tests can prove the rule but not
+     * that the screen actually feeds it. The strict-mode Space regression was
+     * exactly that: the on-screen button checked ExamMode while the key handler
+     * called revealCurrent() unguarded. Pin both call sites.
+     */
+    @Test
+    fun theTestKeyboardRevealGateIsFedByTheScreen() {
+        val screen = sourceOf("TestSessionScreen.kt")
+        assertTrue(
+            "the key handler must pass the mode flags into the gate",
+            screen.contains(
+                "TestKeyboard.action(key, state.isCurrentRevealed, state.practiceMode, state.strictMode)"
+            )
+        )
+        assertTrue(
+            "the on-screen button keeps its own ExamMode guard",
+            screen.contains("if (ExamMode.canReveal(state.practiceMode, state.strictMode))")
+        )
+        assertTrue(
+            "the seam itself derives reveal from ExamMode",
+            sourceOf("TestKeyboard.kt").contains("ExamMode.canReveal(practiceMode, strictMode)")
+        )
     }
 
     /** Constructions of [entity], not the `toXEntity(` calls that end in its name. */

@@ -37,6 +37,35 @@ suspend fun CorrectAnswerDao.getQuestionIdsWithKeysChunked(questionIds: List<Str
 suspend fun QuestionDao.getByIdsChunked(ids: List<String>): List<QuestionEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
+/**
+ * Selected ids in the canonical browse order, chunked. Each chunk sorts itself;
+ * the concatenation is re-sorted globally by the same keys so a selection that
+ * spans more than one bind chunk still exports in the order the list shows.
+ */
+suspend fun QuestionDao.getOrderedIdsByIdsChunked(ids: Collection<String>): List<String> =
+    ids.toList().chunks()
+        .flatMap { getOrderedIdsByIds(it) }
+        .sortedWith(
+            compareBy<SelectedOrderRow> { it.categorySortOrder }
+                .thenBy { it.categoryTitle }
+                .thenBy { it.questionSortOrder }
+                .thenBy { it.rowId }
+        )
+        .map { it.id }
+
+suspend fun ReviewLogDao.getByQuestionsChunked(ids: Collection<String>): List<ReviewLogEntity> =
+    ids.toList().chunks().flatMap { getByQuestions(it) }
+
+suspend fun QuestionStatsDao.getByQuestionsChunked(ids: Collection<String>): List<QuestionStatsEntity> =
+    ids.toList().chunks().flatMap { getByQuestions(it) }
+
+suspend fun BookmarkDao.getForQuestionsChunked(ids: Collection<String>): List<BookmarkEntity> =
+    ids.toList().chunks().flatMap { getForQuestions(it) }
+
+suspend fun BookmarkDao.addAllChunked(rows: Collection<BookmarkEntity>) {
+    rows.toList().chunks().forEach { addAll(it) }
+}
+
 suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<QuestionEntity> =
     categoryIds.chunks().flatMap { getByCategories(it) }
 
@@ -436,6 +465,21 @@ internal suspend fun QuestionTagDao.tagCountsChunked(
         .sortedWith(compareByDescending<TagCount> { it.count }.thenBy { it.tagFolded })
 }
 
+/** Study's card-inclusive twin of [tagCountsChunked]; same merge, same order. */
+internal suspend fun QuestionTagDao.studyTagCountsChunked(
+    paperId: String,
+    categoryIds: List<String>
+): List<TagCount> {
+    if (categoryIds.isEmpty()) return studyTagCounts(paperId, scopeAll = 1, categoryIds = emptyList())
+    return categoryIds.chunks()
+        .flatMap { studyTagCounts(paperId, scopeAll = 0, categoryIds = it) }
+        .groupBy { it.tagFolded }
+        .map { (folded, rows) ->
+            TagCount(rows.first().tag, folded, rows.sumOf { it.count })
+        }
+        .sortedWith(compareByDescending<TagCount> { it.count }.thenBy { it.tagFolded })
+}
+
 /**
  * The scope's questions carrying a tag, concatenated over disjoint chunks.
  * Both callers turn the result into a set (the custom pool), so chunk order
@@ -451,6 +495,20 @@ internal suspend fun QuestionTagDao.questionIdsForTagChunked(
     } else {
         categoryIds.chunks().flatMap {
             questionIdsForTag(paperId, scopeAll = 0, categoryIds = it, tagFolded = tagFolded)
+        }
+    }
+
+/** Study's card-inclusive twin of [questionIdsForTagChunked]. */
+internal suspend fun QuestionTagDao.studyQuestionIdsForTagChunked(
+    paperId: String,
+    categoryIds: List<String>,
+    tagFolded: String
+): List<String> =
+    if (categoryIds.isEmpty()) {
+        studyQuestionIdsForTag(paperId, scopeAll = 1, categoryIds = emptyList(), tagFolded = tagFolded)
+    } else {
+        categoryIds.chunks().flatMap {
+            studyQuestionIdsForTag(paperId, scopeAll = 0, categoryIds = it, tagFolded = tagFolded)
         }
     }
 

@@ -89,6 +89,11 @@ class AnkiApkgImporter(
                     leechThreshold = schedulerConfig.leechThreshold
                 )
             }
+            // The reader used to hand the session an empty warning list, so a
+            // deck's dropped cards and unresolved media left no trace. The
+            // reasons ride both as typed report notes (what the learner reads)
+            // and as warnings on the file shape, so nothing is discarded.
+            val notes = ankiImportNotes(tail.droppedStems, tail.missingMedia)
             session.finish(
                 LegacyParser.StreamedFile(
                     version = 1,
@@ -96,14 +101,36 @@ class AnkiApkgImporter(
                     bookmarks = emptyList(),
                     attempts = emptyList(),
                     scheduling = emptyMap(),
-                    warnings = emptyList()
+                    warnings = notes.map { note ->
+                        when (note) {
+                            is ImportNote.AnkiDroppedCards ->
+                                "Anki: ${note.count} card(s) dropped (blank front or answer)"
+                            is ImportNote.AnkiMissingMedia ->
+                                "Anki: ${note.count} picture(s) referenced but missing from the package could not be brought across"
+                        }
+                    }
                 )
             )
             // The reader owns the dropped count (a blank stem or answer is a
             // reader decision, not a database outcome). The card count itself
             // comes from the shared session — every card actually written —
             // so it cannot disagree with a JSON or backup import.
-            session.report().copy(droppedAnkiStems = tail.droppedStems)
+            session.report().copy(
+                droppedAnkiStems = tail.droppedStems,
+                importNotes = notes
+            )
         }
     }
 }
+
+/**
+ * The typed reasons an Anki deck did not come across verbatim. Kept pure so the
+ * "only say it when it happened" rule is testable without a database: a clean
+ * deck emits no notes, and a missing-picture note carries its own count rather
+ * than a blanket warning on every import.
+ */
+internal fun ankiImportNotes(droppedStems: Int, missingMedia: Int): List<ImportNote> =
+    buildList {
+        if (droppedStems > 0) add(ImportNote.AnkiDroppedCards(droppedStems))
+        if (missingMedia > 0) add(ImportNote.AnkiMissingMedia(missingMedia))
+    }

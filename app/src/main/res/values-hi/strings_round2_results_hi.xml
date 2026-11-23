@@ -3,7 +3,7 @@
   Hindi mirror of values/strings_round2_results.xml. Names and format
   specifiers are identical; only the wording changes.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- R2: review-chip labels. -->
     <string name="r2_res_filter_all">सभी</string>
     <string name="r2_res_filter_correct">सही</string>
@@ -25,9 +25,9 @@
 
     <!-- R5: spoken alternatives for history row and trend semantics. -->
     <string name="r2_res_open_attempt">प्रयास खोलें</string>
-    <string name="r2_res_delta_improved">%1$s अंक सुधार</string>
-    <string name="r2_res_delta_declined">%1$s अंक गिरावट</string>
-    <string name="r2_res_delta_unchanged">कोई बदलाव नहीं</string>
+    <string name="r2_res_delta_improved" tools:ignore="UnusedResources">%1$s अंक सुधार</string>
+    <string name="r2_res_delta_declined" tools:ignore="UnusedResources">%1$s अंक गिरावट</string>
+    <string name="r2_res_delta_unchanged" tools:ignore="UnusedResources">कोई बदलाव नहीं</string>
     <string name="r2_res_mastery_progress">निपुणता %1$s</string>
 
     <!-- R6: history top-list load failure. -->

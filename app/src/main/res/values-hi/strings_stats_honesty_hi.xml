@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- One honest headline: mature, objective-only true retention vs the target. -->
+    <string name="stats_honest_headline_title">सच्ची स्मरण क्षमता, ईमानदारी से</string>
+    <string name="stats_honest_headline_value">%1$s परिपक्व सच्ची स्मरण क्षमता · केवल वस्तुनिष्ठ उत्तर</string>
+    <string name="stats_honest_headline_gap">लक्ष्य %1$s · लक्ष्य की तुलना में %2$s</string>
+    <string name="stats_honest_headline_points">%1$s अंक</string>
+    <string name="stats_honest_headline_reviews" tools:ignore="PluralsCandidate">%1$d वस्तुनिष्ठ परिपक्व समीक्षाओं के आधार पर</string>
+    <string name="stats_honest_headline_empty">अभी पर्याप्त वस्तुनिष्ठ परिपक्व समीक्षाएँ नहीं हैं</string>
+    <string name="stats_honest_headline_help">केवल उन परिपक्व कार्डों को गिना जाता है जिनका सही या गलत उत्तर दर्ज है। स्व-आंकलित, अनुमान लगाए गए और छोड़े गए उत्तर शामिल नहीं हैं।</string>
+
+    <!-- The "Most forgotten" list ranks lapses, not first-day learning stumbles. -->
+    <string name="stats_weakest_help_honest">सीखने के चरणों के बाद \'फिर से\' दिए गए उत्तरों के अनुसार क्रमांकित। उसी दिन के सीखने के लड़खड़ाहट को लैप्स नहीं माना जाता। कार्ड का इतिहास देखने के लिए टैप करें।</string>
+
+    <!-- Calibration and Brier now use the cut estimator's objective evidence gate. -->
+    <string name="stats_calibration_honest_note">कैलिब्रेशन और Brier में वस्तुनिष्ठ, सही-या-गलत उत्तर शामिल हैं — केवल दर्ज किए गए सही और गलत उत्तर गिने जाते हैं। स्व-आंकलित, अनुमानित, छोड़े गए और अलग ढंग से आंकलित पंक्तियाँ शामिल नहीं हैं।</string>
+
+    <!-- One due definition: overdue is before today's study-day boundary. -->
+    <string name="stats_forecast_help_aligned">अगले 30 अध्ययन दिनों के निर्धारित रिव्यू, दिन-वार समूहों में। पहली पट्टी आज की है; आज से पहले देय कार्ड नीचे बताए गए बकाया हैं, पट्टी नहीं। रेखा कुल बकाया दिखाती है यदि आप हर दिन छोड़ दें।</string>
+
+    <!-- Thin buckets are plotted but visibly de-emphasised, and always spoken with n. -->
+    <string name="stats_chart_small_buckets" tools:ignore="PluralsCandidate">फीके बिंदु %1$d से कम समीक्षाओं वाले समूहों के हैं। हर बिंदु की समीक्षा संख्या उसकी बोली गई सूचना में होती है।</string>
+    <string name="stats_chart_review_unit">समीक्षा</string>
+    <string name="stats_chart_reviews_unit">समीक्षाएँ</string>
+
+    <!-- Group weakness bars open the weakest card behind the aggregate. -->
+    <string name="stats_group_bar_hint">कमज़ोरतम कार्ड खोलने के लिए पट्टी पर टैप करें।</string>
+    <string name="stats_guess_topics_hint">कमज़ोरतम कार्ड खोलने के लिए विषय पर टैप करें।</string>
+
+    <!-- A flashcard-only library has no flagged guess evidence to show. -->
+    <string name="stats_guess_empty_self_graded">अभी दिखाने के लिए कुछ नहीं है। स्व-आंकलित फ़्लैशकार्ड सही या गलत उत्तर दर्ज नहीं करते, इसलिए वे इन आँकड़ों से डिज़ाइन अनुसार बाहर रखे जाते हैं। अनुमान के आँकड़े तब दिखेंगे जब कुंजी वाले प्रश्नों पर अनुमान का झंडा हो।</string>
+
+    <!-- Tests' "average" is an unweighted mean; say so, next to Exam's pooled one. -->
+    <string name="stats_tests_family_row_unweighted" tools:ignore="PluralsCandidate">%1$s · %2$d प्रयास · नवीनतम %3$d%% · असंतुलित औसत %4$d%%</string>
+    <string name="stats_panels_row_unweighted" tools:ignore="PluralsCandidate">%1$s · %2$d प्रश्न · %3$d बार · नवीनतम %4$d%% · असंतुलित औसत %5$d%%</string>
+    <string name="stats_tests_average_help">यहाँ औसत हर प्रयास के प्रतिशत का असंतुलित माध्य है, अतः 10 प्रश्नों वाला प्रयास उतना ही गिना जाता है जितना 50 प्रश्नों वाला। परीक्षा अनुभाग का औसत सभी प्रश्नों के सही उत्तरों को मिलाकर निकाला जाता है।</string>
+    <string name="stats_exam_kpi_average_pooled">औसत (संग्रहीत)</string>
+</resources>

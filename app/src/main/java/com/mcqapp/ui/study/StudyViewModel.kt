@@ -17,12 +17,14 @@ import com.mcqapp.domain.clockMayRun
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.SchedulerConfig
+import com.mcqapp.domain.crossedLeechThreshold
 import com.mcqapp.domain.Scoring
 import com.mcqapp.domain.Shuffle
 import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyCard
 import com.mcqapp.domain.StudyReason
 import com.mcqapp.domain.isFlashcard
+import com.mcqapp.domain.mistakeIdsInScope
 import com.mcqapp.util.IntervalFormat
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.CompletableDeferred
@@ -76,6 +78,8 @@ sealed interface ScopeLabel {
     data object WholePaper : ScopeLabel
     data class One(val title: String) : ScopeLabel
     data class Many(val count: Int) : ScopeLabel
+    /** A tag/mistake pool: copy stays in the UI, only a resource id crosses. */
+    data class Text(val resId: Int, val arg: String = "") : ScopeLabel
 }
 
 /**
@@ -216,6 +220,21 @@ data class StudyUiState(
     val freshAvailable: Boolean = false,
     /** The reviewed-count the break strip was dismissed at, so it can return at the next milestone. */
     val breakDismissedAt: Int = 0,
+    /**
+     * One-shot notice after a grade first flags a card as a leech. Set on the
+     * card served immediately after the crossing, cleared by the next pull, so
+     * the "Now flagged as tricky" line is seen once and never repeats for a
+     * card that stays flagged.
+     */
+    val justFlaggedLeech: Boolean = false,
+    /**
+     * True while the learner is on an explicit break from the strip. Both clocks
+     * are banked and answering is parked, but the sitting stays open: Resume
+     * restarts the clocks without losing the tally or ending the session.
+     */
+    val onBreak: Boolean = false,
+    /** Whether this sitting is the tricky drill; drives its one-pass note. */
+    val leechesOnly: Boolean = false,
     /**
      * What the header shows above the card: the whole paper, one category's
      * title, or a count. [ScopeLabel.WholePaper] renders as nothing.
@@ -365,15 +384,23 @@ internal fun studyCanChangeGrade(state: StudyUiState): Boolean =
  */
 internal fun studyCanActOnCard(state: StudyUiState): Boolean =
     state.question != null && !state.finished && !state.grading &&
-        !state.cardActionInProgress && state.pendingGrade == null
+        !state.cardActionInProgress && !state.onBreak && state.pendingGrade == null
 
 class StudyViewModel(
     application: Application,
     private val paperId: String,
     /** The ticked category ids from the route; empty means the whole paper. */
     private val categoryIds: List<String> = emptyList(),
-    private val leechesOnly: Boolean = false
+    private val leechesOnly: Boolean = false,
+    /** Folded tag carried by the route; restricts the pool to its questions. */
+    private val tag: String = "",
+    /** Mistake-scoped sitting; restricts the pool to currently-wrong questions. */
+    private val mistakes: Boolean = false
 ) : AndroidViewModel(application) {
+
+    /** The resolved route scope; never a schema or schedule change. */
+    private val studyScope: com.mcqapp.domain.StudyScope =
+        com.mcqapp.domain.StudyScope.fromRoute(categoryIds, tag, mistakes)
 
     private val repository: McqRepository = (application as McqApplication).repository
 
@@ -532,6 +559,13 @@ class StudyViewModel(
      * The tricky drill serves a fixed list of the paper's leeches; the main
      * session pulls card by card from the scheduler. Non-null switches the
      * pull source to this list.
+     *
+     * The drill is deliberately ONE PASS: [nextCard] walks this snapshot once
+     * and never re-queues a leech that comes due again mid-sitting. The summary
+     * says so plainly (`study_polish_drill_one_pass`) rather than implying the
+     * drill keeps drilling until nothing is tricky; "Study again" starts a new
+     * pass from the scheduler's *current* queue ([restart]), so a card that
+     * lapsed since is included and one since cured is left out.
      */
     private var drillCards: List<StudyCard>? = null
     private var drillIndex = 0
@@ -573,6 +607,8 @@ class StudyViewModel(
                     )
                 }
                 val label = when {
+                    mistakes -> ScopeLabel.Text(com.mcqapp.R.string.of_scope_mistakes)
+                    tag.isNotBlank() -> ScopeLabel.Text(com.mcqapp.R.string.of_scope_tag, tag)
                     categoryIds.isEmpty() -> ScopeLabel.WholePaper
                     categoryIds.size == 1 -> ScopeLabel.One(
                         CategorySelection.titleOf(paper?.categories.orEmpty(), categoryIds.first())
@@ -586,6 +622,8 @@ class StudyViewModel(
                         leechesOnly = true,
                         categoryIds = scopeIds
                     )
+                } else if (studyScope.isRestricted) {
+                    drillCards = resolveScopedDrillCards()
                 }
                 // One cheap indexed read for the header's "N suspended"
                 // indicator; never a driver of the pull, which reads its own
@@ -612,7 +650,8 @@ class StudyViewModel(
                         confirmGradeBeforeNext = repository.confirmGradeBeforeNext().first(),
                         introduceNewCards = config?.introduceNewCards ?: true,
                         scopeLabel = label,
-                        suspendedCount = hidden
+                        suspendedCount = hidden,
+                        leechesOnly = leechesOnly
                     )
                 }
                 // One read per sitting, before the first pull: see the field.
@@ -635,6 +674,39 @@ class StudyViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * The question ids a tag or mistake scope may serve, in the source's order:
+     * the tag index's authored `(sortOrder, rowid)` order, or the standings'
+     * most-recently-missed-first order. Split out so the empty-state fresh
+     * probe and the queue resolver ask the same scope the same question.
+     */
+    private suspend fun resolveScopedAllowedIds(): List<String> =
+        when (studyScope.kind) {
+            com.mcqapp.domain.StudyScopeKind.TAG ->
+                repository.questionIdsForStudyTagInScope(paperId, scopeIds, studyScope.tag)
+            com.mcqapp.domain.StudyScopeKind.MISTAKES ->
+                mistakeIdsInScope(repository.getMistakenQuestions(paperId), scopeIds)
+            else -> emptyList()
+        }
+
+    private suspend fun resolveScopedDrillCards(): List<StudyCard> =
+        repository.getStudyQueueForQuestions(paperId, resolveScopedAllowedIds())
+
+    /**
+     * Whether a restricted (tag/mistake) empty sitting has a new card behind the
+     * off toggle. The paper-wide eligibility read would answer for questions
+     * outside the scope, so the offer used to appear with nothing it could
+     * actually serve. The scoped queue keeps the same authored order the real
+     * sitting uses.
+     */
+    private suspend fun scopedFreshAvailable(): Boolean {
+        val allowed = resolveScopedAllowedIds()
+        if (allowed.isEmpty()) return false
+        return repository
+            .getStudyQueueForQuestions(paperId, allowed, introduceNewCards = true)
+            .any { it.reason == StudyReason.NEW }
     }
 
     /** Re-runs a failed load after the user asks for it. */
@@ -726,7 +798,7 @@ class StudyViewModel(
             }
             // The clock's colour and the check's grade read the same absolute
             // pair, so the two can never disagree about where the card sits.
-            val schedulerConfig = config ?: SchedulerConfig()
+            val schedulerConfig = studyConfigOrWarn(config, STALE_CONFIG_CLOCK_MESSAGE)
             val now = SystemClock.elapsedRealtime()
             // Fetched before the card is shown: the answer buttons and the grade
             // they produce must agree on how many exposures today the card has
@@ -735,7 +807,7 @@ class StudyViewModel(
                 repository.exposureInStudyDay(
                     paperId = paperId,
                     questionId = card.questionId,
-                    config = config ?: SchedulerConfig()
+                    config = studyConfigOrWarn(config, STALE_CONFIG_EXPOSURE_MESSAGE)
                 )
             } catch (e: Exception) {
                 Logger.e("STUDY", "exposureInStudyDay(${card.questionId}) failed", e)
@@ -771,6 +843,11 @@ class StudyViewModel(
                     gradeEdited = false,
                     lastResult = null,
                     isGuess = false,
+                    // A fresh card has not just crossed the leech threshold:
+                    // the notice is set AFTER this pull by the grade that did.
+                    justFlaggedLeech = false,
+                    // The break always ends when a new card is served.
+                    onBreak = false,
                     questionStartedAt = now,
                     questionElapsedMillis = 0L,
                     gradedDwellSeconds = 0L,
@@ -784,6 +861,12 @@ class StudyViewModel(
                 )
             }
             clockPausedByUser = false
+            // A new card resumes as soon as it is served when the session
+            // already considers it on screen, instead of depending on the
+            // re-composed body's visibility effect being the next thing to run.
+            // The gate still refuses a card that is off screen, revealed, or
+            // paused by the learner.
+            resumeQuestionClock()
             refreshPreviews(exposures)
             publishDwell()
             // Re-anchor the ticker on the card's own start: a ticker launched
@@ -803,13 +886,25 @@ class StudyViewModel(
                 // Ask as if new cards were on: the empty state offers exactly
                 // that flip, and the toggle being off is what emptied the
                 // session — counting under the off flag would always say no.
-                freshAvailable = repository
-                    .getStudyEligibility(paperId, introduceNewCards = true, categoryIds = scopeIds)
-                    .fresh > 0
+                // A tag/mistake scope must be asked about its own pool: the
+                // paper-wide read offered the flip when only cards outside the
+                // scope were fresh, and the sitting stayed empty after taking it.
+                freshAvailable = if (studyScope.isRestricted) {
+                    scopedFreshAvailable()
+                } else {
+                    repository.getStudyEligibility(
+                        paperId,
+                        introduceNewCards = true,
+                        categoryIds = scopeIds
+                    ).fresh > 0
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "getStudyEligibility failed", e)
             }
         }
+        // A tag or mistake scope is a restriction even when it covers the whole
+        // paper (empty categoryIds), so its empty copy must name the scope.
+        val scoped = scopeIds.isNotEmpty() || studyScope.isRestricted
         // The sitting is over even though nobody pressed anything: freeze both
         // clocks here, or the summary's total keeps ticking while it is read.
         pauseQuestionClock()
@@ -834,13 +929,15 @@ class StudyViewModel(
                 questionElapsedMillis = 0L,
                 gradedDwellSeconds = 0L,
                 clockRunning = false,
+                justFlaggedLeech = false,
+                onBreak = false,
                 sessionTotalSeconds = totalSeconds,
                 finished = true,
                 emptyReason = when {
                     it.reviewed > 0 -> EmptyReason.None
-                    leechesOnly && scopeIds.isNotEmpty() -> EmptyReason.NothingTrickyInScope
+                    leechesOnly && scoped -> EmptyReason.NothingTrickyInScope
                     leechesOnly -> EmptyReason.NothingTricky
-                    scopeIds.isNotEmpty() -> EmptyReason.NothingDueInScope
+                    scoped -> EmptyReason.NothingDueInScope
                     else -> EmptyReason.NothingDue
                 },
                 freshAvailable = freshAvailable
@@ -851,7 +948,7 @@ class StudyViewModel(
 
     fun toggleOption(optionId: String) {
         val question = _state.value.question ?: return
-        if (_state.value.revealed) return
+        if (_state.value.revealed || _state.value.onBreak) return
         _state.update { state ->
             val current = state.selection
             val updated = if (question.isMultiCorrect) {
@@ -909,7 +1006,7 @@ class StudyViewModel(
 
     fun toggleQuestionClock() {
         val current = _state.value
-        if (current.revealed) return
+        if (current.revealed || current.onBreak) return
         if (current.clockRunning) {
             clockPausedByUser = true
             pauseQuestionClock()
@@ -932,7 +1029,7 @@ class StudyViewModel(
     /** The gate decides: a hidden card or a deliberate pause stays paused. */
     fun onAppForegrounded() {
         resumeQuestionClock()
-        if (!_state.value.finished) {
+        if (!_state.value.finished && !_state.value.onBreak) {
             resumeSessionClock()
             publishSessionSeconds()
         }
@@ -956,6 +1053,7 @@ class StudyViewModel(
                 state.loadError == null &&
                 !state.finished &&
                 !state.revealed &&
+                !state.onBreak &&
                 state.question != null
         )
 
@@ -1086,13 +1184,14 @@ class StudyViewModel(
         // wrong and propose AGAIN for something the app cannot know, so both
         // are self-graded and the footer shows Show answer instead of Check.
         if (!current.canAutoGrade) return
+        if (current.onBreak) return
         if (!current.simplified || current.revealed || current.grading) return
         pauseQuestionClock()
         val paused = _state.value
         // Freeze the graded dwell here, rounded once from the millisecond total.
         // Next, a grade change and Stop all persist this same value.
         val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
-        val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
+        val schedulerConfig = studyConfigOrWarn(config, STALE_CONFIG_GRADE_MESSAGE)
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
             selection = paused.selection,
@@ -1160,6 +1259,9 @@ class StudyViewModel(
         val question = current.question ?: return
         // S4: a grade write already in flight owns the proposal. Ignore the tap
         // rather than let it rewrite pendingGrade/lastResult after Next read it.
+        // On a break the shared gate still passes (the answer is staged), so
+        // the break-specific refusal lives here: no edit while clocks are banked.
+        if (current.onBreak) return
         if (!studyCanChangeGrade(current)) return
         val now = System.currentTimeMillis()
         // The dwell was frozen at Check; changing the grade must not reread a
@@ -1194,7 +1296,7 @@ class StudyViewModel(
     fun stageGrade(grade: ReviewGrade) {
         val current = _state.value
         val question = current.question ?: return
-        if (current.grading) return
+        if (current.grading || current.onBreak) return
         // Reveal is required exactly as in grade(): a learner cannot grade an
         // answer they have not been shown.
         if (current.selfGraded && !current.revealed) return
@@ -1227,10 +1329,13 @@ class StudyViewModel(
      */
     fun next() {
         val current = _state.value
+        // A grade already landed before the next-card pull failed: the review is
+        // on disk, so Next must not write it a second time.
+        if (current.gradedAndStuck) return
         val question = current.question ?: return
         val proposed = current.pendingGrade ?: return
         if (!current.stagedGrading || !current.revealed) return
-        if (current.grading) return
+        if (current.grading || current.onBreak) return
         if (!current.simplified) {
             // Opt-in four-button flow: the staged grade is written by the exact
             // same one-tap grade path, only later. review_log semantics — CHOSEN,
@@ -1282,7 +1387,13 @@ class StudyViewModel(
                     _state.update { it.copy(grading = false) }
                     return@launch
                 }
+                val becameLeech = crossedLeechThreshold(current.current?.state, next)
                 pullCard()
+                // Set AFTER the pull: the notice belongs to the card just
+                // served and is cleared by the following one.
+                if (becameLeech && !_state.value.finished) {
+                    _state.update { it.copy(justFlaggedLeech = true) }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // A closed database surfaces its failure as cancellation, not
                 // as an exception; rethrow only when THIS job is actually
@@ -1318,10 +1429,13 @@ class StudyViewModel(
      */
     fun grade(grade: ReviewGrade) {
         val current = _state.value
+        // A previous write for this card already succeeded (only the pull
+        // failed): another grade would append a second review_log row.
+        if (current.gradedAndStuck) return
         val question = current.question ?: return
         // Claim the card before launching: the write is async, so a second tap
         // would otherwise persist two reviews for the same question.
-        if (current.grading) return
+        if (current.grading || current.onBreak) return
         // Defence behind the footers: a self-graded question is graded from its
         // answer, and nothing may grade one the learner has not been shown. MCQ
         // grading is deliberately unchanged — its buttons have always implied
@@ -1382,7 +1496,13 @@ class StudyViewModel(
                     _state.update { it.copy(grading = false) }
                     return@launch
                 }
+                val becameLeech = crossedLeechThreshold(current.current?.state, next)
                 pullCard()
+                // Set AFTER the pull: the notice belongs to the card just
+                // served and is cleared by the following one.
+                if (becameLeech && !_state.value.finished) {
+                    _state.update { it.copy(justFlaggedLeech = true) }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // A closed database surfaces its failure as cancellation, not
                 // as an exception; rethrow only when THIS job is actually
@@ -1720,6 +1840,34 @@ class StudyViewModel(
     }
 
     /**
+     * Banks both clocks without ending the sitting. The strip offers this
+     * beside Dismiss: dismissing only silences the suggestion, while this stops
+     * the timing until the learner is back. Answering is parked while on break
+     * (the grade/option gates check [StudyUiState.onBreak]) so no dwell can be
+     * charged to a card nobody is looking at.
+     */
+    fun takeBreak() {
+        val current = _state.value
+        if (current.finished || current.onBreak) return
+        pauseQuestionClock()
+        bankSessionClock()
+        publishSessionSeconds()
+        // The suggestion has been acted on; it must not reappear at this marker.
+        _state.update { it.copy(onBreak = true, breakDismissedAt = it.reviewed) }
+    }
+
+    /** Leaves the break with the tally and the sitting intact; clocks restart. */
+    fun resumeFromBreak() {
+        if (!_state.value.onBreak) return
+        resumeSessionClock()
+        publishSessionSeconds()
+        _state.update { it.copy(onBreak = false) }
+        // The card clock restarts only if the card is still in view and was not
+        // deliberately paused by the learner before the break.
+        resumeQuestionClock()
+    }
+
+    /**
      * Dismisses the one-time grading disclosure for good. The state flips at
      * once (so the card is never left showing a stale hint), and the durable
      * write follows on IO: a rotation keeps the same ViewModel and reads the
@@ -1760,7 +1908,35 @@ class StudyViewModel(
                 val updated = stored.copy(introduceNewCards = true)
                 config = updated
                 repository.setSchedulerConfig(updated)
-                _state.update { it.copy(introduceNewCards = true, loading = true) }
+                // The empty state froze both clocks and closed the sitting
+                // (finishEmpty). Taking the offer continues that sitting, so
+                // re-base BOTH clocks and the sitting's wall-clock start before
+                // the first card is pulled: pullCard only anchors the card's
+                // segment from `questionInView`, and left the session clock
+                // banked and the session row pointing at the empty sitting.
+                resetSessionClock()
+                sessionStartedAtWall = System.currentTimeMillis()
+                sittingEnded.set(false)
+                clockPausedByUser = false
+                questionInView = true
+                _state.update {
+                    it.copy(
+                        introduceNewCards = true,
+                        loading = true,
+                        sessionTotalSeconds = 0L,
+                        emptyReason = EmptyReason.None,
+                        onBreak = false,
+                        justFlaggedLeech = false
+                    )
+                }
+                // A tag/mistake sitting serves a snapshot resolved at load with
+                // the old toggle off, so flipping the setting alone would leave
+                // this scoped session empty. Re-resolve its pool from live data
+                // before the pull; the whole-paper session pulls live already.
+                if (studyScope.isRestricted) {
+                    drillCards = resolveScopedDrillCards()
+                    drillIndex = 0
+                }
                 pullCard()
                 _state.update { it.copy(loading = false) }
             } catch (e: Exception) {
@@ -1848,6 +2024,11 @@ class StudyViewModel(
                         leechesOnly = true,
                         categoryIds = scopeIds
                     )
+                } else if (studyScope.isRestricted) {
+                    // Tag and mistake pools are snapshots too: a card suspended
+                    // mid-sitting, or a question answered correctly since, must
+                    // not be replayed by "Study again".
+                    drillCards = resolveScopedDrillCards()
                 }
                 drillIndex = 0
                 // "Study again" is a new sitting, so it draws a new option
@@ -1885,6 +2066,8 @@ class StudyViewModel(
                         gradedDwellSeconds = 0L,
                         clockRunning = false,
                         breakDismissedAt = 0,
+                        justFlaggedLeech = false,
+                        onBreak = false,
                         // The stale card must not linger: a restart is a fresh
                         // pull, and during the gap the loading screen speaks —
                         // otherwise the old card would be what "Study again"

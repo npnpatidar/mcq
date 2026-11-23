@@ -26,7 +26,9 @@ class FollowupImportCompletionTest {
         restoredAttempts: Int = 0,
         restoredSchedules: Int = 0,
         droppedAnkiStems: Int = 0,
-        recallConverted: Int = 0
+        recallConverted: Int = 0,
+        schedulesReset: Int = 0,
+        rowsSkipped: Int = 0
     ) = ImportReport(
         newPapers = newPapers,
         updatedPapers = updatedPapers,
@@ -38,7 +40,9 @@ class FollowupImportCompletionTest {
         restoredAttempts = restoredAttempts,
         restoredSchedules = restoredSchedules,
         droppedAnkiStems = droppedAnkiStems,
-        recallConverted = recallConverted
+        recallConverted = recallConverted,
+        schedulesReset = schedulesReset,
+        rowsSkipped = rowsSkipped
     )
 
     @Test
@@ -69,9 +73,9 @@ class FollowupImportCompletionTest {
         val lines = importReportLines(
             report(
                 newPapers = 1, updatedPapers = 2, newQuestions = 3, updatedQuestions = 4,
-                duplicateQuestions = 5, answersRefreshed = 6, restoredSchedules = 7,
-                restoredBookmarks = 8, restoredAttempts = 9, droppedAnkiStems = 10,
-                recallConverted = 11
+                duplicateQuestions = 5, answersRefreshed = 6, restoredSchedules = 8,
+                restoredBookmarks = 9, restoredAttempts = 10, droppedAnkiStems = 11,
+                recallConverted = 12, schedulesReset = 7, rowsSkipped = 13
             )
         )
         assertEquals(
@@ -82,15 +86,17 @@ class FollowupImportCompletionTest {
                 ImportReportLineKind.UPDATED_QUESTIONS,
                 ImportReportLineKind.DUPLICATE_QUESTIONS,
                 ImportReportLineKind.ANSWERS_REFRESHED,
+                ImportReportLineKind.SCHEDULES_RESET,
                 ImportReportLineKind.RESTORED_SCHEDULES,
                 ImportReportLineKind.RESTORED_BOOKMARKS,
                 ImportReportLineKind.RESTORED_ATTEMPTS,
                 ImportReportLineKind.DROPPED_ANKI_STEMS,
-                ImportReportLineKind.RECALL_CONVERTED
+                ImportReportLineKind.RECALL_CONVERTED,
+                ImportReportLineKind.ROWS_SKIPPED
             ),
             lines.map { it.kind }
         )
-        assertEquals((1..11).toList(), lines.map { it.count })
+        assertEquals((1..13).toList(), lines.map { it.count })
     }
 
     /** Every counter non-zero, except the one at [omittingIndex]. */
@@ -103,22 +109,24 @@ class FollowupImportCompletionTest {
             updatedQuestions = value(3),
             duplicateQuestions = value(4),
             answersRefreshed = value(5),
-            restoredSchedules = value(6),
-            restoredBookmarks = value(7),
-            restoredAttempts = value(8),
-            droppedAnkiStems = value(9),
-            recallConverted = value(10)
+            schedulesReset = value(6),
+            restoredSchedules = value(7),
+            restoredBookmarks = value(8),
+            restoredAttempts = value(9),
+            droppedAnkiStems = value(10),
+            recallConverted = value(11),
+            rowsSkipped = value(12)
         )
     }
 
     /**
-     * The longest report (a restore, every counter non-zero) lists all eleven
+     * The longest report (a restore, every counter non-zero) lists all thirteen
      * kinds once, in the enum's display order. This is the data the completion
      * dialog sizes itself against, so a missing or reordered kind is a visible
      * bug before it is a layout bug.
      */
     @Test
-    fun allElevenKindsAreListedOnceInDisplayOrder() {
+    fun allKindsAreListedOnceInDisplayOrder() {
         assertEquals(
             ImportReportLineKind.entries,
             importReportLines(countersAtOne()).map { it.kind }
@@ -130,8 +138,21 @@ class FollowupImportCompletionTest {
     fun aZeroCounterIsOmittedAtEveryPosition() {
         ImportReportLineKind.entries.forEachIndexed { index, omitted ->
             val lines = importReportLines(countersAtOne(omittingIndex = index))
-            assertEquals("omitting $omitted must leave ten lines", 10, lines.size)
+            assertEquals(
+                "omitting $omitted must leave ${ImportReportLineKind.entries.size - 1} lines",
+                ImportReportLineKind.entries.size - 1, lines.size
+            )
             assertFalse("$omitted must not be listed", lines.any { it.kind == omitted })
         }
+    }
+
+    /** A reset must be visible even when no question count changed. */
+    @Test
+    fun aScheduleResetAloneProducesOneLine() {
+        val lines = importReportLines(report(schedulesReset = 3))
+        assertEquals(
+            listOf(ImportReportLineKind.SCHEDULES_RESET to 3),
+            lines.map { it.kind to it.count }
+        )
     }
 }

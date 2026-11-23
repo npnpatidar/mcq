@@ -4,6 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Per-PR builds deliberately do NOT pass --refresh-dependencies: forcing
+  # re-resolution on every step turned one transient plugin fetch or a Maven
+  # 429 into a failed PR. This nightly run re-resolves against the repositories
+  # on its own, so a stale-plugin or repository problem surfaces in a dedicated
+  # run instead of holding a branch. The wrapper's 60 s timeout and three
+  # retries cover the distribution download only — not plugin resolution — so a
+  # transient plugin fetch on a PR fails that step and is retried by the next
+  # push; the refreshed metadata reaches the PR jobs through the shared rotating
+  # cache below — see the cache step in each job for why a run-scoped key is
+  # required for that to work.
+  schedule:
+    - cron: '17 1 * * *' # 01:17 UTC = 06:47 IST, daily
 
 # Least privilege: every job only needs to read the repository. The single
 # write grant lives in release.yml's publish job.
@@ -29,6 +41,145 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
 
+  nightly-dependency-refresh:
+    # The single place allowed to force remote re-resolution. A stale plugin
+    # POM or a repository outage then fails this standalone nightly run with a
+    # clear signal instead of failing every PR; the per-PR jobs stay fast and
+    # deterministic. Runs only on the schedule, never on a PR.
+    if: github.event_name == 'schedule'
+    needs: wrapper-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+        # No `cache: gradle`: setup-java keys that cache on a hash of the build
+        # files. An unchanged repo is an exact hit, and actions/cache does NOT
+        # save a cache on a hit, so the forced refresh below would be discarded
+        # and PRs would keep restoring the stale metadata. We manage the cache
+        # ourselves with a key that always misses instead.
+
+      - name: Restore Gradle cache
+        # actions/cache only saves when the key is new. setup-java's hash key
+        # is an exact hit on an unchanged repo, so its post-job save is skipped;
+        # a run-scoped key always misses and therefore always stores the cache
+        # after --refresh-dependencies. Every job shares the `gradle-nightly-`
+        # restore prefix, so the next run — PRs included — starts from the most
+        # recently refreshed cache. GitHub's key matching:
+        # https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#matching-a-cache-key
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-nightly-${{ github.run_id }}
+          restore-keys: gradle-nightly-
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Refresh resolved dependencies and plugin metadata
+        # `dependencies` walks every configuration, so this re-resolves the
+        # plugins the bootstrap tasks fetch as well as the app's own graph.
+        # The restored cache is saved by the step above under a fresh run-scoped
+        # key, which is what later PR runs restore.
+        run: sh gradlew :app:dependencies --refresh-dependencies --no-daemon
+
+  test-durations:
+    # `apk-build/test-shards.sh` can partition by measured cost, but a manifest
+    # has to exist first. One unsharded pass produces the JUnit XML, and
+    # `writeTestDurations` turns it into `test-durations.tsv`, which the four
+    # shards restore from a cross-run cache and pass as the script's third
+    # argument. This is a measurement pass, not a PR gate: running the whole
+    # unsharded suite on every PR doubled the work and a hung probe skipped the
+    # shards entirely. Nightly and main builds refresh the manifest; PR shards
+    # reuse the newest one and fall back to balanced-by-count when none exists.
+    if: github.event_name == 'schedule' || github.event_name == 'push'
+    needs: wrapper-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+        # Cache is managed by the shared actions/cache step below, not here.
+
+      - name: Restore Gradle cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-run-${{ github.run_id }}
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Measure class durations
+        # This job is only a measurement pass; the sharded job below is the
+        # authoritative gate. A failing/hung pass must still leave a usable
+        # (possibly empty) manifest so the shards fall back cleanly.
+        continue-on-error: true
+        shell: bash
+        run: sh gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Write duration manifest
+        if: always()
+        run: sh gradlew :app:writeTestDurations --no-daemon
+
+      - name: Upload test durations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations
+          path: app/build/test-durations.tsv
+          if-no-files-found: error
+
+      - name: Stage duration manifest for cross-run cache
+        # PR runs have no probe of their own, so the manifest has to survive
+        # into later runs. Stage it under a path the shard jobs restore as-is.
+        if: always()
+        shell: bash
+        run: cp app/build/test-durations.tsv apk-build/test-durations.tsv || true
+
+      - name: Cache measured test durations
+        # A run-scoped key always misses (actions/cache does not save on a hit),
+        # and the stable `test-durations-` prefix lets PR jobs restore the most
+        # recently written manifest. The probe's own artifact stays for humans.
+        if: always()
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: apk-build/test-durations.tsv
+          key: test-durations-${{ github.run_id }}
+          restore-keys: test-durations-
+
   build:
     needs: wrapper-validation
     # x86_64 runners: Robolectric's native runtime and the Conscrypt JNI
@@ -49,7 +200,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+        # Cache is managed by the shared actions/cache step below: setup-java's
+        # hash key would be an exact hit and never store the nightly refresh.
+
+      - name: Restore Gradle cache
+        # A separate run-scoped namespace from the nightly job: jobs run in
+        # parallel on a schedule, and a non-refresh job saving under the
+        # nightly's exact key would win the race and discard the fresh metadata.
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-run-${{ github.run_id }}
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -66,15 +235,15 @@ jobs:
       - name: Build debug APK
         # No aapt2 override: the bundled aapt2 runs natively on x86_64
         # (the override is only needed on ARM64 hosts with QEMU).
-        # Force remote re-resolution: a restored Gradle cache has repeatedly
-        # served stale plugin metadata (compose 2.2.10 not found) in this job.
-        run: sh gradlew :app:assembleDebug --refresh-dependencies --no-daemon
+        # No --refresh-dependencies: the nightly job refreshes the shared
+        # cache. The wrapper does not retry plugin resolution, so a transient
+        # fetch here fails the step and the next push tries again.
+        run: sh gradlew :app:assembleDebug --no-daemon
 
       - name: Lint
         # Catches the Android-specific problems the unit tests cannot: missing
         # content descriptions, wrong API usage, unused resources.
-        # Same forced re-resolution: the restored cache cannot be trusted here.
-        run: sh gradlew :app:lintDebug --refresh-dependencies --no-daemon
+        run: sh gradlew :app:lintDebug --no-daemon
 
       - name: Upload debug APK
         if: always()
@@ -99,7 +268,11 @@ jobs:
     # the classes over a 4-way parallel matrix shrinks the state one worker
     # accumulates (the process-wide DataStore actor is the coupling), halves
     # the wall clock, and makes one bad shard report alone instead of holding
-    # the branch. No test is skipped: the four shards are a partition.
+    # the branch. No test is skipped: the four shards are a partition, including
+    # subpackage classes (asserted by TestShardScriptTest).
+    # Deliberately NOT `needs: test-durations`: that probe is a nightly/main
+    # measurement, absent on PRs, and a hung/failed unsharded pass must never
+    # skip the shards. The manifest is restored from cache below instead.
     needs: wrapper-validation
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -116,7 +289,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+        # Cache is managed by the shared actions/cache step below: setup-java's
+        # hash key would be an exact hit and never store the nightly refresh.
+
+      - name: Restore Gradle cache
+        # A separate run-scoped namespace from the nightly job: jobs run in
+        # parallel on a schedule, and a non-refresh job saving under the
+        # nightly's exact key would win the race and discard the fresh metadata.
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-run-${{ github.run_id }}
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -125,6 +316,17 @@ jobs:
 
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Restore measured test durations
+        # The probe only runs on nightly/main, so a PR has no artifact in this
+        # run. Restore the newest manifest an earlier such run cached. With no
+        # cache yet (a first PR) the shard step below uses the two-argument
+        # balanced-by-count call instead — no shard waits on the probe.
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: apk-build/test-durations.tsv
+          key: test-durations-${{ github.run_id }}
+          restore-keys: test-durations-
 
       - name: Run unit test shard
         # Sentinel: if this shard wedges, dump the worker's stacks from the
@@ -140,8 +342,14 @@ jobs:
             done ) &
           WATCH=$!
           trap 'kill "$WATCH" 2>/dev/null || true' EXIT
-          ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4)
-          sh gradlew :app:testDebugUnitTest $ARGS --refresh-dependencies --no-daemon
+          if [ -f apk-build/test-durations.tsv ]; then
+            ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4 apk-build/test-durations.tsv)
+          else
+            # No cached manifest yet: the original balanced-by-count partition.
+            # This keeps every class in exactly one shard, just not cost-weighted.
+            ARGS=$(sh apk-build/test-shards.sh ${{ matrix.shard }} 4)
+          fi
+          sh gradlew :app:testDebugUnitTest $ARGS --no-daemon
 
       - name: Upload unit test results
         if: always()
@@ -171,7 +379,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+        # Cache is managed by the shared actions/cache step below: setup-java's
+        # hash key would be an exact hit and never store the nightly refresh.
+
+      - name: Restore Gradle cache
+        # A separate run-scoped namespace from the nightly job: jobs run in
+        # parallel on a schedule, and a non-refresh job saving under the
+        # nightly's exact key would win the race and discard the fresh metadata.
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-run-${{ github.run_id }}
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -221,9 +447,8 @@ jobs:
           echo "::add-mask::$KEY_PASSWORD"
 
       - name: Build release APK
-        # Same forced re-resolution as the build/lint jobs: this job restores
-        # the same Gradle cache, so stale plugin metadata can hit it too.
-        run: sh gradlew :app:assembleRelease --refresh-dependencies --no-daemon
+        # Cache is refreshed nightly; no per-build forced re-resolution.
+        run: sh gradlew :app:assembleRelease --no-daemon
 
       - name: Report the release APK size
         run: du -h app/build/outputs/apk/release/*.apk || true
@@ -258,7 +483,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+        # Cache is managed by the shared actions/cache step below: setup-java's
+        # hash key would be an exact hit and never store the nightly refresh.
+
+      - name: Restore Gradle cache
+        # A separate run-scoped namespace from the nightly job: jobs run in
+        # parallel on a schedule, and a non-refresh job saving under the
+        # nightly's exact key would win the race and discard the fresh metadata.
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-run-${{ github.run_id }}
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -285,7 +528,7 @@ jobs:
           # Every instrumented test runs: the suite used to skip a handful via
           # a system-property switch, but that property was never passed to the
           # on-device test process, so the switch silently did nothing.
-          script: sh gradlew :app:connectedDebugAndroidTest --refresh-dependencies --no-daemon
+          script: sh gradlew :app:connectedDebugAndroidTest --no-daemon
 
       - name: Upload UI test results
         if: always()

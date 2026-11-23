@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- डेटा ईमानदारी: ऐप के कारण होने वाली हर हानि उपयोगकर्ता को दिखनी चाहिए। -->
+
+    <!-- शेड्यूल रीसेट: बदली सामग्री कार्ड की FSRS मेमोरी हटा देती है। -->
+    <plurals name="data_honesty_schedules_reset">
+        <item quantity="one">• %1$d पढ़ाई शेड्यूल रीसेट — वह कार्ड फिर से शुरू होता है</item>
+        <item quantity="other">• %1$d पढ़ाई शेड्यूल रीसेट — वे कार्ड फिर से शुरू होते हैं</item>
+    </plurals>
+    <string name="data_honesty_badge_schedule_reset">शेड्यूल रीसेट</string>
+
+    <!-- प्रीव्यू बैज जब "दोबारा आयात पर उत्तर ताज़ा करें" कुंजी बदलेगा। -->
+    <string name="data_honesty_badge_answer_refresh">उत्तर ताज़ा — प्रगति रीसेट</string>
+
+    <!-- एंकि आयात नोट्स: डेक पूरी तरह न आने के कारण। -->
+    <string name="data_honesty_anki_notes_title">एंकि आयात नोट्स</string>
+    <string name="data_honesty_anki_note_blank" tools:ignore="PluralsCandidate">%1$d कार्ड छोड़ दिए गए क्योंकि उनका सामने वाला भाग या उत्तर खाली था।</string>
+    <string name="data_honesty_anki_note_media" tools:ignore="PluralsCandidate">%1$d चित्रों का कार्ड ने संदर्भ दिया पर वे पैकेज में नहीं थे, उन्हें लाया नहीं जा सका।</string>
+
+    <!-- JSON/DOCX रीडर ने पार्स करते समय जो पंक्तियाँ छोड़ीं। -->
+    <plurals name="data_honesty_rows_skipped">
+        <item quantity="one">• %1$d प्रविष्टि छोड़ी गई — आयात नोट्स देखें</item>
+        <item quantity="other">• %1$d प्रविष्टियाँ छोड़ी गईं — आयात नोट्स देखें</item>
+    </plurals>
+
+    <!-- हमारा लिखा बैकअप वही होना चाहिए जिसे हम पुनर्स्थापित कर सकें (SafeZip सीमाएँ)। -->
+    <string name="data_honesty_backup_too_large">यह बैकअप %1$d MB पुनर्स्थापना सीमा से बड़ा होगा। पेपर छोटे समूहों में निर्यात करें या बहुत बड़ी तस्वीरें हटाएँ, फिर पुनः प्रयास करें।</string>
+    <string name="data_honesty_backup_entry_too_large">इस बैकअप का एक हिस्सा %1$d MB पुनर्स्थापना सीमा से बड़ा है। बहुत बड़ी तस्वीरें हटाएँ, फिर पुनः प्रयास करें।</string>
+
+    <!-- पुनर्स्थापना पुष्टि: मिटाने से पहले फ़ाइल और जोखिम बताएँ। -->
+    <string name="data_honesty_restore_file">फ़ाइल: %1$s</string>
+    <string name="data_honesty_restore_manifest" tools:ignore="PluralsCandidate">बैकअप %1$s को लिया गया — %2$d पेपर, %3$d प्रश्न, %4$d समीक्षाएँ</string>
+    <string name="data_honesty_restore_current" tools:ignore="PluralsCandidate">वर्तमान लाइब्रेरी: %1$d पेपर, %2$d प्रश्न, %3$d समीक्षाएँ</string>
+    <string name="data_honesty_restore_settings_note">लाइब्रेरी पहले बदली जाती है। बैकअप की सेटिंग्स उस प्रतिस्थापन के पूरी तरह पूरा होने के बाद ही लागू होती हैं।</string>
+    <string name="data_honesty_restore_backup_first">पहले वर्तमान लाइब्रेरी का बैकअप लें…</string>
+
+    <!-- पैसेज संपादन हर सदस्य का पढ़ाई शेड्यूल रीसेट करता है (PassageStore)। -->
+    <plurals name="data_honesty_passage_reset_notice">
+        <item quantity="one">इसे सहेजने पर इसके %1$d सदस्य प्रश्न का पढ़ाई शेड्यूल फिर से शुरू होगा।</item>
+        <item quantity="other">इसे सहेजने पर इसके %1$d सदस्य प्रश्नों के पढ़ाई शेड्यूल फिर से शुरू होंगे।</item>
+    </plurals>
+</resources>

@@ -93,9 +93,10 @@ jobs:
           echo "::add-mask::$KEY_PASSWORD"
 
       - name: Build signed release APK
-        # Same forced re-resolution as every build.yml Gradle step: this job
-        # restores the same cache, so stale plugin metadata can hit it too.
-        run: sh gradlew :app:assembleRelease --refresh-dependencies --no-daemon
+        # build.yml's nightly job refreshes the shared Gradle cache; a tag
+        # build must not fail on a transient plugin fetch the way a blanket
+        # --refresh-dependencies on every step did.
+        run: sh gradlew :app:assembleRelease --no-daemon
 
       - name: Remove the key
         if: always()

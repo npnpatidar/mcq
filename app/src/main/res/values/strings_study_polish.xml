@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Study-session polish copy: the one-shot leech crossing notice, the honest
+  relearning label, the break control and the tricky drill's one-pass note.
+  Every name is paired one-for-one in values-hi; none carry format arguments.
+-->
+<resources>
+    <!-- Shown once, on the card after a grade first flags it as tricky. -->
+    <string name="study_polish_leech_notice">Now flagged as tricky</string>
+    <!-- A first-exposure step says Learning; a lapsed card says Relearning. -->
+    <string name="study_polish_relearning_step">Relearning after a lapse</string>
+    <!-- The break strip's second action: bank both clocks without ending the sitting. -->
+    <string name="study_polish_take_break">Take a break</string>
+    <string name="study_polish_on_break">On a break – both clocks are paused</string>
+    <string name="study_polish_resume">Resume</string>
+    <!-- The tricky drill deliberately walks its due leeches once per sitting. -->
+    <string name="study_polish_drill_one_pass">That was one pass through your tricky cards.</string>
+</resources>

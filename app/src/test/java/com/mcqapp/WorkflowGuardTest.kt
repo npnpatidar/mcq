@@ -13,6 +13,10 @@ import java.io.File
  * tag, no permissions/concurrency, no ui-test timeout, a mask applied to a
  * keystore.properties that did not exist yet, unbounded artifact uploads and
  * no release-notes reminder.
+ *
+ * INCIDENT: unpinned actions, a mask applied before keystore.properties existed
+ * and unbounded uploads each shipped once; the blanket --refresh-dependencies
+ * workaround then turned four transient fetches into failed PRs.
  */
 class WorkflowGuardTest {
 
@@ -111,8 +115,8 @@ class WorkflowGuardTest {
         val steps = build.split(Regex("""\n[ \t]*- name:"""))
         val uploads = steps.filter { it.contains("uses: actions/upload-artifact@") }
         assertTrue(
-            "build.yml: expected 5 upload-artifact steps, got ${uploads.size}",
-            uploads.size == 5
+            "build.yml: expected 6 upload-artifact steps, got ${uploads.size}",
+            uploads.size == 6
         )
         uploads.forEach { step ->
             assertTrue(
@@ -123,7 +127,7 @@ class WorkflowGuardTest {
         // The `test-results` upload is a single step in the 4-way unit-test
         // matrix: one YAML step, four artifacts when expanded.
         for (name in listOf(
-            "app-debug", "app-release", "lint-report", "ui-test-results"
+            "app-debug", "app-release", "lint-report", "ui-test-results", "test-durations"
         )) {
             assertTrue(
                 "build.yml: artifact '${name}' is missing",
@@ -159,15 +163,25 @@ class WorkflowGuardTest {
         )
     }
 
+    /**
+     * BEHAVIOUR: the release variant must keep resource shrinking and R8 on —
+     * the release build job is the only CI check that a keep rule or a
+     * release-only resource regression still works. Replaced the old
+     * comment-wording assertion with one that reads the actual build settings.
+     */
     @Test
-    fun releaseBuildCommentMatchesActualMinifySettings() {
-        assertFalse(
-            "the stale 'isMinifyEnabled is still false' comment must be gone",
-            build.contains("isMinifyEnabled is still")
-        )
+    fun releaseBuildKeepsShrinkingAndR8Enabled() {
+        val gradle = listOf(File("../app/build.gradle.kts"), File("app/build.gradle.kts"))
+            .firstOrNull { it.isFile }
+            ?.readText()
+            ?: throw AssertionError("cannot find app/build.gradle.kts from $cwd")
+        val release = gradle.substringAfter("        release {")
+        assertTrue("release resource shrinking is off", "isShrinkResources = true" in release)
+        assertTrue("release R8 minification is off", "isMinifyEnabled = true" in release)
+        assertTrue("release must keep its ProGuard rules", "proguard-rules.pro" in release)
         assertTrue(
-            "the comment must describe the live R8 settings",
-            build.contains("isShrinkResources = true")
+            "CI must assemble the release variant so shrinking is exercised",
+            build.contains(":app:assembleRelease")
         )
     }
 
@@ -175,36 +189,177 @@ class WorkflowGuardTest {
     private fun gradleInvocationLines(yaml: String): List<String> =
         yaml.lineSequence().filter { it.contains("sh gradlew ") }.toList()
 
-    private fun allGradleStepsRefreshDependencies(yaml: String): Boolean {
-        val invocations = gradleInvocationLines(yaml)
-        return invocations.isNotEmpty() && invocations.all { "--refresh-dependencies" in it }
+    /**
+     * The one intentional refresh: the nightly job that re-resolves against
+     * the repositories independently. Per-PR steps must not force
+     * re-resolution — doing so turned three transient plugin fetches and one
+     * Maven 429 into failed PRs in a single release. This is the ONLY line
+     * where the flag is allowed.
+     */
+    private fun nightlyRefreshLine(yaml: String): String? =
+        gradleInvocationLines(yaml).firstOrNull { "--refresh-dependencies" in it }
+
+    /** Every Gradle step except the deliberate nightly refresh. */
+    private fun regularGradleInvocations(yaml: String): List<String> =
+        gradleInvocationLines(yaml).filter { it != nightlyRefreshLine(yaml) }
+
+    /** Non-empty means a regular step reintroduced the blanket flag. */
+    private fun blanketRefreshOffences(yaml: String): List<String> =
+        regularGradleInvocations(yaml).filter { "--refresh-dependencies" in it }
+
+    /** Every prefix a cache step's `restore-keys` declares (inline or block form). */
+    private fun restorePrefixes(step: String): List<String> {
+        val regex = Regex(
+            """(?m)^[ \t]*restore-keys:[ \t]*(?:\|[ \t]*\n((?:[ \t]+\S[^\n]*\n?)*)|(\S+)[ \t]*)$"""
+        )
+        val match = regex.find(step) ?: return emptyList()
+        val body = match.groupValues[1].ifBlank { match.groupValues[2] }
+        return body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
     }
 
     @Test
-    fun everyGradleInvocationForcesDependencyRefresh() {
+    fun onlyTheNightlyJobForcesDependencyRefresh() {
+        // build.yml: one scheduled refresh, and every ordinary Gradle step
+        // (build, lint, 4-way unit-test matrix, release build, UI test) relies
+        // on the refreshed cache. The wrapper retries only the distribution
+        // download, so a transient plugin fetch on a PR is not retried here.
+        val nightly = nightlyRefreshLine(build)
+        assertTrue("build.yml: the nightly refresh Gradle step is missing", nightly != null)
+        assertTrue(
+            "the refresh step must re-resolve plugin metadata too:\n$nightly",
+            nightly!!.contains(":app:dependencies") && nightly.contains("--refresh-dependencies")
+        )
+        assertTrue(
+            "build.yml must declare a nightly schedule",
+            Regex("""(?m)^  schedule:\n[ \t]*- cron: [^\n]+$""").containsMatchIn(build)
+        )
+        assertTrue(
+            "the refresh job must never run on a PR",
+            Regex("""(?m)^[ \t]*if: github\.event_name == 'schedule'[ \t]*$""").containsMatchIn(build)
+        )
         for ((label, yaml) in listOf("build.yml" to build, "release.yml" to release)) {
-            val invocations = gradleInvocationLines(yaml)
-            assertTrue("$label: no 'sh gradlew' invocations found", invocations.isNotEmpty())
+            val invocations = regularGradleInvocations(yaml)
+            assertTrue("$label: no regular 'sh gradlew' invocations found", invocations.isNotEmpty())
             assertTrue(
-                "$label: every Gradle step must pass --refresh-dependencies:\n" +
-                    invocations.joinToString("\n"),
-                allGradleStepsRefreshDependencies(yaml)
+                "$label: a regular Gradle step forced dependency refresh:\n" +
+                    blanketRefreshOffences(yaml).joinToString("\n"),
+                blanketRefreshOffences(yaml).isEmpty()
+            )
+        }
+        // A forced refresh is inert if the same cache is restored every time:
+        // GitHub's actions/cache does not save on an exact-key hit, and
+        // setup-java's hash key is an exact hit on an unchanged repo. Every job
+        // therefore uses a run-scoped key (always a miss, so the refresh is
+        // saved) and a shared restore prefix (so PRs pick up that refresh).
+        assertFalse(
+            "setup-java's own cache would be an unsaved exact hit",
+            Regex("""(?m)^[ \t]*cache: gradle[ \t]*$""").containsMatchIn(build)
+        )
+        val allCacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
+            .filter { it.contains("uses: actions/cache@") }
+        // The duration manifest has its own cross-run cache; exclude it here so
+        // this guard stays about the rotating Gradle dependency caches.
+        val cacheSteps = allCacheSteps.filter {
+            it.contains("gradle-nightly-") || it.contains("gradle-run-")
+        }
+        assertTrue(
+            "one rotating Gradle cache step per Gradle job, got ${cacheSteps.size}",
+            cacheSteps.size == 6
+        )
+        cacheSteps.forEach { step ->
+            assertTrue(
+                "the cache key must be scoped to the run so it always saves:\n$step",
+                step.contains("github.run_id") &&
+                    (step.contains("gradle-nightly-") || step.contains("gradle-run-"))
+            )
+            assertTrue(
+                "the cache must restore the latest nightly refresh:\n$step",
+                "gradle-nightly-" in restorePrefixes(step)
+            )
+        }
+        assertTrue(
+            "exactly one job owns the nightly key — a parallel job saving under it would discard the refresh",
+            cacheSteps.count { it.contains("key: gradle-nightly-\${{ github.run_id }}") } == 1
+        )
+    }
+
+    /**
+     * A run-scoped save is only useful if a later run can restore it. The PR
+     * jobs saved under `gradle-run-<run_id>` but declared only the
+     * `gradle-nightly-` restore prefix, so those caches could never be hit.
+     */
+    @Test
+    fun runScopedGradleCachesAreRestorableByALaterRun() {
+        val cacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
+            .filter { it.contains("uses: actions/cache@") }
+        val runKeyed = cacheSteps.filter { it.contains("key: gradle-run-") }
+        assertTrue("expected the PR jobs' run-scoped caches, got ${runKeyed.size}", runKeyed.isNotEmpty())
+        runKeyed.forEach { step ->
+            assertTrue(
+                "a cache saved under gradle-run- must be restored by a later run:\n$step",
+                "gradle-run-" in restorePrefixes(step)
             )
         }
     }
 
+    /**
+     * The duration probe is a measurement, not a gate. It used to run on every
+     * PR and `unit-test` had a hard `needs` edge on it, so the whole unsharded
+     * suite ran twice and a hung probe skipped every shard. Now only nightly
+     * and main refresh the manifest into a cross-run cache; PR shards restore
+     * it and fall back to the 2-arg balanced-by-count call when it is absent.
+     */
     @Test
-    fun refreshDependenciesGuardDetectsAMissingFlag() {
-        // Negative case: strip one flag from the real workflow text and prove
-        // the guard rejects it, so the assertion above is not a tautology.
-        val regressed = build.replaceFirst("--refresh-dependencies", "")
+    fun durationAwareShardingIsWiredWithoutBlockingPRs() {
+        assertTrue("a prior job must write the manifest", build.contains(":app:writeTestDurations"))
+        assertTrue("the manifest must be uploaded for inspection", build.contains("name: test-durations"))
+
+        val probe = build.substringAfter("  test-durations:\n").substringBefore("\n  build:\n")
         assertTrue(
-            "the mutation must not delete a Gradle step",
-            gradleInvocationLines(regressed).size == gradleInvocationLines(build).size
+            "the probe must run only on schedule or a push to main",
+            probe.contains(
+                "if: github.event_name == 'schedule' || github.event_name == 'push'"
+            )
+        )
+
+        val shardJob = build.substringAfter("  unit-test:\n").substringBefore("\n  release-build:\n")
+        val needs = Regex("""(?m)^[ \t]*needs:.*$""").find(shardJob)?.value.orEmpty()
+        assertTrue(
+            "the shard job must depend only on wrapper-validation: $needs",
+            needs.trim() == "needs: wrapper-validation"
         )
         assertFalse(
-            "the guard must reject a Gradle step missing --refresh-dependencies",
-            allGradleStepsRefreshDependencies(regressed)
+            "a hard needs edge on the probe would gate every PR on the unsharded suite",
+            needs.contains("test-durations")
+        )
+        assertTrue(
+            "the shards must restore a manifest cached by an earlier main/nightly run",
+            shardJob.contains("uses: actions/cache/restore@") &&
+                shardJob.contains("restore-keys: test-durations-")
+        )
+        assertTrue(
+            "the shard call must pass the measured durations as its third argument",
+            build.contains("4 apk-build/test-durations.tsv")
+        )
+        assertTrue(
+            "CI must fall back to the two-argument balanced-by-count call when no manifest is cached",
+            build.contains("test-shards.sh \${{ matrix.shard }} 4)")
+        )
+    }
+
+    @Test
+    fun refreshDependenciesGuardDetectsARegressedBlanketFlag() {
+        // Negative case: add the blanket flag back to a regular step and prove
+        // the guard rejects it, so the assertion above is not a tautology.
+        val regular = regularGradleInvocations(build).first()
+        val regressed = build.replace(regular, regular.replace(" --no-daemon", " --refresh-dependencies --no-daemon"))
+        assertTrue(
+            "the mutation must add a flag, not delete a Gradle step",
+            gradleInvocationLines(regressed).size == gradleInvocationLines(build).size
+        )
+        assertTrue(
+            "the guard must reject a regular step with --refresh-dependencies",
+            blanketRefreshOffences(regressed).isNotEmpty()
         )
     }
 }

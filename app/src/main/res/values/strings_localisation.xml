@@ -72,7 +72,7 @@
     <string name="history_wrong_skipped_line" tools:ignore="PluralsCandidate">%1$s wrong · %2$s skipped · %3$d attempts</string>
     <string name="history_correct_line" tools:ignore="PluralsCandidate">%1$d/%2$d correct</string>
     <string name="history_trend_attempts_best">%1$s · best %2$s</string>
-    <string name="history_delta_points">%1$s %2$s pts</string>
+    <string name="history_delta_points" tools:ignore="UnusedResources">%1$s %2$s pts</string>
 
     <!-- Search / stats / editor / misc -->
     <plurals name="search_result_count">

@@ -12,7 +12,9 @@ import com.mcqapp.R
 import com.mcqapp.data.backup.BackupRestorer
 import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
+import com.mcqapp.data.backup.McqBackupFormat.BackupTooLargeException
 import com.mcqapp.data.backup.RestorePartialCopy
+import com.mcqapp.data.backup.writeBackupOrDrop
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
@@ -27,6 +29,7 @@ import com.mcqapp.ui.theme.MAX_THEME_FILE_BYTES
 import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.boundedStream
+import com.mcqapp.util.stampedFileName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +62,21 @@ sealed interface FsrsOptimizeState {
 
 /** A Backup & data failure: the title's string resource plus the friendly copy. */
 data class SettingsOperationError(val titleRes: Int, val message: String)
+
+/**
+ * What a picked backup claims, read before the wipe so the confirmation can
+ * name the file and show its counts next to the library they will replace.
+ */
+internal data class RestorePreviewInfo(
+    val fileName: String,
+    val exportedAt: Long,
+    val papers: Int,
+    val questions: Int,
+    val reviews: Int,
+    val currentPapers: Int,
+    val currentQuestions: Int,
+    val currentReviews: Int
+)
 
 /** A built share intent waiting for the (possibly recreated) Activity to show it. */
 internal data class ShareRequest(val intent: Intent, val id: Long)
@@ -192,6 +210,55 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val busy: StateFlow<Boolean> get() = operations.busy
     val operationError: StateFlow<SettingsOperationError?> get() = operations.error
     val restoreReport: StateFlow<String?> get() = operations.restoreReport
+
+    private val _restorePreview = MutableStateFlow<RestorePreviewInfo?>(null)
+    internal val restorePreview: StateFlow<RestorePreviewInfo?> = _restorePreview.asStateFlow()
+
+    fun clearRestorePreview() {
+        _restorePreview.value = null
+    }
+
+    /**
+     * Reads only the picked archive's manifest and the current library counts.
+     * Nothing is wiped here: the learner decides after seeing both sides. A
+     * failed read surfaces as a normal Backup & data error instead of leaving
+     * the confirmation with blank, misleading details.
+     */
+    fun prepareRestore(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val info = withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val name = uri.lastPathSegment?.substringAfterLast('/') ?: "backup.zip"
+                    val input = app.contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException(msg(R.string.final_read_file_failed))
+                    val manifest = input.use { stream ->
+                        McqBackupFormat.readManifest(
+                            boundedStream(stream, limit = com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES)
+                        )
+                    }
+                    val db = repository.db()
+                    RestorePreviewInfo(
+                        fileName = name,
+                        exportedAt = manifest.exportedAt,
+                        papers = manifest.papers,
+                        questions = manifest.questions,
+                        reviews = manifest.reviews,
+                        currentPapers = db.paperDao().getAll().size,
+                        currentQuestions = db.questionDao().countQuestions(),
+                        currentReviews = db.reviewLogDao().countAll()
+                    )
+                }
+                _restorePreview.value = info
+            } catch (e: Exception) {
+                Logger.e("SETTINGS", "Could not read backup manifest", e)
+                operations.fail(
+                    R.string.restore_failed,
+                    msg(R.string.final_restore_failed)
+                )
+            }
+        }
+    }
 
     private val _shareRequest = MutableStateFlow<ShareRequest?>(null)
     internal val shareRequest: StateFlow<ShareRequest?> = _shareRequest.asStateFlow()
@@ -826,6 +893,23 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Actionable, localized copy for a backup that would exceed a restore cap. */
+    private fun backupTooLargeMessage(e: BackupTooLargeException): String {
+        val bytes = if (e.entry) {
+            com.mcqapp.data.SafeZip.MAX_ENTRY_BYTES
+        } else {
+            com.mcqapp.data.SafeZip.MAX_TOTAL_BYTES
+        }
+        return msg(
+            if (e.entry) {
+                R.string.data_honesty_backup_entry_too_large
+            } else {
+                R.string.data_honesty_backup_too_large
+            },
+            (bytes / (1024 * 1024)).toInt()
+        )
+    }
+
     fun exportAll(uri: Uri) {
         viewModelScope.launch {
             operations.begin()
@@ -927,88 +1011,92 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     // stall every Settings write behind it), so the check is
                     // after it instead: an unchanged guard means the two halves
                     // still describe one instant.
-                    val output = app.contentResolver.openOutputStream(uri)
-                    if (output == null) {
+                    // The write can take minutes; the study section stays
+                    // interactive throughout. If a cut save or a rule switch
+                    // landed in it, these settings and those rows describe two
+                    // different rules and a restore would trust the pair it
+                    // finds. The document is ours (the picker just created it),
+                    // so any refusal or write failure drops it and a retry
+                    // produces a consistent one — a truncated zip must never be
+                    // left behind looking like a backup.
+                    val wrote = writeBackupOrDrop(
+                        open = { app.contentResolver.openOutputStream(uri) },
+                        delete = { deletePickedDocument(app, uri) },
+                        write = { out ->
+                            McqBackupFormat.writeTo(
+                                output = out,
+                                manifest = manifest,
+                                content = { w ->
+                                    // The zip carries the rows verbatim in
+                                    // study.json, so the question-keyed map would
+                                    // only duplicate them.
+                                    com.mcqapp.data.io.Exporter(db)
+                                        .exportAllTo(w, withScheduling = false)
+                                },
+                                study = { w ->
+                                    val source = com.mcqapp.data.backup.BackupSource(db)
+                                    McqBackupFormat.writeStudyRows(
+                                        w = w,
+                                        cardState = { emit -> source.emitCards(emit) },
+                                        reviewLog = { emit -> source.emitReviews(emit) },
+                                        paperCreated = paperCreated,
+                                        inProgressTest = inProgressTest,
+                                        panels = source.panels(),
+                                        blueprints = source.backupBlueprints(),
+                                        gradingVersions = source.gradingVersions(),
+                                        studySessions = source.studySessions()
+                                    )
+                                },
+                                settings = settings
+                            )
+                        },
+                        verify = {
+                            if (!repository.settingsUnchangedSince(settings)) {
+                                Logger.w(
+                                    "SETTINGS",
+                                    "Grading settings moved during the backup; dropping $uri"
+                                )
+                                throw IllegalStateException(BACKUP_RULE_MOVED)
+                            }
+                        }
+                    )
+                    if (!wrote) {
                         operations.fail(
                             R.string.backup_failed,
                             msg(R.string.final_open_for_write_failed)
                         )
                         return@withContext
                     }
-                    output.use { out ->
-                        McqBackupFormat.writeTo(
-                            output = out,
-                            manifest = manifest,
-                            content = { w ->
-                                // The zip carries the rows verbatim in
-                                // study.json, so the question-keyed map would
-                                // only duplicate them.
-                                com.mcqapp.data.io.Exporter(db)
-                                    .exportAllTo(w, withScheduling = false)
-                            },
-                            study = { w ->
-                                val source = com.mcqapp.data.backup.BackupSource(db)
-                                McqBackupFormat.writeStudyRows(
-                                    w = w,
-                                    cardState = { emit -> source.emitCards(emit) },
-                                    reviewLog = { emit -> source.emitReviews(emit) },
-                                    paperCreated = paperCreated,
-                                    inProgressTest = inProgressTest,
-                                    panels = source.panels(),
-                                    blueprints = source.backupBlueprints(),
-                                    gradingVersions = source.gradingVersions(),
-                                    studySessions = source.studySessions()
-                                )
-                            },
-                            settings = settings
-                        )
-                    }
-                    // The stream above can take minutes; the study section
-                    // stays interactive throughout. If a cut save or a rule
-                    // switch landed in it, these settings and those rows
-                    // describe two different rules and a restore would trust
-                    // the pair it finds. Refuse the file rather than hand the
-                    // learner a backup that lies: the document is ours (the
-                    // picker just created it), so drop it and let a retry
-                    // produce a consistent one.
-                    if (!repository.settingsUnchangedSince(settings)) {
-                        Logger.w(
-                            "SETTINGS",
-                            "Grading settings moved during the backup; dropping $uri"
-                        )
-                        // A document URI is deleted through the provider's own
-                        // call, not ContentResolver.delete: DocumentsProvider
-                        // does not implement the latter.
-                        runCatching {
-                            if (android.provider.DocumentsContract.isDocumentUri(app, uri)) {
-                                android.provider.DocumentsContract.deleteDocument(
-                                    app.contentResolver,
-                                    uri
-                                )
-                            } else {
-                                app.contentResolver.delete(uri, null, null)
-                            }
-                        }.onFailure { Logger.w("SETTINGS", "Could not drop $uri", it) }
-                        throw IllegalStateException(BACKUP_RULE_MOVED)
-                    }
                     Logger.i("SETTINGS", "Backup written (streamed)")
                 }
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Backup failed", e)
-                operations.fail(
-                    R.string.backup_failed,
-                    msg(
-                        if (e.message == BACKUP_RULE_MOVED) {
-                            R.string.final_backup_rule_moved
-                        } else {
-                            R.string.final_backup_failed
-                        }
-                    )
-                )
+                // A backup beyond the restore caps is refused with the concrete
+                // limit and a way out — "generic failure" left the learner with
+                // no idea why a large library could not be backed up.
+                val message = when {
+                    e.message == BACKUP_RULE_MOVED -> msg(R.string.final_backup_rule_moved)
+                    e is BackupTooLargeException -> backupTooLargeMessage(e)
+                    else -> msg(R.string.final_backup_failed)
+                }
+                operations.fail(R.string.backup_failed, message)
             } finally {
                 // H4: the original fix was this `finally`; keep clearing busy here.
                 operations.finish()
             }
+        }
+    }
+
+    /**
+     * Drops a document the backup picker created. A document URI is deleted
+     * through the provider's own call, not `ContentResolver.delete`:
+     * `DocumentsProvider` does not implement the latter.
+     */
+    private fun deletePickedDocument(app: Application, uri: Uri) {
+        if (android.provider.DocumentsContract.isDocumentUri(app, uri)) {
+            android.provider.DocumentsContract.deleteDocument(app.contentResolver, uri)
+        } else {
+            app.contentResolver.delete(uri, null, null)
         }
     }
 
@@ -1031,6 +1119,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val intent = try {
                 build()
+            } catch (e: BackupTooLargeException) {
+                operations.fail(failureTitleRes, backupTooLargeMessage(e))
+                null
             } finally {
                 operations.finish()
             }
@@ -1051,7 +1142,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return withContext(Dispatchers.IO) {
             try {
                 val app = getApplication<Application>()
-                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcq-export.json")
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir, stampedFileName("mcq-export", "json")
+                )
                 java.io.FileOutputStream(file).use { out ->
                     Exporter(repository.db()).exportAllTo(
                         java.io.BufferedWriter(java.io.OutputStreamWriter(out, Charsets.UTF_8), 1 shl 14)
@@ -1075,7 +1168,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return withContext(Dispatchers.IO) {
             try {
                 val app = getApplication<Application>()
-                val file = com.mcqapp.util.nextSharedFile(app.cacheDir, "mcqapp-backup.zip")
+                val file = com.mcqapp.util.nextSharedFile(
+                    app.cacheDir, stampedFileName("mcqapp-backup", "zip")
+                )
                 val appVersion = try {
                     app.packageManager.getPackageInfo(app.packageName, 0).versionName
                 } catch (_: Exception) {
@@ -1139,6 +1234,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
                 Logger.i("SETTINGS", "Shared backup '${file.name}' (${file.length()} bytes)")
                 com.mcqapp.util.shareIntent(app, file, "application/zip")
+            } catch (e: BackupTooLargeException) {
+                // Let share() map this to the actionable cap message instead of
+                // the generic "share failed".
+                Logger.e("SETTINGS", "Share backup too large", e)
+                throw e
             } catch (e: Exception) {
                 Logger.e("SETTINGS", "Share backup failed", e)
                 null

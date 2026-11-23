@@ -9,6 +9,7 @@ import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.Logger
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -64,7 +65,10 @@ fun isDocxArchive(bytes: ByteArray): Boolean {
             }
             false
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        // A malformed or truncated ZIP means "not a .docx"; the caller tries
+        // the other readers. Worth one diagnostic, not one per picked file.
+        Logger.warnOnce("DOCX", "Could not inspect a picked archive as a .docx", e)
         false
     }
 }
@@ -119,12 +123,19 @@ private fun preferPayload(
     if (payloadJson == null) return visible
     val payload = try {
         LegacyParser.parse(payloadJson)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        // A payload that no longer parses is stale by definition. We import
+        // the visible text, but the reason must be observable — otherwise a
+        // writer regression looks exactly like a user-edited document.
+        Logger.warnOnce("DOCX", "The hidden question data is unreadable; using the visible markers", e)
         return visible
     }
     val visibleFile = try {
         LegacyParser.parse(visible.json)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        // The visible markers themselves failed to parse: a quiet return here
+        // hid a real parser bug behind a successful-looking import.
+        Logger.warnOnce("DOCX", "The visible markers could not be parsed for payload comparison", e)
         return visible
     }
     val payloadTitle = payload.papers.firstOrNull()?.title
@@ -133,7 +144,7 @@ private fun preferPayload(
     val visibleQuestions = visibleFile.papers
         .flatMap { it.categories.flatMap { c -> c.questions } + it.questions }
     fun stale(reason: String): DocxParseResult {
-        com.mcqapp.util.Logger.w(
+        Logger.warnOnce(
             "DOCX",
             "payload stale ($reason): payloadQs=${payloadQuestions.size} visibleQs=${visibleQuestions.size} " +
                 "payloadTitle='$payloadTitle' visibleTitle='${visible.paperTitle}'"

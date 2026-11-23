@@ -182,7 +182,12 @@ fun StatsScreen(
                                 )
                             }
                             StatsViewModel.Tab.RETENTION -> state.retention?.let { retention ->
-                                RetentionSection(bundle = retention)
+                                RetentionSection(
+                                    bundle = retention,
+                                    onOpenCard = { ref ->
+                                        openCard(ref.paperId, ref.questionId)
+                                    }
+                                )
                             }
                             StatsViewModel.Tab.WORKLOAD -> state.workload?.let { data ->
                                 WorkloadSection(
@@ -206,7 +211,10 @@ fun StatsScreen(
                                 GuessingSection(
                                     bundle = data,
                                     questionText = questionText,
-                                    onOpenCard = { openCard(it.paperId, it.questionId) }
+                                    onOpenCard = { openCard(it.paperId, it.questionId) },
+                                    onOpenTopicCard = { ref ->
+                                        openCard(ref.paperId, ref.questionId)
+                                    }
                                 )
                             }
                             StatsViewModel.Tab.TESTS -> state.testProgress?.let { data ->

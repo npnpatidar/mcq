@@ -34,6 +34,15 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
     val attempts: StateFlow<List<Attempt>> = repository.observeAttempts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /**
+     * A saved, unfinished test also belongs on History: a learner looking at
+     * past attempts is exactly the one who may want to finish the current one
+     * before starting another. Re-read on every resume for the same reason as
+     * the top lists.
+     */
+    private val _unfinishedTest = MutableStateFlow<com.mcqapp.domain.UnfinishedTest?>(null)
+    val unfinishedTest: StateFlow<com.mcqapp.domain.UnfinishedTest?> = _unfinishedTest.asStateFlow()
+
     private val _hardest = MutableStateFlow<List<QuestionStats.Stat>>(emptyList())
     val hardest: StateFlow<List<QuestionStats.Stat>> = _hardest.asStateFlow()
 
@@ -45,6 +54,14 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         refresh()
+        refreshUnfinishedTest()
+    }
+
+    /** Re-reads the one saved session; the single slot can change off-screen. */
+    fun refreshUnfinishedTest() {
+        viewModelScope.launch {
+            _unfinishedTest.value = runCatching { repository.unfinishedTest() }.getOrNull()
+        }
     }
 
     /**
@@ -61,6 +78,7 @@ class HistoryViewModel(application: Application) : AndroidViewModel(application)
     fun refresh() {
         viewModelScope.launch {
             _statsState.update { it.copy(loading = true, error = null) }
+            refreshUnfinishedTest()
             try {
                 // Read the maintained lifetime aggregate instead of mapping
                 // every result row (option and element JSON included) into

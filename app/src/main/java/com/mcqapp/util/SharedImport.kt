@@ -36,9 +36,37 @@ data class SharedImportRequest(
  */
 data class SharedImportError(val resId: Int, val args: List<Any> = emptyList())
 
+/**
+ * Plain text shared from another app to be captured as a flashcard. Files and
+ * bank-shaped text still go through [SharedImportRequest] and the import flow;
+ * everything else lands here so a highlighted sentence can become a card in
+ * two fields instead of an import preview.
+ */
+data class SharedTextCapture(val text: String)
+
+/** A shared snippet is a bank when it arrives as JSON or a flat CSV/TSV header. */
+internal fun sharedTextIsBank(text: String): Boolean {
+    val head = text.trimStart().take(400)
+    return head.startsWith("{") || head.startsWith("[") ||
+        head.startsWith("question", ignoreCase = true)
+}
+
 object SharedImport {
     private val _pending = MutableStateFlow<SharedImportRequest?>(null)
     val pending: StateFlow<SharedImportRequest?> = _pending.asStateFlow()
+
+    private val _pendingText = MutableStateFlow<SharedTextCapture?>(null)
+    val pendingText: StateFlow<SharedTextCapture?> = _pendingText.asStateFlow()
+
+    fun requestText(text: String) {
+        _pendingText.value = SharedTextCapture(text)
+    }
+
+    fun consumeText(): SharedTextCapture? {
+        val value = _pendingText.value
+        _pendingText.value = null
+        return value
+    }
 
     private val _error = MutableStateFlow<SharedImportError?>(null)
     val error: StateFlow<SharedImportError?> = _error.asStateFlow()

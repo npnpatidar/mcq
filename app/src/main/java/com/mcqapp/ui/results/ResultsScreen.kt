@@ -284,6 +284,34 @@ fun ResultsScreen(
         val filterValue = state.filter
         val bookmarked = state.bookmarked
         val report = state.report
+        // One action handler for both the compact hero at the top and the full
+        // list further down, so a tap on either lands on exactly the same route.
+        fun onAction(action: RecommendedAction) {
+            when (action.kind) {
+                RecommendedAction.Kind.STUDY -> {
+                    val plan = action.relaunch ?: RelaunchPlanner.from(report!!.attempt)
+                    navController.navigate(
+                        com.mcqapp.ui.navigation.studyRoute(plan.paperId, plan.scopeCategoryIds)
+                    )
+                }
+                RecommendedAction.Kind.TEST -> {
+                    val plan = action.relaunch ?: RelaunchPlanner.from(report!!.attempt)
+                    navController.navigate(
+                        com.mcqapp.ui.navigation.testRoute(
+                            paperId = plan.paperId,
+                            categoryIds = plan.scopeCategoryIds,
+                            minutes = plan.minutes,
+                            type = (action.testType ?: TestType.RANDOM).name,
+                            count = action.testCount,
+                            exclusion = plan.exclusionMode,
+                            breadth = plan.breadth,
+                            variant = plan.variant.orEmpty()
+                        )
+                    )
+                }
+                RecommendedAction.Kind.REVIEW -> viewModel.updateFilter(action.filter ?: ReviewFilters.ALL)
+            }
+        }
         val showDwell = report?.timing?.hasDwell ?: (state.aggregates.dwellCount > 0)
         val ungradedCount = report?.score?.ungraded ?: state.aggregates.ungraded
         LazyColumn(
@@ -306,6 +334,14 @@ fun ResultsScreen(
                 }
             }
             if (report != null) {
+                // Finding 8: the recommendation is the first thing a learner
+                // reads, not a section they have to scroll to find. A clean run
+                // still has the engine's fallback action here.
+                if (report.actions.isNotEmpty()) {
+                    item(contentType = "next-step") {
+                        NextStepHero(report = report, onAction = ::onAction)
+                    }
+                }
                 item(contentType = "meaning") { MeaningCard(report) }
                 if (report.guessing != null) {
                     item(contentType = "guessing") { GuessingCard(report) }
@@ -339,36 +375,7 @@ fun ResultsScreen(
                 }
                 if (report.actions.isNotEmpty()) {
                     item(contentType = "actions") {
-                        ActionsCard(
-                            report = report,
-                            onStudy = { action ->
-                                val plan = action.relaunch ?: RelaunchPlanner.from(report.attempt)
-                                navController.navigate(
-                                    com.mcqapp.ui.navigation.studyRoute(plan.paperId, plan.scopeCategoryIds)
-                                )
-                            },
-                            onTest = { action ->
-                                val plan = action.relaunch ?: RelaunchPlanner.from(report.attempt)
-                                // R4: the attempt stores neither minutes nor
-                                // breadth, so this is a fresh run using the
-                                // recommendation's type/count and the report's
-                                // scope — not a replay of the exact original
-                                // time/breadth. The copy below says so.
-                                navController.navigate(
-                                    com.mcqapp.ui.navigation.testRoute(
-                                        paperId = plan.paperId,
-                                        categoryIds = plan.scopeCategoryIds,
-                                        minutes = plan.minutes,
-                                        type = (action.testType ?: TestType.RANDOM).name,
-                                        count = action.testCount,
-                                        exclusion = plan.exclusionMode,
-                                        breadth = plan.breadth,
-                                        variant = plan.variant.orEmpty()
-                                    )
-                                )
-                            },
-                            onReview = { filter -> viewModel.updateFilter(filter) }
-                        )
+                        ActionsCard(report = report, onAction = ::onAction)
                     }
                 }
             }
@@ -394,6 +401,12 @@ fun ResultsScreen(
                         FilterChip(
                             selected = filterValue == key,
                             onClick = { viewModel.updateFilter(key) },
+                            // The chip's label is also a row's verdict word
+                            // ("Skipped" appears on a skipped question and on
+                            // this chip), so text alone cannot address the
+                            // chip. The tag is the filter key, the same stable
+                            // token the paging source compares.
+                            modifier = Modifier.testTag("results-filter-$key"),
                             label = { Text(stringResource(key.labelRes)) }
                         )
                     }
@@ -640,17 +653,24 @@ private fun MeaningCard(report: TestReport) {
                     style = MaterialTheme.typography.bodySmall
                 )
                 val delta = score.percentage - previous.percentage
+                // One rule, one wording: [TestReport.trendOf] calls the same
+                // helper for its verdict, so the header and the trend card can
+                // no longer call the same pair of attempts differently.
+                val withinNoise = TestStatistics.deltaWithinNoise(
+                    delta, margin, previous.marginPoints
+                )
                 Text(
                     stringResource(
-                        R.string.report_delta,
-                        if (delta >= 0) "+" else "",
-                        delta.roundToInt(),
+                        R.string.test_ux_delta_line,
+                        if (delta >= 0) "+" else "−",
+                        abs(delta).roundToInt(),
                         stringResource(
-                            if (abs(delta) <= margin) R.string.report_delta_inside
-                            else R.string.report_delta_outside
+                            if (withinNoise) R.string.test_ux_delta_within
+                            else R.string.test_ux_delta_beyond
                         )
                     ),
-                    style = MaterialTheme.typography.bodySmall
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("results-delta-verdict")
                 )
             } else if (report.comparable) {
                 Text(
@@ -926,12 +946,48 @@ private fun TimingCard(report: TestReport) {
     }
 }
 
+/**
+ * The top-of-results next step. It reuses the exact same title, evidence and
+ * handler as the full "What to do next" card, so there is one recommendation
+ * and no second wording to drift. The fallback rule guarantees it exists even
+ * when a clean run fired no evidence-specific rule.
+ */
+@Composable
+private fun NextStepHero(
+    report: TestReport,
+    onAction: (RecommendedAction) -> Unit
+) {
+    val action = report.actions.firstOrNull() ?: return
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("results-next-step")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                stringResource(R.string.test_ux_next_step),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(actionTitle(action.rule), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                actionEvidence(report, action.rule),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { onAction(action) }) {
+                Text(stringResource(R.string.test_ux_next_step_go))
+            }
+        }
+    }
+}
+
 @Composable
 private fun ActionsCard(
     report: TestReport,
-    onStudy: (RecommendedAction) -> Unit,
-    onTest: (RecommendedAction) -> Unit,
-    onReview: (String) -> Unit
+    onAction: (RecommendedAction) -> Unit
 ) {
     ReportSection(R.string.report_actions_title) {
         report.actions.forEachIndexed { index, action ->
@@ -947,16 +1003,7 @@ private fun ActionsCard(
                     color = MaterialTheme.colorScheme.outline
                 )
                 Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = {
-                        when (action.kind) {
-                            RecommendedAction.Kind.STUDY -> onStudy(action)
-                            RecommendedAction.Kind.TEST -> onTest(action)
-                            RecommendedAction.Kind.REVIEW ->
-                                onReview(action.filter ?: ReviewFilters.ALL)
-                        }
-                    }
-                ) {
+                Button(onClick = { onAction(action) }) {
                     Text(
                         stringResource(
                             when (action.kind) {
@@ -1376,9 +1423,11 @@ private fun TrendCard(report: TestReport) {
             )
             Text(
                 stringResource(
-                    if (trend.withinNoise) R.string.report_trend_noise else R.string.report_trend_holds
+                    if (trend.withinNoise) R.string.test_ux_delta_within
+                    else R.string.test_ux_delta_beyond
                 ),
-                style = MaterialTheme.typography.labelSmall
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.testTag("results-trend-verdict")
             )
             if (trend.freshSample) {
                 Text(
@@ -1478,6 +1527,32 @@ private fun ResultCard(
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Finding 7: a comprehension question's stem is meaningless without
+            // its passage. The passage is resolved live by question id when the
+            // page loads (no result schema column), and sits above the stem.
+            val passage = result.passage
+            if (passage != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("result-passage")
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            passage.title.ifBlank { stringResource(R.string.test_ux_passage_label) },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        ContentElements(
+                            passage.elements,
+                            textStyle = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     stringResource(R.string.editor_index, index),

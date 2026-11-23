@@ -25,6 +25,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -32,6 +34,7 @@ import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.SelectAll
@@ -91,6 +94,8 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.clampMoveTarget
+import com.mcqapp.data.repository.reachableMoveRange
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.isFlashcard
@@ -102,6 +107,26 @@ import com.mcqapp.util.ContentElements
 import com.mcqapp.util.parseNonNegativeDecimal
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+
+/**
+ * Stable identity for a duplicate group's keeper choice. `contentHash` is NOT
+ * unique: `groupDuplicates` confirms candidates with an element-level
+ * fingerprint after the hash has narrowed them, so two unrelated groups can
+ * share one stale hash. Keying the keepers by hash made picking a keeper in one
+ * group silently change the keeper of every other group with that hash.
+ */
+internal fun duplicateGroupKeeperKey(questionIds: Collection<String>): String =
+    questionIds.sorted().joinToString("\u0000")
+
+/**
+ * Short name for one duplicate candidate, used on its keeper chip's content
+ * description and in the merge action. A blank preview must fall back to the
+ * id, otherwise every unloaded candidate reads as the same empty label.
+ */
+internal fun duplicateCandidatePreview(preview: String?, id: String): String {
+    val text = preview?.takeUnless { it.isNullOrBlank() }?.trim() ?: id
+    return if (text.length > 24) text.take(23) + "…" else text
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -168,9 +193,37 @@ fun BrowseScreen(
         R.plurals.r2_browse_question_count, exportIds.size, exportIds.size
     )
     val moveCollisionToast = stringResource(R.string.r2_browse_move_collision_toast)
+    val undoLabel = stringResource(R.string.undo)
+    // Resolved in composition: the snackbar lambdas below are not @Composable.
+    val bookmarkAddedText = stringResource(R.string.browse_bulk_bookmark)
+    val assignText = stringResource(R.string.browse_bulk_assign_passage)
+    val unassignText = stringResource(R.string.browse_bulk_unassign_passage)
+    val mergeText = stringResource(R.string.duplicates_merge_history)
+    val deleteOthersText = stringResource(R.string.duplicates_delete_others)
+    val deletedOneText = stringResource(R.string.browse_single_deleted)
 
     val error by viewModel.error.collectAsStateWithLifecycle()
     val moveAffectedCount by viewModel.moveAffectedCount.collectAsStateWithLifecycle()
+    val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
+    val exportProgress by viewModel.exportProgress.collectAsStateWithLifecycle()
+    val isExporting by viewModel.isExporting.collectAsStateWithLifecycle()
+    val duplicateGroups by viewModel.duplicateGroups.collectAsStateWithLifecycle()
+    val duplicatesLoading by viewModel.duplicatesLoading.collectAsStateWithLifecycle()
+    val duplicatePreviews by viewModel.duplicatePreviews.collectAsStateWithLifecycle()
+    val allPassages by viewModel.allPassages.collectAsStateWithLifecycle()
+
+    // Range selection: the first tap in range mode sets the anchor, the next
+    // selects everything between them (a file-manager gesture, no modifier key
+    // needed on a phone). Invert works over the visible window.
+    var rangeAnchor by rememberSaveable { mutableStateOf<String?>(null) }
+    var rangeMode by rememberSaveable { mutableStateOf(false) }
+    var showAssignDialog by remember { mutableStateOf(false) }
+    var showDuplicatesDialog by remember { mutableStateOf(false) }
+    var unassignMode by remember { mutableStateOf(false) }
+    var movePositionId by remember { mutableStateOf<String?>(null) }
+    var positionText by remember { mutableStateOf("") }
+    var duplicateKeepers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var resetCards by remember { mutableStateOf<List<com.mcqapp.data.repository.ResetCard>>(emptyList()) }
 
     // Shared by the export dialog's own finish and the one-shot share-result
     // collector, so closing on success is always done in one place (B3).
@@ -265,6 +318,9 @@ fun BrowseScreen(
         com.mcqapp.data.export.ExportFormat.APKG -> exportApkgLauncher
         com.mcqapp.data.export.ExportFormat.DOCX -> exportDocxLauncher
     }
+    // Select-mode's secondary actions share one overflow menu; keeping it in
+    // state here means a rotation does not leave a menu hanging over the list.
+    var selectOverflowOpen by remember { mutableStateOf(false) }
     var showBulkDialog by remember { mutableStateOf(false) }
     var bulkMarks by remember { mutableStateOf("") }
     var bulkTags by remember { mutableStateOf("") }
@@ -297,10 +353,101 @@ fun BrowseScreen(
                 },
                 actions = {
                     if (selectionMode) {
-                        // Select all in the current queue. The button was
-                        // asked for as an icon, alongside the selection
-                        // actions, and it resolves the live filter so a
-                        // selection never includes rows outside the list.
+                        // Twelve text buttons in the top bar pushed Export and
+                        // Delete off the right edge of a phone. One labelled
+                        // overflow holds the secondary actions; the primary set
+                        // below is short and stays on screen (TopAppBar places
+                        // the last actions closest to the edge). All labels and
+                        // tags remain reachable — only their location changed.
+                        IconButton(
+                            onClick = { selectOverflowOpen = true },
+                            modifier = Modifier.testTag("browse-select-overflow")
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.of_more_actions)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = selectOverflowOpen,
+                            onDismissRequest = { selectOverflowOpen = false }
+                        ) {
+                            // Range mode and invert work over the rows the
+                            // window currently holds, so a giant paper never
+                            // has to materialise its whole list to select a block.
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_select_range)) },
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    rangeMode = !rangeMode
+                                    rangeAnchor = null
+                                },
+                                modifier = Modifier.testTag("browse-select-range")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_invert_selection)) },
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    selectedIds = viewModel.invertSelection(selectedIds)
+                                },
+                                modifier = Modifier.testTag("browse-select-invert")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_bookmark)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.setBookmarks(selectedIds, true) { changed ->
+                                        if (changed > 0) sendMessage(
+                                            UiMessage(bookmarkAddedText, UiMessageTone.Success)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("browse-select-bookmark")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_duplicate)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.bulkDuplicate(selectedIds) { done ->
+                                        if (done > 0) sendMessage(
+                                            UiMessage(
+                                                platformResources.getQuantityString(
+                                                    R.plurals.questions_copied_count, done, done
+                                                ),
+                                                UiMessageTone.Success
+                                            )
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("browse-select-duplicate")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_assign_passage)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
+                                    unassignMode = false
+                                    showAssignDialog = true
+                                },
+                                modifier = Modifier.testTag("browse-select-assign")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_unassign_passage)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
+                                    unassignMode = true
+                                    showAssignDialog = true
+                                },
+                                modifier = Modifier.testTag("browse-select-unassign")
+                            )
+                        }
+                        // Select all in the current queue: resolves the live
+                        // filter so a selection never includes hidden rows.
                         IconButton(
                             onClick = {
                                 viewModel.selectAllInScope { ids -> selectedIds = ids }
@@ -351,7 +498,14 @@ fun BrowseScreen(
                             enabled = selectedIds.isNotEmpty()
                         ) { Text(stringResource(R.string.delete)) }
                     } else {
-                        TextButton(onClick = { selectionMode = true }) { Text(stringResource(R.string.select)) }
+                        TextButton(onClick = {
+                            showDuplicatesDialog = true
+                            viewModel.loadDuplicates()
+                        }) { Text(stringResource(R.string.duplicates_title)) }
+                        TextButton(onClick = {
+                            rangeMode = false
+                            selectionMode = true
+                        }) { Text(stringResource(R.string.select)) }
                     }
                 }
             )
@@ -509,6 +663,10 @@ fun BrowseScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                // Stable anchor for tests that must scroll a row into view: a
+                // lazy list only composes what the viewport holds, so a row
+                // below the fold has no semantics until the list is scrolled.
+                .testTag("browse-list")
                 .padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -715,6 +873,13 @@ fun BrowseScreen(
                         categoryTitle = categoryTitles[question.categoryId],
                         selectionMode = selectionMode,
                         selected = question.id in selectedIds,
+                        bookmarked = question.id in bookmarkedIds,
+                        onToggleBookmark = { viewModel.toggleBookmark(question.id) },
+                        onMoveToPosition = {
+                            movePositionId = question.id
+                            positionText = (state.categoryContexts[question.categoryId]?.refs
+                                ?.indexOfFirst { it.id == question.id } ?: 0).plus(1).toString()
+                        },
                         highlighted = question.id == highlightId,
                         moveUpIsCategory = isCategoryFirst,
                         moveDownIsCategory = isCategoryLast,
@@ -737,8 +902,18 @@ fun BrowseScreen(
                             else moveOrder(false)
                         },
                         onToggleSelect = {
-                            selectedIds = selectedIds.toMutableSet().apply {
-                                if (!add(question.id)) remove(question.id)
+                            if (rangeMode) {
+                                if (rangeAnchor == null) {
+                                    rangeAnchor = question.id
+                                    selectedIds = selectedIds + question.id
+                                } else {
+                                    selectedIds = viewModel.selectRange(rangeAnchor, question.id, selectedIds)
+                                    rangeAnchor = null
+                                }
+                            } else {
+                                selectedIds = selectedIds.toMutableSet().apply {
+                                    if (!add(question.id)) remove(question.id)
+                                }
                             }
                         },
                         onEdit = {
@@ -861,10 +1036,24 @@ fun BrowseScreen(
             AlertDialog(
                 onDismissRequest = { pendingDeleteIds = null },
                 title = { Text(pluralStringResource(R.plurals.delete_n_questions, deleteCount, deleteCount)) },
-                text = { Text(stringResource(R.string.this_cannot_be_undone)) },
+                text = { Text(stringResource(R.string.browse_delete_with_undo, deleteCount)) },
                 confirmButton = {
                     TextButton(onClick = {
-                        viewModel.deleteQuestions(pendingDelete.orEmpty())
+                        viewModel.deleteQuestions(pendingDelete.orEmpty()) { deleted ->
+                            if (deleted > 0) {
+                                sendMessage(
+                                    UiMessage(
+                                        text = if (deleted == 1) deletedOneText
+                                        else platformResources.getQuantityString(
+                                            R.plurals.browse_bulk_deleted, deleted, deleted
+                                        ),
+                                        tone = UiMessageTone.Info,
+                                        actionLabel = undoLabel,
+                                        onAction = { viewModel.undoDelete() }
+                                    )
+                                )
+                            }
+                        }
                         selectedIds = emptySet()
                         selectionMode = false
                         pendingDeleteIds = null
@@ -906,12 +1095,25 @@ fun BrowseScreen(
             }
 
             AlertDialog(
-                onDismissRequest = { showExportDialog = false },
+                onDismissRequest = {
+                    if (isExporting) viewModel.cancelExport()
+                    showExportDialog = false
+                },
                 title = { Text(pluralStringResource(R.plurals.export_n_selected, exportIds.size, exportIds.size)) },
                 text = {
                     // All formats must be reachable on a phone: an unscrollable
                     // column leaves the lower ones off-screen and untappable.
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        if (isExporting) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(exportProgress ?: stringResource(R.string.sharing))
+                            }
+                        }
                         if (isSharing) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -958,11 +1160,11 @@ fun BrowseScreen(
                 },
                 confirmButton = {
                     Row {
-                        TextButton(enabled = !isSharing, onClick = { saveSelectionToFile() }) {
+                        TextButton(enabled = !isSharing && !isExporting, onClick = { saveSelectionToFile() }) {
                             Text(stringResource(R.string.share_save))
                         }
                         TextButton(
-                            enabled = !isSharing,
+                            enabled = !isSharing && !isExporting,
                             onClick = { viewModel.shareSelection(exportIds, exportTitle(), exportFormat) }
                         ) {
                             Text(stringResource(R.string.share_share))
@@ -970,8 +1172,13 @@ fun BrowseScreen(
                     }
                 },
                 dismissButton = {
-                    TextButton(enabled = !isSharing, onClick = { showExportDialog = false }) {
-                        Text(stringResource(R.string.cancel))
+                    TextButton(
+                        onClick = {
+                            if (isExporting) viewModel.cancelExport()
+                            showExportDialog = false
+                        }
+                    ) {
+                        Text(stringResource(if (isExporting) R.string.browse_cancel_export else R.string.cancel))
                     }
                 }
             )
@@ -1141,6 +1348,277 @@ fun BrowseScreen(
                 }
             )
         }
+
+        // One reset disclosure for the whole bulk passage action, naming the
+        // cards whose study schedules it will restart (or saying none will).
+        if (showAssignDialog) {
+            AlertDialog(
+                onDismissRequest = { showAssignDialog = false },
+                title = {
+                    Text(stringResource(
+                        if (unassignMode) R.string.browse_bulk_unassign_passage
+                        else R.string.browse_bulk_assign_passage
+                    ))
+                },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            if (resetCards.isEmpty()) stringResource(R.string.browse_passage_no_reset)
+                            else stringResource(
+                                R.string.browse_passage_reset_disclosure,
+                                resetCards.take(8).joinToString(", ") { it.preview }
+                                    .let { if (resetCards.size > 8) "$it…" else it }
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        if (!unassignMode) {
+                            allPassages.forEach { passage ->
+                                TextButton(
+                                    onClick = {
+                                        viewModel.assignToPassage(selectedIds, passage.id) { ok ->
+                                            if (ok) sendMessage(
+                                                UiMessage(assignText, UiMessageTone.Success)
+                                            )
+                                        }
+                                        selectedIds = emptySet()
+                                        selectionMode = false
+                                        showAssignDialog = false
+                                    }
+                                ) {
+                                    Text(passage.title.ifBlank { stringResource(R.string.passage) }, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (unassignMode) {
+                        TextButton(onClick = {
+                            viewModel.unassignFromPassage(selectedIds) { ok ->
+                                if (ok) sendMessage(
+                                    UiMessage(unassignText, UiMessageTone.Success)
+                                )
+                            }
+                            selectedIds = emptySet()
+                            selectionMode = false
+                            showAssignDialog = false
+                        }) { Text(stringResource(R.string.apply)) }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAssignDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+
+        // "Move to position…" computes the full order once in the ViewModel and
+        // writes it once, so the group stays contiguous. The dialog advertises
+        // the positions that are actually reachable and snaps the input to one
+        // of them before asking for the write.
+        if (movePositionId != null) {
+            val moveContext = state.categoryContexts.values.firstOrNull {
+                it.refs.any { ref -> ref.id == movePositionId }
+            }
+            val moveRefs = moveContext?.refs.orEmpty()
+            val reachable = reachableMoveRange(moveRefs, movePositionId.orEmpty())
+            val rangeText = if (reachable != null) {
+                stringResource(R.string.browse_position_reachable_range, reachable.first, reachable.last)
+            } else {
+                stringResource(R.string.browse_position_range, moveRefs.size)
+            }
+            AlertDialog(
+                onDismissRequest = { movePositionId = null },
+                title = { Text(stringResource(R.string.browse_move_to_position_title)) },
+                text = {
+                    Column {
+                        Text(rangeText)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = positionText,
+                            onValueChange = { positionText = it },
+                            label = { Text(rangeText) },
+                            singleLine = true
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val id = movePositionId
+                        val categoryId = state.categoryContexts.entries
+                            .firstOrNull { it.value.refs.any { ref -> ref.id == id } }?.key
+                        val requested = positionText.toIntOrNull()?.minus(1)
+                        // Validate/clamp against the passage-group edges: asking
+                        // for the inside of a group must move to its nearest edge
+                        // and report THAT position, not the requested number.
+                        val target = if (id != null) requested?.let {
+                            clampMoveTarget(moveRefs, id, it)
+                        } else null
+                        if (id != null && categoryId != null && target != null) {
+                            viewModel.moveToPosition(id, categoryId, target) { actual ->
+                                if (actual != null) {
+                                    sendMessage(
+                                        UiMessage(
+                                            platformResources.getString(
+                                                R.string.browse_moved_to_position, actual + 1
+                                            ),
+                                            UiMessageTone.Success
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        movePositionId = null
+                    }) { Text(stringResource(R.string.apply)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { movePositionId = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+
+        // Duplicate finder: exact duplicates grouped by content hash and
+        // confirmed element-by-element. The chosen card keeps its schedule.
+        if (showDuplicatesDialog) {
+            AlertDialog(
+                onDismissRequest = { showDuplicatesDialog = false },
+                title = { Text(stringResource(R.string.duplicates_title)) },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        if (duplicatesLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        } else if (duplicateGroups.isEmpty()) {
+                            Text(stringResource(R.string.duplicates_none))
+                        } else {
+                            duplicateGroups.forEach { group ->
+                                val keeperKey = duplicateGroupKeeperKey(group.questionIds)
+                                val keeper = duplicateKeepers[keeperKey]
+                                    ?: group.questionIds.first()
+                                Text(
+                                    pluralStringResource(
+                                        R.plurals.duplicates_group_size,
+                                        group.questionIds.size, group.questionIds.size
+                                    ),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                Text(stringResource(R.string.duplicates_kept_schedule),
+                                    style = MaterialTheme.typography.labelSmall)
+                                // Side-by-side compare of the chosen keeper and
+                                // the first copy, before any delete or merge.
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    group.questionIds.take(2).forEach { id ->
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                stringResource(
+                                                    if (id == keeper) R.string.duplicates_column_original
+                                                    else R.string.duplicates_column_copy
+                                                ),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                duplicatePreviews[id].takeUnless { it.isNullOrBlank() }
+                                                    ?: id,
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+                                val keeperPreview = duplicateCandidatePreview(
+                                    duplicatePreviews[keeper], keeper
+                                )
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    group.questionIds.forEachIndexed { index, id ->
+                                        // Identical "Keep this one" chips were
+                                        // indistinguishable beyond the first two
+                                        // previews. Number every candidate and
+                                        // name it in the accessibility label.
+                                        val candidate = duplicateCandidatePreview(duplicatePreviews[id], id)
+                                        val description = stringResource(
+                                            R.string.duplicates_keep_candidate,
+                                            index + 1, candidate
+                                        )
+                                        FilterChip(
+                                            selected = id == keeper,
+                                            onClick = {
+                                                duplicateKeepers = duplicateKeepers + (keeperKey to id)
+                                            },
+                                            label = {
+                                                Text(
+                                                    stringResource(
+                                                        R.string.duplicates_keep_numbered,
+                                                        index + 1
+                                                    )
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .testTag("duplicates-keeper-chip-$index")
+                                                .semantics { contentDescription = description }
+                                        )
+                                    }
+                                }
+                                // N chips can wrap to several lines; keep the
+                                // destructive/merge actions on their own block
+                                // so they never sit off the right edge. The
+                                // merge label carries the keeper's preview, so
+                                // side by side on a phone it pushed Delete
+                                // others past the dialog's edge. Stacked, each
+                                // label wraps inside the dialog instead.
+                                Column {
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.resolveDuplicates(group, keeper, merge = true) { changed ->
+                                                if (changed > 0) sendMessage(
+                                                    UiMessage(mergeText, UiMessageTone.Success)
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("duplicates-merge")
+                                    ) {
+                                        Text(
+                                            stringResource(
+                                                R.string.duplicates_merge_history_into,
+                                                keeperPreview
+                                            )
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.resolveDuplicates(group, keeper, merge = false) { changed ->
+                                                if (changed > 0) sendMessage(
+                                                    UiMessage(deleteOthersText, UiMessageTone.Success)
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("duplicates-delete-others")
+                                    ) { Text(stringResource(R.string.duplicates_delete_others)) }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    // One way out. The groups already sit side by side in the
+                    // dialog body, so "Done" is the only exit: a second
+                    // "Cancel" beside it said the same thing twice. Back and an
+                    // outside tap still dismiss through onDismissRequest.
+                    TextButton(
+                        onClick = { showDuplicatesDialog = false },
+                        modifier = Modifier.testTag("duplicates-done")
+                    ) {
+                        Text(stringResource(R.string.duplicates_done))
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -1192,6 +1670,9 @@ private fun BrowseQuestionCard(
     question: com.mcqapp.domain.Question,
     selectionMode: Boolean = false,
     selected: Boolean = false,
+    bookmarked: Boolean = false,
+    onToggleBookmark: () -> Unit = {},
+    onMoveToPosition: () -> Unit = {},
     canMoveUp: Boolean = false,
     canMoveDown: Boolean = false,
     /** Section edges: the button moves the whole category, not the question. */
@@ -1363,6 +1844,21 @@ private fun BrowseQuestionCard(
                     }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.edit_question))
+                    }
+                    IconButton(onClick = onMoveToPosition) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.browse_move_to_position)
+                        )
+                    }
+                    IconButton(onClick = onToggleBookmark) {
+                        Icon(
+                            if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            contentDescription = stringResource(
+                                if (bookmarked) R.string.browse_remove_bookmark
+                                else R.string.browse_add_bookmark
+                            )
+                        )
                     }
                     IconButton(onClick = onDuplicate) {
                         Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.duplicate_question))

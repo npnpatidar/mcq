@@ -1,7 +1,9 @@
 package com.mcqapp.data.repository
 
 import android.content.Context
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,9 +24,16 @@ import kotlinx.coroutines.withContext
  * snapshot and the same atomic read-modify-write. Reads (`data.first()`) do not
  * need this.
  *
- * `PreferenceWritesGuardTest` fails the build if `dataStore.edit` appears
- * anywhere in `src/main` outside this file.
+ * The [DataStore] receiver is the injection seam: production reaches the
+ * process-wide store through the [Context] overload below; a test can pass a
+ * fresh store to `SettingsStore` and still go through this one write path.
+ * `PreferenceWritesGuardTest` fails the build if a direct `dataStore.edit`
+ * appears anywhere in `src/main` outside this file.
  */
-internal suspend fun Context.editPreferences(transform: suspend (MutablePreferences) -> Unit) {
-    withContext(Dispatchers.IO) { dataStore.edit(transform) }
+internal suspend fun DataStore<Preferences>.editPreferences(transform: suspend (MutablePreferences) -> Unit) {
+    withContext(Dispatchers.IO) { edit(transform) }
 }
+
+/** The production entry point: the single process-wide preferences store. */
+internal suspend fun Context.editPreferences(transform: suspend (MutablePreferences) -> Unit) =
+    dataStore.editPreferences(transform)

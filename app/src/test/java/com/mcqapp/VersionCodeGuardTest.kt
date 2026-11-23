@@ -13,6 +13,9 @@ import java.io.File
  * such a tag loudly instead of publishing a collision. Proven end to end
  * once: a local 0.0.1000 tag made `gradlew help` fail with the message.
  *
+ * INCIDENT: coerceAtMost(Int.MAX_VALUE) silently made 0.0.1000 collide with
+ * 0.1.0; the build now refuses the tag instead of publishing a bad versionCode.
+ *
  * Unit tests run with the app module as working directory.
  */
 class VersionCodeGuardTest {

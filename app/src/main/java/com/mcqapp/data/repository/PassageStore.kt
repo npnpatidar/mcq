@@ -5,6 +5,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.io.CardContent
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
@@ -80,7 +81,7 @@ internal class PassageStore(
                 // member read which block.
                 val members = db.passageDao().memberIds(id)
                 if (members.isNotEmpty()) {
-                    db.cardStateDao().deleteByQuestionsChunked(members)
+                    resetMemberSchedules(members)
                     Logger.i("REPO", "savePassage($id): content changed, reset ${members.size} card(s)")
                 }
             }
@@ -153,7 +154,15 @@ internal class PassageStore(
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
             val moved = before.values.filter { it.passageId != passageId }.map { it.id }
-            if (moved.isNotEmpty()) db.cardStateDao().deleteByQuestionsChunked(moved)
+            if (moved.isNotEmpty()) {
+                // The passage is part of the card's content hash, so the state
+                // needs the new hash — but the learner's suspend/bury flags
+                // must survive a context change, exactly like any other edit.
+                val newHashes = moved.associateWith { id ->
+                    db.questionDao().getById(id)?.let { mapper.contentHashOf(mapper.toDomain(it)) }
+                }
+                resetMemberSchedules(moved) { newHashes[it] }
+            }
             // Category first, placement second: placeWithGroup anchors within
             // the (new) category, so it must already be the passage's.
             if (passage != null) {
@@ -198,6 +207,27 @@ internal class PassageStore(
         db.questionDao().updateContentHash(questionId, mapper.contentHashOf(domain))
     }
 
+    /**
+     * Resets the schedule of cards whose prompt changed. The row is dropped —
+     * absent is what "new" means everywhere else — except for the learner's own
+     * hide flags, which are re-created as a flag-only row: deleting it silently
+     * un-suspended or un-buried the card and removed it from the unsuspend list.
+     * [newHash] may supply the card's new content hash; null keeps the stored
+     * one (a passage-body edit does not change a member's own hash).
+     */
+    private suspend fun resetMemberSchedules(
+        memberIds: Collection<String>,
+        newHash: (String) -> String? = { null }
+    ) {
+        val hidden = db.cardStateDao().getForQuestionsChunked(memberIds.toList())
+            .filter { it.suspended || it.buriedUntil != null }
+        db.cardStateDao().deleteByQuestionsChunked(memberIds)
+        hidden.forEach { state ->
+            val hash = newHash(state.questionId) ?: state.contentHash
+            db.cardStateDao().upsert(state.resetForNewContent(hash))
+        }
+    }
+
     /** Detaches every member of a passage (used before a guarded delete). */
     suspend fun unassignAll(passageId: String) {
         val members = db.passageDao().memberIds(passageId)
@@ -237,6 +267,25 @@ internal class PassageStore(
             .map { (passageId, members) -> PassageBlock(passages.getValue(passageId), members) }
             .sortedBy { it.passage.sortOrder }
     }
+}
+
+/** A card whose study schedule an assign/unassign would reset, and its preview. */
+data class ResetCard(val id: String, val preview: String)
+
+/**
+ * The subset of [questionIds] that already have a study schedule. The bulk
+ * passage actions reset those cards, so the confirmation can name exactly which
+ * ones before the write rather than saying "some cards" (single disclosure).
+ */
+internal suspend fun McqRepository.cardsWithSchedule(questionIds: Collection<String>): List<ResetCard> {
+    if (questionIds.isEmpty()) return emptyList()
+    val db = db()
+    val scheduled = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
+        .map { it.questionId }.toHashSet()
+    if (scheduled.isEmpty()) return emptyList()
+    return db.questionDao().getByIdsChunked(scheduled.toList()).map { entity ->
+        ResetCard(entity.id, entity.searchText.take(40))
+    }.sortedBy { it.preview }
 }
 
 /** A passage together with the questions that share it, in session order. */

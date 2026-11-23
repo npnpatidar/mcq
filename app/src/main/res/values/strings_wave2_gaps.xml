@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Wave 2 cross-agent gaps: strings new to this pass. Names and specifiers are mirrored in values-hi. -->
+
+    <!-- Restore completion: offered only when no restored paper can be identified. -->
+    <string name="wg_open_library">Open library</string>
+</resources>

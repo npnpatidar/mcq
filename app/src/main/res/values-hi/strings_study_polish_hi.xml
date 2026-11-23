@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One-for-one Hindi mirror of values/strings_study_polish.xml. -->
+<resources>
+    <!-- Shown once, on the card after a grade first flags it as tricky. -->
+    <string name="study_polish_leech_notice">अब इसे कठिन के रूप में चिह्नित किया गया</string>
+    <!-- A first-exposure step says Learning; a lapsed card says Relearning. -->
+    <string name="study_polish_relearning_step">चूक के बाद फिर से सीखना</string>
+    <!-- The break strip's second action: bank both clocks without ending the sitting. -->
+    <string name="study_polish_take_break">थोड़ा ब्रेक लें</string>
+    <string name="study_polish_on_break">ब्रेक पर हैं – दोनों घड़ियाँ रुकी हुई हैं</string>
+    <string name="study_polish_resume">जारी रखें</string>
+    <!-- The tricky drill deliberately walks its due leeches once per sitting. -->
+    <string name="study_polish_drill_one_pass">यह आपके कठिन कार्डों का एक दौर था।</string>
+</resources>

@@ -34,6 +34,13 @@ internal fun isRemoteImageSrc(src: String): Boolean =
     src.startsWith("http://", ignoreCase = true) ||
         src.startsWith("https://", ignoreCase = true)
 
+/**
+ * Renders a question's image. The default description is null because a
+ * decorative image should be silent — but every *content-bearing* call site must
+ * pass a localized description. Study's passage, stem, option and answer/picture
+ * sites all do; `StudyPolishStructureGuardTest` guards that so a new call cannot
+ * quietly drop its spoken description.
+ */
 @Composable
 fun QuestionImage(
     src: String?,

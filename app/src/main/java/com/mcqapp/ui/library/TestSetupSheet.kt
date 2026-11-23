@@ -1,5 +1,6 @@
 package com.mcqapp.ui.library
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -28,6 +29,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,6 +63,7 @@ import com.mcqapp.domain.TestComparability
 import com.mcqapp.domain.TestPlan
 import com.mcqapp.domain.TestSetup
 import com.mcqapp.domain.TestTime
+import com.mcqapp.domain.UnfinishedTest
 import com.mcqapp.domain.TestType
 import com.mcqapp.domain.signals.Breadth
 import com.mcqapp.domain.signals.Composition
@@ -152,6 +155,88 @@ internal fun customPoolIsFlashcardsOnly(
     preview.rawPool > 0 &&
     (type == TestType.BOOKMARKED || type == TestType.TAG ||
         type == TestType.FIXED_PANEL)
+
+/**
+ * One line of the "before you start" conditions block. [arg] is the formatted
+ * negative-marking rate; every other line is a plain resource id so the whole
+ * block follows the active locale.
+ */
+internal data class ExamConditionLine(
+    @StringRes val resId: Int,
+    val arg: String? = null
+)
+
+/** The marking rate as a short, human label (1/3, 1/4, 1/2 or a percentage). */
+internal fun negativeMarkingLabel(value: Double): String = when {
+    value <= 0.0 -> ""
+    kotlin.math.abs(value - 1.0 / 3.0) < 0.02 -> "1/3"
+    kotlin.math.abs(value - 1.0 / 4.0) < 0.02 -> "1/4"
+    kotlin.math.abs(value - 1.0 / 2.0) < 0.02 -> "1/2"
+    kotlin.math.abs(value - 1.0) < 0.02 -> "1"
+    else -> "${(value * 100).roundToInt()}%"
+}
+
+/**
+ * The exam conditions this run will actually use, in one fixed order. Strict
+ * wins over practice (a strict run hides live feedback), and every condition
+ * states both sides so the learner can tell what a toggle changes without
+ * opening Settings.
+ */
+internal fun examConditionLines(
+    strictMode: Boolean,
+    autoAdvance: Boolean,
+    practiceMode: Boolean,
+    shuffleQuestions: Boolean,
+    negativeMarking: Double
+): List<ExamConditionLine> {
+    val liveFeedback = practiceMode && !strictMode
+    return buildList {
+        add(
+            ExamConditionLine(
+                if (strictMode) R.string.test_ux_condition_strict
+                else R.string.test_ux_condition_not_strict
+            )
+        )
+        add(
+            ExamConditionLine(
+                if (autoAdvance) R.string.test_ux_condition_auto_advance
+                else R.string.test_ux_condition_no_auto_advance
+            )
+        )
+        add(
+            ExamConditionLine(
+                if (liveFeedback) R.string.test_ux_condition_practice
+                else R.string.test_ux_condition_not_practice
+            )
+        )
+        add(
+            ExamConditionLine(
+                if (shuffleQuestions) R.string.test_ux_condition_shuffle
+                else R.string.test_ux_condition_no_shuffle
+            )
+        )
+        add(
+            if (negativeMarking > 0.0) {
+                ExamConditionLine(R.string.test_ux_condition_negative, negativeMarkingLabel(negativeMarking))
+            } else {
+                ExamConditionLine(R.string.test_ux_condition_no_negative)
+            }
+        )
+    }
+}
+
+/** The 17 peer chips split into representative mocks and practice selectors. */
+internal data class TestTypeGroups(
+    val mocks: List<TestType>,
+    val practice: List<TestType>
+)
+
+internal fun groupedTestTypes(
+    types: List<TestType> = TestSetup.STARTABLE_TYPES
+): TestTypeGroups = TestTypeGroups(
+    mocks = types.filter { it.isRepresentative },
+    practice = types.filterNot { it.isRepresentative }
+)
 
 /** Which length sentence a fixed panel shows, if any. */
 internal enum class PanelLengthCopy {
@@ -269,6 +354,21 @@ internal fun TestSetupSheet(
     onUpdateBlueprint: suspend (Long, String, List<BlueprintSection>) -> Unit = { _, _, _ -> },
     /** Deletes a blueprint. */
     onDeleteBlueprint: suspend (Long) -> Unit = {},
+    /** Live exam conditions the run will use, shown before Start. */
+    strictMode: Boolean = false,
+    autoAdvance: Boolean = false,
+    practiceMode: Boolean = false,
+    shuffleQuestions: Boolean = false,
+    /** The paper's marking rate, shown as part of the conditions. */
+    negativeMarking: Double = 0.0,
+    /** The single saved session, when one exists, for the replacement notice. */
+    savedTest: UnfinishedTest? = null,
+    /** One-tap route to the screen that owns the conditions above. */
+    onOpenSettings: () -> Unit = {},
+    /** When the scope holds only flashcards, send the learner to Study instead. */
+    onStudyFlashcards: (List<String>) -> Unit = {},
+    /** Leaves the sheet so the saved session can be resumed instead. */
+    onKeepSavedTest: () -> Unit = {},
     onDismiss: () -> Unit,
     onStart: (
         type: TestType,
@@ -388,6 +488,12 @@ internal fun TestSetupSheet(
     val panelScope = rememberCoroutineScope()
     /** Null means "follow the suggested pace"; a number is the learner's own. */
     var minutesOverride by rememberSaveable { mutableStateOf<String?>(null) }
+    /**
+     * The 14 practice types are a secondary group, collapsed so the three
+     * mocks are not drowned out. The selected practice chip stays visible in
+     * the collapsed state, so its help sentence always has an anchor.
+     */
+    var showPracticeTypes by rememberSaveable { mutableStateOf(false) }
 
     // A blueprint owns its scope (plan §3 #11): selecting BLUEPRINT clears
     // the category tick-set for this sheet, and the run's scope is the
@@ -617,6 +723,27 @@ internal fun TestSetupSheet(
     } else {
         TestPlan.maxAllowedFor(available)
     }
+    /**
+     * Whether pressing Start would take a different session's slot. The notice
+     * is shown before the first answer, not after the saved answers are gone.
+     * A focus type records its targets at load, so an empty target list on this
+     * side is the "not known yet" case [TestSnapshot.matches] accepts.
+     */
+    val replacesSaved = savedTest?.let { saved ->
+        !saved.snapshot.matches(
+            paperId = paper.id,
+            categoryIds = setupCategoryIds,
+            isDrill = false,
+            mistakesOnly = false,
+            testType = type.name,
+            requestedCount = requestCount,
+            exclusionMode = exclusionMode.name,
+            targetTopicIds = emptyList(),
+            scopeKey = setupScopeKey,
+            variant = effectiveVariant
+        )
+    } ?: false
+
     val maxLengthIndex = TestPlan.LENGTHS.indexOf(maxSelectable).coerceAtLeast(0)
 
     // A restored length is clamped to the current pool (plan §10). A length
@@ -630,7 +757,14 @@ internal fun TestSetupSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Open at the expanded anchor. The setup form is taller than half a phone,
+    // so the default partial anchor clipped its own Start action (and the
+    // resolved blueprint tree) behind a drag; the sheet's viewport was taller
+    // than the part of it on screen, which also made a scrolled-to row exist
+    // but stay hidden. The learner opens this sheet to set a test up, not to
+    // peek at it, so it starts at full height.
+    val setupSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = setupSheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -652,17 +786,60 @@ internal fun TestSetupSheet(
             // --- type ---
             Text(stringResource(R.string.test_setup_type), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
+            val groups = groupedTestTypes()
+            Text(
+                stringResource(R.string.test_ux_group_mocks),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TestSetup.STARTABLE_TYPES.forEach { candidate ->
+                groups.mocks.forEach { candidate ->
                     FilterChip(
                         selected = type == candidate,
                         onClick = {
                             if (type != candidate) variant = null
                             type = candidate
                         },
-                        label = { Text(stringResource(testTypeLabelRes(candidate))) }
+                        label = { Text(stringResource(testTypeLabelRes(candidate))) },
+                        modifier = Modifier.testTag("test-setup-type-${candidate.name}")
                     )
                 }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.test_ux_group_practice),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { showPracticeTypes = !showPracticeTypes }) {
+                    Text(
+                        stringResource(
+                            if (showPracticeTypes) R.string.test_ux_practice_less
+                            else R.string.test_ux_practice_more
+                        )
+                    )
+                }
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                groups.practice
+                    .filter { showPracticeTypes || type == it }
+                    .forEach { candidate ->
+                        FilterChip(
+                            selected = type == candidate,
+                            onClick = {
+                                if (type != candidate) variant = null
+                                type = candidate
+                            },
+                            label = { Text(stringResource(testTypeLabelRes(candidate))) },
+                            modifier = Modifier.testTag("test-setup-type-${candidate.name}")
+                        )
+                    }
             }
             Text(
                 stringResource(
@@ -1179,6 +1356,56 @@ internal fun TestSetupSheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
+                // A disabled Start with only study-only cards must give a way
+                // forward: the same scope, opened in Study where cards work.
+                if (setup.flashcardsOnlyScope()) {
+                    TextButton(
+                        onClick = { onStudyFlashcards(categoryIds) },
+                        modifier = Modifier.testTag("test-setup-study-flashcards")
+                    ) {
+                        Text(stringResource(R.string.of_study_these))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // --- exam conditions (finding 1) ---
+            // The preview says *what* will be asked; this says *how* it will be
+            // run. Both are needed before Start, because strict mode and
+            // negative marking change what a score means.
+            Text(
+                stringResource(R.string.test_ux_conditions_title),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.testTag("test-setup-conditions")
+            )
+            examConditionLines(strictMode, autoAdvance, practiceMode, shuffleQuestions, negativeMarking)
+                .forEach { line ->
+                    Text(
+                        if (line.arg != null) {
+                            stringResource(line.resId, line.arg)
+                        } else {
+                            stringResource(line.resId)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            TextButton(onClick = onOpenSettings) {
+                Text(stringResource(R.string.test_ux_condition_settings))
+            }
+
+            if (replacesSaved) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.test_ux_replace_notice),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("test-setup-replace-notice")
+                )
+                TextButton(onClick = onKeepSavedTest) {
+                    Text(stringResource(R.string.test_ux_replace_keep))
+                }
             }
 
             Spacer(Modifier.height(16.dp))

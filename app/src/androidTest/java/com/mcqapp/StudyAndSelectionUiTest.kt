@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -764,6 +765,20 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Edit", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Move", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Delete", substring = false).assertIsDisplayed()
+
+        // The secondary actions share one overflow so the top bar fits a
+        // phone. They must still be reachable, not silently gone.
+        compose.onNodeWithTag("browse-select-overflow").performClick()
+        listOf(
+            R.string.browse_select_range,
+            R.string.browse_invert_selection,
+            R.string.browse_bulk_bookmark,
+            R.string.browse_bulk_duplicate,
+            R.string.browse_bulk_assign_passage,
+            R.string.browse_bulk_unassign_passage
+        ).forEach { res ->
+            compose.onNodeWithText(app.getString(res), substring = false).assertIsDisplayed()
+        }
     }
 
     /**
@@ -788,11 +803,13 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        // Delete is an icon on the card itself now; the action row can sit
-        // below the fold on the small emulator screen, so scroll it in.
+        // Destructive actions live behind the card's overflow menu; the action
+        // row can sit below the fold on the small emulator screen, so scroll
+        // the overflow in, open it, then tap its Delete item.
         compose.waitForIdle()
-        compose.onNodeWithTag("paper-delete-ui-sel").performScrollTo()
+        compose.onNodeWithTag("paper-overflow-ui-sel").performScrollTo()
         compose.waitForIdle()
+        compose.onNodeWithTag("paper-overflow-ui-sel").performClick()
         compose.onNodeWithTag("paper-delete-ui-sel").performClick()
 
         waitFor("This cannot be undone.")
@@ -1184,6 +1201,10 @@ class StudyAndSelectionUiTest {
         openDrawer("ui-scope")
         drawerNode("drawer-paper-ui-scope").performClick()
         waitForTag("drawer-cat-ui-scope-p")
+        // The nested rows must exist before the parent is ticked: they used to
+        // never render because overflow state doubled as "show children".
+        waitForTag("drawer-cat-ui-scope-ca")
+        waitForTag("drawer-cat-ui-scope-cb")
 
         drawerNode("drawer-cat-ui-scope-p").performClick()
         drawerNode("drawer-cat-ui-scope-ca").assertIsOn()
@@ -1494,6 +1515,11 @@ class StudyAndSelectionUiTest {
         waitFor("All categories")
         compose.onNodeWithText("All categories", substring = false).performClick()
         waitFor("UITest ui-cbrowse-q1?")
+        // The unfiltered list puts the other root's card first: q2 now sits
+        // below the fold on the CI AVD, and a lazy list does not compose a row
+        // it has not scrolled to. Scroll it in, then assert it is really there.
+        compose.onNodeWithTag("browse-list")
+            .performScrollToNode(hasText("UITest ui-cbrowse-q2?", substring = true))
         waitFor("UITest ui-cbrowse-q2?")
     }
 

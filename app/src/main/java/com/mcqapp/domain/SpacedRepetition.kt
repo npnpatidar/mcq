@@ -674,3 +674,29 @@ object Study {
     fun onlyLeeches(cards: List<StudyCard>): List<StudyCard> =
         cards.filter { it.reason == StudyReason.LEECH || it.state.leech }
 }
+
+/**
+ * True only on the grade that first flags a card as a leech.
+ *
+ * [CardState.leech] is sticky, so comparing the two states is the whole
+ * crossing rule: a card already flagged never re-notifies on later grades, and
+ * a card whose lapse count merely stays below the threshold says nothing. A
+ * caller holding a card with no stored state yet treats it as unflagged.
+ */
+fun crossedLeechThreshold(before: CardState?, next: CardState): Boolean =
+    next.leech && before?.leech != true
+
+/**
+ * Which short-term label a card wears while it is still in the learning
+ * pipeline. Derived from the card's own FSRS state, not from why the pull
+ * happened: after a lapse [CardStateKind.RELEARNING] differs from a first
+ * exposure's [CardStateKind.LEARNING] even though the study reason is the same.
+ */
+enum class StudyStepLabel { LEARNING_STEP, RELEARNING_AFTER_LAPSE }
+
+/** The step label for this card, or null once it has graduated (or is new). */
+fun CardState.studyStepLabel(): StudyStepLabel? = when (state) {
+    CardStateKind.RELEARNING -> StudyStepLabel.RELEARNING_AFTER_LAPSE
+    CardStateKind.LEARNING -> StudyStepLabel.LEARNING_STEP
+    CardStateKind.NEW, CardStateKind.REVIEW -> null
+}

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="stats_progress_relapsed">फिर से भूल गया</string>
     <string name="stats_progress_reviews_vs">समीक्षाएँ बनाम पिछली</string>
     <string name="stats_progress_time_vs">औसत उत्तर समय बनाम पिछला</string>
@@ -55,7 +55,7 @@
     <string name="stats_streak_longest_days">सबसे लंबा सिलसिला (दिन)</string>
     <string name="stats_streak_longest_value">सबसे लंबा सिलसिला: %1$d दिन</string>
     <string name="stats_tests_all_time">हर समय · हर प्रयास</string>
-    <string name="stats_tests_family_row">%1$s · %2$d प्रयास · नवीनतम %3$d%% · औसत %4$d%%</string>
+    <string name="stats_tests_family_row" tools:ignore="UnusedResources">%1$s · %2$d प्रयास · नवीनतम %3$d%% · औसत %4$d%%</string>
     <string name="stats_tests_help">मॉक, फ़्रेश नमूना, अभ्यास सेट, छोटा टेस्ट और पुराना प्रयास — इन्हें कभी एक साथ औसत नहीं किया जाता।</string>
     <string name="stats_tests_no_attempts">इस दायरे में अभी कोई टेस्ट पूरा नहीं हुआ है।</string>
     <string name="stats_tests_title">टेस्ट समूह</string>
@@ -72,7 +72,7 @@
     <string name="stats_true_retention_help">हर कार्ड की केवल दिन की पहली समीक्षा गिनी जाती है; \'फिर से\' देना असफल माना जाता है। परिपक्व का अर्थ है कार्ड का अंतराल 21 दिन या उससे अधिक हो।</string>
     <string name="stats_unknown_kind">अज्ञात</string>
     <string name="stats_weakest_cards">सबसे ज़्यादा भूले गए</string>
-    <string name="stats_weakest_help">इन कार्डों को \'फिर से\' उत्तर दिए जाने की बारंबारता के अनुसार क्रमांकित। कार्ड का इतिहास देखने के लिए टैप करें।</string>
+    <string name="stats_weakest_help" tools:ignore="UnusedResources">इन कार्डों को \'फिर से\' उत्तर दिए जाने की बारंबारता के अनुसार क्रमांकित। कार्ड का इतिहास देखने के लिए टैप करें।</string>
     <string name="stats_young">अपरिपक्व</string>
     <string name="status_answered">उत्तर दिया गया</string>
     <string name="status_flagged">चिह्नित</string>
@@ -128,7 +128,7 @@
     <string name="target_retention_help">जब कार्ड देय हों, उन्हें याद आने की आप कितनी विश्वसनीयता चाहते हैं। अधिक मान कम अंतराल और अधिक समीक्षाएँ मांगता है।</string>
     <string name="target_retention_value">लक्ष्य याद-दर: %1$d%%</string>
     <string name="test">टेस्ट</string>
-    <string name="test_action">टेस्ट</string>
+    <string name="test_action" tools:ignore="UnusedResources">टेस्ट</string>
     <string name="test_asked_shown">%1$d पूछे गए, %2$d दिखाए गए</string>
     <string name="test_banner_blueprint">मॉक · ब्लूप्रिंट · %1$s · %2$d प्रश्न</string>
     <plurals name="test_banner_mistakes">

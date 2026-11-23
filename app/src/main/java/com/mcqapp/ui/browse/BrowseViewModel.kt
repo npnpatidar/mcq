@@ -10,8 +10,21 @@ import androidx.paging.cachedIn
 import com.mcqapp.McqApplication
 import com.mcqapp.R
 import com.mcqapp.data.local.QuestionRef
+import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.repository.BrowseListFilter
+import com.mcqapp.data.repository.DeletedQuestionSnapshot
+import com.mcqapp.data.repository.DuplicateGroup
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.ResetCard
+import com.mcqapp.data.repository.cardsWithSchedule
+import com.mcqapp.data.repository.findDuplicateGroups
+import com.mcqapp.data.repository.mergeDuplicates
+import com.mcqapp.data.repository.resolveMoveToPosition
+import com.mcqapp.data.repository.orderedSelectionIds
+import com.mcqapp.data.repository.restoreQuestions
+import com.mcqapp.data.repository.setBookmarked
+import com.mcqapp.data.repository.snapshotQuestions
 import com.mcqapp.domain.CategoryNode
 import com.mcqapp.domain.Difficulty
 import com.mcqapp.domain.Paper
@@ -22,6 +35,7 @@ import com.mcqapp.util.Logger
 import com.mcqapp.util.parseNonNegativeDecimal
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -153,6 +167,28 @@ class BrowseViewModel(
     /** Guards an older async scope read from overwriting a newer dialog's count. */
     private var moveScopeGeneration = 0
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
+
+    /** Bookmark flags for the rows around the viewport. */
+    private val _bookmarkedIds = MutableStateFlow<Set<String>>(emptySet())
+    val bookmarkedIds: StateFlow<Set<String>> = _bookmarkedIds.asStateFlow()
+
+    /** The last destructive write, held until its Undo snackbar expires. */
+    private var lastDeleted: DeletedQuestionSnapshot? = null
+
+    /** Export/share progress and cancellation, shared by the save and share paths. */
+    private val _exportProgress = MutableStateFlow<String?>(null)
+    val exportProgress: StateFlow<String?> = _exportProgress.asStateFlow()
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+    private var exportJob: kotlinx.coroutines.Job? = null
+
+    /** Exact-duplicate groups for the duplicate finder dialog. */
+    private val _duplicateGroups = MutableStateFlow<List<DuplicateGroup>>(emptyList())
+    val duplicateGroups: StateFlow<List<DuplicateGroup>> = _duplicateGroups.asStateFlow()
+    private val _duplicatesLoading = MutableStateFlow(false)
+    val duplicatesLoading: StateFlow<Boolean> = _duplicatesLoading.asStateFlow()
+    private val _duplicatePreviews = MutableStateFlow<Map<String, String>>(emptyMap())
+    val duplicatePreviews: StateFlow<Map<String, String>> = _duplicatePreviews.asStateFlow()
 
     // One shared seed, not two adjoined copies: the MutableStateFlow's
     // request state and the eagerly started StateFlow's initial value must
@@ -353,6 +389,37 @@ class BrowseViewModel(
         loadPassageFirstIds(windowPassageIds.toList())
         loadCategoryContexts(windowCategoryIds.toList())
         refreshRowMoves()
+        observeBookmarks(window.map { it.id })
+    }
+
+    /** Bookmark flags for the visible rows, in one (chunked) query. */
+    fun observeBookmarks(ids: List<String>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val found = repository.db().bookmarkDao().getForQuestionsChunked(ids)
+                    .map { it.questionId }.toHashSet()
+                _bookmarkedIds.update { current ->
+                    (current intersect ids.toSet()) + found
+                }
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "bookmark flags failed", e)
+            }
+        }
+    }
+
+    /** The same toggle Bookmarks uses; the row shows the flipped state at once. */
+    fun toggleBookmark(questionId: String) {
+        viewModelScope.launch {
+            try {
+                repository.toggleBookmark(questionId)
+                _bookmarkedIds.update { current ->
+                    if (questionId in current) current - questionId else current + questionId
+                }
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_bookmark_failed, e)
+            }
+        }
     }
 
     /**
@@ -416,6 +483,7 @@ class BrowseViewModel(
         }
         loadCategoryContexts(listOf(ref.categoryId))
         refreshRowMoves()
+        observeBookmarks(listOf(ref.id))
     }
 
     private fun loadContent(window: List<QuestionRef>) {
@@ -627,14 +695,23 @@ class BrowseViewModel(
         reportError(R.string.action_failed, friendly(messageRes))
     }
 
-    fun deleteQuestion(questionId: String) {
+    fun deleteQuestion(questionId: String, onDeleted: (Int) -> Unit = {}) {
         viewModelScope.launch {
             try {
+                // Snapshot before the write so the snackbar can restore every
+                // dependent row (schedule, history, stats, bookmark, passage
+                // membership) if the learner taps Undo.
+                val snapshot = withContext(Dispatchers.IO) {
+                    repository.db().snapshotQuestions(listOf(questionId))
+                }
                 repository.deleteQuestion(questionId)
+                lastDeleted = snapshot
                 invalidateContexts()
                 Logger.i("BROWSEVM", "Deleted question $questionId")
+                onDeleted(snapshot.size)
             } catch (e: Exception) {
                 reportActionFailure(R.string.browse_delete_question_failed, e)
+                onDeleted(0)
             }
         }
     }
@@ -652,14 +729,45 @@ class BrowseViewModel(
         }
     }
 
-    fun deleteQuestions(questionIds: Set<String>) {
+    fun deleteQuestions(questionIds: Set<String>, onDeleted: (Int) -> Unit = {}) {
         viewModelScope.launch {
             try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    repository.db().snapshotQuestions(questionIds)
+                }
                 repository.deleteQuestions(questionIds)
+                lastDeleted = snapshot
                 invalidateContexts()
                 Logger.i("BROWSEVM", "Deleted ${questionIds.size} questions")
+                onDeleted(snapshot.size)
             } catch (e: Exception) {
                 reportActionFailure(R.string.browse_delete_questions_failed, e)
+                onDeleted(0)
+            }
+        }
+    }
+
+    /**
+     * Restores the last destructive write. A later write that re-created any
+     * of these ids wins: [restoreQuestions] guards every row with a presence
+     * check, so a stale Undo can never clobber newer data.
+     */
+    fun undoDelete(onResult: (Int) -> Unit = {}) {
+        val snapshot = lastDeleted ?: run { onResult(0); return }
+        lastDeleted = null
+        viewModelScope.launch {
+            try {
+                val restored = withContext(Dispatchers.IO) {
+                    repository.db().restoreQuestions(snapshot)
+                }
+                invalidateContexts()
+                if (restored == 0 && snapshot.size > 0) {
+                    reportError(R.string.action_failed, friendly(R.string.browse_undo_failed))
+                }
+                onResult(restored)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_undo_failed, e)
+                onResult(0)
             }
         }
     }
@@ -764,6 +872,171 @@ class BrowseViewModel(
         }
     }
 
+    /** Shift/range selection over the rows currently in the viewport window. */
+    fun selectRange(anchorId: String?, targetId: String, current: Set<String>): Set<String> =
+        com.mcqapp.data.repository.selectRange(windowRefs.map { it.id }, anchorId, targetId, current)
+
+    /** Inverts the selection over the rows currently in the viewport window. */
+    fun invertSelection(current: Set<String>): Set<String> =
+        com.mcqapp.data.repository.invertSelection(windowRefs.map { it.id }, current)
+
+    /** All passages in this paper, for the bulk assign picker. */
+    val allPassages: StateFlow<List<com.mcqapp.domain.Passage>> = repository.observePassages()
+        .map { list -> list.filter { passage ->
+            _state.value.paper?.categories?.any { it.id == passage.categoryId } == true
+        } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Bulk bookmark set (idempotent — no per-row toggle race). */
+    fun setBookmarks(ids: Set<String>, bookmarked: Boolean, onDone: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                val changed = repository.setBookmarked(ids, bookmarked)
+                observeBookmarks(ids.toList())
+                onDone(changed)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_bookmark_failed, e)
+                onDone(0)
+            }
+        }
+    }
+
+    /** Deep-copies every selected question; keeps the existing per-copy id minter. */
+    fun bulkDuplicate(ids: Set<String>, onDone: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            var done = 0
+            try {
+                ids.forEach { if (repository.duplicateQuestion(it) != null) done++ }
+                invalidateContexts()
+                onDone(done)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_duplicate_question_failed, e)
+                onDone(done)
+            }
+        }
+    }
+
+    /** Cards whose schedules an assign/unassign would reset, for the one disclosure. */
+    fun passageResetCards(ids: Set<String>, onResult: (List<ResetCard>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(withContext(Dispatchers.IO) { repository.cardsWithSchedule(ids) })
+            } catch (e: Exception) {
+                Logger.e("BROWSEVM", "reset disclosure failed", e)
+                onResult(emptyList())
+            }
+        }
+    }
+
+    fun assignToPassage(ids: Set<String>, passageId: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                repository.assignQuestionsToPassage(ids, passageId)
+                invalidateContexts()
+                onDone(true)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_assign_passage_failed, e)
+                onDone(false)
+            }
+        }
+    }
+
+    fun unassignFromPassage(ids: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                repository.unassignQuestionsFromPassage(ids)
+                invalidateContexts()
+                onDone(true)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_assign_passage_failed, e)
+                onDone(false)
+            }
+        }
+    }
+
+    /**
+     * Computes the full new category order once and writes it once, so a "Move
+     * to position…" tap is a single atomic renumber and never splits a passage
+     * group. Both the O(N) computation and the write run on IO; the callback
+     * receives the position the question ACTUALLY landed at (0-based), or null
+     * on failure — a target inside a group can only be reached at its edge, so
+     * reporting the requested number would be a lie.
+     */
+    fun moveToPosition(
+        questionId: String,
+        categoryId: String,
+        targetIndex: Int,
+        onDone: (Int?) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val refs = _state.value.categoryContexts[categoryId]?.refs.orEmpty()
+                    resolveMoveToPosition(refs, questionId, targetIndex)
+                }
+                if (result == null) {
+                    onDone(null)
+                    return@launch
+                }
+                val ok = withContext(Dispatchers.IO) {
+                    repository.renumberQuestions(categoryId, result.order)
+                }
+                invalidateContexts()
+                onDone(if (ok) result.actualIndex else null)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.browse_move_questions_failed, e)
+                onDone(null)
+            }
+        }
+    }
+
+    /** Loads exact-duplicate groups on demand for the duplicate finder dialog. */
+    fun loadDuplicates() {
+        if (_duplicatesLoading.value) return
+        _duplicatesLoading.value = true
+        viewModelScope.launch {
+            try {
+                val groups = withContext(Dispatchers.IO) { repository.findDuplicateGroups() }
+                _duplicateGroups.value = groups
+                val ids = groups.flatMap { it.questionIds }.distinct()
+                _duplicatePreviews.value = withContext(Dispatchers.IO) {
+                    repository.db().questionDao().getByIdsChunked(ids)
+                        .associate { it.id to it.searchText.take(80) }
+                }
+            } catch (e: Exception) {
+                reportActionFailure(R.string.duplicates_title, e)
+                _duplicateGroups.value = emptyList()
+            } finally {
+                _duplicatesLoading.value = false
+            }
+        }
+    }
+
+    /** Merges (or just deletes) the copies, keeping the chosen card's schedule. */
+    fun resolveDuplicates(
+        group: DuplicateGroup,
+        keepId: String,
+        merge: Boolean,
+        onDone: (Int) -> Unit
+    ) {
+        val others = group.questionIds.filter { it != keepId }
+        viewModelScope.launch {
+            try {
+                val changed = if (merge) {
+                    withContext(Dispatchers.IO) { repository.mergeDuplicates(keepId, others) }
+                } else {
+                    withContext(Dispatchers.IO) { repository.deleteQuestions(others); others.size }
+                }
+                invalidateContexts()
+                loadDuplicates()
+                onDone(changed)
+            } catch (e: Exception) {
+                reportActionFailure(R.string.duplicates_title, e)
+                onDone(0)
+            }
+        }
+    }
+
     /**
      * Writes just the selected questions out as a paper of their own, so a
      * subset can leave the app without a temporary paper being created.
@@ -774,9 +1047,18 @@ class BrowseViewModel(
         title: String,
         format: com.mcqapp.data.export.ExportFormat
     ) {
-        viewModelScope.launch {
+        exportJob?.cancel()
+        exportJob = viewModelScope.launch {
             exportSelectionOn(uri, questionIds, title, format)
         }
+    }
+
+    /** Aborts the in-flight export/share; a later tap starts a fresh job. */
+    fun cancelExport() {
+        exportJob?.cancel()
+        exportJob = null
+        _isExporting.value = false
+        _exportProgress.value = null
     }
 
     /**
@@ -814,9 +1096,16 @@ class BrowseViewModel(
                     .exportDto(dto, title, format, sink, twoColumnPdf = repository.pdfTwoColumn().first())
             }
     ) {
+        _isExporting.value = true
         withContext(dispatcher) {
             try {
+                _exportProgress.value = getApplication<Application>().getString(
+                    R.string.browse_export_progress_preparing, questionIds.size
+                )
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val dto = buildDto(questionIds, title)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _exportProgress.value = friendly(R.string.browse_export_progress_rendering)
                 val file = com.mcqapp.util.renderToTempThenCopy(
                     cacheDir = getApplication<Application>().cacheDir,
                     openUriOutput = { mode ->
@@ -826,9 +1115,15 @@ class BrowseViewModel(
                 )
                 Logger.i("BROWSEVM", "Exported ${questionIds.size} questions as ${file.fileName}")
                 clearError(R.string.export)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Logger.i("BROWSEVM", "Export cancelled")
+                throw e
             } catch (e: Exception) {
                 Logger.e("BROWSEVM", "Export of selection failed", e)
                 reportError(R.string.export, friendly(R.string.browse_export_failed))
+            } finally {
+                _isExporting.value = false
+                _exportProgress.value = null
             }
         }
     }
@@ -850,20 +1145,12 @@ class BrowseViewModel(
         questionIds: Set<String>,
         title: String
     ): com.mcqapp.data.io.PaperDto {
-        val scope = currentScope()
-        val byId = repository.getQuestionsByIds(questionIds.toList())
-            .associateBy { it.id }
-        val positions = HashMap<String, Int>()
-        questionIds.forEachIndexed { tickIndex, id ->
-            val counted = repository.browseFilteredIndexOf(id, scope)
-            positions[id] = if (repository.browseFilteredIdAt(counted, scope) == id) {
-                counted
-            } else {
-                Int.MAX_VALUE - (questionIds.size - tickIndex)
-            }
-        }
-        val selected = byId.values
-            .sortedBy { positions[it.id] ?: Int.MAX_VALUE }
+        // One ordered query replaces the old O(n) position-per-id lookups.
+        // Unknown ids keep their relative tail position so a stale tick still
+        // exports the card it names.
+        val ordered = repository.orderedSelectionIds(questionIds)
+        val byId = repository.getQuestionsByIds(ordered).associateBy { it.id }
+        val selected = ordered.mapNotNull { byId[it] }
         if (selected.isEmpty()) throw IllegalStateException("Nothing selected")
         // The passages the selection's member questions reference, resolved
         // the same way a paper export's are.
@@ -919,9 +1206,16 @@ class BrowseViewModel(
         format: com.mcqapp.data.export.ExportFormat
     ): android.content.Intent? {
         _isSharing.value = true
+        _isExporting.value = true
         try {
             return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                _exportProgress.value = getApplication<Application>().getString(
+                    R.string.browse_export_progress_preparing, questionIds.size
+                )
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val dto = buildSelectionDto(questionIds, title)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                _exportProgress.value = friendly(R.string.browse_export_progress_rendering)
                 val app = getApplication<Application>()
                 val file = com.mcqapp.util.nextSharedFile(
                     app.cacheDir,
@@ -934,12 +1228,17 @@ class BrowseViewModel(
                 Logger.i("BROWSEVM", "Shared ${questionIds.size} questions as ${exported.fileName} (${file.length()} bytes)")
                 com.mcqapp.util.shareIntent(app, file, format.mimeType)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Logger.i("BROWSEVM", "Share cancelled")
+            throw e
         } catch (e: Exception) {
             Logger.e("BROWSEVM", "Share of selection failed", e)
             reportError(R.string.export, friendly(R.string.browse_export_failed))
             return null
         } finally {
             _isSharing.value = false
+            _isExporting.value = false
+            _exportProgress.value = null
         }
     }
 

@@ -42,6 +42,24 @@ class FollowupAnkiImportCountsTest {
         assertTrue(kinds.any { it.kind == ImportReportLineKind.RESTORED_SCHEDULES })
     }
 
+    /**
+     * The typed "N cards were left out" note and the dropped-cards count line
+     * said the same thing twice. The note is the more specific copy, so the
+     * count line is suppressed when the note is present.
+     */
+    @Test
+    fun theTypedDroppedNoteReplacesTheDuplicateCountLine() {
+        val report = ankiReport().copy(
+            importNotes = listOf(com.mcqapp.data.io.ImportNote.AnkiDroppedCards(2))
+        )
+        val kinds = importReportLines(report)
+        assertTrue(
+            "the dropped count must not be said twice: $kinds",
+            kinds.none { it.kind == ImportReportLineKind.DROPPED_ANKI_STEMS }
+        )
+        assertEquals(2, report.importNotes.single().let { it as com.mcqapp.data.io.ImportNote.AnkiDroppedCards }.count)
+    }
+
     @Test
     fun aDeckWithNoDropsOrConversionsDoesNotShowThoseLines() {
         val kinds = importReportLines(

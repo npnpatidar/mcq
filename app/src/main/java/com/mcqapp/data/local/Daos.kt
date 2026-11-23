@@ -187,6 +187,19 @@ data class SuspendedCardRow(
     val buriedUntil: Long?
 )
 
+/**
+ * One selected question's canonical browse position, returned by
+ * [QuestionDao.getOrderedIdsByIds] so a bulk export can order a whole selection
+ * in one (chunked) query instead of one position query per id.
+ */
+data class SelectedOrderRow(
+    val id: String,
+    val categorySortOrder: Int,
+    val categoryTitle: String,
+    val questionSortOrder: Int,
+    val rowId: Long
+)
+
 /** Scheduling input for a question: its id and stored content hash only. */
 data class QuestionIdHash(
     val id: String,
@@ -1199,6 +1212,22 @@ interface QuestionDao {
     /** Every question id, column-narrow; collision probes need no body. */
     @Query("SELECT id FROM questions")
     suspend fun getAllIds(): List<String>
+
+    /**
+     * Selected ids in the same canonical order every browse/list surface uses
+     * (`categories.sortOrder, categories.title, questions.sortOrder, rowid`).
+     * One query replaces the old per-selected-id position lookups on the export
+     * and share paths. Unknown ids drop out; callers chunk the id list.
+     */
+    @Query(
+        "SELECT questions.id AS id, categories.sortOrder AS categorySortOrder, " +
+            "categories.title AS categoryTitle, questions.sortOrder AS questionSortOrder, " +
+            "questions.rowid AS rowId FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.id IN (:ids) " +
+            "ORDER BY categories.sortOrder, categories.title, questions.sortOrder, questions.rowid"
+    )
+    suspend fun getOrderedIdsByIds(ids: Collection<String>): List<SelectedOrderRow>
 
     /**
      * Which of [ids] already exists, id-only. The import preview used to load
@@ -2317,6 +2346,14 @@ interface ReviewLogDao {
     suspend fun getAll(): List<ReviewLogEntity>
 
     /**
+     * Every review row belonging to [questionIds], in append order. Used by
+     * delete-undo snapshots so a restored card keeps its whole history, not a
+     * rebuilt approximation of it. Callers chunk the id list.
+     */
+    @Query("SELECT * FROM review_log WHERE questionId IN (:questionIds) ORDER BY id ASC")
+    suspend fun getByQuestions(questionIds: Collection<String>): List<ReviewLogEntity>
+
+    /**
      * One keyset page of the whole log in append order, for the statistics
      * screen's streaming replay (`FsrsReplay.Stream`). Paging by `id` (the
      * autoincrement primary key, so also each card's chronological order) means
@@ -2365,6 +2402,17 @@ interface ReviewLogDao {
     /** One question's review history, oldest first. */
     @Query("SELECT * FROM review_log WHERE questionId = :questionId ORDER BY reviewedAt ASC, id ASC")
     suspend fun historyForQuestion(questionId: String): List<ReviewLogEntity>
+
+    /**
+     * One card's review history, scoped to the paper whose card was opened.
+     * The same question can carry independent histories in two papers, so the
+     * question-only read cannot back the statistics drill-down sheet.
+     */
+    @Query(
+        "SELECT * FROM review_log WHERE paperId = :paperId AND questionId = :questionId " +
+            "ORDER BY reviewedAt ASC, id ASC"
+    )
+    suspend fun historyForCard(paperId: String, questionId: String): List<ReviewLogEntity>
 
     /**
      * Guess evidence for a known set of questions. Only rows with a non-null
@@ -2540,6 +2588,14 @@ interface BookmarkDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(bookmark: BookmarkEntity)
 
+    /** Bulk restore of snapshotted bookmarks (undo of a bulk removal). */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addAll(rows: List<BookmarkEntity>)
+
+    /** Bookmark rows for a set of questions, for delete-undo snapshots. */
+    @Query("SELECT * FROM bookmarks WHERE questionId IN (:questionIds)")
+    suspend fun getForQuestions(questionIds: Collection<String>): List<BookmarkEntity>
+
     @Query("DELETE FROM bookmarks WHERE questionId = :questionId")
     suspend fun remove(questionId: String)
 
@@ -2641,6 +2697,27 @@ interface QuestionTagDao {
         categoryIds: List<String>
     ): List<TagCount>
 
+    /**
+     * The distinct tags of the scope, flashcards **included** — the Study tag
+     * picker's counts. Study serves zero-option cards, so a tag count that
+     * drops them disagrees with [studyQuestionIdsForTag] and hides the only
+     * pool the tag can produce. Test keeps [tagCounts], which excludes cards.
+     */
+    @Query(
+        "SELECT MIN(qt.tag) AS tag, qt.tagFolded AS tagFolded, COUNT(*) AS count " +
+            "FROM question_tags qt " +
+            "INNER JOIN questions q ON q.id = qt.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "GROUP BY qt.tagFolded ORDER BY count DESC, tagFolded"
+    )
+    suspend fun studyTagCounts(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>
+    ): List<TagCount>
+
     /** The ids of the scope's multiple-choice questions carrying exactly [tagFolded]. */
     @Query(
         "SELECT q.id FROM question_tags qt " +
@@ -2652,6 +2729,28 @@ interface QuestionTagDao {
             "ORDER BY q.sortOrder, q.rowid"
     )
     suspend fun questionIdsForTag(
+        paperId: String,
+        scopeAll: Int,
+        categoryIds: List<String>,
+        tagFolded: String
+    ): List<String>
+
+    /**
+     * The scope's question ids carrying exactly [tagFolded], flashcards
+     * **included** — the Study tag scope's pool. The [questionIdsForTag]
+     * `EXISTS(options)` filter is Test-only: a flashcard is study-only and is
+     * the main card here, so dropping it would make a Study tag scope unable
+     * to serve the questions its own picker counted.
+     */
+    @Query(
+        "SELECT q.id FROM question_tags qt " +
+            "INNER JOIN questions q ON q.id = qt.questionId " +
+            "INNER JOIN categories c ON c.id = q.categoryId " +
+            "WHERE qt.tagFolded = :tagFolded AND c.paperId = :paperId " +
+            "AND (:scopeAll = 1 OR q.categoryId IN (:categoryIds)) " +
+            "ORDER BY q.sortOrder, q.rowid"
+    )
+    suspend fun studyQuestionIdsForTag(
         paperId: String,
         scopeAll: Int,
         categoryIds: List<String>,
@@ -3297,6 +3396,14 @@ interface QuestionStatsDao {
     /** One question's stored aggregate, including its display paper/category. */
     @Query("SELECT * FROM question_stats WHERE questionId = :questionId")
     suspend fun get(questionId: String): QuestionStatsEntity?
+
+    /** Aggregates for a delete-undo snapshot; callers chunk the id list. */
+    @Query("SELECT * FROM question_stats WHERE questionId IN (:questionIds)")
+    suspend fun getByQuestions(questionIds: Collection<String>): List<QuestionStatsEntity>
+
+    /** Restores snapshotted aggregates verbatim, including their display fields. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(rows: List<QuestionStatsEntity>)
 
     /**
      * Re-points [questionIds]' lifetime aggregates at the destination paper and

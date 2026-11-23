@@ -26,6 +26,8 @@ import com.mcqapp.data.local.bookmarkedCountInScopeChunked
 import com.mcqapp.data.local.questionCountForTagChunked
 import com.mcqapp.data.local.dwellSamplesInScopeChunked
 import com.mcqapp.data.local.questionIdsForTagChunked
+import com.mcqapp.data.local.studyQuestionIdsForTagChunked
+import com.mcqapp.data.local.studyTagCountsChunked
 import com.mcqapp.data.local.tagCountsChunked
 import com.mcqapp.domain.Blueprint
 import com.mcqapp.domain.BlueprintSection
@@ -572,6 +574,31 @@ class McqRepository internal constructor(
         statsStore.reviewHistory(questionId)
 
     // --- in-progress test session (header in DataStore, answers in Room) ---
+
+    /**
+     * The single saved session as a Library/History card can present it: the
+     * header joined with its answer rows and the count of answered questions.
+     * A snapshot with no answers and no progress is not an unfinished test and
+     * is reported as none, so a stale header cannot create a phantom card.
+     */
+    suspend fun unfinishedTest(): com.mcqapp.domain.UnfinishedTest? {
+        val header = testProgress.snapshot() ?: return null
+        val answers = db.testProgressDao().getForPaper(header.paperId).map { entity ->
+            TestAnswer(
+                questionId = entity.questionId,
+                selection = entity.selection.split(",").filter { it.isNotBlank() }.toSet(),
+                revealed = entity.revealed,
+                flagged = entity.flagged,
+                dwellSeconds = entity.dwellSeconds
+            )
+        }
+        val merged = header.withAnswers(answers)
+        if (!merged.hasAnswers && merged.currentIndex <= 0) return null
+        return com.mcqapp.domain.UnfinishedTest(
+            snapshot = merged,
+            answeredCount = merged.selections.count { it.value.isNotEmpty() }
+        )
+    }
 
     /** The header a killed test session left behind, or null. */
     suspend fun loadTestSnapshot(): TestSnapshot? = testProgress.snapshot()
@@ -1126,6 +1153,30 @@ class McqRepository internal constructor(
         categoryIds: List<String>,
         foldedTag: String
     ): List<String> = db.questionTagDao().questionIdsForTagChunked(
+        paperId = paperId,
+        categoryIds = categoryIds,
+        tagFolded = foldedTag
+    )
+
+    /**
+     * Study's tag picker counts, flashcards included. The Test-facing
+     * [tagCountsForScope] deliberately hides cards; Study cannot, because a
+     * flashcard is a normal card there. Counts and pool must use the same gate.
+     */
+    suspend fun tagCountsForStudyScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<TagCount> = db.questionTagDao().studyTagCountsChunked(
+        paperId = paperId,
+        categoryIds = categoryIds
+    )
+
+    /** Study's tag-scope pool, flashcards included — twin of [tagCountsForStudyScope]. */
+    suspend fun questionIdsForStudyTagInScope(
+        paperId: String,
+        categoryIds: List<String>,
+        foldedTag: String
+    ): List<String> = db.questionTagDao().studyQuestionIdsForTagChunked(
         paperId = paperId,
         categoryIds = categoryIds,
         tagFolded = foldedTag
@@ -1841,6 +1892,13 @@ class McqRepository internal constructor(
         difficulty: com.mcqapp.domain.Difficulty?,
         tags: List<String>?
     ) = questionStore.bulkUpdateQuestions(questionIds, marks, difficulty, tags)
+
+    /**
+     * Adds one tag to many questions in a single transaction, keeping their
+     * existing tags. Returns how many rows changed.
+     */
+    suspend fun addTagToQuestions(questionIds: Collection<String>, tag: String): Int =
+        questionStore.addTagToQuestions(questionIds, tag)
     suspend fun swapQuestionOrder(firstId: String, secondId: String): Boolean =
         questionStore.swapQuestionOrder(firstId, secondId)
 
@@ -1853,6 +1911,22 @@ class McqRepository internal constructor(
         categoryIds: List<String> = emptyList()
     ): List<com.mcqapp.domain.StudyCard> =
         studyStore.getStudyQueue(paperId, now, leechesOnly, categoryIds)
+
+    /**
+     * A bounded pool for a tag/mistake-scoped Study sitting. Only the given
+     * ids are read, so the cost is the pool's size rather than the paper's.
+     * The input's iteration order is preserved for the new cards, so the tag
+     * scope keeps its authored `(sortOrder, rowid)` order.
+     */
+    suspend fun getStudyQueueForQuestions(
+        paperId: String,
+        questionIds: Collection<String>,
+        now: Long = System.currentTimeMillis(),
+        /** Overrides the stored new-card toggle; see [StudyStore]. */
+        introduceNewCards: Boolean? = null
+    ): List<com.mcqapp.domain.StudyCard> =
+        studyStore.getScopedStudyQueue(paperId, questionIds, now, introduceNewCards)
+
     /**
      * The card a pull-based session serves next, or null when nothing is due.
      * [categoryIds] empty means the whole paper; a non-empty list scopes both
@@ -2014,7 +2088,19 @@ class McqRepository internal constructor(
         slowSeconds: () -> Long = { com.mcqapp.domain.ReviewFilters.DEFAULT_SLOW_SECONDS },
         bookmarked: () -> Set<String>
     ): androidx.paging.PagingSource<ResultPageKey, com.mcqapp.domain.NumberedResult> =
-        historyStore.resultPagingSource(attemptId, filter, slowSeconds, bookmarked)
+        historyStore.resultPagingSource(
+            attemptId, filter, slowSeconds, bookmarked,
+            loadPassages = { ids -> historyStore.passagesForQuestions(ids) }
+        )
+
+    /**
+     * Passage context for the result review, resolved live by question id.
+     * The result rows keep no passage column; a passage edited after the
+     * attempt is what the review now shows above the stem.
+     */
+    suspend fun passagesForQuestionIds(ids: List<String>): Map<String, com.mcqapp.domain.Passage> =
+        historyStore.passagesForQuestions(ids)
+
     suspend fun getResultAggregates(attemptId: Long) =
         historyStore.getResultAggregates(attemptId)
     suspend fun getResultCategoryBreakdown(attemptId: Long) =

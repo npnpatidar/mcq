@@ -86,6 +86,24 @@ object Calibration {
     const val RESAMPLES = 5_000
     const val SEED = 20261111L
 
+    /**
+     * The objective, correctly graded evidence filter, shared by the cut
+     * estimator and the statistics calibration chart so the two can never drift.
+     *
+     * A self-graded row records no right/wrong outcome; a guess or a skip is not
+     * an honest answer; and a row graded under the clock-tinted rule is not a
+     * correctness grade at all. Only rows that pass all four gates are evidence.
+     */
+    fun isObjectiveCorrectEvidence(
+        correctnessOnly: Boolean,
+        wasCorrect: Boolean?,
+        wasGuess: Boolean?,
+        wasSkipped: Boolean?
+    ): Boolean = correctnessOnly &&
+        wasCorrect == true &&
+        wasGuess != true &&
+        wasSkipped != true
+
     private const val DAY_MS = 86_400_000L
     private const val BLOCK_MS = BLOCK_DAYS * DAY_MS
 
@@ -370,11 +388,12 @@ object Calibration {
         slowSeconds: Long
     ): CutSuggestion {
         val usable = reviews.filter {
-            it.correctnessOnly &&
-                it.elapsedSeconds != null &&
-                it.wasCorrect == true &&
-                it.wasGuess != true &&
-                it.wasSkipped != true
+            it.elapsedSeconds != null && isObjectiveCorrectEvidence(
+                correctnessOnly = it.correctnessOnly,
+                wasCorrect = it.wasCorrect,
+                wasGuess = it.wasGuess,
+                wasSkipped = it.wasSkipped
+            )
         }
         val cards = usable.map { it.paperId to it.questionId }.toSet()
         val first = if (usable.isEmpty()) now else usable.minOf { it.reviewedAt }

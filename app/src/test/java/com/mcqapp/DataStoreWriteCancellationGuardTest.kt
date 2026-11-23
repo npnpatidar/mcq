@@ -21,6 +21,9 @@ import org.junit.Test
  * These guards pin the mechanism, not just the instances: the shared pump must
  * bound the *wait* without cancelling or interrupting the work, and no test may
  * wrap a DataStore write in a cancelling timeout. Pure JVM: reads the sources.
+ *
+ * INCIDENT: repeated process-wide test-suite wedges; jstack named a cancelled
+ * DataStore edit inside Fsrs7SelectionTest.setUp with every other thread parked.
  */
 class DataStoreWriteCancellationGuardTest {
 

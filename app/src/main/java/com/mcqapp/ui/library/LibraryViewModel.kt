@@ -13,7 +13,9 @@ import com.mcqapp.data.io.ImportReport
 import com.mcqapp.data.io.Importer
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.dataStore
 import com.mcqapp.data.repository.editCategoryAtomic
+import com.mcqapp.data.repository.editPreferences
 import com.mcqapp.domain.CategoryCounts
 import com.mcqapp.domain.DailyGoal
 import com.mcqapp.domain.CategoryNode
@@ -30,7 +32,10 @@ import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import com.mcqapp.util.displayName
 import java.io.InputStream
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -87,6 +92,40 @@ internal class SampleLoadGate {
     val isInFlight: Boolean get() = inFlight
 }
 
+/**
+ * The first-run chooser is a one-shot on a *genuine* fresh install. Both other
+ * conditions matter: an upgrade must never be treated as new (it would offer
+ * to replace a bank the learner already has), and an install that has since
+ * imported a paper must not be talked into loading a sample over it. The
+ * persisted marker survives rotation and process death.
+ */
+internal fun shouldShowFirstRunChooser(
+    isNewInstall: Boolean,
+    hasPapers: Boolean,
+    chooserShown: Boolean
+): Boolean = isNewInstall && !hasPapers && !chooserShown
+
+/**
+ * Onboarding advances only after the bundled sample actually parsed into at
+ * least one paper. A failed load must leave the chooser marker unset so the
+ * learner can retry, and must never queue a first-study navigation.
+ */
+internal data class FirstRunAfterSample(
+    val markChooserShown: Boolean,
+    val studyRoutePaperId: String?
+)
+
+internal fun firstRunAfterSample(papersCreated: Int, availablePaperId: String?): FirstRunAfterSample =
+    if (papersCreated > 0) {
+        FirstRunAfterSample(true, availablePaperId)
+    } else {
+        FirstRunAfterSample(false, null)
+    }
+
+/** Preference marker that the welcome chooser was answered on this install. */
+private val firstRunChooserShownKey =
+    androidx.datastore.preferences.core.booleanPreferencesKey("onboarding_chooser_shown")
+
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Exposed for the setup sheet's scoped mistake count query. */
@@ -102,6 +141,22 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     val avoidRecentQuestions: StateFlow<Boolean> = repository.avoidRecentQuestions()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /**
+     * The unfinished test that needs a home on the Library. A saved session is
+     * not a notification or a hidden dialog: the card is re-read on every
+     * resume because the slot belongs to the process, not to this screen's
+     * backstack entry (a test started from Results changes it while we are
+     * away).
+     */
+    private val _unfinishedTest = MutableStateFlow<com.mcqapp.domain.UnfinishedTest?>(null)
+    val unfinishedTest: StateFlow<com.mcqapp.domain.UnfinishedTest?> = _unfinishedTest.asStateFlow()
+
+    fun refreshUnfinishedTest() {
+        viewModelScope.launch {
+            _unfinishedTest.value = runCatching { repository.unfinishedTest() }.getOrNull()
+        }
+    }
 
     // --- Reporting-only daily goal ---
     // The count is the overview tab's existing today bucket: review_log rows in
@@ -153,7 +208,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    init { refreshDailyGoal() }
+    init {
+        refreshDailyGoal()
+        refreshUnfinishedTest()
+    }
 
     // Library editor state lives here, not in the screen's `remember`: the
     // ViewModel survives configuration changes, so an edit dialog or a pending
@@ -289,9 +347,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         contentResolver: android.content.ContentResolver,
         onDocx: (bytes: ByteArray, name: String) -> Unit,
         onJsonUri: (Uri) -> Unit,
-        onJsonBytes: (ByteArray) -> Unit
+        onJsonBytes: (ByteArray, name: String?) -> Unit
     ) {
         viewModelScope.launch {
+            // One display-name read for every route: the Word and CSV paths name
+            // the new paper after the picked file, and a flat CSV has no title of
+            // its own. Content Urls carry an opaque row id in lastPathSegment, so
+            // only the provider's display name is usable.
+            val pickedName = contentResolver.displayName(picked)
             // Read a bounded prefix first. It is enough to tell a zip from
             // JSON and to keep a small bank in memory, but it never allocates
             // the whole large bank: a bigger JSON is streamed from the Uri.
@@ -374,7 +437,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         // rarely names its own paper). The provider's display
                         // name, not the opaque row id a content Uri carries in
                         // lastPathSegment.
-                        onDocx(bytes, contentResolver.displayName(picked) ?: "")
+                        onDocx(bytes, pickedName ?: "")
                     }
                     kind == com.mcqapp.ui.library.PickedArchive.BACKUP -> {
                         // Restore is the reverse of export: it replaces the
@@ -385,7 +448,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     pickedArchiveIsAnki(kind) -> {
                         // The deck is streamed straight from the Uri by the
                         // importer, so the archive is never held as bytes.
-                        val title = contentResolver.displayName(picked) ?: "deck.apkg"
+                        val title = pickedName ?: "deck.apkg"
                         importAnkiPackage(title) {
                             contentResolver.openInputStream(picked)
                         }
@@ -410,8 +473,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } catch (e: Exception) {
                     "unknown"
                 }
-                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint")
-                onJsonBytes(bytes)
+                Logger.i("LIB", "picked import file: bytes=${bytes.size}, sha=$fingerprint, name=$pickedName")
+                onJsonBytes(bytes, pickedName)
             }
         }
     }
@@ -934,9 +997,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _importReportTitle = MutableStateFlow<String?>(null)
     val importReportTitle: StateFlow<String?> = _importReportTitle.asStateFlow()
 
+    /** The paper the just-finished import created/updated, for follow-up actions. */
+    private val _lastImportedPaperId = MutableStateFlow<String?>(null)
+    val lastImportedPaperId: StateFlow<String?> = _lastImportedPaperId.asStateFlow()
+
     fun dismissImportReport() {
         _importReport.value = null
         _importReportTitle.value = null
+        _lastImportedPaperId.value = null
     }
 
     /**
@@ -958,6 +1026,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun importAnkiPackage(title: String, source: () -> InputStream?) {
         viewModelScope.launch {
+            val beforeIds = runCatching { repository.observePapers().first().map { it.id }.toSet() }
+                .getOrDefault(emptySet())
             Logger.i("LIBVM", "Reading Anki package '$title'")
             // Only the import call is the transaction: a failure there rolls
             // every batch back, so the "no changes" note is true. The report
@@ -1001,10 +1071,219 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
                 _importReport.value = report
                 _importReportTitle.value = title
+                val after = runCatching { repository.observePapers().first() }
+                    .getOrDefault(emptyList())
+                _lastImportedPaperId.value = after.firstOrNull { it.id !in beforeIds }?.id
+                    ?: after.firstOrNull { it.title.equals(title.substringBeforeLast('.'), true) }?.id
+                    ?: after.firstOrNull()?.id
             } catch (e: Exception) {
                 // The deck already imported; do not tell the user nothing was
                 // saved just because showing the report failed.
                 Logger.e("LIBVM", "Anki import bookkeeping failed", e)
+            }
+        }
+    }
+
+    /**
+     * Turns the paper's currently-wrong questions into a reusable tag, keeping
+     * each question's existing tags. No schema change: the exact-tag index is
+     * rebuilt by [bulkUpdateQuestions] from the canonical CSV.
+     */
+    suspend fun saveMistakesAsTag(paperId: String): Int = withContext(Dispatchers.IO) {
+        try {
+            val mistakes = repository.getMistakenQuestions(paperId)
+            // One transaction for the whole pool: a half-tagged bank was
+            // possible when each question was its own write, and a big pool
+            // paid one transaction per row.
+            repository.addTagToQuestions(mistakes.map { it.id }, MISTAKES_POOL_TAG)
+            mistakes.size
+        } catch (e: Exception) {
+            Logger.e("LIBVM", "Could not save the mistakes pool", e)
+            // Not an import: say what actually failed.
+            _exportError.value = msg(R.string.of_mistakes_pool_failed)
+            0
+        }
+    }
+
+    companion object {
+        /** Stable identity of the reusable mistake pool; never a display token. */
+        const val MISTAKES_POOL_TAG = "my mistakes"
+    }
+
+    /**
+     * One-shot notification that a quick-capture write finished, consumed by
+     * the NavHost to dismiss the dialog and show the confirmation. Living in
+     * the activity-scoped ViewModel (not in a dialog tied to one composition)
+     * is what makes a Save survive rotation: the dialog is closed on the tap,
+     * the write runs in [viewModelScope], and this event is buffered even if
+     * no collector is attached during the rotation gap.
+     */
+    private val _quickCaptureSaved = MutableSharedFlow<String>(replay = 1, extraBufferCapacity = 1)
+    val quickCaptureSaved: SharedFlow<String> = _quickCaptureSaved.asSharedFlow()
+
+    /**
+     * Clears the replayed completion after the NavHost has shown it. Without
+     * this, a configuration change would replay an old "saved" message again;
+     * without the replay buffer, a save that finished while no collector was
+     * attached (the rotation gap) was lost entirely.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun consumeQuickCaptureSaved() = _quickCaptureSaved.resetReplayCache()
+
+    /**
+     * Saves a shared snippet straight into the bank as a flashcard. A blank
+     * paper/category name creates one, so capturing is a two-field action even
+     * on a fresh install. Fire-and-forget by design: the caller closes the
+     * dialog on the tap, and completion is reported through [quickCaptureSaved]
+     * so a rotation mid-write cannot re-offer the snippet and write it twice.
+     */
+    fun saveQuickCapture(
+        paperId: String?,
+        paperTitle: String,
+        categoryId: String?,
+        categoryTitle: String,
+        front: String,
+        back: String,
+        tag: String
+    ) {
+        viewModelScope.launch {
+            val savedPaperId = withContext(Dispatchers.IO) {
+                try {
+                    val resolvedPaperId = if (paperId.isNullOrBlank()) {
+                        val id = "paper-" + System.currentTimeMillis().toString(36)
+                        repository.savePaper(
+                            Paper(id = id, title = paperTitle.trim().ifBlank {
+                                com.mcqapp.data.io.FALLBACK_PAPER_TITLE
+                            })
+                        )
+                        id
+                    } else paperId
+                    val resolvedCategoryId = if (categoryId.isNullOrBlank()) {
+                        repository.addCategory(
+                            resolvedPaperId,
+                            categoryTitle.trim().ifBlank {
+                                com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
+                            },
+                            null
+                        )
+                    } else categoryId
+                    val id = "q-" + System.currentTimeMillis().toString(36) + "-" +
+                        (0..9999).random()
+                    repository.saveQuestion(
+                        com.mcqapp.domain.Question(
+                            id = id,
+                            categoryId = resolvedCategoryId,
+                            text = front.trim(),
+                            options = emptyList(),
+                            correctOptionIds = emptySet(),
+                            explanation = back.trim(),
+                            tags = if (tag.isBlank()) emptyList() else listOf(tag.trim())
+                        )
+                    )
+                    refreshStudyCounts()
+                    resolvedPaperId
+                } catch (e: Exception) {
+                    Logger.e("LIBVM", "Quick capture failed", e)
+                    // Not an import: naming "Import failed" for a snippet save
+                    // sent the learner looking for a file they never picked.
+                    _exportError.value = msg(R.string.of_quick_capture_failed)
+                    null
+                }
+            }
+            if (savedPaperId != null) _quickCaptureSaved.emit(savedPaperId)
+        }
+    }
+
+    // --- First-run chooser -------------------------------------------------
+    data class FirstRunState(val showChooser: Boolean = false, val isNewInstall: Boolean = false)
+
+    private val _firstRun = MutableStateFlow(FirstRunState())
+    val firstRun: StateFlow<FirstRunState> = _firstRun.asStateFlow()
+
+    /** Editor route for "Add your first question" on a paper with no content. */
+    private val _editorRoute = MutableStateFlow<String?>(null)
+    val editorRoute: StateFlow<String?> = _editorRoute.asStateFlow()
+    fun consumeEditorRoute(): String? {
+        val route = _editorRoute.value
+        _editorRoute.value = null
+        return route
+    }
+
+    /**
+     * A brand-new paper has no category, and the editor needs one. Create the
+     * default branch only when there is none, then emit the route in VM scope
+     * so a rotation between the write and the navigation cannot drop the tap.
+     */
+    fun ensureCategoryAndEditor(paperId: String) {
+        viewModelScope.launch {
+            try {
+                val paper = repository.getPaper(paperId)
+                val categoryId = paper?.categories?.firstOrNull()?.id
+                    ?: repository.addCategory(
+                        paperId,
+                        com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE,
+                        null
+                    )
+                _editorRoute.value = com.mcqapp.ui.navigation.editorRoute(
+                    "", paperId, categoryId, "new"
+                )
+            } catch (e: Exception) {
+                Logger.e("LIBVM", "Could not open the first-question editor", e)
+                _exportError.value = msg(R.string.final_add_category_failed)
+            }
+        }
+    }
+
+    /** One-shot Study route after the learner picks "Try the sample". */
+    private val _firstStudyRoute = MutableStateFlow<String?>(null)
+    val firstStudyRoute: StateFlow<String?> = _firstStudyRoute.asStateFlow()
+    fun consumeFirstStudyRoute(): String? {
+        val route = _firstStudyRoute.value
+        _firstStudyRoute.value = null
+        return route
+    }
+
+    /** Read once on composition; an answered chooser never reopens. */
+    fun checkFirstRun() {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val shown = app.dataStore.data.first()[firstRunChooserShownKey] == true
+            if (shown) {
+                _firstRun.value = FirstRunState(false, false)
+                return@launch
+            }
+            val fresh = repository.decideInstallFreshness()
+            _firstRun.value = FirstRunState(
+                showChooser = shouldShowFirstRunChooser(fresh, papers.value.isNotEmpty(), false),
+                isNewInstall = fresh
+            )
+        }
+    }
+
+    fun markFirstRunChooserShown() {
+        viewModelScope.launch {
+            getApplication<Application>().editPreferences { it[firstRunChooserShownKey] = true }
+            _firstRun.value = FirstRunState(false, _firstRun.value.isNewInstall)
+        }
+    }
+
+    /**
+     * Loads the bundled sample and, when it actually created a paper, offers
+     * the first Study card. The chooser marker is written only after a parse
+     * that produced at least one paper, so a failed load can be retried and no
+     * first-study route is queued on failure.
+     */
+    fun trySampleAndStudy() {
+        loadSampleData { papersCreated ->
+            viewModelScope.launch {
+                val paperId = if (papersCreated > 0) {
+                    repository.observePapers().first().firstOrNull()?.id
+                } else null
+                val decision = firstRunAfterSample(papersCreated, paperId)
+                if (decision.markChooserShown) markFirstRunChooserShown()
+                decision.studyRoutePaperId?.let {
+                    _firstStudyRoute.value = com.mcqapp.ui.navigation.studyRoute(it)
+                }
             }
         }
     }
@@ -1020,12 +1299,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * used to be opened and parsed on Main) and ignores a second tap while one
      * load is in flight. The gate is released in `finally`, so a failed load
      * can be retried and a rotation of the screen does not duplicate it.
+     * [onLoaded] reports how many papers the parse actually created; callers
+     * that advance one-state onboarding use it to avoid marking a failed load.
      */
-    fun loadSampleData() {
-        if (!sampleLoadGate.tryStart()) return
+    fun loadSampleData(onLoaded: ((Int) -> Unit)? = null) {
+        if (!sampleLoadGate.tryStart()) {
+            onLoaded?.invoke(0)
+            return
+        }
         _isLoadingSample.value = true
         Logger.i("LIBVM", "Loading sample data from assets")
         viewModelScope.launch {
+            var papersCreated = 0
             try {
                 val report = withContext(Dispatchers.IO) {
                     val context = getApplication<Application>()
@@ -1034,6 +1319,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     val file = LegacyParser.parse(text)
                     Importer(repository.db(), repository.updateAnswersOnDuplicate().first()).import(file)
                 }
+                papersCreated = report.newPapers
                 Logger.i("LIBVM", "Sample data loaded: ${report.newPapers} papers, ${report.newQuestions} questions")
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Sample load failed", e)
@@ -1041,6 +1327,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             } finally {
                 sampleLoadGate.finish()
                 _isLoadingSample.value = false
+                onLoaded?.invoke(papersCreated)
             }
         }
     }

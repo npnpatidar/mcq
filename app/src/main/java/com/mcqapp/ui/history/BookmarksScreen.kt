@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,11 +24,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.BookmarkRemove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +81,7 @@ import com.mcqapp.ui.common.UiMessageTone
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingRefreshErrorItem
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BookmarksScreen(
     repository: McqRepository,
@@ -85,7 +90,19 @@ fun BookmarksScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val exportError by viewModel.exportError.collectAsStateWithLifecycle()
+    val papers by viewModel.papers.collectAsStateWithLifecycle()
+    val paperTitles by viewModel.paperTitles.collectAsStateWithLifecycle()
     val items = viewModel.pagingData.collectAsLazyPagingItems()
+    var selectionMode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var selectedIds by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(setOf<String>()) }
+    // A filter change hides rows; a selection made under the old filter could
+    // then remove bookmarks the user can no longer see. Drop it wholesale.
+    LaunchedEffect(state.filterPaperId) {
+        if (selectionMode) {
+            selectionMode = false
+            selectedIds = emptySet()
+        }
+    }
 
     val showFormatDialog = state.showFormatDialog
     val exportFormat = state.exportFormat
@@ -163,14 +180,56 @@ fun BookmarksScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.bookmarks)) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    IconButton(onClick = {
+                        if (selectionMode) {
+                            selectionMode = false
+                            selectedIds = emptySet()
+                        } else {
+                            navController.popBackStack()
+                        }
+                    }) {
+                        Icon(
+                            if (selectionMode) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.back)
+                        )
                     }
                 },
                 actions = {
-                    if (state.count > 0) {
-                        IconButton(onClick = { viewModel.openFormatDialog() }) {
-                            Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_bookmarks))
+                    if (selectionMode) {
+                        Text(
+                            stringResource(R.string.bookmarks_selected_count, selectedIds.size),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        TextButton(
+                            enabled = selectedIds.isNotEmpty(),
+                            onClick = {
+                                viewModel.removeBookmarks(selectedIds) { removed ->
+                                    if (removed > 0) {
+                                        sendMessage(
+                                            UiMessage(
+                                                text = platformResources.getQuantityString(
+                                                    R.plurals.bookmarks_removed_count, removed, removed
+                                                ),
+                                                tone = UiMessageTone.Info,
+                                                actionLabel = undoLabel,
+                                                onAction = { viewModel.undoBulkRemove {} }
+                                            )
+                                        )
+                                    }
+                                }
+                                selectionMode = false
+                                selectedIds = emptySet()
+                            }
+                        ) { Text(stringResource(R.string.bookmarks_remove_selected)) }
+                    } else {
+                        if (state.count > 0) {
+                            TextButton(onClick = {
+                                selectionMode = true
+                                selectedIds = emptySet()
+                            }) { Text(stringResource(R.string.bookmarks_select)) }
+                            IconButton(onClick = { viewModel.openFormatDialog() }) {
+                                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.export_bookmarks))
+                            }
                         }
                     }
                 }
@@ -208,6 +267,24 @@ fun BookmarksScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (papers.isNotEmpty()) {
+                    item(key = "bookmarks-paper-filter") {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = state.filterPaperId == null,
+                                onClick = { viewModel.setPaperFilter(null) },
+                                label = { Text(stringResource(R.string.bookmarks_all_papers)) }
+                            )
+                            papers.forEach { paper ->
+                                FilterChip(
+                                    selected = state.filterPaperId == paper.id,
+                                    onClick = { viewModel.setPaperFilter(paper.id) },
+                                    label = { Text(paper.title) }
+                                )
+                            }
+                        }
+                    }
+                }
                 items(
                     count = items.itemCount,
                     key = items.itemKey { it.question.id },
@@ -219,15 +296,21 @@ fun BookmarksScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                // Bookmarks are a reading list: opening one
-                                // should show the question in context, not
-                                // drop straight into the editor.
-                                navController.navigate(
-                                    com.mcqapp.ui.navigation.browseRoute(
-                                        paperId = bookmarked.paperId,
-                                        focusQuestionId = question.id
+                                if (selectionMode) {
+                                    selectedIds = selectedIds.toMutableSet().apply {
+                                        if (!add(question.id)) remove(question.id)
+                                    }
+                                } else {
+                                    // Bookmarks are a reading list: opening one
+                                    // should show the question in context, not
+                                    // drop straight into the editor.
+                                    navController.navigate(
+                                        com.mcqapp.ui.navigation.browseRoute(
+                                            paperId = bookmarked.paperId,
+                                            focusQuestionId = question.id
+                                        )
                                     )
-                                )
+                                }
                             }
                     ) {
                         Row(
@@ -236,6 +319,16 @@ fun BookmarksScreen(
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (selectionMode) {
+                                Checkbox(
+                                    checked = question.id in selectedIds,
+                                    onCheckedChange = {
+                                        selectedIds = selectedIds.toMutableSet().apply {
+                                            if (!add(question.id)) remove(question.id)
+                                        }
+                                    }
+                                )
+                            }
                             Column(modifier = Modifier.weight(1f)) {
                                 // A card's type, shown as text: its front is
                                 // the question and it has no options, which the
@@ -254,13 +347,22 @@ fun BookmarksScreen(
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                // Where the card lives, so a reading list
+                                // collected across papers stays navigable.
+                                paperTitles[bookmarked.paperId]?.let { title ->
+                                    Text(
+                                        stringResource(R.string.bookmark_provenance, title),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                                 // Deliberately no explanation here, image
                                 // included. A bookmark list is a reading list
                                 // of questions; with no options shown, the
                                 // explanation gave the answer away against
                                 // half a question.
                             }
-                            IconButton(
+                            if (!selectionMode) IconButton(
                                 onClick = {
                                     // The action drops the bookmark, not the
                                     // question: the owner tapped this trash

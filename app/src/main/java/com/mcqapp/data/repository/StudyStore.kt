@@ -163,6 +163,58 @@ internal class StudyStore(
     }
 
     /**
+     * A bounded queue for an explicit set of questions (a tag or mistake pool).
+     *
+     * Unlike [getStudyQueue], this never walks the paper: only the given ids
+     * are read, so a scoped sitting over a million-question paper still costs
+     * the size of the pool. The same pools and scheduler build the cards, so a
+     * scoped session grades and orders them exactly like a whole-paper one.
+     * The input's iteration order is kept for the new cards it builds: the tag
+     * index returns authored `(sortOrder, rowid)` order, and a HashSet here
+     * would serve those cards in hash order instead.
+     */
+    suspend fun getScopedStudyQueue(
+        paperId: String,
+        questionIds: Collection<String>,
+        now: Long = System.currentTimeMillis(),
+        /**
+         * Overrides the stored introduce-new-cards toggle. The empty state asks
+         * the opposite question ("would this scope have new cards if it were
+         * on?"), so it can offer exactly the flip. Null reads the config.
+         */
+        introduceNewCards: Boolean? = null
+    ): List<com.mcqapp.domain.StudyCard> {
+        val orderedIds = LinkedHashSet(questionIds).toList()
+        if (orderedIds.isEmpty()) return emptyList()
+        val config = settings.schedulerConfigNow()
+        resetEdited(paperId)
+        val inPaper = db.cardStateDao().getForQuestionsChunked(orderedIds)
+            .filter { it.paperId == paperId }
+        // "Known" means a schedule row exists, whatever its visibility. A
+        // suspended or buried card is hidden from both pools below, not
+        // forgotten: building this set after the visibility filter used to
+        // serve a hidden card straight back as a brand-new one.
+        val knownIds = inPaper.mapTo(HashSet()) { it.questionId }
+        val rows = inPaper.filter { row ->
+            !row.suspended &&
+                (row.buriedUntil == null || row.buriedUntil <= now)
+        }
+        val pools = poolsOf(config, rows, now)
+        val fresh = if (introduceNewCards ?: config.introduceNewCards) {
+            orderedIds.filter { it !in knownIds }.map { id ->
+                com.mcqapp.domain.StudyCard(
+                    id,
+                    com.mcqapp.domain.StudyReason.NEW,
+                    fsrs(config).initial(id)
+                )
+            }
+        } else {
+            emptyList()
+        }
+        return pools.learning + pools.reviews + fresh
+    }
+
+    /**
      * The card a session should pull next, or null when nothing is eligible —
      * the same pools the badge counts, so the empty state and the pull agree.
      *

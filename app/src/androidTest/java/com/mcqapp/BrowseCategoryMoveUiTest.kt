@@ -2,11 +2,15 @@ package com.mcqapp
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -73,6 +77,14 @@ class BrowseCategoryMoveUiTest {
             )
         }
         compose.waitForIdle()
+        // The list is paged and lazy: on the CI AVD (320x640) a second card
+        // can sit below the fold, where it is not composed and therefore has no
+        // semantics at all. Scroll the row into view first, then assert it.
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("browse-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("browse-list")
+            .performScrollToNode(hasText("Second Cat", substring = true))
         compose.waitUntil(30_000) {
             compose.onAllNodesWithText("Second Cat", substring = true)
                 .fetchSemanticsNodes().isNotEmpty()

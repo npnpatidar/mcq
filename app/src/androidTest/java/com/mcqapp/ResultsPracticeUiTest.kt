@@ -3,6 +3,7 @@ package com.mcqapp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -127,8 +128,22 @@ class ResultsPracticeUiTest {
         }
 
         // The practice headline leads with the recorded target, not the score.
+        // The new "next step" hero sits above this card, so on the CI AVD the
+        // practice card is no longer inside the first viewport — a lazy list
+        // does not compose it until it is scrolled to.
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("results-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasText("Targeted practice", substring = true))
         waitFor("Targeted practice")
         compose.onNodeWithText("Targeted practice", substring = true).assertIsDisplayed()
+        // The header line ("Practice · Weakest topics · …") sits above this
+        // card, so scrolling to the card carried it off the top of the list.
+        // Scroll back to the type line instead of assuming it is still on
+        // screen: it exists either way, and the page still names the type.
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasText("Weakest topics", substring = true))
         compose.onNodeWithText("Weakest topics", substring = true).assertIsDisplayed()
 
         // The review list is below the header cards: scroll to the tags.

@@ -22,6 +22,22 @@ const val SHARED_MAX_AGE_MS: Long = 7L * 24 * 60 * 60 * 1000L
 const val MAX_SHARED_FILE_NAME: Int = 100
 
 /**
+ * Default name for a whole-bank export: the same prefix it always had plus a
+ * local date/time stamp. Two backups taken on the same device no longer land on
+ * one another, and the name shown when the file is picked back up says when it
+ * was taken. [nowMillis] is injected so the rule is testable off-device.
+ */
+fun stampedFileName(
+    base: String,
+    extension: String,
+    nowMillis: Long = System.currentTimeMillis()
+): String {
+    val stamp = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+        .format(java.util.Date(nowMillis))
+    return "$base-$stamp.$extension"
+}
+
+/**
  * A file name safe to use under `cacheDir/shared` and through `FileProvider`.
  *
  * Paths are stripped to the last segment, everything outside `[A-Za-z0-9._-]`

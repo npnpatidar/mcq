@@ -32,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -86,6 +88,9 @@ internal fun DrawerContent(
     onStartStudy: (paperId: String, categoryIds: List<String>) -> Unit
 ) {
     var expandedPaperId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Per-paper "show N more" reveals for large category trees; remembered so a
+    // rotation does not fold the branches back up.
+    var expandedMore by rememberSaveable { mutableStateOf(emptyMap<String, Set<String>>()) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -240,6 +245,12 @@ internal fun DrawerContent(
                 val rolled = remember(paper.categories, countsByPaper[paper.id]) {
                     rollUpCategoryCounts(paper.categories, countsByPaper[paper.id].orEmpty())
                 }
+                // The whole tree is navigable: every parent's children render.
+                // expandedMore stays separate and means only "show the >6
+                // extra siblings at this level", never "hide this branch".
+                val allCategoryIds = remember(paper.categories) {
+                    CategoryTreePager.allIds(paper.categories)
+                }
                 Column {
                     Row(
                         modifier = Modifier
@@ -273,7 +284,14 @@ internal fun DrawerContent(
                                 nodes = paper.categories,
                                 states = states,
                                 counts = rolled,
-                                onToggle = { id -> onToggleCategory(paper.id, id) }
+                                onToggle = { id -> onToggleCategory(paper.id, id) },
+                                expanded = allCategoryIds,
+                                expandedMore = expandedMore[paper.id].orEmpty(),
+                                onToggleMore = { key ->
+                                    val current = expandedMore[paper.id].orEmpty()
+                                    expandedMore = expandedMore + (paper.id to
+                                        if (key in current) current - key else current + key)
+                                }
                             )
                             if (ticked.isNotEmpty()) {
                                 Row(
@@ -337,15 +355,23 @@ private fun CategoryTree(
     nodes: List<CategoryNode>,
     states: Map<String, CategoryCheckState>,
     counts: Map<String, CategoryCounts>,
-    onToggle: (String) -> Unit
+    onToggle: (String) -> Unit,
+    /** Nodes whose children are rendered — the full tree in the picker. */
+    expanded: Set<String> = emptySet(),
+    /** Only the >6 overflow levels that were explicitly revealed. */
+    expandedMore: Set<String> = emptySet(),
+    onToggleMore: (String) -> Unit = {}
 ) {
-    for (node in nodes) {
+    // A bank with hundreds of branches used to make the drawer unusable. Bound
+    // each level and reveal the rest behind an explicit "show N more".
+    CategoryTreePager.page(nodes, expanded = expanded, revealed = expandedMore).forEach { line ->
+        val node = line.node
         // Resolve in the composable scope; `semantics {}` is not composable.
         val selectLabel = stringResource(R.string.r2_lib_select_category, node.title)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 2.dp),
+                .padding(start = (line.depth * 24).dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TriStateCheckbox(
@@ -380,13 +406,23 @@ private fun CategoryTree(
                 }
             }
         }
-        Column(modifier = Modifier.padding(start = 24.dp)) {
-            CategoryTree(
-                nodes = node.children,
-                states = states,
-                counts = counts,
-                onToggle = onToggle
-            )
+        // Once revealed, hiddenAfter drops to 0 — keep the toggle on screen via
+        // the reveal key so "Show less" can fold the level back again.
+        if (line.hiddenAfter > 0 || node.id in expandedMore) {
+            TextButton(
+                onClick = { onToggleMore(node.id) },
+                modifier = Modifier
+                    .padding(start = (line.depth * 24 + 48).dp)
+                    .testTag("drawer-more-${node.id}")
+            ) {
+                Text(
+                    if (node.id in expandedMore) {
+                        stringResource(R.string.of_show_less)
+                    } else {
+                        pluralStringResource(R.plurals.of_show_more_categories, line.hiddenAfter, line.hiddenAfter)
+                    }
+                )
+            }
         }
     }
 }

@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,6 +54,8 @@ import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.ResetCard
+import com.mcqapp.data.repository.cardsWithSchedule
 import com.mcqapp.domain.Passage
 import com.mcqapp.util.ContentElements
 import com.mcqapp.R
@@ -391,6 +394,31 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.movePassage(passageId, delta) }
     }
 
+    /** Cards whose schedules an unassign would reset, for the single disclosure. */
+    fun memberResetCards(ids: Set<String>, onResult: (List<ResetCard>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.cardsWithSchedule(ids)
+                })
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
+
+    /** Exposes PassageStore.unassignQuestions from the management screen. */
+    fun unassignMembers(ids: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                repository.unassignQuestionsFromPassage(ids)
+                onDone(true)
+            } catch (e: Exception) {
+                onDone(false)
+            }
+        }
+    }
+
     companion object {
         private const val MEMBER_PAGE = 50
     }
@@ -414,6 +442,8 @@ fun PassagesScreen(
     // The edit form lives in the ViewModel (E1/E2); these two are just local
     // dialog flags. saveable so rotation does not drop the delete refusal (E2).
     var deleteRefusal by rememberSaveable { mutableStateOf<Pair<String, Int>?>(null) }
+    var pendingUnassign by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
+    var unassignReset by remember { mutableStateOf<List<ResetCard>>(emptyList()) }
     val form by viewModel.form.collectAsStateWithLifecycle()
     // The pending confirmation lives in the ViewModel so it survives rotation.
     val pendingCrossPaperSave by viewModel.pendingCrossPaperSave.collectAsStateWithLifecycle()
@@ -574,48 +604,74 @@ fun PassagesScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            // The question in its paper, focused:
-                                            // the same arrival a search hit gets.
-                                            // The member's own paper, not the
-                                            // passage's, in case a question ever
-                                            // sits in another category's paper.
-                                            val memberPaperId =
-                                                paperByCategoryId[member.categoryId]?.id ?: paperId
-                                            navController.navigate(
-                                                com.mcqapp.ui.navigation.browseRoute(
-                                                    memberPaperId, member.id
-                                                )
-                                            )
-                                        }
                                         .padding(vertical = 6.dp, horizontal = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        stringResource(R.string.editor_index, index + 1),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        modifier = Modifier.padding(end = 8.dp)
-                                    )
-                                    Text(
-                                        member.text,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 2,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    // A zero-option question is a flashcard; the
-                                    // ref's answer-key count cannot say so (a
-                                    // keyless MCQ has none either), hence the
-                                    // option count. Rendered text, not a
-                                    // description only.
-                                    if (member.optionCount == 0) {
+                                    // The member's own tap target is its text
+                                    // block, with its own tag. The unassign
+                                    // button used to sit inside this clickable
+                                    // row, so the row was one merged node whose
+                                    // bounds included a destructive control:
+                                    // a tap aimed at the row could land on the
+                                    // button, and a screen reader read "1 stem,
+                                    // Unassign" as a single button. The two are
+                                    // siblings now — the row opens the question,
+                                    // the button unassigns it.
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                // The question in its paper, focused:
+                                                // the same arrival a search hit gets.
+                                                // The member's own paper, not the
+                                                // passage's, in case a question ever
+                                                // sits in another category's paper.
+                                                val memberPaperId =
+                                                    paperByCategoryId[member.categoryId]?.id ?: paperId
+                                                navController.navigate(
+                                                    com.mcqapp.ui.navigation.browseRoute(
+                                                        memberPaperId, member.id
+                                                    )
+                                                )
+                                            }
+                                            .padding(vertical = 6.dp)
+                                            .testTag("passage-member-${member.id}"),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            stringResource(R.string.r2_flashcard_label),
+                                            stringResource(R.string.editor_index, index + 1),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier.padding(start = 8.dp)
+                                            modifier = Modifier.padding(end = 8.dp)
                                         )
+                                        Text(
+                                            member.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 2,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        // A zero-option question is a flashcard; the
+                                        // ref's answer-key count cannot say so (a
+                                        // keyless MCQ has none either), hence the
+                                        // option count. Rendered text, not a
+                                        // description only.
+                                        if (member.optionCount == 0) {
+                                            Text(
+                                                stringResource(R.string.r2_flashcard_label),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.padding(start = 8.dp)
+                                            )
+                                        }
+                                    }
+                                    TextButton(onClick = {
+                                        viewModel.memberResetCards(setOf(member.id)) { cards ->
+                                            unassignReset = cards
+                                        }
+                                        pendingUnassign = member.id to member.text
+                                    }) {
+                                        Text(stringResource(R.string.passage_unassign_member))
                                     }
                                 }
                             }
@@ -667,6 +723,7 @@ fun PassagesScreen(
             PassageEditDialog(
                 form = form!!,
                 papers = state.papers,
+                memberCount = form?.original?.id?.let { state.memberCounts[it] } ?: 0,
                 saveEnabled = !isDeciding,
                 dismissEnabled = !isDeciding,
                 onTitle = viewModel::setFormTitle,
@@ -710,6 +767,35 @@ fun PassagesScreen(
             }
         }
 
+        pendingUnassign?.let { target ->
+            AlertDialog(
+                onDismissRequest = { pendingUnassign = null },
+                title = { Text(stringResource(R.string.passage_unassign_member)) },
+                text = {
+                    Text(
+                        if (unassignReset.isEmpty()) stringResource(R.string.browse_passage_no_reset)
+                        else stringResource(
+                            R.string.browse_passage_reset_disclosure,
+                            unassignReset.joinToString(", ") { it.preview }
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.unassignMembers(setOf(target.first)) {
+                            pendingUnassign = null
+                            unassignReset = emptyList()
+                        }
+                    }) { Text(stringResource(R.string.apply)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingUnassign = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+
         pendingCrossPaperSave?.let { _ ->
             AlertDialog(
                 onDismissRequest = { if (!isConfirming) viewModel.cancelPending() },
@@ -743,6 +829,7 @@ fun PassagesScreen(
 private fun PassageEditDialog(
     form: PassageForm,
     papers: List<com.mcqapp.domain.Paper>,
+    memberCount: Int,
     saveEnabled: Boolean,
     dismissEnabled: Boolean,
     onTitle: (String) -> Unit,
@@ -803,6 +890,20 @@ private fun PassageEditDialog(
                     selectedId = effectiveCategory,
                     onSelect = onCategory
                 )
+                // Saving an edited passage body deletes every member's study
+                // schedule in PassageStore. Say how many cards that is before
+                // the learner taps Save, not after.
+                if (!form.isNew && memberCount > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        pluralStringResource(
+                            R.plurals.data_honesty_passage_reset_notice,
+                            memberCount, memberCount
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         },
         confirmButton = {

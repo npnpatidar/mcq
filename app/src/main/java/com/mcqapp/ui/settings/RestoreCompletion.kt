@@ -45,3 +45,12 @@ internal suspend fun handleRestoreCompletion(
         onComplete()
     }
 }
+
+/**
+ * The paper a finished restore can point the learner at. A restore replaces the
+ * library wholesale, so the first surviving paper is the natural target for the
+ * completion dialog's Study/Open actions. An empty backup leaves nothing
+ * identifiable — the caller then offers Open library instead of an action that
+ * would navigate to an id we do not have.
+ */
+internal fun identifiableRestoredPaper(paperIds: List<String>): String? = paperIds.firstOrNull()

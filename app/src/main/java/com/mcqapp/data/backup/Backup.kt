@@ -287,6 +287,57 @@ object McqBackupFormat {
     class Invalid(message: String) : Exception(message)
 
     /**
+     * A backup we are writing would exceed the same [SafeZip] caps the restore
+     * enforces. Writing an un-restorable archive is worse than refusing: the
+     * learner would only discover it at the moment they needed the backup.
+     * [entry] distinguishes a single oversized member from the whole archive so
+     * the UI can give an actionable message for either.
+     */
+    class BackupTooLargeException(val entry: Boolean, limitMb: Int) :
+        IOException("Backup exceeds the ${limitMb} MB restore limit${if (entry) " for one part" else ""}.")
+
+    /**
+     * Counts uncompressed bytes as the writer emits them — the same metric
+     * [SafeZip] checks when reading — so an over-cap backup fails while it is
+     * being written, not days later during a restore. [total] is shared across
+     * the four members by [writeTo].
+     */
+    private class SizeGuard(
+        private val delegate: OutputStream,
+        private val total: LongArray,
+        private val maxEntryBytes: Long,
+        private val maxTotalBytes: Long
+    ) : OutputStream() {
+        private var inEntry = 0L
+
+        override fun write(b: Int) {
+            add(1)
+            delegate.write(b)
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            if (len <= 0) return
+            add(len.toLong())
+            delegate.write(b, off, len)
+        }
+
+        private fun add(bytes: Long) {
+            inEntry += bytes
+            total[0] += bytes
+            if (inEntry > maxEntryBytes) {
+                throw BackupTooLargeException(
+                    entry = true, limitMb = (maxEntryBytes / (1024 * 1024)).toInt().coerceAtLeast(1)
+                )
+            }
+            if (total[0] > maxTotalBytes) {
+                throw BackupTooLargeException(
+                    entry = false, limitMb = (maxTotalBytes / (1024 * 1024)).toInt().coerceAtLeast(1)
+                )
+            }
+        }
+    }
+
+    /**
      * Receives a backup's parts as its zip is read. Every callback runs while
      * its entry is still streaming, so an implementation has to be finished
      * with the stream before it returns: the next entry cannot be opened until
@@ -495,18 +546,81 @@ object McqBackupFormat {
         }
     }
 
+    /**
+     * Reads only the manifest from a picked archive, so the restore
+     * confirmation can name the file and its date/counts before the learner
+     * agrees to replace their library. The rest of the zip is walked past,
+     * never inflated into memory, and the small part is read under the same
+     * bound the full readers use.
+     */
+    fun readManifest(input: InputStream): Manifest {
+        try {
+            ZipInputStream(input.buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    try {
+                        if (!entry.isDirectory && entry.name == MANIFEST) {
+                            val text = readBounded(zip, limit = MAX_PART_BYTES)
+                                .toString(Charsets.UTF_8)
+                            val manifest = try {
+                                json.decodeFromString(Manifest.serializer(), text)
+                            } catch (e: Exception) {
+                                throw Invalid("Not an mcqapp backup (unreadable manifest).")
+                            }
+                            return validate(manifest)
+                        }
+                    } finally {
+                        zip.closeEntry()
+                    }
+                }
+            }
+        } catch (e: Invalid) {
+            throw e
+        } catch (e: Exception) {
+            throw Invalid("Not a readable zip file: ${e.message}")
+        }
+        throw Invalid("Not an mcqapp backup (no manifest).")
+    }
+
     /** The whole backup to zip bytes. Pure JVM: no Android types involved. */
     fun write(
         manifest: Manifest,
         content: McqFileDto,
         study: StudyFile,
         settings: SettingsFile
+    ): ByteArray = write(
+        manifest, content, study, settings, SafeZip.MAX_ENTRY_BYTES, SafeZip.MAX_TOTAL_BYTES
+    )
+
+    /** Test seam: the same writer with small caps so the boundaries are testable. */
+    internal fun write(
+        manifest: Manifest,
+        content: McqFileDto,
+        study: StudyFile,
+        settings: SettingsFile,
+        maxEntryBytes: Long,
+        maxTotalBytes: Long
     ): ByteArray {
         val out = ByteArrayOutputStream()
+        var uncompressed = 0L
         ZipOutputStream(out).use { zip ->
             fun entry(name: String, text: String) {
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                if (bytes.size > maxEntryBytes) {
+                    throw BackupTooLargeException(
+                        entry = true,
+                        limitMb = (maxEntryBytes / (1024 * 1024)).toInt().coerceAtLeast(1)
+                    )
+                }
+                uncompressed += bytes.size
+                if (uncompressed > maxTotalBytes) {
+                    throw BackupTooLargeException(
+                        entry = false,
+                        limitMb = (maxTotalBytes / (1024 * 1024)).toInt().coerceAtLeast(1)
+                    )
+                }
                 zip.putNextEntry(ZipEntry(name))
-                zip.write(text.toByteArray(Charsets.UTF_8))
+                zip.write(bytes)
                 zip.closeEntry()
             }
             entry(MANIFEST, json.encodeToString(Manifest.serializer(), manifest))
@@ -529,12 +643,28 @@ object McqBackupFormat {
         content: suspend (java.io.BufferedWriter) -> Unit,
         study: suspend (java.io.BufferedWriter) -> Unit,
         settings: SettingsFile
+    ) = writeTo(
+        output, manifest, content, study, settings,
+        SafeZip.MAX_ENTRY_BYTES, SafeZip.MAX_TOTAL_BYTES
+    )
+
+    /** Test seam with small caps for the same streaming writer. */
+    internal fun writeTo(
+        output: OutputStream,
+        manifest: Manifest,
+        content: suspend (java.io.BufferedWriter) -> Unit,
+        study: suspend (java.io.BufferedWriter) -> Unit,
+        settings: SettingsFile,
+        maxEntryBytes: Long,
+        maxTotalBytes: Long
     ) {
+        val total = LongArray(1)
         ZipOutputStream(output.buffered()).use { zip ->
             suspend fun entry(name: String, body: suspend (java.io.BufferedWriter) -> Unit) {
                 zip.putNextEntry(ZipEntry(name))
+                val guarded = SizeGuard(zip, total, maxEntryBytes, maxTotalBytes)
                 val w = java.io.BufferedWriter(
-                    java.io.OutputStreamWriter(zip, Charsets.UTF_8), 1 shl 14
+                    java.io.OutputStreamWriter(guarded, Charsets.UTF_8), 1 shl 14
                 )
                 body(w)
                 w.flush()

@@ -3,9 +3,13 @@ package com.mcqapp.ui.study
 import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -60,9 +64,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -79,7 +87,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -89,16 +99,24 @@ import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
 import com.mcqapp.domain.Study
 import com.mcqapp.domain.StudyReason
+import com.mcqapp.domain.StudyStepLabel
+import com.mcqapp.domain.studyStepLabel
 import com.mcqapp.domain.Scoring
+import com.mcqapp.domain.StudyScopeMenuChoice
+import com.mcqapp.domain.studyScopeMenuSelection
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.isFlashcard
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.importscreen.displayTitle
+import com.mcqapp.ui.theme.GradePalette
 import com.mcqapp.ui.theme.clockBandColors
+import com.mcqapp.ui.theme.gradePaletteFor
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -114,16 +132,24 @@ fun StudyScreen(
     paperId: String,
     navController: NavController,
     categoryIds: List<String> = emptyList(),
-    leechesOnly: Boolean = false
+    leechesOnly: Boolean = false,
+    tag: String = "",
+    mistakes: Boolean = false
 ) {
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current.resources) keeps the spoken
+    // "saved N wrong answers" count configuration-aware across locale changes.
+    val resources = LocalResources.current
+    val scope = rememberCoroutineScope()
     val viewModel: StudyViewModel = viewModel(
-        key = "study-$paperId-${categoryIds.joinToString(",")}-$leechesOnly",
+        key = "study-$paperId-${categoryIds.joinToString(",")}-$leechesOnly-$tag-$mistakes",
         factory = StudyViewModelFactory(
             context.applicationContext as Application,
             paperId,
             categoryIds,
-            leechesOnly
+            leechesOnly,
+            tag,
+            mistakes
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -162,6 +188,13 @@ fun StudyScreen(
     }
     LaunchedEffect(lastResult) {
         verdictMessage?.let { announcer.announce(it) }
+    }
+    // Crossing the leech threshold used to be silent: speak the same one-shot
+    // line the card shows. The flag lives on the served card, so a card that
+    // stays flagged never repeats it.
+    val leechNoticeMessage = stringResource(R.string.study_polish_leech_notice)
+    LaunchedEffect(state.justFlaggedLeech) {
+        if (state.justFlaggedLeech) announcer.announce(leechNoticeMessage)
     }
     // A card has no result card, so nothing above speaks when its answer
     // appears. Announce the revealed heading once per reveal instead, resolved
@@ -205,6 +238,74 @@ fun StudyScreen(
     val showStudyHeader =
         !state.loading && state.loadError == null && !state.finished
 
+    // Tag/mistake scope is entered from the header and applied by navigating to
+    // a new route. Remembered so rotation cannot strand an open picker.
+    var showScopeDialog by rememberSaveable { mutableStateOf(false) }
+    fun scopeRoute(choice: StudyScopeMenuChoice, foldedTag: String = ""): String {
+        val selection = studyScopeMenuSelection(categoryIds, choice, foldedTag)
+        return com.mcqapp.ui.navigation.studyRoute(
+            paperId,
+            selection.categoryIds,
+            leechesOnly = selection.leechesOnly,
+            tag = selection.tag,
+            mistakes = selection.mistakes
+        )
+    }
+
+    // Keyboard shortcuts: Space reveal / advance, 1-4 grades, arrows move the
+    // option selection. Focus is requested on the card surface and keys are
+    // ignored while a dialog owns the screen or a modifier is held.
+    val keyFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(showScopeDialog, state.showSuspendedDialog, state.finished) {
+        if (!showScopeDialog && !state.showSuspendedDialog && !state.finished) {
+            keyFocus.requestFocus()
+        }
+    }
+    fun onStudyKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return false
+        if (event.nativeKeyEvent.isCtrlPressed ||
+            event.nativeKeyEvent.isAltPressed ||
+            event.nativeKeyEvent.isMetaPressed
+        ) return false
+        if (showScopeDialog || state.showSuspendedDialog || state.finished || state.onBreak) return false
+        val code = event.nativeKeyEvent.keyCode
+        val key = when (code) {
+            android.view.KeyEvent.KEYCODE_SPACE -> StudyKey.SPACE
+            android.view.KeyEvent.KEYCODE_1 -> StudyKey.ONE
+            android.view.KeyEvent.KEYCODE_2 -> StudyKey.TWO
+            android.view.KeyEvent.KEYCODE_3 -> StudyKey.THREE
+            android.view.KeyEvent.KEYCODE_4 -> StudyKey.FOUR
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> StudyKey.LEFT
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> StudyKey.RIGHT
+            else -> StudyKey.OTHER
+        }
+        val action = StudyKeyboard.action(
+            key = key,
+            revealed = state.revealed,
+            staged = state.pendingGrade != null && !state.gradedAndStuck,
+            canGrade = !state.grading && !state.onBreak && !state.gradedAndStuck,
+            // Simplified's keyed card is answered by Check, which also stages
+            // the grade; Space must not reveal it into an ungradeable card.
+            // A self-graded card still uses Space as Show answer.
+            revealAllowed = !state.simplified || state.selfGraded,
+            onBreak = state.onBreak
+        )
+        when (action) {
+            StudyKeyAction.NONE -> return false
+            StudyKeyAction.REVEAL -> viewModel.reveal()
+            StudyKeyAction.NEXT -> viewModel.next()
+            StudyKeyAction.GRADE_AGAIN -> gradeByKey(viewModel, state, ReviewGrade.AGAIN)
+            StudyKeyAction.GRADE_HARD -> gradeByKey(viewModel, state, ReviewGrade.HARD)
+            StudyKeyAction.GRADE_GOOD -> gradeByKey(viewModel, state, ReviewGrade.GOOD)
+            StudyKeyAction.GRADE_EASY -> gradeByKey(viewModel, state, ReviewGrade.EASY)
+            StudyKeyAction.SELECT_PREVIOUS_OPTION,
+            StudyKeyAction.SELECT_NEXT_OPTION -> selectOptionByArrow(
+                viewModel, state, forward = action == StudyKeyAction.SELECT_NEXT_OPTION
+            )
+        }
+        return true
+    }
+
     // Back is a voluntary stop, not a silent exit: it ends the sitting the
     // same way "Done for now" does, so the tally and the restart option are
     // not skipped. Once the summary is up the handler stands down and back
@@ -223,11 +324,14 @@ fun StudyScreen(
                     onBack = { viewModel.stop() },
                     onStop = { viewModel.stop() },
                     onDismissBreak = { viewModel.dismissBreak() },
+                    onTakeBreak = { viewModel.takeBreak() },
+                    onResumeBreak = { viewModel.resumeFromBreak() },
                     onToggleClock = { viewModel.toggleQuestionClock() },
                     onToggleBookmark = { viewModel.toggleBookmarkCurrent() },
                     onBury = { viewModel.buryCurrent() },
                     onSuspend = { viewModel.suspendCurrent() },
-                    onOpenSuspended = { viewModel.openSuspendedDialog() }
+                    onOpenSuspended = { viewModel.openSuspendedDialog() },
+                    onOpenScope = { showScopeDialog = true }
                 )
             } else {
                 BackOnlyBar(onBack = { navController.popBackStack() })
@@ -238,6 +342,10 @@ fun StudyScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .focusRequester(keyFocus)
+                .focusable(true)
+                .onKeyEvent(::onStudyKey)
+                .testTag("study-keyboard-surface")
         ) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -250,12 +358,28 @@ fun StudyScreen(
                     state = state,
                     onRestart = { viewModel.restart() },
                     onEnableNewCards = { viewModel.enableNewCards() },
+                    onOpenEditor = {
+                        com.mcqapp.ui.editor.EditorSession.clear()
+                        navController.navigate(
+                            com.mcqapp.ui.navigation.editorRoute(
+                                "", paperId, categoryIds.firstOrNull().orEmpty(), "new"
+                            )
+                        )
+                    },
                     onDone = { navController.popBackStack() }
                 )
-                else -> StudyBody(
-                    state = state,
-                    viewModel = viewModel
-                )
+                // The body owns the scroll position and the card's viewport-
+                // visibility flag. Without this key a long card scrolled to its
+                // answer handed its scroll offset AND its stale "not visible"
+                // report to the next card, which then started with its clock
+                // paused. A new card gets a new body: scroll at the top and a
+                // fresh visibility report before the clock can be charged.
+                else -> key(state.current?.questionId) {
+                    StudyBody(
+                        state = state,
+                        viewModel = viewModel
+                    )
+                }
             }
             // The unsuspend route. A suspended card never reaches the pull, so
             // this dialog is the only way back into the pool from the UI.
@@ -266,8 +390,100 @@ fun StudyScreen(
                     onDismiss = { viewModel.closeSuspendedDialog() }
                 )
             }
+            if (showScopeDialog) {
+                StudyScopeDialog(
+                    paperId = paperId,
+                    categoryIds = categoryIds,
+                    currentTag = tag,
+                    currentMistakes = mistakes,
+                    loadTags = { pid, cats -> repository.tagCountsForStudyScope(pid, cats) },
+                    // Switching scope pushes a new study route, so the old
+                    // screen's ViewModel stays alive in the back stack. End the
+                    // sitting first, exactly as Back and "Done for now" do:
+                    // otherwise its ticker keeps running and a later pop writes
+                    // an inflated study_sessions row for a sitting that ended
+                    // here. stop() banks both clocks and writes the row once.
+                    onPickWhole = {
+                        showScopeDialog = false
+                        viewModel.stop()
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.WHOLE))
+                    },
+                    onPickTag = { folded ->
+                        showScopeDialog = false
+                        viewModel.stop()
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.TAG, folded))
+                    },
+                    onPickMistakes = {
+                        showScopeDialog = false
+                        viewModel.stop()
+                        navController.navigate(scopeRoute(StudyScopeMenuChoice.MISTAKES))
+                    },
+                    onSaveMistakes = {
+                        scope.launch {
+                            // One transaction for the whole pool (`addTagToQuestions`),
+                            // not a write per question: a crash used to leave half
+                            // the pool tagged. A failure says so instead of
+                            // announcing a success the bank does not hold.
+                            try {
+                                val wrong = repository.getMistakenQuestions(paperId)
+                                repository.addTagToQuestions(
+                                    wrong.map { it.id },
+                                    com.mcqapp.ui.library.LibraryViewModel.MISTAKES_POOL_TAG
+                                )
+                                announcer.announce(
+                                    resources.getString(R.string.of_mistakes_pool_saved, wrong.size)
+                                )
+                            } catch (e: Exception) {
+                                com.mcqapp.util.Logger.e("STUDY", "Saving the mistakes pool failed", e)
+                                announcer.announce(resources.getString(R.string.of_mistakes_pool_failed))
+                            }
+                        }
+                    },
+                    onDismiss = { showScopeDialog = false }
+                )
+            }
         }
     }
+}
+
+/**
+ * Space/1-4 grading honours the app's optional confirm-before-next setting in
+ * Classic only. Simplified ignores the toggle: Check already staged its auto
+ * grade, so a digit edits that proposal through [StudyViewModel.changeGrade]
+ * and Next commits it — preserving the app's proposal, the guess flag and the
+ * AUTO/EDITED provenance. A Simplified self-graded card has no Check and no
+ * proposal, so its digits still grade in one tap.
+ */
+private fun gradeByKey(viewModel: StudyViewModel, state: StudyUiState, grade: ReviewGrade) {
+    when (
+        StudyKeyboard.digitGradeAction(
+            simplified = state.simplified,
+            confirmGradeBeforeNext = state.confirmGradeBeforeNext,
+            selfGraded = state.selfGraded
+        )
+    ) {
+        StudyDigitGrade.STAGE -> viewModel.stageGrade(grade)
+        StudyDigitGrade.CHANGE -> viewModel.changeGrade(grade)
+        StudyDigitGrade.GRADE -> viewModel.grade(grade)
+    }
+}
+
+/** Left/Right walk the answer options, keeping at most one selected. */
+private fun selectOptionByArrow(
+    viewModel: StudyViewModel,
+    state: StudyUiState,
+    forward: Boolean
+) {
+    val options = state.question?.options.orEmpty()
+    if (options.isEmpty()) return
+    val current = options.indexOfFirst { it.id in state.selection }
+    val next = if (current < 0) {
+        if (forward) 0 else options.lastIndex
+    } else {
+        (current + if (forward) 1 else -1 + options.size) % options.size
+    }
+    if (current >= 0 && current != next) viewModel.toggleOption(options[current].id)
+    viewModel.toggleOption(options[next].id)
 }
 
 @Composable
@@ -276,22 +492,59 @@ private fun StudyBody(
     viewModel: StudyViewModel
 ) {
     val question = state.question ?: return
+    // Keyed to the card, not to the composition's lifetime: with the call site
+    // keyed on the question id this is already a fresh state per card, and the
+    // explicit key keeps a future unkeyed caller from carrying scroll position
+    // into the next question. Scroll offset 0 means the card is in the viewport
+    // when its visibility is first reported, so its clock starts running.
+    val scrollState = remember(question.id) { ScrollState(0) }
     // The dwell clock only charges while the question card is actually in the
     // viewport: scrolling a long passage — or, after reveal, the answer — past
     // the card pauses it, the same rule the test screen applies to dialogs.
-    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var cardCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var questionOnScreen by remember { mutableStateOf(true) }
+    //
+    // All three belong to the card, not to the composition that happens to
+    // show it. Keying them on the id keeps a reused body from handing its
+    // predecessor's scrolled-past "not visible" reading — and its detached
+    // coordinates — to a card that starts at the top of its own scroll state.
+    var containerCoords by remember(question.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var cardCoords by remember(question.id) { mutableStateOf<LayoutCoordinates?>(null) }
+    var questionOnScreen by remember(question.id) { mutableStateOf(true) }
     fun reportVisibility() {
         val card = cardCoords
         val container = containerCoords
         if (card == null || container == null || !card.isAttached || !container.isAttached) return
-        val top = card.localPositionOf(container, Offset.Zero).y
+        // Zero is a pass before placement, not a viewport with nothing in it.
+        // Reading it as "hidden" would pause the clock on a card that is about
+        // to be shown, and nothing would clear the reading again.
+        if (container.size.height <= 0 || card.size.height <= 0) return
+        // Window positions, not localPositionOf: the local position is the
+        // layout slot inside the scrolling column and does not move when the
+        // column scrolls, so it can never tell whether the card is on screen.
+        val top = card.positionInWindow().y - container.positionInWindow().y
         questionOnScreen = top < container.size.height && top + card.size.height > 0f
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
-    LaunchedEffect(questionOnScreen) {
-        viewModel.setQuestionVisible(questionOnScreen)
+    // The pull clocked this card from the PREVIOUS card's reading, so a new
+    // card must report its own. The three readings above are keyed on the card,
+    // so this flow starts at "on screen" — a card starts at the top of its own
+    // scroll state — and every laid-out reading after that (the learner scrolls
+    // the card out, or back in) flows through the same gate.
+    LaunchedEffect(question.id) {
+        snapshotFlow { questionOnScreen }.collect { viewModel.setQuestionVisible(it) }
+    }
+    // A first layout can land before this body's scroll container has a size,
+    // and that one "hidden" reading would stick, because no key changes again.
+    // Re-read the geometry once this card's own frame has been laid out.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(question.id) {
+        // Force this card to its own top before reading the viewport. A
+        // focus restoration from the previous card can otherwise bring a
+        // former option back into view and apply its offset to the new scroll
+        // state, and the single geometry read would stick as "hidden".
+        focusManager.clearFocus(force = true)
+        scrollState.scrollTo(0)
+        withFrameNanos { }
+        reportVisibility()
     }
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live
@@ -300,8 +553,9 @@ private fun StudyBody(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .onGloballyPositioned { containerCoords = it; reportVisibility() }
+                    .testTag("study-question-scroll")
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
@@ -309,11 +563,14 @@ private fun StudyBody(
                     StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
                     Spacer(Modifier.height(12.dp))
                 }
+                LeechNoticeBlock(show = state.justFlaggedLeech)
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.current?.reason,
+                    isLeech = state.current?.state?.leech == true,
+                    stepLabel = state.current?.state?.studyStepLabel(),
                     onToggleOption = { viewModel.toggleOption(it) },
                     passage = state.passage,
                     modifier = cardPositioned
@@ -338,8 +595,9 @@ private fun StudyBody(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(scrollState)
                     .onGloballyPositioned { containerCoords = it; reportVisibility() }
+                    .testTag("study-question-scroll")
                     .padding(16.dp)
             ) {
                 Spacer(Modifier.height(12.dp))
@@ -347,11 +605,14 @@ private fun StudyBody(
                     StudyGradingHintCard(onDismiss = { viewModel.dismissGradingHint() })
                     Spacer(Modifier.height(12.dp))
                 }
+                LeechNoticeBlock(show = state.justFlaggedLeech)
                 QuestionCard(
                     question = question,
                     selection = state.currentSelection,
                     revealed = state.revealed,
                     reason = state.current?.reason,
+                    isLeech = state.current?.state?.leech == true,
+                    stepLabel = state.current?.state?.studyStepLabel(),
                     onToggleOption = { viewModel.toggleOption(it) },
                     passage = state.passage,
                     modifier = cardPositioned
@@ -385,7 +646,8 @@ private fun StudyBody(
                             haptics.tick()
                             viewModel.reveal()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.onBreak
                     ) {
                         Text(stringResource(R.string.show_answer))
                     }
@@ -397,7 +659,7 @@ private fun StudyBody(
                     // Default: a self-reported grade is persisted and the next
                     // card pulled in one tap, exactly as before.
                     GradeButtons(
-                        enabled = !state.grading,
+                        enabled = !state.grading && !state.onBreak,
                         previews = state.previews,
                         onGrade = {
                             if (state.confirmGradeBeforeNext) viewModel.stageGrade(it)
@@ -534,7 +796,7 @@ private fun StagedResultActions(state: StudyUiState, viewModel: StudyViewModel) 
             modifier = Modifier.weight(1f).testTag("study-next"),
             // The card is graded and stuck: re-tapping Next would
             // double-persist it (consolidated_bugs.md I3).
-            enabled = !state.grading && !state.gradedAndStuck
+            enabled = !state.grading && !state.gradedAndStuck && !state.onBreak
         ) {
             Text(stringResource(R.string.next))
         }
@@ -581,7 +843,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                         haptics.tick()
                         viewModel.reveal()
                     },
-                    modifier = Modifier.fillMaxWidth().testTag("study-show-answer")
+                    modifier = Modifier.fillMaxWidth().testTag("study-show-answer"),
+                    enabled = !state.onBreak
                 ) {
                     Text(stringResource(R.string.show_answer))
                 }
@@ -592,7 +855,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 // here — staging would run the simplified commit path and
                 // fabricate correctness for a card that has no answer key.
                 GradeButtons(
-                    enabled = !state.grading,
+                    enabled = !state.grading && !state.onBreak,
                     previews = state.previews,
                     onGrade = { viewModel.grade(it) }
                 )
@@ -620,6 +883,7 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                 Switch(
                     checked = state.isGuess,
                     onCheckedChange = { viewModel.setGuess(it) },
+                    enabled = !state.onBreak,
                     modifier = Modifier.testTag("study-guess")
                 )
             }
@@ -640,7 +904,8 @@ private fun SimplifiedFooter(state: StudyUiState, viewModel: StudyViewModel) {
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().testTag("study-check")
+                modifier = Modifier.fillMaxWidth().testTag("study-check"),
+                enabled = !state.onBreak
             ) {
                 Text(stringResource(R.string.check))
             }
@@ -749,11 +1014,14 @@ private fun StudyStickyHeader(
     onBack: () -> Unit,
     onStop: () -> Unit,
     onDismissBreak: () -> Unit,
+    onTakeBreak: () -> Unit,
+    onResumeBreak: () -> Unit,
     onToggleClock: () -> Unit,
     onToggleBookmark: () -> Unit,
     onBury: () -> Unit,
     onSuspend: () -> Unit,
-    onOpenSuspended: () -> Unit
+    onOpenSuspended: () -> Unit,
+    onOpenScope: () -> Unit
 ) {
     // `semantics {}` is not composable, so resolve its accessibility strings
     // during composition with stringResource and capture the plain Strings;
@@ -828,7 +1096,11 @@ private fun StudyStickyHeader(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        state.paperTitle,
+                        // The stored title may be the importer's fallback
+                        // token ("Imported Questions"); resolve it for display
+                        // in the active locale, exactly as the import screen
+                        // and the library card do.
+                        displayTitle(state.paperTitle),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -842,6 +1114,7 @@ private fun StudyStickyHeader(
                         is ScopeLabel.One -> label.title
                         is ScopeLabel.Many ->
                             pluralStringResource(R.plurals.study_scope_many, label.count, label.count)
+                        is ScopeLabel.Text -> stringResource(label.resId, label.arg)
                     }
                     if (scopeText.isNotEmpty()) {
                         Text(
@@ -862,6 +1135,11 @@ private fun StudyStickyHeader(
                         )
                     }
                 }
+                // The scope picker lives in the same overflow as the card
+                // actions. A fifth top-bar icon squeezed the paper title to
+                // zero width on a 320 dp phone (the header keeps back, actions,
+                // bookmark and Done), so the session-level choice moved behind
+                // the icon that already holds session-level actions.
                 // Card actions live behind one overflow so the header keeps its
                 // bookmark and Done controls. Suspend and bury act on the card
                 // on screen without writing a grade; the last item opens the
@@ -869,7 +1147,10 @@ private fun StudyStickyHeader(
                 Box {
                     IconButton(
                         onClick = { cardMenuExpanded = true },
-                        enabled = state.question != null,
+                        // Enabled even with no card: the menu's first item is
+                        // the study scope, which must stay reachable from an
+                        // empty sitting. The card items gate themselves on
+                        // studyCanActOnCard below.
                         modifier = Modifier.testTag("study-card-actions")
                     ) {
                         Icon(
@@ -882,6 +1163,14 @@ private fun StudyStickyHeader(
                         onDismissRequest = { cardMenuExpanded = false },
                         modifier = Modifier.testTag("study-card-actions-menu")
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.of_study_scope)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onOpenScope()
+                            },
+                            modifier = Modifier.testTag("study-scope")
+                        )
                         // A card action hides this card and pulls the next, so
                         // it must stand down while a grade is in flight or only
                         // staged — otherwise a tap loses the learner's decision.
@@ -998,7 +1287,7 @@ private fun StudyStickyHeader(
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier
                         .heightIn(min = 48.dp)
-                        .clickable(onClick = onToggleClock, enabled = !state.revealed)
+                        .clickable(onClick = onToggleClock, enabled = !state.revealed && !state.onBreak)
                         .testTag("study-question-clock")
                         .semantics {
                             contentDescription = clockContentDescription
@@ -1038,7 +1327,27 @@ private fun StudyStickyHeader(
                     )
                 }
             }
-            if (state.showBreakStrip) {
+            if (state.onBreak) {
+                // An explicit break is not the end of the sitting: both clocks
+                // are banked and the only way forward is Resume. Showing Dismiss
+                // here would strand the learner with a frozen session.
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.study_polish_on_break),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("study-on-break")
+                    )
+                    TextButton(
+                        onClick = onResumeBreak,
+                        modifier = Modifier.testTag("study-resume-break")
+                    ) {
+                        Text(stringResource(R.string.study_polish_resume))
+                    }
+                }
+            } else if (state.showBreakStrip) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -1048,6 +1357,12 @@ private fun StudyStickyHeader(
                     )
                     TextButton(onClick = onDismissBreak) {
                         Text(stringResource(R.string.dismiss))
+                    }
+                    TextButton(
+                        onClick = onTakeBreak,
+                        modifier = Modifier.testTag("study-take-break")
+                    ) {
+                        Text(stringResource(R.string.study_polish_take_break))
                     }
                 }
             }
@@ -1061,6 +1376,10 @@ private fun QuestionCard(
     selection: Set<String>,
     revealed: Boolean,
     reason: StudyReason?,
+    /** The card's own flag: a leech wears the chip in the main session too. */
+    isLeech: Boolean = false,
+    /** First-exposure step vs a lapse recovery, from the card's FSRS state. */
+    stepLabel: StudyStepLabel? = null,
     onToggleOption: (String) -> Unit,
     passage: com.mcqapp.domain.Passage? = null,
     modifier: Modifier = Modifier
@@ -1089,12 +1408,15 @@ private fun QuestionCard(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            // Why this card was pulled. Optional context, never a demand.
+            // Why this card was pulled, plus the card's own flag. A leech in the
+            // main session wears the same chip as one in the drill: the flag is
+            // a fact about the card, not about which surface served it.
+            if (isLeech || reason == StudyReason.LEECH) {
+                LeeChip()
+                Spacer(Modifier.height(6.dp))
+            }
             when (reason) {
-                StudyReason.LEECH -> {
-                    LeeChip()
-                    Spacer(Modifier.height(6.dp))
-                }
+                StudyReason.LEECH -> {}
                 StudyReason.NEW -> {
                     Text(
                         stringResource(R.string.new_question),
@@ -1112,8 +1434,11 @@ private fun QuestionCard(
                     Spacer(Modifier.height(6.dp))
                 }
                 StudyReason.LEARNING -> {
+                    // Both are short-term steps served by the same pull, but a
+                    // lapsed card is relearning and must not claim it is seeing
+                    // this material for the first time.
                     Text(
-                        stringResource(R.string.learning_step),
+                        stringResource(studyStepLabelRes(stepLabel)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1166,7 +1491,12 @@ private fun QuestionCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp)
+                        // The content height of a one-line option was under
+                        // 48 dp: a short label left a tap target too small and
+                        // the rows crowded together. Reserve the target and a
+                        // little more breathing room; the tag is unchanged.
+                        .padding(top = 8.dp)
+                        .heightIn(min = 48.dp)
                         .background(container, RoundedCornerShape(8.dp))
                         .testTag("study-option-" + option.id)
                         .selectable(
@@ -1177,14 +1507,12 @@ private fun QuestionCard(
                             haptics.toggle(!isSelected)
                             onToggleOption(option.id)
                         }
-                        .padding(8.dp)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                         .semantics { stateDescription = optionState },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        mark,
-                        modifier = Modifier.width(32.dp),
-                        style = MaterialTheme.typography.titleLarge,
+                    OptionMark(
+                        mark = mark,
                         color = if (verdict && isCorrect) MaterialTheme.colorScheme.primary
                         else if (verdict && isSelected) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurface
@@ -1231,6 +1559,58 @@ private fun QuestionCard(
     }
 }
 
+/**
+ * The one-shot "Now flagged as tricky" line. It sits above the card it is
+ * attached to, disappears on the next pull, and is never a claim about that
+ * next card — it reports the grade that just crossed the threshold.
+ */
+@Composable
+private fun LeechNoticeBlock(show: Boolean) {
+    if (!show) return
+    Spacer(Modifier.height(8.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("study-leech-notice")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                modifier = Modifier.height(16.dp),
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(R.string.study_polish_leech_notice),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+/**
+ * The shared option marker: one glyph slot and one typography for every Study
+ * option row. Internal so another surface can reuse the same mark later
+ * (Results uses the same glyph vocabulary and should adopt this component in a
+ * follow-up batch rather than drawing a second, drifting set).
+ */
+@Composable
+internal fun OptionMark(mark: String, color: Color) {
+    Text(
+        mark,
+        modifier = Modifier.width(32.dp),
+        style = MaterialTheme.typography.titleLarge,
+        color = color
+    )
+}
+
 @Composable
 private fun LeeChip() {
     Surface(
@@ -1271,22 +1651,22 @@ private fun GradeButtons(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GradeButtonFor(
-                ReviewGrade.AGAIN, MaterialTheme.colorScheme.error,
+                ReviewGrade.AGAIN,
                 enabled, previews[ReviewGrade.AGAIN], Modifier.weight(1f), onGrade
             )
             GradeButtonFor(
-                ReviewGrade.HARD, MaterialTheme.colorScheme.tertiary,
+                ReviewGrade.HARD,
                 enabled, previews[ReviewGrade.HARD], Modifier.weight(1f), onGrade
             )
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GradeButtonFor(
-                ReviewGrade.GOOD, MaterialTheme.colorScheme.primary,
+                ReviewGrade.GOOD,
                 enabled, previews[ReviewGrade.GOOD], Modifier.weight(1f), onGrade
             )
             GradeButtonFor(
-                ReviewGrade.EASY, MaterialTheme.colorScheme.secondary,
+                ReviewGrade.EASY,
                 enabled, previews[ReviewGrade.EASY], Modifier.weight(1f), onGrade
             )
         }
@@ -1297,7 +1677,6 @@ private fun GradeButtons(
 @Composable
 private fun GradeButtonFor(
     grade: ReviewGrade,
-    color: Color,
     enabled: Boolean,
     preview: String?,
     modifier: Modifier,
@@ -1306,7 +1685,10 @@ private fun GradeButtonFor(
     GradeButton(
         labelRes = studyGradeLabelRes(grade),
         tag = studyGradeTag(grade),
-        color = color,
+        // The fill and its text come from ONE role pair. Passing only a
+        // container left Material's onPrimary text on top of an error/tertiary
+        // fill, which is unreadable with a custom palette.
+        palette = gradePaletteFor(grade, MaterialTheme.colorScheme),
         enabled = enabled,
         preview = preview,
         modifier = modifier,
@@ -1318,7 +1700,7 @@ private fun GradeButtonFor(
 private fun GradeButton(
     @StringRes labelRes: Int,
     tag: String,
-    color: Color,
+    palette: GradePalette,
     enabled: Boolean,
     preview: String?,
     modifier: Modifier = Modifier,
@@ -1334,7 +1716,10 @@ private fun GradeButton(
         // itself; the label Text inside a Button is not the target.
         modifier = modifier.testTag("study-grade-$tag"),
         enabled = enabled,
-        colors = ButtonDefaults.buttonColors(containerColor = color)
+        colors = ButtonDefaults.buttonColors(
+            containerColor = palette.container,
+            contentColor = palette.onContainer
+        )
     ) {
         // The delay each grade would produce, as in Anki. Without it the learner
         // cannot tell "Again" from "Hard" before committing, and after Track C
@@ -1380,6 +1765,7 @@ private fun StudySummary(
     state: StudyUiState,
     onRestart: () -> Unit,
     onEnableNewCards: () -> Unit,
+    onOpenEditor: () -> Unit,
     onDone: () -> Unit
 ) {
     // The ViewModel says why it is empty; the copy is resolved here (C19).
@@ -1440,6 +1826,18 @@ private fun StudySummary(
                 )
                 Spacer(Modifier.height(8.dp))
             }
+            // An empty bank has no card to serve. The route out goes straight
+            // to the editor instead of dropping the learner back at a library
+            // whose "add question" affordance they never found.
+            if (!stoppedEarly) {
+                OutlinedButton(
+                    onClick = onOpenEditor,
+                    modifier = Modifier.fillMaxWidth().testTag("study-add-questions")
+                ) {
+                    Text(stringResource(R.string.of_empty_study_add))
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             SummaryTimes(state)
             if (stoppedEarly) {
                 // The learner chose to stop, so the same sitting is still
@@ -1469,6 +1867,17 @@ private fun StudySummary(
                 stringResource(R.string.study_session_summary, state.reviewed, state.againCount, state.goodCount),
                 style = MaterialTheme.typography.bodyMedium
             )
+            if (state.leechesOnly && state.reviewed > 0) {
+                // The drill walks the due leeches it loaded once. Say so rather
+                // than letting the "Study again" button imply the app kept
+                // drilling cards that lapsed again during the pass.
+                Text(
+                    stringResource(R.string.study_polish_drill_one_pass),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             if (state.showsRecallAccuracy) {
                 Spacer(Modifier.height(4.dp))
                 // Stats only, no goals: how the sitting went, not a score to
@@ -1549,6 +1958,17 @@ internal fun studyOptionStateRes(
     revealed && keyKnown && isSelected -> R.string.r2_study_option_selected_wrong
     isSelected -> R.string.r2_study_option_selected
     else -> R.string.r2_study_option_not_selected
+}
+
+/**
+ * The short-term step's label. A first exposure says "Learning step"; a card
+ * that lapsed and is recovering says "Relearning after a lapse". The enum comes
+ * from the card's own FSRS state, so the two never disagree.
+ */
+@StringRes
+internal fun studyStepLabelRes(label: StudyStepLabel?): Int = when (label) {
+    StudyStepLabel.RELEARNING_AFTER_LAPSE -> R.string.study_polish_relearning_step
+    StudyStepLabel.LEARNING_STEP, null -> R.string.learning_step
 }
 
 /** Short, localized verdict spoken when a result card lands. */

@@ -321,6 +321,29 @@ internal fun yTicks(max: Double, count: Int = 4): List<Double> {
 
 internal fun formatPct(fraction: Double): String = "${(fraction * 100).roundToInt()}%"
 
+/** A bucket below this many reviews is too thin to carry a full-weight point. */
+internal const val SMALL_BUCKET_REVIEWS = 5
+
+/**
+ * A line point's spoken text with its sample size, when one is known. A 100%
+ * bucket of one review must not sound the same as a 100% bucket of a hundred.
+ * [reviewUnit] is the localized unit supplied by the caller (plural form).
+ */
+internal fun linePointText(
+    value: String,
+    count: Int,
+    singularUnit: String,
+    pluralUnit: String
+): String = if (count <= 0) {
+    value
+} else {
+    "$value · $count ${if (count == 1) singularUnit else pluralUnit}"
+}
+
+/** True for a non-empty bucket whose sample is too thin for a solid marker. */
+internal fun isSmallBucket(count: Int, threshold: Int = SMALL_BUCKET_REVIEWS): Boolean =
+    count in 1 until threshold
+
 internal fun formatCount(value: Double): String =
     if (value >= 10 || value == value.roundToInt().toDouble()) {
         value.roundToInt().toString()

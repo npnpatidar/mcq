@@ -95,6 +95,17 @@ class MainActivity : ComponentActivity() {
         private val sendCopyScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
         private val sendIntentCoordinator = SendIntentCoordinator<SendPayload>(sendCopyScope) { payload ->
+            // A shared snippet (no file attached) is quick capture unless it is
+            // plainly a bank. Files keep the existing copy -> import pipeline.
+            val sharedText = if (com.mcqapp.util.sendStreamUri(payload.intent) == null) {
+                payload.intent.getStringExtra(Intent.EXTRA_TEXT)
+            } else null
+            if (!sharedText.isNullOrBlank() &&
+                !com.mcqapp.util.sharedTextIsBank(sharedText)
+            ) {
+                SharedImport.requestText(sharedText)
+                return@SendIntentCoordinator
+            }
             val result = withContext(Dispatchers.IO) {
                 copySendToCache(payload.context, payload.intent)
             }

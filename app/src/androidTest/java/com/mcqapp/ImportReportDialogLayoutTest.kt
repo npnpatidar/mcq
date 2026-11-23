@@ -51,6 +51,8 @@ class ImportReportDialogLayoutTest {
         restoredAttempts = 9,
         droppedAnkiStems = 10,
         recallConverted = 11,
+        schedulesReset = 12,
+        rowsSkipped = 13,
         progressRestoreSkipped = true
     )
 

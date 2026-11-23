@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Finding 1: the exam conditions a test will run under, shown before Start. -->
+    <string name="test_ux_conditions_title">शुरू करने से पहले</string>
+    <string name="test_ux_condition_strict">कड़ी परीक्षा मोड: जमा करने तक उत्तर छिपे रहते हैं।</string>
+    <string name="test_ux_condition_not_strict">तत्काल प्रतिक्रिया: हर उत्तर के साथ परिणाम दिखता है।</string>
+    <string name="test_ux_condition_auto_advance">स्वतः आगे: उत्तर देते ही अगला प्रश्न खुलता है।</string>
+    <string name="test_ux_condition_no_auto_advance">प्रश्नों के बीच आप स्वयं जाते हैं।</string>
+    <string name="test_ux_condition_practice">अभ्यास मोड: स्पष्टीकरण तुरंत दिखता है।</string>
+    <string name="test_ux_condition_not_practice">परीक्षा शैली: स्पष्टीकरण टेस्ट के बाद मिलते हैं।</string>
+    <string name="test_ux_condition_shuffle">प्रश्नों का क्रम बदला गया है।</string>
+    <string name="test_ux_condition_no_shuffle">प्रश्न पेपर के क्रम में रहते हैं।</string>
+    <string name="test_ux_condition_negative">नेगेटिव मार्किंग: गलत उत्तर पर %1$s घटेगा।</string>
+    <string name="test_ux_condition_no_negative">कोई नेगेटिव मार्किंग नहीं।</string>
+    <string name="test_ux_condition_settings">यह सेटिंग्स में बदलें</string>
+
+    <!-- Finding 2: representative mocks and the collapsed practice group. -->
+    <string name="test_ux_group_mocks">मॉक टेस्ट</string>
+    <string name="test_ux_group_practice">अभ्यास टेस्ट</string>
+    <string name="test_ux_practice_more">और अभ्यास प्रकार</string>
+    <string name="test_ux_practice_less">कम अभ्यास प्रकार</string>
+
+    <!-- Finding 3: the unfinished test has a home and a replacement warning. -->
+    <string name="test_ux_unfinished_line" tools:ignore="PluralsCandidate">अधूरा टेस्ट - %1$d हल किए गए</string>
+    <string name="test_ux_unfinished_resume">टेस्ट फिर शुरू करें</string>
+    <string name="test_ux_replace_notice">यह टेस्ट शुरू करने पर आपका सहेजा हुआ अधूरा टेस्ट हट जाएगा।</string>
+    <string name="test_ux_replace_dismiss">समझ गया</string>
+    <string name="test_ux_replace_keep">सहेजा हुआ टेस्ट रखें</string>
+
+    <!-- Finding 4: numbered, feedback-free navigation in strict mode. -->
+    <string name="test_ux_jump_grid">प्रश्न पर जाएँ</string>
+    <string name="test_ux_jump_grid_hide">प्रश्न ग्रिड छिपाएँ</string>
+    <string name="test_ux_jump_go">प्रश्न %1$d पर जाएँ</string>
+
+    <!-- Finding 5: one margin rule and one wording everywhere. -->
+    <string name="test_ux_delta_line" tools:ignore="PluralsCandidate">पिछले टेस्ट के बाद %1$s%2$d अंक - %3$s</string>
+    <string name="test_ux_delta_within">दोनों मार्जिन के भीतर (हो सकता है कि यह सिर्फ उतार-चढ़ाव हो)</string>
+    <string name="test_ux_delta_beyond">दोनों मार्जिन से बाहर</string>
+
+    <!-- Finding 6: the History arrow is explicitly since the first attempt. -->
+    <string name="test_ux_history_delta_line">पहले प्रयास के बाद %1$s %2$s अंक</string>
+    <string name="test_ux_history_delta_within">स्पष्ट बदलाव नहीं - मार्जिन के भीतर</string>
+    <string name="test_ux_history_delta_spoken_improved">पहले प्रयास के बाद %1$s अंक सुधार</string>
+    <string name="test_ux_history_delta_spoken_declined">पहले प्रयास के बाद %1$s अंक गिरावट</string>
+    <string name="test_ux_history_delta_spoken_unchanged">पहले प्रयास के बाद स्पष्ट बदलाव नहीं</string>
+
+    <!-- Finding 7: the passage above the stem in a result card. -->
+    <string name="test_ux_passage_label">गद्यांश</string>
+
+    <!-- Finding 8: the next step is the first thing a learner sees on results. -->
+    <string name="test_ux_next_step">अगला कदम</string>
+    <string name="test_ux_next_step_go">करें</string>
+</resources>

@@ -12,15 +12,24 @@ import com.mcqapp.R
 import com.mcqapp.data.export.ExportFormat
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.PaperFilteredBookmarkSource
+import com.mcqapp.data.repository.RemovedBookmarks
+import com.mcqapp.data.repository.removeBookmarksBulk
+import com.mcqapp.data.repository.restoreBookmarksBulk
+import com.mcqapp.domain.Paper
 import com.mcqapp.ui.results.OneShotEvents
 import com.mcqapp.util.AppStrings
 import com.mcqapp.util.Logger
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -31,7 +40,9 @@ data class BookmarksUiState(
     val loaded: Boolean = false,
     /** R8: dialog state in the ViewModel survives rotation. */
     val showFormatDialog: Boolean = false,
-    val exportFormat: ExportFormat = ExportFormat.JSON_INLINE
+    val exportFormat: ExportFormat = ExportFormat.JSON_INLINE,
+    /** Paper chip: null = all papers. */
+    val filterPaperId: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -44,27 +55,36 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     private val _state = MutableStateFlow(BookmarksUiState())
     val state: StateFlow<BookmarksUiState> = _state.asStateFlow()
 
+    /** Papers for the filter chip and for provenance titles. */
+    val papers: StateFlow<List<Paper>> = repository.observePapers()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val paperTitles: StateFlow<Map<String, String>> = papers.map { list ->
+        list.associate { it.id to it.title }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     /**
-     * One Pager generation: the bookmarks change signal invalidates the live
-     * paging source, so removing (or adding) a bookmark from anywhere
-     * refreshes the visible list in place, with [getRefreshKey] keeping the
-     * reader's position. The old `flatMapLatest` rebuilt the whole pager —
-     * and reset its scroll to the top — on every toggle
-     * (consolidated_bugs.md F14).
+     * One Pager generation per paper filter: the source invalidates itself on
+     * bookmark writes, so removing from anywhere refreshes the visible list in
+     * place. Changing the chip rebuilds a filtered source (and so resets the
+     * scroll, which is the expected meaning of a new filter).
      */
     private var liveSource: androidx.paging.PagingSource<com.mcqapp.data.repository.BookmarkPageKey, com.mcqapp.domain.BookmarkedQuestion>? = null
 
+    private val paperFilter = MutableStateFlow<String?>(null)
+
     val pagingData: Flow<PagingData<com.mcqapp.domain.BookmarkedQuestion>> =
-        Pager(
-            PagingConfig(
-                pageSize = BOOKMARKS_PAGE,
-                initialLoadSize = BOOKMARKS_PAGE,
-                enablePlaceholders = false
-            )
-        ) {
-            repository.bookmarkedPagingSource().also { liveSource = it }
-        }.flow
-            .cachedIn(viewModelScope)
+        paperFilter.flatMapLatest { paperId ->
+            Pager(
+                PagingConfig(
+                    pageSize = BOOKMARKS_PAGE,
+                    initialLoadSize = BOOKMARKS_PAGE,
+                    enablePlaceholders = false
+                )
+            ) {
+                PaperFilteredBookmarkSource(repository.bookmarkedPagingSource(), paperId)
+                    .also { liveSource = it }
+            }.flow
+        }.cachedIn(viewModelScope)
 
     init {
         // R7: the header must count the same rows the list can resolve. The
@@ -77,9 +97,6 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
                 _state.update { it.copy(count = count, loaded = true) }
             }
         }
-        // One generation, invalidated in place: a source cannot observe the
-        // tracker itself reliably (the observer needs the tracker's refresh
-        // cycle), but the change flow demonstrably fires per write.
         viewModelScope.launch {
             repository.observeBookmarkChanges().collect { liveSource?.invalidate() }
         }
@@ -98,6 +115,11 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
         return questions.count { it.categoryId in categoryIds }
     }
 
+    fun setPaperFilter(paperId: String?) {
+        paperFilter.value = paperId
+        _state.update { it.copy(filterPaperId = paperId) }
+    }
+
     fun removeBookmark(questionId: String) {
         // Idempotent delete, not a toggle: the row is still composed while the
         // list refreshes, so a second tap used to re-add the bookmark it had
@@ -113,6 +135,36 @@ class BookmarksViewModel(application: Application) : AndroidViewModel(applicatio
     fun restoreBookmark(questionId: String) {
         viewModelScope.launch {
             if (!repository.isBookmarked(questionId)) repository.toggleBookmark(questionId)
+        }
+    }
+
+    /** Bulk removal with a restorable snapshot, for the snackbar Undo. */
+    private var lastRemoved: RemovedBookmarks? = null
+
+    fun removeBookmarks(questionIds: Set<String>, onRemoved: (Int) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val removed = repository.removeBookmarksBulk(questionIds)
+                lastRemoved = removed
+                onRemoved(removed.size)
+            } catch (e: Exception) {
+                Logger.e("BOOKVM", "Bulk bookmark removal failed", e)
+                onRemoved(0)
+            }
+        }
+    }
+
+    /** Guarded restore; a later write that re-bookmarked a row wins. */
+    fun undoBulkRemove(onResult: (Int) -> Unit) {
+        val snapshot = lastRemoved ?: run { onResult(0); return }
+        lastRemoved = null
+        viewModelScope.launch {
+            try {
+                onResult(repository.restoreBookmarksBulk(snapshot))
+            } catch (e: Exception) {
+                Logger.e("BOOKVM", "Bulk bookmark undo failed", e)
+                onResult(0)
+            }
         }
     }
 

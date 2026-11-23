@@ -2,26 +2,37 @@ package com.mcqapp.data.repository
 
 import androidx.room.withTransaction
 import com.mcqapp.data.local.AppDatabase
+import com.mcqapp.data.local.BookmarkEntity
+import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.CorrectAnswerEntity
 import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
+import com.mcqapp.data.local.QuestionStatsEntity
+import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.data.local.COPY_ID_PROBE
+import com.mcqapp.data.local.addAllChunked
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.deleteOtherPapersChunked
 import com.mcqapp.data.local.existingQuestionIdsInPaperChunked
-import com.mcqapp.data.local.getIdCategoriesByIdsChunked
-import com.mcqapp.data.local.getIdCategoryPassageByIdsChunked
 import com.mcqapp.data.local.getByIdsChunked
 import com.mcqapp.data.local.getByCategoriesChunked
+import com.mcqapp.data.local.getByQuestionsChunked
+import com.mcqapp.data.local.getContentHashesByIdsChunked
+import com.mcqapp.data.local.getExistingIdsChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.local.getRefsByCategoriesChunked
+import com.mcqapp.data.local.getIdCategoriesByIdsChunked
+import com.mcqapp.data.local.getIdCategoryPassageByIdsChunked
+import com.mcqapp.data.local.getOrderedIdsByIdsChunked
 import com.mcqapp.data.local.likePrefixPattern
 import com.mcqapp.data.local.moveAfterAnchor
 import com.mcqapp.data.local.placeWithGroup
 import com.mcqapp.data.local.rekeyToPaperChunked
 import com.mcqapp.data.local.removeAllChunked
 import com.mcqapp.data.local.replaceQuestionTags
+import com.mcqapp.data.local.tagsForQuestionsChunked
 import com.mcqapp.data.local.updateBulkFieldsChunked
 import com.mcqapp.data.local.updateCategoryChunked
 import com.mcqapp.data.io.CardContent
@@ -761,4 +772,149 @@ internal class QuestionStore(
          */
         const val ORDER_PAGE = 2000
     }
+}
+
+/**
+ * Everything a delete removes, captured before the write so Undo can put it
+ * back. Schedules, review history, lifetime statistics and bookmarks are kept
+ * verbatim — a restored card resumes where the learner left it — and every
+ * member of a deleted passage group is included by virtue of being in the
+ * deleted id set (its membership rides in [questions].passageId).
+ */
+internal data class DeletedQuestionSnapshot(
+    val questions: List<QuestionEntity>,
+    val options: List<OptionEntity>,
+    val answers: List<CorrectAnswerEntity>,
+    val tags: Map<String, List<String>>,
+    val cardStates: List<CardStateEntity>,
+    val reviewLogs: List<ReviewLogEntity>,
+    val stats: List<QuestionStatsEntity>,
+    val bookmarks: List<BookmarkEntity>
+) {
+    val size: Int get() = questions.size
+}
+
+/** Reads the full delete snapshot before a destructive write, off the caller's thread. */
+internal suspend fun AppDatabase.snapshotQuestions(ids: Collection<String>): DeletedQuestionSnapshot {
+    if (ids.isEmpty()) return DeletedQuestionSnapshot(emptyList(), emptyList(), emptyList(), emptyMap(), emptyList(), emptyList(), emptyList(), emptyList())
+    val present = questionDao().getByIdsChunked(ids.toList())
+    if (present.isEmpty()) return DeletedQuestionSnapshot(emptyList(), emptyList(), emptyList(), emptyMap(), emptyList(), emptyList(), emptyList(), emptyList())
+    val live = present.map { it.id }
+    return DeletedQuestionSnapshot(
+        questions = present,
+        options = optionDao().getForQuestionsChunked(live),
+        answers = correctAnswerDao().getForQuestionsChunked(live),
+        tags = questionTagDao().tagsForQuestionsChunked(live),
+        cardStates = cardStateDao().getForQuestionsChunked(live),
+        reviewLogs = reviewLogDao().getByQuestionsChunked(live),
+        stats = questionStatsDao().getByQuestionsChunked(live),
+        bookmarks = bookmarkDao().getForQuestionsChunked(live)
+    )
+}
+
+/**
+ * Restores a delete snapshot in one transaction. A question that was
+ * re-created after the delete (an import, or a second Undo) is left alone:
+ * every dependent row is guarded by the same presence check, so a later write
+ * can never be clobbered by an older Undo. Returns how many questions were
+ * actually restored.
+ */
+internal suspend fun AppDatabase.restoreQuestions(snapshot: DeletedQuestionSnapshot): Int {
+    if (snapshot.questions.isEmpty()) return 0
+    return withTransaction {
+        val existing = questionDao().getExistingIdsChunked(snapshot.questions.map { it.id }).toHashSet()
+        val missing = snapshot.questions.filterNot { it.id in existing }
+        if (missing.isEmpty()) return@withTransaction 0
+        val ids = missing.map { it.id }.toHashSet()
+        questionDao().upsertAll(missing)
+        optionDao().upsertAll(snapshot.options.filter { it.questionId in ids })
+        correctAnswerDao().upsertAll(snapshot.answers.filter { it.questionId in ids })
+        cardStateDao().upsertAll(snapshot.cardStates.filter { it.questionId in ids })
+        if (snapshot.reviewLogs.isNotEmpty()) {
+            reviewLogDao().insertAll(snapshot.reviewLogs.filter { it.questionId in ids })
+        }
+        if (snapshot.stats.isNotEmpty()) {
+            questionStatsDao().insertAll(snapshot.stats.filter { it.questionId in ids })
+        }
+        snapshot.tags.forEach { (id, tags) ->
+            if (id in ids) questionTagDao().replaceQuestionTags(id, tags)
+        }
+        bookmarkDao().addAllChunked(snapshot.bookmarks.filter { it.questionId in ids })
+        Logger.i("REPO", "restoreQuestions: restored ${missing.size} question(s)")
+        missing.size
+    }
+}
+
+/** A set of questions with the same content hash and the same element-level fingerprint. */
+data class DuplicateGroup(
+    val contentHash: String,
+    val questionIds: List<String>
+)
+
+/**
+ * Groups exact duplicates in two phases: the stored `contentHash` narrows the
+ * candidates in one (chunked) query, then [com.mcqapp.data.io.CardContent]'s
+ * element-level fingerprint confirms them — a stale or colliding hash can put
+ * two different questions in the same bucket, and only the second phase decides.
+ * Input rows are passed in so the grouping itself is a pure, JVM-testable seam.
+ */
+internal fun groupDuplicates(
+    hashes: List<com.mcqapp.data.local.QuestionHashRow>,
+    fingerprints: Map<String, String>
+): List<DuplicateGroup> =
+    hashes.groupBy({ it.contentHash }, { it.questionId })
+        .filter { it.value.size > 1 }
+        .flatMap { (hash, ids) ->
+            ids.groupBy { fingerprints[it] ?: it }
+                .filter { it.value.size > 1 }
+                .map { DuplicateGroup(hash, it.value) }
+        }
+        .sortedBy { it.questionIds.firstOrNull() }
+
+/** Reads every question's stored hash; callers group the result. */
+internal suspend fun AppDatabase.allQuestionHashes(): List<com.mcqapp.data.local.QuestionHashRow> =
+    questionDao().getContentHashesByIdsChunked(questionDao().getAllIds())
+
+/** The element-level fingerprint of one stored question (blocks, options, key, passage, back). */
+internal suspend fun AppDatabase.contentFingerprint(questionId: String): String? {
+    val entity = questionDao().getById(questionId) ?: return null
+    val options = optionDao().getByQuestion(questionId)
+    val correct = correctAnswerDao().getCorrectIds(questionId).toSet()
+    return com.mcqapp.data.io.CardContent.of(entity, options, correct)
+}
+
+/** Finds exact duplicate groups across the whole library. */
+internal suspend fun McqRepository.findDuplicateGroups(): List<DuplicateGroup> {
+    val db = db()
+    val hashes = db.allQuestionHashes()
+    val candidates = hashes.groupBy({ it.contentHash }, { it.questionId })
+        .filter { it.value.size > 1 }
+        .values.flatten().distinct()
+    val fingerprints = candidates.associateWith { id -> db.contentFingerprint(id) ?: id }
+    return groupDuplicates(hashes, fingerprints)
+}
+
+/**
+ * Merges duplicates into the chosen card: its study schedule and memory are
+ * left untouched, and same-paper review history from the removed copies is
+ * appended to it (a copy in another paper keeps its own provenance and is not
+ * folded in). The copies themselves are then deleted through the normal path.
+ */
+internal suspend fun McqRepository.mergeDuplicates(
+    keepId: String,
+    duplicateIds: Collection<String>
+): Int {
+    if (duplicateIds.isEmpty()) return 0
+    val db = db()
+    val keep = db.questionDao().getById(keepId) ?: return 0
+    val keepPaper = db.categoryDao().getById(keep.categoryId)?.paperId ?: return 0
+    db.withTransaction {
+        val logs = db.reviewLogDao().getByQuestionsChunked(duplicateIds)
+            .filter { it.paperId == keepPaper }
+        if (logs.isNotEmpty()) {
+            db.reviewLogDao().insertAll(logs.map { it.copy(id = 0, questionId = keepId) })
+        }
+    }
+    deleteQuestions(duplicateIds)
+    return duplicateIds.size
 }

@@ -100,6 +100,30 @@ object Logger {
 
     fun e(tag: String, message: String, throwable: Throwable? = null) = write("E", tag, message, throwable)
 
+    /**
+     * A warning a fallback hit — report it once per distinct `(tag, message)`
+     * instead of once per row.
+     *
+     * The error ring only records `E`/`CRASH`, so a swallowed parse failure or
+     * an unavailable XXE hardening feature used to leave no diagnostic at all:
+     * the app degraded quietly, and the first clue was a user complaining that
+     * questions went missing. This writes the normal `Logger.w` line *and*
+     * records the same message in [recentErrors], so a JVM test can assert the
+     * warning happened without a logcat or a log file. Repeated hits with the
+     * same tag and message are suppressed — a 100k-row import must not allocate
+     * 100k ring entries or log lines for one repeated condition.
+     */
+    fun warnOnce(tag: String, message: String, throwable: Throwable? = null) {
+        if (!warnOnceKeys.add("$tag\u0000$message")) return
+        w(tag, message, throwable)
+        recordError("W", tag, message)
+    }
+
+    /** Test seam: forget which warnings have already been reported. */
+    internal fun resetWarnOnce() = warnOnceKeys.clear()
+
+    private val warnOnceKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     fun crash(throwable: Throwable) {
         val message = throwable.javaClass.name + ": " + throwable.message
         val line = formatLine("CRASH", "UNCAUGHT", message, throwable)
@@ -132,7 +156,12 @@ object Logger {
 
     fun recentErrors(limit: Int = 20): List<String> = recentErrors.toList().takeLast(limit)
 
-    fun clearRecentErrors() = recentErrors.clear()
+    fun clearRecentErrors() {
+        recentErrors.clear()
+        // A test that clears the ring is starting a clean observation window;
+        // keeping the old dedup keys would hide the first warning it expects.
+        warnOnceKeys.clear()
+    }
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val line = formatLine(level, tag, message, throwable)
@@ -174,11 +203,16 @@ object Logger {
         }
     }
 
+    /** Adds one bounded line to the in-memory ring used by tests. */
+    private fun recordError(level: String, tag: String, message: String) {
+        recentErrors.addLast("$level/$tag: $message")
+        while (recentErrors.size > 100) recentErrors.removeFirst()
+    }
+
     /** logcat and the in-memory ring of recent errors. */
     private fun publish(level: String, tag: String, message: String) {
         if (level == "E" || level == "CRASH") {
-            recentErrors.addLast("$level/$tag: $message")
-            while (recentErrors.size > 100) recentErrors.removeFirst()
+            recordError(level, tag, message)
         }
         // Logging must never crash its caller, on device or on plain-JVM tests.
         try {

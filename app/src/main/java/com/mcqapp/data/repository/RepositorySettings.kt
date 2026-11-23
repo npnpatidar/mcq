@@ -2,6 +2,7 @@ package com.mcqapp.data.repository
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -34,6 +35,19 @@ import java.util.Locale
 // Internal, not private: RepositorySettingsTest seeds the same file directly to
 // prove legacy keys are inert and that corrupt values fall back to defaults.
 internal val Context.dataStore by preferencesDataStore(name = "settings")
+
+/**
+ * How a [SettingsStore] obtains its store. Production uses the single
+ * process-wide instance; a test supplies a factory that creates a fresh
+ * `PreferenceDataStoreFactory` store so it cannot inherit another test's
+ * preferences or cancel the shared write actor. Injecting the factory — not a
+ * store instance — keeps the file path scoped to the test's own context.
+ */
+internal typealias PreferencesDataStoreFactory = (Context) -> DataStore<Preferences>
+
+internal object AppDataStores {
+    val production: PreferencesDataStoreFactory = { context -> context.dataStore }
+}
 
 /**
  * The in-app language choice. SYSTEM is the original behaviour (follow the
@@ -96,8 +110,16 @@ internal data class GradingGuard(
  */
 internal class SettingsStore(
     private val context: Context,
-    private val installFreshness: InstallFreshness
+    private val installFreshness: InstallFreshness,
+    storeFactory: PreferencesDataStoreFactory = AppDataStores.production
 ) : TestProgressSlot {
+
+    /**
+     * The store this instance reads and writes. Everything goes through
+     * [editPreferences] for writes, so a fresh store in a test gets the exact
+     * same IO hop and cancellation safety as the production singleton.
+     */
+    private val dataStore: DataStore<Preferences> = storeFactory(context)
 
     /**
      * A store with no database behind it, for tests that pin the seed's write
@@ -108,22 +130,30 @@ internal class SettingsStore(
     internal constructor(context: Context, freshInstall: Boolean) :
         this(context, InstallFreshness.fixed(context, freshInstall))
 
+    /** The same no-database store, with a caller-supplied store factory. */
+    @VisibleForTesting
+    internal constructor(
+        context: Context,
+        freshInstall: Boolean,
+        storeFactory: PreferencesDataStoreFactory
+    ) : this(context, InstallFreshness.fixed(context, freshInstall), storeFactory)
+
     private val themeKey = stringPreferencesKey("theme_mode")
 
     fun themeMode(): Flow<String> =
-        context.dataStore.data.map { it[themeKey] ?: "system" }
+        dataStore.data.map { it[themeKey] ?: "system" }
 
     suspend fun setThemeMode(mode: String) {
-        context.editPreferences { it[themeKey] = mode }
+        dataStore.editPreferences { it[themeKey] = mode }
     }
 
     private val themePaletteKey = stringPreferencesKey("theme_palette")
 
     fun themePalette(): Flow<String> =
-        context.dataStore.data.map { it[themePaletteKey] ?: "material" }
+        dataStore.data.map { it[themePaletteKey] ?: "material" }
 
     suspend fun setThemePalette(key: String) {
-        context.editPreferences { it[themePaletteKey] = key }
+        dataStore.editPreferences { it[themePaletteKey] = key }
     }
 
     /**
@@ -135,12 +165,12 @@ internal class SettingsStore(
     private val appLanguageKey = stringPreferencesKey(AppLanguage.PREFERENCE_KEY)
 
     fun appLanguage(): Flow<AppLanguage> =
-        context.dataStore.data.map { prefs ->
+        dataStore.data.map { prefs ->
             AppLanguage.fromStored(prefs[appLanguageKey])
         }
 
     suspend fun setAppLanguage(language: AppLanguage) {
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             if (language == AppLanguage.SYSTEM) prefs.remove(appLanguageKey)
             else prefs[appLanguageKey] = language.storedValue
         }
@@ -157,7 +187,7 @@ internal class SettingsStore(
      * format, so this layer never needs to know a colour from a name.
      */
     fun customThemesJson(): Flow<String?> =
-        context.dataStore.data.map { it[customThemesKey] }
+        dataStore.data.map { it[customThemesKey] }
 
     /**
      * Read-modify-write of the imported themes in one DataStore edit. [update]
@@ -166,7 +196,7 @@ internal class SettingsStore(
      * leave the stored list untouched.
      */
     suspend fun updateCustomThemesJson(update: (String?) -> String) {
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             prefs[customThemesKey] = update(prefs[customThemesKey])
         }
     }
@@ -176,10 +206,10 @@ internal class SettingsStore(
     private val simplifiedStudyKey = booleanPreferencesKey("simplified_study")
 
     fun shuffleQuestions(): Flow<Boolean> =
-        context.dataStore.data.map { it[shuffleQuestionsKey] ?: false }
+        dataStore.data.map { it[shuffleQuestionsKey] ?: false }
 
     suspend fun setShuffleQuestions(enabled: Boolean) {
-        context.editPreferences { it[shuffleQuestionsKey] = enabled }
+        dataStore.editPreferences { it[shuffleQuestionsKey] = enabled }
     }
 
     /**
@@ -188,10 +218,10 @@ internal class SettingsStore(
      * a grade comes from, never the scheduler underneath it.
      */
     fun simplifiedStudy(): Flow<Boolean> =
-        context.dataStore.data.map { it[simplifiedStudyKey] ?: true }
+        dataStore.data.map { it[simplifiedStudyKey] ?: true }
 
     suspend fun setSimplifiedStudy(enabled: Boolean) {
-        context.editPreferences { it[simplifiedStudyKey] = enabled }
+        dataStore.editPreferences { it[simplifiedStudyKey] = enabled }
     }
 
     /**
@@ -205,10 +235,10 @@ internal class SettingsStore(
     private val confirmGradeBeforeNextKey = booleanPreferencesKey("confirm_grade_before_next")
 
     fun confirmGradeBeforeNext(): Flow<Boolean> =
-        context.dataStore.data.map { it[confirmGradeBeforeNextKey] ?: false }
+        dataStore.data.map { it[confirmGradeBeforeNextKey] ?: false }
 
     suspend fun setConfirmGradeBeforeNext(enabled: Boolean) {
-        context.editPreferences { it[confirmGradeBeforeNextKey] = enabled }
+        dataStore.editPreferences { it[confirmGradeBeforeNextKey] = enabled }
     }
 
     /**
@@ -221,16 +251,16 @@ internal class SettingsStore(
         booleanPreferencesKey("study_grading_hint_shown")
 
     fun studyGradingHintShown(): Flow<Boolean> =
-        context.dataStore.data.map { it[studyGradingHintShownKey] ?: false }
+        dataStore.data.map { it[studyGradingHintShownKey] ?: false }
 
     suspend fun setStudyGradingHintShown() {
-        context.editPreferences { it[studyGradingHintShownKey] = true }
+        dataStore.editPreferences { it[studyGradingHintShownKey] = true }
     }
 
     fun shuffleOptions(): Flow<Boolean> =
-        context.dataStore.data.map { it[shuffleOptionsKey] ?: false }
+        dataStore.data.map { it[shuffleOptionsKey] ?: false }
     suspend fun setShuffleOptions(enabled: Boolean) {
-        context.editPreferences { it[shuffleOptionsKey] = enabled }
+        dataStore.editPreferences { it[shuffleOptionsKey] = enabled }
     }
 
     private val hapticsEnabledKey = booleanPreferencesKey("haptics_enabled")
@@ -241,19 +271,19 @@ internal class SettingsStore(
      * underneath. The Settings switch is the app-level opt-out.
      */
     fun hapticsEnabled(): Flow<Boolean> =
-        context.dataStore.data.map { it[hapticsEnabledKey] ?: true }
+        dataStore.data.map { it[hapticsEnabledKey] ?: true }
 
     suspend fun setHapticsEnabled(enabled: Boolean) {
-        context.editPreferences { it[hapticsEnabledKey] = enabled }
+        dataStore.editPreferences { it[hapticsEnabledKey] = enabled }
     }
 
     private val pdfTwoColumnKey = booleanPreferencesKey("pdf_two_column")
 
     fun pdfTwoColumn(): Flow<Boolean> =
-        context.dataStore.data.map { it[pdfTwoColumnKey] ?: false }
+        dataStore.data.map { it[pdfTwoColumnKey] ?: false }
 
     suspend fun setPdfTwoColumn(enabled: Boolean) {
-        context.editPreferences { it[pdfTwoColumnKey] = enabled }
+        dataStore.editPreferences { it[pdfTwoColumnKey] = enabled }
     }
 
     private val lastTestLengthKey = intPreferencesKey("last_test_length")
@@ -265,30 +295,30 @@ internal class SettingsStore(
      * impossible request.
      */
     fun lastTestLength(): Flow<Int> =
-        context.dataStore.data.map {
+        dataStore.data.map {
             it[lastTestLengthKey] ?: TestPlan.DEFAULT_LENGTH
         }
 
     suspend fun setLastTestLength(length: Int) {
-        context.editPreferences { it[lastTestLengthKey] = length }
+        dataStore.editPreferences { it[lastTestLengthKey] = length }
     }
 
     private val practiceModeKey = booleanPreferencesKey("practice_mode")
 
     fun practiceMode(): Flow<Boolean> =
-        context.dataStore.data.map { it[practiceModeKey] ?: false }
+        dataStore.data.map { it[practiceModeKey] ?: false }
 
     suspend fun setPracticeMode(enabled: Boolean) {
-        context.editPreferences { it[practiceModeKey] = enabled }
+        dataStore.editPreferences { it[practiceModeKey] = enabled }
     }
 
     private val strictModeKey = booleanPreferencesKey("strict_mode")
 
     fun strictMode(): Flow<Boolean> =
-        context.dataStore.data.map { it[strictModeKey] ?: false }
+        dataStore.data.map { it[strictModeKey] ?: false }
 
     suspend fun setStrictMode(enabled: Boolean) {
-        context.editPreferences { it[strictModeKey] = enabled }
+        dataStore.editPreferences { it[strictModeKey] = enabled }
     }
 
     /**
@@ -300,19 +330,19 @@ internal class SettingsStore(
     private val updateAnswersKey = booleanPreferencesKey("update_answers_on_duplicate")
 
     fun updateAnswersOnDuplicate(): Flow<Boolean> =
-        context.dataStore.data.map { it[updateAnswersKey] ?: false }
+        dataStore.data.map { it[updateAnswersKey] ?: false }
 
     suspend fun setUpdateAnswersOnDuplicate(enabled: Boolean) {
-        context.editPreferences { it[updateAnswersKey] = enabled }
+        dataStore.editPreferences { it[updateAnswersKey] = enabled }
     }
 
     private val autoAdvanceKey = booleanPreferencesKey("auto_advance")
 
     fun autoAdvance(): Flow<Boolean> =
-        context.dataStore.data.map { it[autoAdvanceKey] ?: false }
+        dataStore.data.map { it[autoAdvanceKey] ?: false }
 
     suspend fun setAutoAdvance(enabled: Boolean) {
-        context.editPreferences { it[autoAdvanceKey] = enabled }
+        dataStore.editPreferences { it[autoAdvanceKey] = enabled }
     }
 
     /**
@@ -324,10 +354,10 @@ internal class SettingsStore(
     private val avoidRecentQuestionsKey = booleanPreferencesKey("avoid_recent_questions")
 
     fun avoidRecentQuestions(): Flow<Boolean> =
-        context.dataStore.data.map { it[avoidRecentQuestionsKey] ?: true }
+        dataStore.data.map { it[avoidRecentQuestionsKey] ?: true }
 
     suspend fun setAvoidRecentQuestions(enabled: Boolean) {
-        context.editPreferences { it[avoidRecentQuestionsKey] = enabled }
+        dataStore.editPreferences { it[avoidRecentQuestionsKey] = enabled }
     }
 
     /**
@@ -339,21 +369,21 @@ internal class SettingsStore(
     private val loadRemoteImagesKey = booleanPreferencesKey("load_remote_images")
 
     fun loadRemoteImages(): Flow<Boolean> =
-        context.dataStore.data.map { it[loadRemoteImagesKey] ?: false }
+        dataStore.data.map { it[loadRemoteImagesKey] ?: false }
 
     suspend fun setLoadRemoteImages(enabled: Boolean) {
-        context.editPreferences { it[loadRemoteImagesKey] = enabled }
+        dataStore.editPreferences { it[loadRemoteImagesKey] = enabled }
     }
 
     private val fontScaleKey = floatPreferencesKey("font_scale")
 
     fun fontScale(): Flow<Float> =
-        context.dataStore.data.map {
+        dataStore.data.map {
             com.mcqapp.util.FontScale.coerce(it[fontScaleKey] ?: com.mcqapp.util.FontScale.DEFAULT)
         }
 
     suspend fun setFontScale(scale: Float) {
-        context.editPreferences { it[fontScaleKey] = scale }
+        dataStore.editPreferences { it[fontScaleKey] = scale }
     }
 
     // --- Reporting-only daily goal (owner ruling) ---
@@ -365,17 +395,17 @@ internal class SettingsStore(
     private val dailyGoalCountKey = intPreferencesKey("daily_goal_count")
 
     fun dailyGoalEnabled(): Flow<Boolean> =
-        context.dataStore.data.map { it[dailyGoalEnabledKey] ?: DailyGoal.DEFAULT_ENABLED }
+        dataStore.data.map { it[dailyGoalEnabledKey] ?: DailyGoal.DEFAULT_ENABLED }
 
     suspend fun setDailyGoalEnabled(enabled: Boolean) {
-        context.editPreferences { it[dailyGoalEnabledKey] = enabled }
+        dataStore.editPreferences { it[dailyGoalEnabledKey] = enabled }
     }
 
     fun dailyGoalCount(): Flow<Int> =
-        context.dataStore.data.map { it[dailyGoalCountKey] ?: DailyGoal.DEFAULT_COUNT }
+        dataStore.data.map { it[dailyGoalCountKey] ?: DailyGoal.DEFAULT_COUNT }
 
     suspend fun setDailyGoalCount(count: Int) {
-        context.editPreferences { it[dailyGoalCountKey] = DailyGoal.normalizeCount(count) }
+        dataStore.editPreferences { it[dailyGoalCountKey] = DailyGoal.normalizeCount(count) }
     }
 
     // --- Scheduler settings ---
@@ -460,7 +490,7 @@ internal class SettingsStore(
      */
     fun schedulerConfig(): Flow<com.mcqapp.domain.SchedulerConfig> = flow {
         emitAll(
-            context.dataStore.data.map { prefs ->
+            dataStore.data.map { prefs ->
                 val d = com.mcqapp.domain.SchedulerConfig()
                 // v28 fixed the cuts at absolute 6 s / 60 s and deleted the reading
                 // allowance, so a pair stored by an older build is measured against
@@ -527,10 +557,10 @@ internal class SettingsStore(
      * instead of being overwritten by the seed.
      */
     private suspend fun seedFreshInstallRule() = seedMutex.withLock {
-        val snapshot = context.dataStore.data.first()
+        val snapshot = dataStore.data.first()
         if (snapshot[correctnessOnlyKey] != null) return@withLock
         if (!installFreshness.isNewInstall()) return@withLock
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             if (prefs[correctnessOnlyKey] == null) prefs[correctnessOnlyKey] = true
         }
     }
@@ -554,7 +584,7 @@ internal class SettingsStore(
 
     suspend fun setSchedulerConfig(config: com.mcqapp.domain.SchedulerConfig) {
         val c = config.sanitized()
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             prefs[schedKey("max_interval")] = c.maxIntervalDays.toDouble()
             prefs[schedKey("relearn_ms")] = c.relearnMs.toDouble()
             prefs[schedKey("leech_threshold")] = c.leechThreshold.toDouble()
@@ -588,7 +618,7 @@ internal class SettingsStore(
             .sanitized()
             .fsrsParameters
         val serialized = weights.joinToString(",")
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             // Any set written from this build is FSRS-7 shaped, including the
             // defaults written by a restore or a reset.
             prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
@@ -621,7 +651,7 @@ internal class SettingsStore(
      * is and only stamped with the model version.
      */
     suspend fun ensureFsrs7() {
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             if ((prefs[fsrsModelVersionKey] ?: 0) >= FSRS_MODEL_VERSION) return@editPreferences
             val parsed = prefs[fsrsParametersKey]
                 ?.split(',')
@@ -647,7 +677,7 @@ internal class SettingsStore(
 
     /** The stored FSRS model version; 0 means the pre-FSRS-7 build. */
     suspend fun fsrsModelVersion(): Int =
-        context.dataStore.data.map { it[fsrsModelVersionKey] ?: 0 }.first()
+        dataStore.data.map { it[fsrsModelVersionKey] ?: 0 }.first()
 
     /**
      * The last review-log id the FSRS-7 card rebuild finished, or 0 when it has
@@ -655,15 +685,15 @@ internal class SettingsStore(
      * million-row replay.
      */
     suspend fun fsrsRebuildCursor(): Long =
-        context.dataStore.data.map { it[fsrsRebuildCursorKey] ?: 0L }.first()
+        dataStore.data.map { it[fsrsRebuildCursorKey] ?: 0L }.first()
 
     internal suspend fun setFsrsRebuildCursor(cursor: Long) {
-        context.editPreferences { it[fsrsRebuildCursorKey] = cursor }
+        dataStore.editPreferences { it[fsrsRebuildCursorKey] = cursor }
     }
 
     /** Stamps the rebuild complete and clears its cursor in one edit. */
     internal suspend fun completeFsrs7Rebuild() {
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             prefs[fsrsRebuildDoneKey] = true
             prefs[fsrsRebuildCursorKey] = 0L
             prefs[fsrsModelVersionKey] = FSRS_MODEL_VERSION
@@ -672,22 +702,22 @@ internal class SettingsStore(
 
     /** Whether the card-state rebuild has already run to completion. */
     internal suspend fun fsrs7RebuildDone(): Boolean =
-        context.dataStore.data.map { it[fsrsRebuildDoneKey] ?: false }.first()
+        dataStore.data.map { it[fsrsRebuildDoneKey] ?: false }.first()
 
     /** Whether the one-shot fast-trace repair already ran. */
     internal suspend fun fastTraceRepairDone(): Boolean =
-        context.dataStore.data.map { it[fsrsFastRepairDoneKey] ?: false }.first()
+        dataStore.data.map { it[fsrsFastRepairDoneKey] ?: false }.first()
 
     internal suspend fun completeFastTraceRepair() {
-        context.editPreferences { it[fsrsFastRepairDoneKey] = true }
+        dataStore.editPreferences { it[fsrsFastRepairDoneKey] = true }
     }
 
     /** Whether the one-shot FSRS-7 migration notice is still waiting. */
     fun fsrs7Notice(): Flow<Boolean> =
-        context.dataStore.data.map { it[fsrs7NoticeKey] ?: false }
+        dataStore.data.map { it[fsrs7NoticeKey] ?: false }
 
     suspend fun dismissFsrs7Notice() {
-        context.editPreferences { it.remove(fsrs7NoticeKey) }
+        dataStore.editPreferences { it.remove(fsrs7NoticeKey) }
     }
 
     /**
@@ -702,7 +732,7 @@ internal class SettingsStore(
         gradingVersion: Int,
         correctnessOnly: Boolean = false
     ) {
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             prefs[schedKey("fast_seconds")] = easySeconds.toDouble()
             prefs[schedKey("slow_seconds")] = slowSeconds.toDouble()
             prefs[ladderVersionKey] = gradingVersion
@@ -736,7 +766,7 @@ internal class SettingsStore(
      * [retainRetiredCutsIfAbsent].
      */
     internal suspend fun retainRetiredCuts() {
-        context.editPreferences { it.retainRetiredCutsIfAbsent() }
+        dataStore.editPreferences { it.retainRetiredCutsIfAbsent() }
     }
 
     /**
@@ -748,7 +778,7 @@ internal class SettingsStore(
      * with another rule's cuts.
      */
     internal suspend fun gradingVersionOrNull(): Int? =
-        context.dataStore.data.map { it[ladderVersionKey] }.first()
+        dataStore.data.map { it[ladderVersionKey] }.first()
 
     /**
      * Resets the pacing knobs only. The fitted FSRS weights are deliberately
@@ -778,7 +808,7 @@ internal class SettingsStore(
      */
     suspend fun resetSchedulerConfig(): Boolean {
         var pairChanged = false
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             val c = com.mcqapp.domain.SchedulerConfig().sanitized()
             val cutsCurrent =
                 (prefs[gradingRulesVersionKey] ?: 0) >= GRADING_RULES_VERSION
@@ -861,14 +891,14 @@ internal class SettingsStore(
 
     /** The resume slot: the store's saves are provable against this seam. */
     override suspend fun saveTestProgress(json: String) {
-        context.editPreferences { it[progressKey] = json }
+        dataStore.editPreferences { it[progressKey] = json }
     }
 
     override suspend fun loadTestProgress(): String? =
-        context.dataStore.data.map { it[progressKey] }.first()
+        dataStore.data.map { it[progressKey] }.first()
 
     override suspend fun clearTestProgress() {
-        context.editPreferences { it.remove(progressKey) }
+        dataStore.editPreferences { it.remove(progressKey) }
     }
 
     /** Clears the resume snapshot if it is for [paperId]. */
@@ -891,7 +921,7 @@ internal class SettingsStore(
      * out rather than half-captured.
      */
     suspend fun snapshot(): McqBackupFormat.SettingsFile {
-        val prefs = context.dataStore.data.first().asMap()
+        val prefs = dataStore.data.first().asMap()
         val out = LinkedHashMap<String, McqBackupFormat.PreferenceEntry>()
         for ((key, value) in prefs) {
             // The resume slot is session state, not a setting. Exporting it
@@ -967,7 +997,7 @@ internal class SettingsStore(
         var restoredWeights: List<Double>? = null
         var restoredFitVersion: Int? = null
         var restoredRetiredFit = false
-        context.editPreferences { prefs ->
+        dataStore.editPreferences { prefs ->
             // The resume snapshot is restored separately, and only after this
             // call. Clearing it here would destroy a live snapshot on a
             // settings-only restore, so preserve it across the replace.
@@ -1057,13 +1087,13 @@ internal class SettingsStore(
         // backup was taken on; the restored rows have their own ids, so a
         // restored cursor cannot be trusted to resume. Start the rebuild from
         // scratch (the caller runs it immediately after restoring).
-        context.editPreferences {
+        dataStore.editPreferences {
             it.remove(fsrsRebuildCursorKey)
             it.remove(fsrsRebuildDoneKey)
             it.remove(fsrsFastRepairDoneKey)
         }
         if (restoredRetiredFit) {
-            context.editPreferences { it[fsrs7NoticeKey] = true }
+            dataStore.editPreferences { it[fsrs7NoticeKey] = true }
         }
         // The restore replaced both the preferences and (for a full backup)
         // the database. [installFreshness] was invalidated before the clear

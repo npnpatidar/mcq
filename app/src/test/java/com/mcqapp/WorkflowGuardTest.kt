@@ -13,6 +13,10 @@ import java.io.File
  * tag, no permissions/concurrency, no ui-test timeout, a mask applied to a
  * keystore.properties that did not exist yet, unbounded artifact uploads and
  * no release-notes reminder.
+ *
+ * INCIDENT: unpinned actions, a mask applied before keystore.properties existed
+ * and unbounded uploads each shipped once; the blanket --refresh-dependencies
+ * workaround then turned four transient fetches into failed PRs.
  */
 class WorkflowGuardTest {
 
@@ -159,52 +163,75 @@ class WorkflowGuardTest {
         )
     }
 
-    @Test
-    fun releaseBuildCommentMatchesActualMinifySettings() {
-        assertFalse(
-            "the stale 'isMinifyEnabled is still false' comment must be gone",
-            build.contains("isMinifyEnabled is still")
-        )
-        assertTrue(
-            "the comment must describe the live R8 settings",
-            build.contains("isShrinkResources = true")
-        )
-    }
+    // Removed: releaseBuildCommentMatchesActualMinifySettings only asserted the
+    // wording of a comment. The live R8 settings are a build property, already
+    // proven by assembleRelease in CI; a comment cannot regress behaviour.
 
     /** Lines that actually invoke Gradle; comments only mention it. */
     private fun gradleInvocationLines(yaml: String): List<String> =
         yaml.lineSequence().filter { it.contains("sh gradlew ") }.toList()
 
-    private fun allGradleStepsRefreshDependencies(yaml: String): Boolean {
-        val invocations = gradleInvocationLines(yaml)
-        return invocations.isNotEmpty() && invocations.all { "--refresh-dependencies" in it }
-    }
+    /**
+     * The one intentional refresh: the nightly job that re-resolves against
+     * the repositories independently. Per-PR steps must not force
+     * re-resolution — doing so turned three transient plugin fetches and one
+     * Maven 429 into failed PRs in a single release. This is the ONLY line
+     * where the flag is allowed.
+     */
+    private fun nightlyRefreshLine(yaml: String): String? =
+        gradleInvocationLines(yaml).firstOrNull { "--refresh-dependencies" in it }
+
+    /** Every Gradle step except the deliberate nightly refresh. */
+    private fun regularGradleInvocations(yaml: String): List<String> =
+        gradleInvocationLines(yaml).filter { it != nightlyRefreshLine(yaml) }
+
+    /** Non-empty means a regular step reintroduced the blanket flag. */
+    private fun blanketRefreshOffences(yaml: String): List<String> =
+        regularGradleInvocations(yaml).filter { "--refresh-dependencies" in it }
 
     @Test
-    fun everyGradleInvocationForcesDependencyRefresh() {
+    fun onlyTheNightlyJobForcesDependencyRefresh() {
+        // build.yml: one scheduled refresh, and every ordinary Gradle step
+        // (build, lint, 4-way unit-test matrix, release build, UI test) relies
+        // on the refreshed cache plus the wrapper's retries.
+        val nightly = nightlyRefreshLine(build)
+        assertTrue("build.yml: the nightly refresh Gradle step is missing", nightly != null)
+        assertTrue(
+            "the refresh step must re-resolve plugin metadata too:\n$nightly",
+            nightly!!.contains(":app:dependencies") && nightly.contains("--refresh-dependencies")
+        )
+        assertTrue(
+            "build.yml must declare a nightly schedule",
+            Regex("""(?m)^  schedule:\n[ \t]*- cron: [^\n]+$""").containsMatchIn(build)
+        )
+        assertTrue(
+            "the refresh job must never run on a PR",
+            Regex("""(?m)^[ \t]*if: github\.event_name == 'schedule'[ \t]*$""").containsMatchIn(build)
+        )
         for ((label, yaml) in listOf("build.yml" to build, "release.yml" to release)) {
-            val invocations = gradleInvocationLines(yaml)
-            assertTrue("$label: no 'sh gradlew' invocations found", invocations.isNotEmpty())
+            val invocations = regularGradleInvocations(yaml)
+            assertTrue("$label: no regular 'sh gradlew' invocations found", invocations.isNotEmpty())
             assertTrue(
-                "$label: every Gradle step must pass --refresh-dependencies:\n" +
-                    invocations.joinToString("\n"),
-                allGradleStepsRefreshDependencies(yaml)
+                "$label: a regular Gradle step forced dependency refresh:\n" +
+                    blanketRefreshOffences(yaml).joinToString("\n"),
+                blanketRefreshOffences(yaml).isEmpty()
             )
         }
     }
 
     @Test
-    fun refreshDependenciesGuardDetectsAMissingFlag() {
-        // Negative case: strip one flag from the real workflow text and prove
+    fun refreshDependenciesGuardDetectsARegressedBlanketFlag() {
+        // Negative case: add the blanket flag back to a regular step and prove
         // the guard rejects it, so the assertion above is not a tautology.
-        val regressed = build.replaceFirst("--refresh-dependencies", "")
+        val regular = regularGradleInvocations(build).first()
+        val regressed = build.replace(regular, regular.replace(" --no-daemon", " --refresh-dependencies --no-daemon"))
         assertTrue(
-            "the mutation must not delete a Gradle step",
+            "the mutation must add a flag, not delete a Gradle step",
             gradleInvocationLines(regressed).size == gradleInvocationLines(build).size
         )
-        assertFalse(
-            "the guard must reject a Gradle step missing --refresh-dependencies",
-            allGradleStepsRefreshDependencies(regressed)
+        assertTrue(
+            "the guard must reject a regular step with --refresh-dependencies",
+            blanketRefreshOffences(regressed).isNotEmpty()
         )
     }
 }

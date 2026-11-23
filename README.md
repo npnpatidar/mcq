@@ -2729,7 +2729,8 @@ sh gradlew :app:assembleDebug :app:testDebugUnitTest $MCQ_AAPT2_OVERRIDE --no-da
   Robolectric native runtime is not supported on Linux (aarch64)"); CI (x86_64)
   is authoritative.
 - `run-jvm-tests.sh` selects classes by `^import org.robolectric` (not word
-  match), so a comment cannot hide a class. Full local pass ≈ 124 classes.
+  match), so a comment cannot hide a class. The current class count is printed by
+  `:app:testPureJvm` on each run.
 
 ### Build (NixOS ARM64 host, repo at `/home/naresh/repo/mcq`)
 

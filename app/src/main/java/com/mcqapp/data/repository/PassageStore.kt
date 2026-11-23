@@ -5,6 +5,7 @@ import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.PassageEntity
 import com.mcqapp.data.local.deleteByQuestionsChunked
 import com.mcqapp.data.local.getByIdsChunked
+import com.mcqapp.data.local.getForQuestionsChunked
 import com.mcqapp.data.io.CardContent
 import com.mcqapp.domain.Passage
 import com.mcqapp.domain.Question
@@ -237,6 +238,25 @@ internal class PassageStore(
             .map { (passageId, members) -> PassageBlock(passages.getValue(passageId), members) }
             .sortedBy { it.passage.sortOrder }
     }
+}
+
+/** A card whose study schedule an assign/unassign would reset, and its preview. */
+data class ResetCard(val id: String, val preview: String)
+
+/**
+ * The subset of [questionIds] that already have a study schedule. The bulk
+ * passage actions reset those cards, so the confirmation can name exactly which
+ * ones before the write rather than saying "some cards" (single disclosure).
+ */
+internal suspend fun McqRepository.cardsWithSchedule(questionIds: Collection<String>): List<ResetCard> {
+    if (questionIds.isEmpty()) return emptyList()
+    val db = db()
+    val scheduled = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
+        .map { it.questionId }.toHashSet()
+    if (scheduled.isEmpty()) return emptyList()
+    return db.questionDao().getByIdsChunked(scheduled.toList()).map { entity ->
+        ResetCard(entity.id, entity.searchText.take(40))
+    }.sortedBy { it.preview }
 }
 
 /** A passage together with the questions that share it, in session order. */

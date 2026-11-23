@@ -54,6 +54,8 @@ import androidx.lifecycle.viewModelScope
 import com.mcqapp.McqApplication
 import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.ResetCard
+import com.mcqapp.data.repository.cardsWithSchedule
 import com.mcqapp.domain.Passage
 import com.mcqapp.util.ContentElements
 import com.mcqapp.R
@@ -392,6 +394,31 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.movePassage(passageId, delta) }
     }
 
+    /** Cards whose schedules an unassign would reset, for the single disclosure. */
+    fun memberResetCards(ids: Set<String>, onResult: (List<ResetCard>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.cardsWithSchedule(ids)
+                })
+            } catch (e: Exception) {
+                onResult(emptyList())
+            }
+        }
+    }
+
+    /** Exposes PassageStore.unassignQuestions from the management screen. */
+    fun unassignMembers(ids: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                repository.unassignQuestionsFromPassage(ids)
+                onDone(true)
+            } catch (e: Exception) {
+                onDone(false)
+            }
+        }
+    }
+
     companion object {
         private const val MEMBER_PAGE = 50
     }
@@ -415,6 +442,8 @@ fun PassagesScreen(
     // The edit form lives in the ViewModel (E1/E2); these two are just local
     // dialog flags. saveable so rotation does not drop the delete refusal (E2).
     var deleteRefusal by rememberSaveable { mutableStateOf<Pair<String, Int>?>(null) }
+    var pendingUnassign by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
+    var unassignReset by remember { mutableStateOf<List<ResetCard>>(emptyList()) }
     val form by viewModel.form.collectAsStateWithLifecycle()
     // The pending confirmation lives in the ViewModel so it survives rotation.
     val pendingCrossPaperSave by viewModel.pendingCrossPaperSave.collectAsStateWithLifecycle()
@@ -618,6 +647,14 @@ fun PassagesScreen(
                                             modifier = Modifier.padding(start = 8.dp)
                                         )
                                     }
+                                    TextButton(onClick = {
+                                        viewModel.memberResetCards(setOf(member.id)) { cards ->
+                                            unassignReset = cards
+                                        }
+                                        pendingUnassign = member.id to member.text
+                                    }) {
+                                        Text(stringResource(R.string.passage_unassign_member))
+                                    }
                                 }
                             }
                         }
@@ -710,6 +747,35 @@ fun PassagesScreen(
                     }
                 )
             }
+        }
+
+        pendingUnassign?.let { target ->
+            AlertDialog(
+                onDismissRequest = { pendingUnassign = null },
+                title = { Text(stringResource(R.string.passage_unassign_member)) },
+                text = {
+                    Text(
+                        if (unassignReset.isEmpty()) stringResource(R.string.browse_passage_no_reset)
+                        else stringResource(
+                            R.string.browse_passage_reset_disclosure,
+                            unassignReset.joinToString(", ") { it.preview }
+                        )
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.unassignMembers(setOf(target.first)) {
+                            pendingUnassign = null
+                            unassignReset = emptyList()
+                        }
+                    }) { Text(stringResource(R.string.apply)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingUnassign = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
         }
 
         pendingCrossPaperSave?.let { _ ->

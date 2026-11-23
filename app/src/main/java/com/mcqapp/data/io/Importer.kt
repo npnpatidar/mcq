@@ -1,5 +1,6 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.data.io.ImportDecision.StoredCandidate
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.CardStateEntity
@@ -52,24 +53,19 @@ const val FALLBACK_PASSAGE_TITLE = "Passage"
 const val FALLBACK_CLOZE_EXPLANATION = "Cloze card from Anki."
 
 /**
- * A brand-new paper whose incoming questions all already exist writes no
- * categories and no questions — only an empty shell. Treat that as "nothing was
- * added": drop the shell and do not count it as a new paper. A paper with zero
- * questions is NOT this case (the skip needs a non-empty set), nor is one where
- * a duplicate's answer key was refreshed.
+ * Kept as the package-level name the existing JVM tests pin; the rule itself
+ * lives in [ImportDecision] alongside the other shared import decisions, so
+ * the whole-file and streaming paths cannot disagree about it.
  */
 internal fun allDuplicatesPaperSkip(
     isNewPaper: Boolean,
     needsWrite: Boolean,
     sawAnyQuestion: Boolean
-): Boolean = isNewPaper && !needsWrite && sawAnyQuestion
+): Boolean = ImportDecision.allDuplicatesPaperSkip(isNewPaper, needsWrite, sawAnyQuestion)
 
-/** Paper counts for a finished paper; a skipped shell is neither new nor updated. */
-internal fun countPaper(isNewPaper: Boolean, skipped: Boolean): Pair<Int, Int> = when {
-    skipped -> 0 to 0
-    isNewPaper -> 1 to 0
-    else -> 0 to 1
-}
+/** Package-level delegate to [ImportDecision.countPaper]; see [allDuplicatesPaperSkip]. */
+internal fun countPaper(isNewPaper: Boolean, skipped: Boolean): Pair<Int, Int> =
+    ImportDecision.countPaper(isNewPaper, skipped)
 
 /** A reason a source did not import verbatim, resolved to copy in the UI. */
 sealed interface ImportNote {
@@ -372,14 +368,13 @@ class Importer(
                     // reused: remap to stay unique (else CASCADE wipe).
                     val ownedElsewhere = db.categoryDao().getById(categoryDto.id)
                         ?.takeIf { it.paperId != effectivePaperId }
-                    val effectiveCatId = matchInPaper?.id
-                        ?: if (ownedElsewhere != null) {
-                            Logger.w("IMPORT", "Category id ${categoryDto.id} belongs to paper " +
-                                "${ownedElsewhere.paperId}, remapping for paper $effectivePaperId")
-                            "$effectivePaperId-${categoryDto.id}"
-                        } else {
-                            categoryDto.id
-                        }
+                    val effectiveCatId = ImportDecision.categoryIdForWrite(
+                        categoryDto.id, ownedElsewhere?.paperId, effectivePaperId, matchInPaper?.id
+                    )
+                    if (ownedElsewhere != null) {
+                        Logger.w("IMPORT", "Category id ${categoryDto.id} belongs to paper " +
+                            "${ownedElsewhere.paperId}, remapping for paper $effectivePaperId")
+                    }
                     rawToEffectiveCategory[categoryDto.id] = effectiveCatId
                     parentLinks += effectiveCatId to categoryDto.parentId
 
@@ -434,17 +429,16 @@ class Importer(
                         val existingOwner = existing?.let {
                             db.categoryDao().getById(it.categoryId)?.paperId
                         }
-                        val effectivePassageId =
-                            if (existingOwner != null && existingOwner != effectivePaperId) {
-                                Logger.w(
-                                    "IMPORT",
-                                    "Passage id $passageId belongs to paper $existingOwner, " +
-                                        "remapping for paper $effectivePaperId"
-                                )
-                                "$effectivePaperId-$passageId"
-                            } else {
-                                passageId
-                            }
+                        val effectivePassageId = ImportDecision.passageIdForWrite(
+                            passageId, existingOwner, effectivePaperId
+                        )
+                        if (existingOwner != null && existingOwner != effectivePaperId) {
+                            Logger.w(
+                                "IMPORT",
+                                "Passage id $passageId belongs to paper $existingOwner, " +
+                                    "remapping for paper $effectivePaperId"
+                            )
+                        }
                         passageIdRemap[passageId] = effectivePassageId
                         if (!seenPassageIds.add(effectivePassageId)) continue
                         paperPassageIds.add(effectivePassageId)
@@ -514,24 +508,11 @@ class Importer(
                             // table or a formula, so the first hash hit may be
                             // a different question. Refreshing that one used to
                             // write this file's key onto the wrong row.
-                            val candidate = candidates[contentHash].orEmpty().firstOrNull {
-                                ContentHash.sameQuestionContent(
-                                    it.entity,
-                                    it.options,
-                                    scaledQuestion
-                                )
-                            }
+                            val candidate = ImportDecision.candidateFor(contentHash, scaledQuestion, candidates)
                             val sameContentId = candidate?.entity?.id
-                            if (sameContentId != null) {
-                                val stored = candidate.entity
-                                val storedCorrect = candidate.correctIds
-                                if (ContentHash.nonHashedFieldsDiffer(
-                                        stored, candidate.options, storedCorrect, scaledQuestion
-                                    )
-                                ) {
-                                    if (CardContent.of(stored, candidate.options, storedCorrect) !=
-                                        CardContent.of(scaledQuestion)
-                                    ) {
+                            if (candidate != null && sameContentId != null) {
+                                if (ImportDecision.needsAnswerRefresh(candidate, scaledQuestion)) {
+                                    if (ImportDecision.refreshInvalidatesSchedule(candidate, scaledQuestion)) {
                                         // The refreshed key (or image) invalidates the
                                         // schedule the stored content earned, even though
                                         // the question was matched by text. The learner's
@@ -539,7 +520,7 @@ class Importer(
                                         // keep them on a flag-only row so a suspended card
                                         // does not silently reappear in Study.
                                         schedulesReset += resetScheduleFor(
-                                            sameContentId, stored.contentHash
+                                            sameContentId, candidate.entity.contentHash
                                         )
                                     }
                                     db.correctAnswerDao().deleteByQuestion(sameContentId)
@@ -586,7 +567,9 @@ class Importer(
                         }
 
                         if (contentHash in existingHashes &&
-                            isSameContentAsAnyStored(contentHash, scaledQuestion)
+                            ImportDecision.isSameContent(
+                                contentHash, scaledQuestion, collisionCandidates(), writtenThisImport
+                            )
                         ) {
                             // The hash only sees text, so two questions differing
                             // solely in a table or a formula share one. Without
@@ -632,15 +615,15 @@ class Importer(
                         }
                         val ownedElsewhere = existingOwner != null &&
                             existingOwner != effectivePaperId
-                        val effectiveQuestionId = if (ownedElsewhere) {
+                        val effectiveQuestionId = ImportDecision.questionIdForWrite(
+                            questionDto.id, existingOwner, effectivePaperId
+                        )
+                        if (ownedElsewhere) {
                             Logger.w(
                                 "IMPORT",
                                 "Question id ${questionDto.id} belongs to paper $existingOwner, " +
                                     "remapping for paper $effectivePaperId"
                             )
-                            "$effectivePaperId-${questionDto.id}"
-                        } else {
-                            questionDto.id
                         }
                         val questionForWrite = if (effectiveQuestionId == scaledQuestion.id) {
                             scaledQuestion
@@ -653,18 +636,17 @@ class Importer(
                         // is needed. A matching hash can still hide a table, a
                         // formula, the key or the question image, so only that
                         // case pays for the full comparison.
-                        val contentChanged = if (existingQuestion != null && !ownedElsewhere) {
-                            if (existingQuestion.contentHash != contentHash) {
-                                true
-                            } else {
-                                val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
-                                val storedCorrect = db.correctAnswerDao()
-                                    .getCorrectIds(effectiveQuestionId).toSet()
-                                CardContent.of(existingQuestion, storedOptions, storedCorrect) !=
-                                    CardContent.of(questionForWrite)
-                            }
-                        } else {
-                            false
+                        val contentChanged = ImportDecision.contentChanged(
+                            existingQuestion,
+                            ownedElsewhere,
+                            hashMatches = existingQuestion?.contentHash == contentHash,
+                            incoming = questionForWrite
+                        ) {
+                            val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
+                            val storedCorrect = db.correctAnswerDao()
+                                .getCorrectIds(effectiveQuestionId).toSet()
+                            CardContent.of(existingQuestion!!, storedOptions, storedCorrect) !=
+                                CardContent.of(questionForWrite)
                         }
                         if (contentChanged) {
                             // Reset means the schedule memory disappears: the
@@ -724,7 +706,7 @@ class Importer(
                         val schedule = if (contentChanged) {
                             null
                         } else {
-                            lookupCardSchedule(
+                            ImportDecision.scheduleFor(
                                 restoreScheduling,
                                 paperDto.id,
                                 questionDto.id,
@@ -923,37 +905,6 @@ class Importer(
         db.cardStateDao().deleteByQuestionsChunked(questionIds)
         return withSchedule
     }
-
-    /**
-     * Whether any stored question carrying [contentHash] really is this
-     * question's content.
-     *
-     * The hash is built from text content and `textContent` counts only text
-     * elements, so a table or a formula in an option is invisible to it. A hash
-     * hit is therefore only a candidate; this decides, and false means the
-     * incoming question is new rather than a duplicate.
-     */
-    private suspend fun isSameContentAsAnyStored(
-        contentHash: String,
-        scaledQuestion: QuestionDto
-    ): Boolean {
-        // Questions written earlier in this same import count as candidates too:
-        // a file carrying the same question twice must still collapse to one.
-        if (writtenThisImport[contentHash].orEmpty()
-                .any { ContentHash.sameQuestionContent(it, scaledQuestion) }
-        ) {
-            return true
-        }
-        return collisionCandidates()[contentHash].orEmpty().any { candidate ->
-            ContentHash.sameQuestionContent(candidate.entity, candidate.options, scaledQuestion)
-        }
-    }
-
-    private data class StoredCandidate(
-        val entity: com.mcqapp.data.local.QuestionEntity,
-        val options: List<com.mcqapp.data.local.OptionEntity>,
-        val correctIds: Set<String>
-    )
 
     /**
      * Every content hash this import could produce, from the scaled DTOs —

@@ -10,6 +10,9 @@ import java.io.File
  * Guards against the dead code the audit found, and against the escapers
  * drifting apart again. Deleting a public function is invisible to the
  * compiler; leaving it behind is how four copies of the same escaper appeared.
+ *
+ * INCIDENT: four copies of the same HTML escaper drifted apart; a legacy
+ * id-list replay kept a test-only copy that did not guard repeated ids.
  */
 class NoDeadCodeTest {
 
@@ -69,7 +72,10 @@ class NoDeadCodeTest {
                 while (at >= 0) {
                     val call = text.substring(at, minOf(text.length, at + window))
                     if (!call.contains("leechesOnly = true")) {
-                        val line = text.count { it == '\n' } + 1
+                        // Count up to the match, not the whole file: the old
+                        // expression reported the file's total line count, so
+                        // every offender pointed at a misleading line.
+                        val line = text.substring(0, at).count { it == '\n' } + 1
                         offenders += "${file.name}:$line"
                     }
                     at = text.indexOf("getStudyQueue(", at + 1)

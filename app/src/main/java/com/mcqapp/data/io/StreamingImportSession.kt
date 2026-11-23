@@ -1,5 +1,6 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.data.io.ImportDecision.StoredCandidate
 import com.mcqapp.data.local.AppDatabase
 import com.mcqapp.data.local.AttemptEntity
 import com.mcqapp.data.local.BookmarkEntity
@@ -7,7 +8,6 @@ import com.mcqapp.data.local.CardStateEntity
 import com.mcqapp.data.local.CategoryEntity
 import com.mcqapp.data.local.ContentHashMatch
 import com.mcqapp.data.local.CorrectAnswerEntity
-import com.mcqapp.data.local.OptionEntity
 import com.mcqapp.data.local.PaperEntity
 import com.mcqapp.data.local.QuestionEntity
 import com.mcqapp.data.local.QuestionResultEntity
@@ -243,8 +243,9 @@ internal class StreamingImportSession(
             ?: catsInPaper.find { it.title == title }
         val ownedElsewhere = db.categoryDao().getById(category.id)
             ?.takeIf { it.paperId != paperId }
-        val effectiveCatId = match?.id
-            ?: if (ownedElsewhere != null) "$paperId-${category.id}" else category.id
+        val effectiveCatId = ImportDecision.categoryIdForWrite(
+            category.id, ownedElsewhere?.paperId, paperId, match?.id
+        )
         val entity = CategoryEntity(
             id = effectiveCatId,
             paperId = paperId,
@@ -449,7 +450,7 @@ internal class StreamingImportSession(
         // skipped, so its categories are still created (and its paper shell is
         // already written by startPaper). Without `sawAnyQuestion` this treated
         // zero questions like all-duplicates and dropped the empty categories.
-        val skipped = allDuplicatesPaperSkip(isNewPaper, needsWrite, sawAnyQuestion)
+        val skipped = ImportDecision.allDuplicatesPaperSkip(isNewPaper, needsWrite, sawAnyQuestion)
         if (skipped) {
             // Every question already exists: nothing was added, so remove the
             // shell startPaper wrote and report no paper at all.
@@ -467,7 +468,7 @@ internal class StreamingImportSession(
                 }
             }
         }
-        val (newForPaper, updatedForPaper) = countPaper(isNewPaper, skipped)
+        val (newForPaper, updatedForPaper) = ImportDecision.countPaper(isNewPaper, skipped)
         newPapers += newForPaper
         updatedPapers += updatedForPaper
         // Resolve parent links now that every category of the paper has
@@ -581,23 +582,17 @@ internal class StreamingImportSession(
                 // The hash cannot see tables or formulas, so a hash hit is only
                 // a candidate: refresh a row only when its content is the same
                 // question, never write this file's key onto a different one.
-                val candidate = candidates[contentHash].orEmpty().firstOrNull {
-                    ContentHash.sameQuestionContent(it.entity, it.options, scaledQuestion)
-                }
+                val candidate = ImportDecision.candidateFor(contentHash, scaledQuestion, candidates)
                 val sameContentId = candidate?.entity?.id
-                if (sameContentId != null &&
-                    ContentHash.nonHashedFieldsDiffer(
-                        candidate.entity, candidate.options, candidate.correctIds, scaledQuestion
-                    )
+                if (candidate != null && sameContentId != null &&
+                    ImportDecision.needsAnswerRefresh(candidate, scaledQuestion)
                 ) {
                     // A refreshed answer means the whole-file importer would
                     // not have taken its "all questions already exist" skip,
                     // so this paper's categories must be written.
                     enableWrites()
                     needsWrite = true
-                    if (CardContent.of(candidate.entity, candidate.options, candidate.correctIds) !=
-                        CardContent.of(scaledQuestion)
-                    ) {
+                    if (ImportDecision.refreshInvalidatesSchedule(candidate, scaledQuestion)) {
                         // The key or an image changed: the stored schedule
                         // describes content the learner no longer sees. The
                         // hide flags are the learner's choice, not part of the
@@ -638,7 +633,10 @@ internal class StreamingImportSession(
                 }
             }
 
-            if (inExisting && isSameContentAsAnyStored(contentHash, scaledQuestion, candidates, batchWritten)) {
+            if (inExisting && ImportDecision.isSameContent(
+                    contentHash, scaledQuestion, candidates, batchWritten
+                )
+            ) {
                 val same = sameId[dto.id]
                 val changedAnswer = same != null &&
                     ContentHash.nonHashedFieldsDiffer(same.first, same.second, scaledQuestion)
@@ -659,17 +657,16 @@ internal class StreamingImportSession(
                 db.categoryDao().getById(it.categoryId)?.paperId
             }
             val ownedElsewhere = existingOwner != null && existingOwner != effectivePaperId
-            val effectiveQuestionId = when {
-                existingQuestion != null && !ownedElsewhere -> existingQuestion.id
-                ownedElsewhere -> {
-                    Logger.w(
-                        "STREAMIMPORT",
-                        "Question id ${dto.id} belongs to paper $existingOwner, " +
-                            "remapping for paper $effectivePaperId"
-                    )
-                    "$effectivePaperId-${dto.id}"
-                }
-                else -> dto.id
+            val effectiveQuestionId = ImportDecision.questionIdForWrite(
+                dto.id, existingOwner, effectivePaperId,
+                adoptId = existingQuestion?.id?.takeIf { !ownedElsewhere }
+            )
+            if (ownedElsewhere) {
+                Logger.w(
+                    "STREAMIMPORT",
+                    "Question id ${dto.id} belongs to paper $existingOwner, " +
+                        "remapping for paper $effectivePaperId"
+                )
             }
             val questionForWrite = if (effectiveQuestionId == scaledQuestion.id) {
                 scaledQuestion
@@ -680,18 +677,17 @@ internal class StreamingImportSession(
             // changed — all card content. A matching hash can still hide a
             // table, a formula, the key or the question image, so only that
             // case pays for the full comparison.
-            val contentChanged = if (existingQuestion != null && !ownedElsewhere) {
-                if (existingQuestion.contentHash != contentHash) {
-                    true
-                } else {
-                    val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
-                    val storedCorrect = db.correctAnswerDao()
-                        .getCorrectIds(effectiveQuestionId).toSet()
-                    CardContent.of(existingQuestion, storedOptions, storedCorrect) !=
-                        CardContent.of(questionForWrite)
-                }
-            } else {
-                false
+            val contentChanged = ImportDecision.contentChanged(
+                existingQuestion,
+                ownedElsewhere,
+                hashMatches = existingQuestion?.contentHash == contentHash,
+                incoming = questionForWrite
+            ) {
+                val storedOptions = db.optionDao().getByQuestion(effectiveQuestionId)
+                val storedCorrect = db.correctAnswerDao()
+                    .getCorrectIds(effectiveQuestionId).toSet()
+                CardContent.of(existingQuestion!!, storedOptions, storedCorrect) !=
+                    CardContent.of(questionForWrite)
             }
             if (contentChanged) {
                 // Absent is "never studied": delete the schedule memory rather
@@ -772,7 +768,7 @@ internal class StreamingImportSession(
                 // version-1 precedence is the one that describes it; a
                 // composite key cannot occur here.
                 if (!scheduleBudget.exhausted) {
-                    lookupCardSchedule(schedules, sourcePaperId, dto.id, JSON_LEGACY_VERSION)?.let { schedule ->
+                    ImportDecision.scheduleFor(schedules, sourcePaperId, dto.id, JSON_LEGACY_VERSION)?.let { schedule ->
                         db.cardStateDao().upsert(
                             CardStateEntity(
                                 paperId = effectivePaperId,
@@ -844,22 +840,6 @@ internal class StreamingImportSession(
             })
     }
 
-    private fun isSameContentAsAnyStored(
-        contentHash: String,
-        scaledQuestion: QuestionDto,
-        candidates: Map<String, List<StoredCandidate>>,
-        batchWritten: Map<String, MutableList<QuestionDto>>
-    ): Boolean {
-        if (batchWritten[contentHash].orEmpty()
-                .any { ContentHash.sameQuestionContent(it, scaledQuestion) }
-        ) {
-            return true
-        }
-        return candidates[contentHash].orEmpty().any { candidate ->
-            ContentHash.sameQuestionContent(candidate.entity, candidate.options, scaledQuestion)
-        }
-    }
-
     // --- tail -------------------------------------------------------------
 
     /**
@@ -881,21 +861,20 @@ internal class StreamingImportSession(
                     "Passage id $rawId belongs to another paper, " +
                         "remapping for paper $effectivePaperId"
                 )
-                "$effectivePaperId-$rawId"
+                ImportDecision.passageIdForWrite(rawId, claimed, effectivePaperId)
             }
         } else {
             val existing = db.passageDao().getById(rawId)
             val owner = existing?.let { db.categoryDao().getById(it.categoryId)?.paperId }
-            if (owner != null && owner != effectivePaperId) {
+            val resolved = ImportDecision.passageIdForWrite(rawId, owner, effectivePaperId)
+            if (resolved != rawId) {
                 Logger.w(
                     "STREAMIMPORT",
                     "Passage id $rawId belongs to paper $owner, " +
                         "remapping for paper $effectivePaperId"
                 )
-                "$effectivePaperId-$rawId"
-            } else {
-                rawId
             }
+            resolved
         }
         passageEffective.putIfAbsent(rawId, effective)
         passageRawByEffective[effective] = rawId
@@ -1031,7 +1010,7 @@ internal class StreamingImportSession(
     /**
      * The file's `scheduling`, applied to the questions this import accepted —
      * the same rule the whole-file importer uses for `file.scheduling`, and the
-     * same key precedence ([lookupCardSchedule]), so the two readers cannot
+     * same key precedence ([ImportDecision.scheduleFor]), so the two readers cannot
      * disagree about which entry names a card. The tail is read only after
      * every paper, so the entries are applied here rather than while their
      * batch was written: [acceptedSchedules] remembered where each accepted
@@ -1082,7 +1061,7 @@ internal class StreamingImportSession(
         for (target in targets) {
             acceptedKeys += target.sourceQuestionId
             acceptedKeys += cardScheduleKey(target.sourcePaperId, target.sourceQuestionId)
-            val schedule = lookupCardSchedule(
+            val schedule = ImportDecision.scheduleFor(
                 schedules,
                 target.sourcePaperId,
                 target.sourceQuestionId,
@@ -1152,9 +1131,9 @@ internal fun normaliseOptionsJson(json: Json, raw: String): String {
     }
 }
 
-/** A stored question that shares a content hash, with the options it needs to be told apart. */
-internal data class StoredCandidate(
-    val entity: QuestionEntity,
-    val options: List<OptionEntity>,
-    val correctIds: Set<String>
-)
+/**
+ * The importers share [ImportDecision.StoredCandidate]; this file no longer
+ * declares a second copy, because two shapes with the same purpose drifted
+ * once already (the "options it needs to be told apart" rule lives in the
+ * decision object, not in a duplicate data class).
+ */

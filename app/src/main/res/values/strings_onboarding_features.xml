@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- General improvements (0.0.69). Names and specifiers are mirrored in values-hi. -->
+
+    <!-- First-run chooser -->
+    <string name="of_welcome_title">Welcome to MCQ</string>
+    <string name="of_welcome_body">Start with a sample paper, make one of your own, or bring in a bank you already have.</string>
+    <string name="of_welcome_sample">Try the sample</string>
+    <string name="of_welcome_create">Create a paper</string>
+    <string name="of_welcome_import">Import a bank</string>
+    <string name="of_welcome_sample_failed" tools:ignore="UnusedResources">Couldn\'t load the sample. Please try again.</string>
+
+    <!-- Import / restore completion actions -->
+    <string name="of_study_now">Study now</string>
+    <string name="of_take_test">Take a test</string>
+    <string name="of_open_paper">Open paper</string>
+
+    <!-- Create-paper-first trap -->
+    <string name="of_add_first_question">Add your first question</string>
+    <string name="of_empty_paper_hint">This paper has no questions yet.</string>
+    <string name="of_empty_study_title" tools:ignore="UnusedResources">Nothing to study yet</string>
+    <string name="of_empty_study_add">Add questions</string>
+    <string name="of_test_flashcards_only_title" tools:ignore="UnusedResources">These are flashcards</string>
+    <string name="of_test_flashcards_only_body" tools:ignore="UnusedResources">Flashcards are for Study, not tests. Study them instead.</string>
+    <string name="of_study_these">Study these</string>
+
+    <!-- Labelled primary paper actions -->
+    <string name="of_test">Test</string>
+    <string name="of_browse">Browse</string>
+    <string name="of_more_actions">More actions</string>
+
+    <!-- Large category trees -->
+    <plurals name="of_show_more_categories">
+        <item quantity="one">Show %1$d more</item>
+        <item quantity="other">Show %1$d more</item>
+    </plurals>
+    <string name="of_show_less">Show less</string>
+
+    <!-- Tag / mistake scoped Study -->
+    <string name="of_study_scope">Study scope</string>
+    <string name="of_scope_whole">Whole paper</string>
+    <string name="of_scope_tag">By tag</string>
+    <string name="of_scope_mistakes">Wrong answers</string>
+    <string name="of_scope_pick_tag">Pick a tag</string>
+    <string name="of_scope_no_tags">No tags in this paper yet</string>
+    <string name="of_scope_start">Start studying</string>
+    <string name="of_mistakes_pool" tools:ignore="UnusedResources">My mistakes</string>
+    <string name="of_mistakes_pool_saved" tools:ignore="PluralsCandidate">Saved %1$d wrong answers to a \'My mistakes\' pool.</string>
+    <string name="of_save_mistakes_pool">Save as a reusable tag</string>
+
+    <!-- CSV / TSV import -->
+    <string name="of_import_csv_hint" tools:ignore="UnusedResources">Columns: question, option a, option b, option c, option d, answer, explanation, tags. Use commas or tabs.</string>
+    <string name="of_csv_bad_answer" tools:ignore="PluralsCandidate">The answer in row %1$d must be a, b, c or d.</string>
+    <string name="of_csv_no_questions">No questions were found in that file.</string>
+
+    <!-- Quick capture from shared text -->
+    <string name="of_quick_capture_title">Save to bank</string>
+    <string name="of_quick_capture_front">Front (question)</string>
+    <string name="of_quick_capture_back">Back (answer)</string>
+    <string name="of_quick_capture_paper">Paper</string>
+    <string name="of_quick_capture_category">Category</string>
+    <string name="of_quick_capture_tag">Tag (optional)</string>
+    <string name="of_quick_capture_save">Save card</string>
+    <string name="of_quick_capture_saved">Card saved to your bank</string>
+    <string name="of_quick_capture_new_paper">New paper</string>
+    <string name="of_quick_capture_missing_front">Add a front before saving.</string>
+
+    <!-- Keyboard shortcuts -->
+    <string name="of_keyboard_hint" tools:ignore="UnusedResources">Keyboard: Space reveal / next · 1–4 grade · arrow keys navigate</string>
+</resources>

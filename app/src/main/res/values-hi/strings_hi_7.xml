@@ -128,7 +128,7 @@
     <string name="target_retention_help">जब कार्ड देय हों, उन्हें याद आने की आप कितनी विश्वसनीयता चाहते हैं। अधिक मान कम अंतराल और अधिक समीक्षाएँ मांगता है।</string>
     <string name="target_retention_value">लक्ष्य याद-दर: %1$d%%</string>
     <string name="test">टेस्ट</string>
-    <string name="test_action">टेस्ट</string>
+    <string name="test_action" tools:ignore="UnusedResources">टेस्ट</string>
     <string name="test_asked_shown">%1$d पूछे गए, %2$d दिखाए गए</string>
     <string name="test_banner_blueprint">मॉक · ब्लूप्रिंट · %1$s · %2$d प्रश्न</string>
     <plurals name="test_banner_mistakes">

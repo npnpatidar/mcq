@@ -7,6 +7,9 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -36,6 +39,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -63,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.pluralStringResource
@@ -82,6 +87,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -105,6 +111,7 @@ import com.mcqapp.ui.theme.gradePaletteFor
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -120,16 +127,24 @@ fun StudyScreen(
     paperId: String,
     navController: NavController,
     categoryIds: List<String> = emptyList(),
-    leechesOnly: Boolean = false
+    leechesOnly: Boolean = false,
+    tag: String = "",
+    mistakes: Boolean = false
 ) {
     val context = LocalContext.current
+    // LocalResources (not LocalContext.current.resources) keeps the spoken
+    // "saved N wrong answers" count configuration-aware across locale changes.
+    val resources = LocalResources.current
+    val scope = rememberCoroutineScope()
     val viewModel: StudyViewModel = viewModel(
-        key = "study-$paperId-${categoryIds.joinToString(",")}-$leechesOnly",
+        key = "study-$paperId-${categoryIds.joinToString(",")}-$leechesOnly-$tag-$mistakes",
         factory = StudyViewModelFactory(
             context.applicationContext as Application,
             paperId,
             categoryIds,
-            leechesOnly
+            leechesOnly,
+            tag,
+            mistakes
         )
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -218,6 +233,67 @@ fun StudyScreen(
     val showStudyHeader =
         !state.loading && state.loadError == null && !state.finished
 
+    // Tag/mistake scope is entered from the header and applied by navigating to
+    // a new route. Remembered so rotation cannot strand an open picker.
+    var showScopeDialog by rememberSaveable { mutableStateOf(false) }
+    fun scopeRoute(nextTag: String, nextMistakes: Boolean): String =
+        com.mcqapp.ui.navigation.studyRoute(
+            paperId,
+            categoryIds,
+            leechesOnly = leechesOnly,
+            tag = nextTag,
+            mistakes = nextMistakes
+        )
+
+    // Keyboard shortcuts: Space reveal / advance, 1-4 grades, arrows move the
+    // option selection. Focus is requested on the card surface and keys are
+    // ignored while a dialog owns the screen or a modifier is held.
+    val keyFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(showScopeDialog, state.showSuspendedDialog, state.finished) {
+        if (!showScopeDialog && !state.showSuspendedDialog && !state.finished) {
+            keyFocus.requestFocus()
+        }
+    }
+    fun onStudyKey(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return false
+        if (event.nativeKeyEvent.isCtrlPressed ||
+            event.nativeKeyEvent.isAltPressed ||
+            event.nativeKeyEvent.isMetaPressed
+        ) return false
+        if (showScopeDialog || state.showSuspendedDialog || state.finished) return false
+        val code = event.nativeKeyEvent.keyCode
+        val key = when (code) {
+            android.view.KeyEvent.KEYCODE_SPACE -> StudyKey.SPACE
+            android.view.KeyEvent.KEYCODE_1 -> StudyKey.ONE
+            android.view.KeyEvent.KEYCODE_2 -> StudyKey.TWO
+            android.view.KeyEvent.KEYCODE_3 -> StudyKey.THREE
+            android.view.KeyEvent.KEYCODE_4 -> StudyKey.FOUR
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> StudyKey.LEFT
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> StudyKey.RIGHT
+            else -> StudyKey.OTHER
+        }
+        val action = StudyKeyboard.action(
+            key = key,
+            revealed = state.revealed,
+            staged = state.pendingGrade != null,
+            canGrade = !state.grading && !state.onBreak
+        )
+        when (action) {
+            StudyKeyAction.NONE -> return false
+            StudyKeyAction.REVEAL -> viewModel.reveal()
+            StudyKeyAction.NEXT -> viewModel.next()
+            StudyKeyAction.GRADE_AGAIN -> gradeByKey(viewModel, state, ReviewGrade.AGAIN)
+            StudyKeyAction.GRADE_HARD -> gradeByKey(viewModel, state, ReviewGrade.HARD)
+            StudyKeyAction.GRADE_GOOD -> gradeByKey(viewModel, state, ReviewGrade.GOOD)
+            StudyKeyAction.GRADE_EASY -> gradeByKey(viewModel, state, ReviewGrade.EASY)
+            StudyKeyAction.SELECT_PREVIOUS_OPTION,
+            StudyKeyAction.SELECT_NEXT_OPTION -> selectOptionByArrow(
+                viewModel, state, forward = action == StudyKeyAction.SELECT_NEXT_OPTION
+            )
+        }
+        return true
+    }
+
     // Back is a voluntary stop, not a silent exit: it ends the sitting the
     // same way "Done for now" does, so the tally and the restart option are
     // not skipped. Once the summary is up the handler stands down and back
@@ -242,7 +318,8 @@ fun StudyScreen(
                     onToggleBookmark = { viewModel.toggleBookmarkCurrent() },
                     onBury = { viewModel.buryCurrent() },
                     onSuspend = { viewModel.suspendCurrent() },
-                    onOpenSuspended = { viewModel.openSuspendedDialog() }
+                    onOpenSuspended = { viewModel.openSuspendedDialog() },
+                    onOpenScope = { showScopeDialog = true }
                 )
             } else {
                 BackOnlyBar(onBack = { navController.popBackStack() })
@@ -253,6 +330,10 @@ fun StudyScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .focusRequester(keyFocus)
+                .focusable(true)
+                .onKeyEvent(::onStudyKey)
+                .testTag("study-keyboard-surface")
         ) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -265,6 +346,14 @@ fun StudyScreen(
                     state = state,
                     onRestart = { viewModel.restart() },
                     onEnableNewCards = { viewModel.enableNewCards() },
+                    onOpenEditor = {
+                        com.mcqapp.ui.editor.EditorSession.clear()
+                        navController.navigate(
+                            com.mcqapp.ui.navigation.editorRoute(
+                                "", paperId, categoryIds.firstOrNull().orEmpty(), "new"
+                            )
+                        )
+                    },
                     onDone = { navController.popBackStack() }
                 )
                 // The body owns the scroll position and the card's viewport-
@@ -289,8 +378,68 @@ fun StudyScreen(
                     onDismiss = { viewModel.closeSuspendedDialog() }
                 )
             }
+            if (showScopeDialog) {
+                StudyScopeDialog(
+                    paperId = paperId,
+                    categoryIds = categoryIds,
+                    currentTag = tag,
+                    currentMistakes = mistakes,
+                    loadTags = { pid, cats -> repository.tagCountsForScope(pid, cats) },
+                    onPickWhole = {
+                        showScopeDialog = false
+                        navController.navigate(scopeRoute("", false))
+                    },
+                    onPickTag = { folded ->
+                        showScopeDialog = false
+                        navController.navigate(scopeRoute(folded, false))
+                    },
+                    onPickMistakes = {
+                        showScopeDialog = false
+                        navController.navigate(scopeRoute("", true))
+                    },
+                    onSaveMistakes = {
+                        scope.launch {
+                            val wrong = repository.getMistakenQuestions(paperId)
+                            wrong.forEach { q ->
+                                repository.bulkUpdateQuestions(
+                                    listOf(q.id), null, null,
+                                    (q.tags + com.mcqapp.ui.library.LibraryViewModel.MISTAKES_POOL_TAG)
+                                        .distinct()
+                                )
+                            }
+                            announcer.announce(
+                                resources.getString(R.string.of_mistakes_pool_saved, wrong.size)
+                            )
+                        }
+                    },
+                    onDismiss = { showScopeDialog = false }
+                )
+            }
         }
     }
+}
+
+/** Space/1-4 grading honours the app's optional confirm-before-next setting. */
+private fun gradeByKey(viewModel: StudyViewModel, state: StudyUiState, grade: ReviewGrade) {
+    if (state.confirmGradeBeforeNext) viewModel.stageGrade(grade) else viewModel.grade(grade)
+}
+
+/** Left/Right walk the answer options, keeping at most one selected. */
+private fun selectOptionByArrow(
+    viewModel: StudyViewModel,
+    state: StudyUiState,
+    forward: Boolean
+) {
+    val options = state.question?.options.orEmpty()
+    if (options.isEmpty()) return
+    val current = options.indexOfFirst { it.id in state.selection }
+    val next = if (current < 0) {
+        if (forward) 0 else options.lastIndex
+    } else {
+        (current + if (forward) 1 else -1 + options.size) % options.size
+    }
+    if (current >= 0 && current != next) viewModel.toggleOption(options[current].id)
+    viewModel.toggleOption(options[next].id)
 }
 
 @Composable
@@ -796,7 +945,8 @@ private fun StudyStickyHeader(
     onToggleBookmark: () -> Unit,
     onBury: () -> Unit,
     onSuspend: () -> Unit,
-    onOpenSuspended: () -> Unit
+    onOpenSuspended: () -> Unit,
+    onOpenScope: () -> Unit
 ) {
     // `semantics {}` is not composable, so resolve its accessibility strings
     // during composition with stringResource and capture the plain Strings;
@@ -885,6 +1035,7 @@ private fun StudyStickyHeader(
                         is ScopeLabel.One -> label.title
                         is ScopeLabel.Many ->
                             pluralStringResource(R.plurals.study_scope_many, label.count, label.count)
+                        is ScopeLabel.Text -> stringResource(label.resId, label.arg)
                     }
                     if (scopeText.isNotEmpty()) {
                         Text(
@@ -904,6 +1055,15 @@ private fun StudyStickyHeader(
                             modifier = Modifier.testTag("study-suspended-indicator")
                         )
                     }
+                }
+                IconButton(
+                    onClick = onOpenScope,
+                    modifier = Modifier.testTag("study-scope")
+                ) {
+                    Icon(
+                        Icons.Default.Tune,
+                        contentDescription = stringResource(R.string.of_study_scope)
+                    )
                 }
                 // Card actions live behind one overflow so the header keeps its
                 // bookmark and Done controls. Suspend and bury act on the card
@@ -1519,6 +1679,7 @@ private fun StudySummary(
     state: StudyUiState,
     onRestart: () -> Unit,
     onEnableNewCards: () -> Unit,
+    onOpenEditor: () -> Unit,
     onDone: () -> Unit
 ) {
     // The ViewModel says why it is empty; the copy is resolved here (C19).
@@ -1577,6 +1738,18 @@ private fun StudySummary(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+                Spacer(Modifier.height(8.dp))
+            }
+            // An empty bank has no card to serve. The route out goes straight
+            // to the editor instead of dropping the learner back at a library
+            // whose "add question" affordance they never found.
+            if (!stoppedEarly) {
+                OutlinedButton(
+                    onClick = onOpenEditor,
+                    modifier = Modifier.fillMaxWidth().testTag("study-add-questions")
+                ) {
+                    Text(stringResource(R.string.of_empty_study_add))
+                }
                 Spacer(Modifier.height(8.dp))
             }
             SummaryTimes(state)

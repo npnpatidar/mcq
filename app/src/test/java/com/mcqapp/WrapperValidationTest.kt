@@ -11,6 +11,9 @@ import java.io.File
  * runner, so a tampered one is game over. Both workflows gain a
  * validation job, and every gradle-running job waits on it.
  *
+ * INCIDENT: a tampered wrapper jar executes with full runner privileges; the
+ * 10 s / 0-retry wrapper defaults also failed four times in one release.
+ *
  * Unit tests run with the app module as working directory.
  */
 class WrapperValidationTest {
@@ -62,12 +65,41 @@ class WrapperValidationTest {
             "the build workflow must validate the wrapper jar",
             usesWrapperValidation(build)
         )
-        // build, release-build, ui-test, and the 4-way unit-test matrix — the
-        // matrix is one YAML job with one `needs:` line, so the count stays 4.
+        // build, release-build, ui-test, the 4-way unit-test matrix (one YAML
+        // job with one `needs:` line) and the nightly refresh job.
         assertEquals(
             "every gradle-running job must wait for validation",
-            4,
+            5,
             build.split("needs: wrapper-validation").size - 1
         )
+        assertTrue(
+            "the nightly dependency-refresh job must wait for wrapper validation too",
+            Regex("""(?ms)^  nightly-dependency-refresh:\n.*?needs: wrapper-validation""")
+                .containsMatchIn(build)
+        )
     }
+
+    /**
+     * The wrapper itself is the last line of defence against a slow mirror or
+     * a Maven 429: the 10 s / 0-retry defaults failed four times in one
+     * release. Pin the robust values so a future "temporary" tweak back to a
+     * short timeout cannot silently undo the fix.
+     */
+    @Test
+    fun wrapperRetriesAndTimeoutAreRobust() {
+        val props = source("../gradle/wrapper/gradle-wrapper.properties")
+        assertEquals(
+            "the wrapper must wait long enough for a slow plugin download",
+            "60000",
+            property(props, "networkTimeout")
+        )
+        assertEquals(
+            "the wrapper must retry transient fetch failures",
+            "3",
+            property(props, "retries")
+        )
+    }
+
+    private fun property(properties: String, name: String): String? =
+        Regex("""(?m)^$name=(.*)$""").find(properties)?.groupValues?.get(1)?.trim()
 }

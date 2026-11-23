@@ -364,6 +364,8 @@ internal fun TestSetupSheet(
     savedTest: UnfinishedTest? = null,
     /** One-tap route to the screen that owns the conditions above. */
     onOpenSettings: () -> Unit = {},
+    /** When the scope holds only flashcards, send the learner to Study instead. */
+    onStudyFlashcards: (List<String>) -> Unit = {},
     /** Leaves the sheet so the saved session can be resumed instead. */
     onKeepSavedTest: () -> Unit = {},
     onDismiss: () -> Unit,
@@ -1346,6 +1348,16 @@ internal fun TestSetupSheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )
+                // A disabled Start with only study-only cards must give a way
+                // forward: the same scope, opened in Study where cards work.
+                if (setup.flashcardsOnlyScope()) {
+                    TextButton(
+                        onClick = { onStudyFlashcards(categoryIds) },
+                        modifier = Modifier.testTag("test-setup-study-flashcards")
+                    ) {
+                        Text(stringResource(R.string.of_study_these))
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))

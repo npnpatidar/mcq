@@ -73,7 +73,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -98,6 +103,8 @@ import com.mcqapp.domain.TestPlan
 import com.mcqapp.ui.TestViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.study.StudyKey
+import com.mcqapp.ui.study.StudyKeyAction
 import com.mcqapp.util.Logger
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
@@ -363,6 +370,60 @@ fun TestSessionScreen(
         }
     }
 
+    // Keyboard shortcuts mirror Study: Space shows the answer then advances,
+    // arrows move between questions, and digits are inert because a test has
+    // no grade. Focus is requested on the question surface and keys are ignored
+    // while a dialog/overlay owns the screen or the result is being saved. The
+    // handler only calls the existing ViewModel methods, so strict-mode and
+    // auto-advance semantics stay entirely in the ViewModel.
+    val keyFocus = remember { FocusRequester() }
+    val keyboardBlocked = state.loading || state.loadError != null ||
+        resumeOffer != null || ungradedBlocking || showSubmitDialog ||
+        state.reviewOpen || showPalette || state.saving || state.submitted ||
+        state.currentQuestion == null
+    LaunchedEffect(keyboardBlocked) {
+        if (!keyboardBlocked) keyFocus.requestFocus()
+    }
+    fun onTestKey(event: KeyEvent): Boolean {
+        if (event.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return false
+        if (event.nativeKeyEvent.isCtrlPressed ||
+            event.nativeKeyEvent.isAltPressed ||
+            event.nativeKeyEvent.isMetaPressed
+        ) return false
+        if (keyboardBlocked) return false
+        val key = when (event.nativeKeyEvent.keyCode) {
+            android.view.KeyEvent.KEYCODE_SPACE -> StudyKey.SPACE
+            android.view.KeyEvent.KEYCODE_1 -> StudyKey.ONE
+            android.view.KeyEvent.KEYCODE_2 -> StudyKey.TWO
+            android.view.KeyEvent.KEYCODE_3 -> StudyKey.THREE
+            android.view.KeyEvent.KEYCODE_4 -> StudyKey.FOUR
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> StudyKey.LEFT
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> StudyKey.RIGHT
+            else -> StudyKey.OTHER
+        }
+        return when (TestKeyboard.action(key, state.isCurrentRevealed)) {
+            StudyKeyAction.NONE -> false
+            StudyKeyAction.REVEAL -> {
+                viewModel.revealCurrent()
+                true
+            }
+            StudyKeyAction.NEXT -> {
+                viewModel.next()
+                true
+            }
+            StudyKeyAction.SELECT_PREVIOUS_OPTION -> {
+                viewModel.previous()
+                true
+            }
+            StudyKeyAction.SELECT_NEXT_OPTION -> {
+                viewModel.next()
+                true
+            }
+            // A test never grades, so these are unreachable from TestKeyboard.
+            else -> false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -511,6 +572,10 @@ fun TestSessionScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .focusRequester(keyFocus)
+                .focusable(true)
+                .onKeyEvent(::onTestKey)
+                .testTag("test-keyboard-surface")
         ) {
             // The palette is an inline Card, not a dialog, so nothing consumed
             // system Back while it was open and the NavController popped the

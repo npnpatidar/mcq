@@ -75,11 +75,17 @@ fun browseRoute(
 fun studyRoute(
     paperId: String,
     categoryIds: List<String> = emptyList(),
-    leechesOnly: Boolean = false
+    leechesOnly: Boolean = false,
+    /** Folded tag identity; a tag-scoped sitting draws only those questions. */
+    tag: String = "",
+    /** A mistake-scoped sitting draws the paper's currently-wrong questions. */
+    mistakes: Boolean = false
 ): String {
     val query = buildList {
         if (categoryIds.isNotEmpty()) add("categories=${encodeCategoryList(categoryIds)}")
         if (leechesOnly) add("leechesOnly=true")
+        if (tag.isNotBlank()) add("tag=${encode(tag)}")
+        if (mistakes) add("mistakes=true")
     }
     return "study/${encode(paperId)}" + if (query.isEmpty()) "" else "?" + query.joinToString("&")
 }

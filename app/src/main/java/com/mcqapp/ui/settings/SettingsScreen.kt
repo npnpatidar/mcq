@@ -39,6 +39,7 @@ import androidx.navigation.NavController
 import com.mcqapp.AppLocale
 import com.mcqapp.R
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.ui.common.CompletionActions
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.stampedFileName
 
@@ -91,6 +92,10 @@ fun SettingsScreen(
     val restoreReport by viewModel.restoreReport.collectAsStateWithLifecycle()
     val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
     val shareRequest by viewModel.shareRequest.collectAsStateWithLifecycle()
+    // After a restore this is the fresh library, so the first surviving paper
+    // is the one the completion dialog can offer to study/open. An empty
+    // backup leaves the list empty and the dialog falls back to Open library.
+    val restoredPapers by repository.observePapers().collectAsStateWithLifecycle(emptyList())
 
     val context = LocalContext.current
     // LocalResources (not LocalContext.current) keeps the chooser title
@@ -409,6 +414,29 @@ fun SettingsScreen(
                 androidx.compose.material3.TextButton(onClick = { viewModel.dismissRestoreReport() }) {
                     Text(stringResource(R.string.ok))
                 }
+            },
+            dismissButton = {
+                CompletionActions(
+                    paperId = identifiableRestoredPaper(restoredPapers.map { it.id }),
+                    onStudy = { id ->
+                        viewModel.dismissRestoreReport()
+                        navController.navigate(com.mcqapp.ui.navigation.studyRoute(id))
+                    },
+                    onTest = { id ->
+                        viewModel.dismissRestoreReport()
+                        navController.navigate(com.mcqapp.ui.navigation.testRoute(id))
+                    },
+                    onOpenPaper = { id ->
+                        viewModel.dismissRestoreReport()
+                        navController.navigate(com.mcqapp.ui.navigation.browseRoute(id))
+                    },
+                    onOpenLibrary = {
+                        viewModel.dismissRestoreReport()
+                        navController.navigate("library") {
+                            popUpTo("library") { inclusive = true }
+                        }
+                    }
+                )
             }
         )
     }

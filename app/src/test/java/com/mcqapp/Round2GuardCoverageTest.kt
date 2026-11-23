@@ -10,6 +10,9 @@ import org.junit.Test
  * can apply it to real holders; here we feed it synthetic holders to prove the
  * rule actually fails on the blind spot it is meant to close, and passes on a
  * correctly paired one. No Android resources or new dependencies are needed.
+ *
+ * BEHAVIOUR: exercises the real pairing rule on synthetic enum holders, so a
+ * regression in the rule's own logic fails here without Robolectric.
  */
 class Round2GuardCoverageTest {
 

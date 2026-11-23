@@ -187,6 +187,19 @@ data class SuspendedCardRow(
     val buriedUntil: Long?
 )
 
+/**
+ * One selected question's canonical browse position, returned by
+ * [QuestionDao.getOrderedIdsByIds] so a bulk export can order a whole selection
+ * in one (chunked) query instead of one position query per id.
+ */
+data class SelectedOrderRow(
+    val id: String,
+    val categorySortOrder: Int,
+    val categoryTitle: String,
+    val questionSortOrder: Int,
+    val rowId: Long
+)
+
 /** Scheduling input for a question: its id and stored content hash only. */
 data class QuestionIdHash(
     val id: String,
@@ -1199,6 +1212,22 @@ interface QuestionDao {
     /** Every question id, column-narrow; collision probes need no body. */
     @Query("SELECT id FROM questions")
     suspend fun getAllIds(): List<String>
+
+    /**
+     * Selected ids in the same canonical order every browse/list surface uses
+     * (`categories.sortOrder, categories.title, questions.sortOrder, rowid`).
+     * One query replaces the old per-selected-id position lookups on the export
+     * and share paths. Unknown ids drop out; callers chunk the id list.
+     */
+    @Query(
+        "SELECT questions.id AS id, categories.sortOrder AS categorySortOrder, " +
+            "categories.title AS categoryTitle, questions.sortOrder AS questionSortOrder, " +
+            "questions.rowid AS rowId FROM questions " +
+            "INNER JOIN categories ON questions.categoryId = categories.id " +
+            "WHERE questions.id IN (:ids) " +
+            "ORDER BY categories.sortOrder, categories.title, questions.sortOrder, questions.rowid"
+    )
+    suspend fun getOrderedIdsByIds(ids: Collection<String>): List<SelectedOrderRow>
 
     /**
      * Which of [ids] already exists, id-only. The import preview used to load
@@ -2317,6 +2346,14 @@ interface ReviewLogDao {
     suspend fun getAll(): List<ReviewLogEntity>
 
     /**
+     * Every review row belonging to [questionIds], in append order. Used by
+     * delete-undo snapshots so a restored card keeps its whole history, not a
+     * rebuilt approximation of it. Callers chunk the id list.
+     */
+    @Query("SELECT * FROM review_log WHERE questionId IN (:questionIds) ORDER BY id ASC")
+    suspend fun getByQuestions(questionIds: Collection<String>): List<ReviewLogEntity>
+
+    /**
      * One keyset page of the whole log in append order, for the statistics
      * screen's streaming replay (`FsrsReplay.Stream`). Paging by `id` (the
      * autoincrement primary key, so also each card's chronological order) means
@@ -2550,6 +2587,14 @@ interface BookmarkDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun add(bookmark: BookmarkEntity)
+
+    /** Bulk restore of snapshotted bookmarks (undo of a bulk removal). */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun addAll(rows: List<BookmarkEntity>)
+
+    /** Bookmark rows for a set of questions, for delete-undo snapshots. */
+    @Query("SELECT * FROM bookmarks WHERE questionId IN (:questionIds)")
+    suspend fun getForQuestions(questionIds: Collection<String>): List<BookmarkEntity>
 
     @Query("DELETE FROM bookmarks WHERE questionId = :questionId")
     suspend fun remove(questionId: String)
@@ -3308,6 +3353,14 @@ interface QuestionStatsDao {
     /** One question's stored aggregate, including its display paper/category. */
     @Query("SELECT * FROM question_stats WHERE questionId = :questionId")
     suspend fun get(questionId: String): QuestionStatsEntity?
+
+    /** Aggregates for a delete-undo snapshot; callers chunk the id list. */
+    @Query("SELECT * FROM question_stats WHERE questionId IN (:questionIds)")
+    suspend fun getByQuestions(questionIds: Collection<String>): List<QuestionStatsEntity>
+
+    /** Restores snapshotted aggregates verbatim, including their display fields. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(rows: List<QuestionStatsEntity>)
 
     /**
      * Re-points [questionIds]' lifetime aggregates at the destination paper and

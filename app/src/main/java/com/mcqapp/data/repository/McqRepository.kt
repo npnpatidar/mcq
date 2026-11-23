@@ -1878,6 +1878,18 @@ class McqRepository internal constructor(
         categoryIds: List<String> = emptyList()
     ): List<com.mcqapp.domain.StudyCard> =
         studyStore.getStudyQueue(paperId, now, leechesOnly, categoryIds)
+
+    /**
+     * A bounded pool for a tag/mistake-scoped Study sitting. Only the given
+     * ids are read, so the cost is the pool's size rather than the paper's.
+     */
+    suspend fun getStudyQueueForQuestions(
+        paperId: String,
+        questionIds: Set<String>,
+        now: Long = System.currentTimeMillis()
+    ): List<com.mcqapp.domain.StudyCard> =
+        studyStore.getScopedStudyQueue(paperId, questionIds, now)
+
     /**
      * The card a pull-based session serves next, or null when nothing is due.
      * [categoryIds] empty means the whole paper; a non-empty list scopes both

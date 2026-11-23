@@ -77,6 +77,8 @@ sealed interface ScopeLabel {
     data object WholePaper : ScopeLabel
     data class One(val title: String) : ScopeLabel
     data class Many(val count: Int) : ScopeLabel
+    /** A tag/mistake pool: copy stays in the UI, only a resource id crosses. */
+    data class Text(val resId: Int, val arg: String = "") : ScopeLabel
 }
 
 /**
@@ -388,8 +390,16 @@ class StudyViewModel(
     private val paperId: String,
     /** The ticked category ids from the route; empty means the whole paper. */
     private val categoryIds: List<String> = emptyList(),
-    private val leechesOnly: Boolean = false
+    private val leechesOnly: Boolean = false,
+    /** Folded tag carried by the route; restricts the pool to its questions. */
+    private val tag: String = "",
+    /** Mistake-scoped sitting; restricts the pool to currently-wrong questions. */
+    private val mistakes: Boolean = false
 ) : AndroidViewModel(application) {
+
+    /** The resolved route scope; never a schema or schedule change. */
+    private val studyScope: com.mcqapp.domain.StudyScope =
+        com.mcqapp.domain.StudyScope.fromRoute(categoryIds, tag, mistakes)
 
     private val repository: McqRepository = (application as McqApplication).repository
 
@@ -596,6 +606,8 @@ class StudyViewModel(
                     )
                 }
                 val label = when {
+                    mistakes -> ScopeLabel.Text(com.mcqapp.R.string.of_scope_mistakes)
+                    tag.isNotBlank() -> ScopeLabel.Text(com.mcqapp.R.string.of_scope_tag, tag)
                     categoryIds.isEmpty() -> ScopeLabel.WholePaper
                     categoryIds.size == 1 -> ScopeLabel.One(
                         CategorySelection.titleOf(paper?.categories.orEmpty(), categoryIds.first())
@@ -609,6 +621,20 @@ class StudyViewModel(
                         leechesOnly = true,
                         categoryIds = scopeIds
                     )
+                } else if (studyScope.isRestricted) {
+                    // Resolve the pool's ids from the existing exact-tag index
+                    // or the mistake standings, then build only those cards.
+                    // No schema change and no schedule rewrite.
+                    val allowed = when (studyScope.kind) {
+                        com.mcqapp.domain.StudyScopeKind.TAG ->
+                            repository.questionIdsForTagInScope(paperId, scopeIds, studyScope.tag)
+                                .toHashSet()
+                        com.mcqapp.domain.StudyScopeKind.MISTAKES ->
+                            repository.getMistakenQuestions(paperId)
+                                .mapTo(HashSet()) { it.id }
+                        else -> emptySet()
+                    }
+                    drillCards = repository.getStudyQueueForQuestions(paperId, allowed)
                 }
                 // One cheap indexed read for the header's "N suspended"
                 // indicator; never a driver of the pull, which reads its own
@@ -750,7 +776,7 @@ class StudyViewModel(
             }
             // The clock's colour and the check's grade read the same absolute
             // pair, so the two can never disagree about where the card sits.
-            val schedulerConfig = config ?: SchedulerConfig()
+            val schedulerConfig = studyConfigOrWarn(config, STALE_CONFIG_CLOCK_MESSAGE)
             val now = SystemClock.elapsedRealtime()
             // Fetched before the card is shown: the answer buttons and the grade
             // they produce must agree on how many exposures today the card has
@@ -759,7 +785,7 @@ class StudyViewModel(
                 repository.exposureInStudyDay(
                     paperId = paperId,
                     questionId = card.questionId,
-                    config = config ?: SchedulerConfig()
+                    config = studyConfigOrWarn(config, STALE_CONFIG_EXPOSURE_MESSAGE)
                 )
             } catch (e: Exception) {
                 Logger.e("STUDY", "exposureInStudyDay(${card.questionId}) failed", e)
@@ -1125,7 +1151,7 @@ class StudyViewModel(
         // Freeze the graded dwell here, rounded once from the millisecond total.
         // Next, a grade change and Stop all persist this same value.
         val dwellSeconds = com.mcqapp.domain.Study.gradedDwellSeconds(paused.questionElapsedMillis)
-        val schedulerConfig = config ?: com.mcqapp.domain.SchedulerConfig()
+        val schedulerConfig = studyConfigOrWarn(config, STALE_CONFIG_GRADE_MESSAGE)
         val grade = com.mcqapp.domain.Study.autoGrade(
             correctOptionIds = question.correctOptionIds,
             selection = paused.selection,

@@ -531,8 +531,8 @@ sh gradlew :app:testDebugUnitTest $(printf -- '--tests %s ' $(cat /tmp/pure-jvm.
 ```
 
 - Robolectric tests that open a real SQLite database fail here with "The Robolectric native
-  runtime is not supported on Linux (aarch64)" — CI (x86_64) is authoritative for those. As
-  of 2026-10-23 a full local pure-JVM pass covers ~124 classes; the count drops if the
-  selection regresses.
+  runtime is not supported on Linux (aarch64)" — CI (x86_64) is authoritative for those.
+  The current pure-JVM class count is printed by `:app:testPureJvm` on each run;
+  a falling count means the selection rule regressed.
 - CI artifacts are downloaded with `gh run download ... -D /home/naresh/Download` (the
   `/sdcard/Download` convention in AGENTS.md belongs to the other host).

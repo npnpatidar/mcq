@@ -163,6 +163,44 @@ internal class StudyStore(
     }
 
     /**
+     * A bounded queue for an explicit set of questions (a tag or mistake pool).
+     *
+     * Unlike [getStudyQueue], this never walks the paper: only the given ids
+     * are read, so a scoped sitting over a million-question paper still costs
+     * the size of the pool. The same pools and scheduler build the cards, so a
+     * scoped session grades and orders them exactly like a whole-paper one.
+     */
+    suspend fun getScopedStudyQueue(
+        paperId: String,
+        questionIds: Set<String>,
+        now: Long = System.currentTimeMillis()
+    ): List<com.mcqapp.domain.StudyCard> {
+        if (questionIds.isEmpty()) return emptyList()
+        val config = settings.schedulerConfigNow()
+        resetEdited(paperId)
+        val rows = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
+            .filter { row ->
+                row.paperId == paperId &&
+                    !row.suspended &&
+                    (row.buriedUntil == null || row.buriedUntil <= now)
+            }
+        val pools = poolsOf(config, rows, now)
+        val fresh = if (config.introduceNewCards) {
+            val known = rows.mapTo(HashSet()) { it.questionId }
+            (questionIds - known).map { id ->
+                com.mcqapp.domain.StudyCard(
+                    id,
+                    com.mcqapp.domain.StudyReason.NEW,
+                    fsrs(config).initial(id)
+                )
+            }
+        } else {
+            emptyList()
+        }
+        return pools.learning + pools.reviews + fresh
+    }
+
+    /**
      * The card a session should pull next, or null when nothing is eligible —
      * the same pools the badge counts, so the empty state and the pull agree.
      *

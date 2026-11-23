@@ -19,6 +19,7 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.CategoryDto
+import com.mcqapp.data.io.CsvTsvParser
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.data.io.withNormalizedFlashcards
@@ -67,7 +68,7 @@ const val PREVIEW_SAMPLE_SIZE: Int = 500
  * disclosure: a plain JSON bank or a Word document has no Anki memory state to
  * lose, so neither must show that note.
  */
-enum class ImportSource { ANKI, DOCX, JSON }
+enum class ImportSource { ANKI, DOCX, JSON, CSV }
 
 /**
  * Whether the Anki scheduling-memory disclosure applies to [source].
@@ -237,6 +238,8 @@ data class ImportUiState(
      */
     val scheduleResetIds: Set<String> = emptySet(),
     val importReport: com.mcqapp.data.io.ImportReport? = null,
+    /** Paper the just-finished import created or updated, for "Study now" actions. */
+    val importedPaperId: String? = null,
     val originalFile: McqFileDto? = null,
     /**
      * Whether the picked file is a multi-paper/progress backup. A streamed large
@@ -835,6 +838,16 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadJsonBytes(bytes: ByteArray) {
         viewModelScope.launch {
+            // A flat bank can arrive under any extension, so classify by
+            // content before the JSON parser sees it. Only small files are
+            // inspected as text — a large bank keeps the streaming path.
+            if (bytes.size <= JSON_STREAM_THRESHOLD_BYTES) {
+                val text = bytes.toString(Charsets.UTF_8)
+                if (CsvTsvParser.looksLikeCsvTsv(text)) {
+                    loadCsvTsv(text)
+                    return@launch
+                }
+            }
             markSource(ImportSource.JSON)
             val fp = withContext(Dispatchers.Default) { fingerprint(bytes) }
             if (fp == loadedDirectFp &&
@@ -970,6 +983,47 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             "${preview.totalQuestions} questions across ${preview.firstPaperCategoryCount} categories" +
             if (preview.isBackup) " (backup: ${preview.paperCount} papers)" else "")
         refreshDuplicates()
+    }
+
+    /**
+     * A CSV/TSV bank. It is converted straight to the same DTO the JSON path
+     * reads, so the preview, dedup, editor write-back and importer are reused
+     * unchanged — no second import pipeline. A picked file's name becomes the
+     * paper title (banks rarely name themselves in a flat file).
+     */
+    fun loadCsvTsv(text: String, fileName: String? = null) {
+        viewModelScope.launch {
+            markSource(ImportSource.CSV)
+            val fp = withContext(Dispatchers.Default) { fingerprint(text.toByteArray()) }
+            if (fp == loadedDirectFp && _state.value.questions.isNotEmpty()) return@launch
+            loadedDirectFp = fp
+            try {
+                withContext(Dispatchers.Default) {
+                    val parsed = CsvTsvParser.parse(
+                        text,
+                        paperTitle = fileName?.let { docxPaperTitle(it) },
+                        rowWarning = { msg(R.string.of_csv_bad_answer, it) }
+                    )
+                    val warnings = parsed.warnings.toMutableList()
+                    if (parsed.file.papers.firstOrNull()
+                            ?.categories?.firstOrNull()?.questions.isNullOrEmpty()
+                    ) {
+                        warnings += msg(R.string.of_csv_no_questions)
+                    }
+                    parseAndLoad(
+                        parse = { parsed.file },
+                        extraWarnings = warnings,
+                        titleOverride = fileName?.let { docxPaperTitle(it) }
+                    )
+                }
+            } catch (e: Exception) {
+                loadedDirectFp = null
+                Logger.e("IMPORTVM", "Failed to parse CSV/TSV", e)
+                _state.update {
+                    it.copy(loading = false, error = msg(R.string.final_import_parse_failed))
+                }
+            }
+        }
     }
 
     fun loadJsonText(text: String) {
@@ -1255,10 +1309,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     importJournal.clear()
                     Logger.i("IMPORTVM", "Imported (streamed): ${report.newQuestions} new, " +
                         "${report.updatedQuestions} updated, ${report.duplicateQuestions} duplicates")
+                    val importedId = repository.observePapers().first()
+                        .firstOrNull { p -> p.title.equals(s.paperTitle.trim(), ignoreCase = true) }?.id
                     _state.update {
                         it.copy(
                             importing = false, importDone = true,
-                            importReport = withRowsSkipped(report)
+                            importReport = withRowsSkipped(report),
+                            importedPaperId = importedId
                         )
                     }
                 } catch (e: Exception) {
@@ -1311,10 +1368,13 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Logger.i("IMPORTVM", "Imported: ${report.newPapers} new papers, ${report.updatedPapers} updated, " +
                     "${report.newQuestions} new questions, ${report.updatedQuestions} updated")
+                val importedId = repository.observePapers().first()
+                    .firstOrNull { p -> p.title.equals(s.paperTitle.trim(), ignoreCase = true) }?.id
                 _state.update {
                     it.copy(
                         importing = false, importDone = true,
-                        importReport = withRowsSkipped(report)
+                        importReport = withRowsSkipped(report),
+                        importedPaperId = importedId
                     )
                 }
             } catch (e: Exception) {

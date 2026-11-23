@@ -345,6 +345,44 @@ tasks.withType<Test>().configureEach {
     forkEvery = 40
 }
 
+// ----- Duration-aware shard input -------------------------------------------
+// The shard script used to split classes by alphabetical range, which put the
+// slow Robolectric/guard classes together and left another shard idle. Feed it
+// the *measured* cost from the last JUnit XML run instead: one
+// `<fqcn><TAB><millis>` line per class, written under build/ so CI can upload
+// it as an artifact for the next run. Running this task is opt-in; the script
+// keeps its old balanced-by-count behaviour when no file is supplied.
+val writeTestDurations = tasks.register("writeTestDurations") {
+    group = "verification"
+    description = "Writes a class->millis manifest from the last JUnit XML run for duration-aware sharding."
+    val resultsDir = layout.buildDirectory.dir("test-results/testDebugUnitTest")
+    val output = layout.buildDirectory.file("test-durations.tsv")
+    inputs.dir(resultsDir).optional()
+    outputs.file(output)
+    doLast {
+        val dir = resultsDir.get().asFile
+        if (!dir.isDirectory) {
+            logger.warn("writeTestDurations: no JUnit XML at ${dir.absolutePath}; sharding will use class-name ranges")
+            output.get().asFile.writeText("")
+            return@doLast
+        }
+        val suiteTag = Regex("""<testsuite\b[^>]*>""")
+        fun attribute(tag: String, name: String): String? =
+            Regex("""\b$name="([^"]*)"""").find(tag)?.groupValues?.get(1)
+        val lines = dir.listFiles { f -> f.name.startsWith("TEST-") && f.extension == "xml" }
+            .orEmpty()
+            .mapNotNull { file ->
+                val tag = suiteTag.find(file.readText())?.value ?: return@mapNotNull null
+                val name = attribute(tag, "name") ?: return@mapNotNull null
+                val seconds = attribute(tag, "time")?.toDoubleOrNull() ?: return@mapNotNull null
+                "$name\t${(seconds * 1000.0).toLong()}"
+            }
+            .sorted()
+        output.get().asFile.writeText(lines.joinToString("\n", postfix = "\n"))
+        logger.lifecycle("writeTestDurations: wrote ${lines.size} class durations to ${output.get().asFile}")
+    }
+}
+
 // ----- Pure-JVM test selection (for ARM64 hosts) ----------------------------
 // Robolectric/SQLite tests cannot run on ARM64 Linux. Select only pure-JVM test
 // classes: those containing @Test and WITHOUT an `import org.robolectric` line.

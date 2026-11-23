@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Library-scale pass: scoped search, bookmarks where found, bulk actions, undo, reorder. -->
+
+    <!-- Search scope chips and exact total. -->
+    <string name="search_filter_papers" tools:ignore="UnusedResources">Papers</string>
+    <string name="search_filter_categories" tools:ignore="UnusedResources">Categories</string>
+    <string name="search_filter_all_papers">All papers</string>
+    <string name="search_filter_all_categories">All categories</string>
+
+    <!-- Bookmark toggle on Browse/Search rows and provenance on Bookmarks rows. -->
+    <string name="browse_add_bookmark">Bookmark this question</string>
+    <string name="browse_remove_bookmark">Remove bookmark</string>
+    <string name="browse_bookmark_failed">Could not change the bookmark</string>
+    <string name="browse_assign_passage_failed">Could not change passage membership</string>
+    <string name="bookmark_provenance">In %1$s</string>
+    <string name="bookmarks_filter_paper" tools:ignore="UnusedResources">Filter by paper</string>
+    <string name="bookmarks_all_papers">All papers</string>
+    <string name="bookmarks_select">Select</string>
+    <string name="bookmarks_selected_count" tools:ignore="PluralsCandidate">%1$d selected</string>
+    <string name="bookmarks_remove_selected">Remove selected</string>
+    <plurals name="bookmarks_removed_count">
+        <item quantity="one">%1$d bookmark removed</item>
+        <item quantity="other">%1$d bookmarks removed</item>
+    </plurals>
+
+    <!-- Bulk operations in Browse. -->
+    <string name="browse_select_range">Select range</string>
+    <string name="browse_invert_selection">Invert selection</string>
+    <string name="browse_bulk_bookmark">Bookmark</string>
+    <string name="browse_bulk_unbookmark" tools:ignore="UnusedResources">Remove bookmark</string>
+    <string name="browse_bulk_duplicate">Duplicate</string>
+    <string name="browse_bulk_assign_passage">Assign to passage</string>
+    <string name="browse_bulk_unassign_passage">Remove from passage</string>
+    <string name="browse_move_to_position">Move to position…</string>
+    <string name="browse_move_to_position_title">Move to position</string>
+    <string name="browse_position_range">Position (1–%1$d)</string>
+    <string name="browse_export_progress_preparing" tools:ignore="PluralsCandidate">Preparing %1$d questions…</string>
+    <string name="browse_export_progress_rendering">Rendering the file…</string>
+    <string name="browse_cancel_export">Cancel</string>
+
+    <!-- Single reset disclosure that names the affected cards. -->
+    <string name="browse_passage_reset_disclosure">Assigning or removing passage membership restarts the study schedule of these cards: %1$s</string>
+    <string name="browse_passage_no_reset">None of these cards have a study schedule yet.</string>
+    <string name="passage_unassign_member">Remove from passage</string>
+
+    <!-- Undo for destructive actions. -->
+    <string name="browse_delete_with_undo" tools:ignore="PluralsCandidate">Delete %1$d questions? Their schedules, review history and bookmarks go with them. You can undo from the snackbar.</string>
+    <plurals name="browse_bulk_deleted">
+        <item quantity="one">%1$d question deleted</item>
+        <item quantity="other">%1$d questions deleted</item>
+    </plurals>
+    <string name="browse_single_deleted">Question deleted</string>
+    <string name="browse_undo_failed">Could not restore the questions</string>
+
+    <!-- Duplicate finder. -->
+    <string name="duplicates_title">Duplicate questions</string>
+    <string name="duplicates_none">No exact duplicates found</string>
+    <plurals name="duplicates_group_size">
+        <item quantity="one">%1$d copy</item>
+        <item quantity="other">%1$d copies</item>
+    </plurals>
+    <string name="duplicates_compare">Compare side by side</string>
+    <string name="duplicates_keep_one">Keep this one</string>
+    <string name="duplicates_delete_others">Delete the others</string>
+    <string name="duplicates_merge_history">Merge history into this one</string>
+    <string name="duplicates_kept_schedule">The card you keep keeps its study schedule and review history.</string>
+    <string name="duplicates_column_original">Original</string>
+    <string name="duplicates_column_copy">Copy</string>
+</resources>

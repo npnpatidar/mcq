@@ -37,6 +37,35 @@ suspend fun CorrectAnswerDao.getQuestionIdsWithKeysChunked(questionIds: List<Str
 suspend fun QuestionDao.getByIdsChunked(ids: List<String>): List<QuestionEntity> =
     ids.chunks().flatMap { getByIds(it) }
 
+/**
+ * Selected ids in the canonical browse order, chunked. Each chunk sorts itself;
+ * the concatenation is re-sorted globally by the same keys so a selection that
+ * spans more than one bind chunk still exports in the order the list shows.
+ */
+suspend fun QuestionDao.getOrderedIdsByIdsChunked(ids: Collection<String>): List<String> =
+    ids.toList().chunks()
+        .flatMap { getOrderedIdsByIds(it) }
+        .sortedWith(
+            compareBy<SelectedOrderRow> { it.categorySortOrder }
+                .thenBy { it.categoryTitle }
+                .thenBy { it.questionSortOrder }
+                .thenBy { it.rowId }
+        )
+        .map { it.id }
+
+suspend fun ReviewLogDao.getByQuestionsChunked(ids: Collection<String>): List<ReviewLogEntity> =
+    ids.toList().chunks().flatMap { getByQuestions(it) }
+
+suspend fun QuestionStatsDao.getByQuestionsChunked(ids: Collection<String>): List<QuestionStatsEntity> =
+    ids.toList().chunks().flatMap { getByQuestions(it) }
+
+suspend fun BookmarkDao.getForQuestionsChunked(ids: Collection<String>): List<BookmarkEntity> =
+    ids.toList().chunks().flatMap { getForQuestions(it) }
+
+suspend fun BookmarkDao.addAllChunked(rows: Collection<BookmarkEntity>) {
+    rows.toList().chunks().forEach { addAll(it) }
+}
+
 suspend fun QuestionDao.getByCategoriesChunked(categoryIds: List<String>): List<QuestionEntity> =
     categoryIds.chunks().flatMap { getByCategories(it) }
 

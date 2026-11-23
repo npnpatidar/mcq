@@ -17,6 +17,9 @@ import org.junit.Test
  * reintroduce that wedge by writing preferences directly.
  *
  * Pure JVM: reads the sources, no Robolectric.
+ *
+ * INCIDENT: a direct `dataStore.edit` on Main stranded the process-wide write
+ * actor after a test discarded its looper, at a different class each run.
  */
 class PreferenceWritesGuardTest {
 
@@ -83,12 +86,16 @@ class PreferenceWritesGuardTest {
 
     /** What the helper must keep doing; empty means the helper is sound. */
     private fun helperOffences(code: String): List<String> = buildList {
-        if (!code.contains("withContext(Dispatchers.IO)")) add(
-            "$helperName must wrap the edit in withContext(Dispatchers.IO); " +
+        if (Regex("""withContext\(Dispatchers\.IO\)""").findAll(code).count() != 1) add(
+            "$helperName must wrap the edit in exactly one withContext(Dispatchers.IO); " +
                 "otherwise the transform still runs on the caller's dispatcher"
         )
-        if (!code.contains("dataStore.edit(transform)")) add(
-            "$helperName must still perform the atomic dataStore.edit"
+        if (!Regex("""\bedit\(transform\)""").containsMatchIn(code)) add(
+            "$helperName must still perform the atomic DataStore.edit"
+        )
+        if (!code.contains("dataStore.editPreferences(transform)")) add(
+            "$helperName must route the production Context overload through the " +
+                "same injected-store write path, so a test cannot bypass the IO hop"
         )
     }
 
@@ -105,10 +112,13 @@ class PreferenceWritesGuardTest {
     /** Negative case: dropping the IO hop must trip the helper guard. */
     @Test
     fun theHelperGuardDetectsAMissingIoHop() {
-        val noHop = "internal suspend fun Context.editPreferences(" +
+        val noHop = "internal suspend fun DataStore<Preferences>.editPreferences(" +
             "transform: suspend (MutablePreferences) -> Unit) {\n" +
-            "    dataStore.edit(transform)\n" +
-            "}"
+            "    edit(transform)\n" +
+            "}\n" +
+            "internal suspend fun Context.editPreferences(" +
+            "transform: suspend (MutablePreferences) -> Unit) =\n" +
+            "    dataStore.editPreferences(transform)"
         assertTrue(
             "a helper without the IO hop must not pass",
             helperOffences(stripComments(noHop)).isNotEmpty()

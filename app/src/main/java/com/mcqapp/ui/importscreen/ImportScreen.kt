@@ -63,6 +63,7 @@ import com.mcqapp.data.io.normalizedFlashcard
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ImportWarnings
 import com.mcqapp.domain.hasVisibleContent
+import com.mcqapp.ui.common.CompletionActions
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.Logger
@@ -159,6 +160,33 @@ fun ImportScreen(
                         popUpTo("library") { inclusive = true }
                     }
                 }) { Text(stringResource(R.string.ok)) }
+            },
+            dismissButton = {
+                // Same follow-up actions as the Library Anki report. The VM
+                // now publishes the paper the import created/updated, so an
+                // import can go straight to studying or testing it instead of
+                // only returning to the library.
+                CompletionActions(
+                    paperId = state.importedPaperId,
+                    onStudy = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.studyRoute(id))
+                    },
+                    onTest = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.testRoute(id))
+                    },
+                    onOpenPaper = { id ->
+                        viewModel.consumeImportResult()
+                        navController.navigate(com.mcqapp.ui.navigation.browseRoute(id))
+                    },
+                    onOpenLibrary = {
+                        viewModel.consumeImportResult()
+                        navController.navigate("library") {
+                            popUpTo("library") { inclusive = true }
+                        }
+                    }
+                )
             }
         )
     }

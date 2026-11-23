@@ -127,6 +127,7 @@ fun LibraryScreen(
     val pendingDelete by viewModel.pendingDelete.collectAsStateWithLifecycle()
     val importReport by viewModel.importReport.collectAsStateWithLifecycle()
     val importReportTitle by viewModel.importReportTitle.collectAsStateWithLifecycle()
+    val lastImportedPaperId by viewModel.lastImportedPaperId.collectAsStateWithLifecycle()
     // Due counts have to be re-read when the library resumes, not when Study is
     // tapped. A study session rewrites the schedules while the library is off
     // screen, so a refresh fired from the click ran *before* anything changed and
@@ -178,6 +179,26 @@ fun LibraryScreen(
         }
     }
     val isLoadingSample by viewModel.isLoadingSample.collectAsStateWithLifecycle()
+    // Genuine-first-run chooser. The ViewModel answers from the install marker,
+    // the live paper list and a persisted "answered" flag, so this dialog can
+    // never offer to load a sample over someone's existing bank.
+    val firstRun by viewModel.firstRun.collectAsStateWithLifecycle()
+    val firstStudyRoute by viewModel.firstStudyRoute.collectAsStateWithLifecycle()
+    val editorRoute by viewModel.editorRoute.collectAsStateWithLifecycle()
+    LaunchedEffect(editorRoute) {
+        editorRoute?.let { route ->
+            viewModel.consumeEditorRoute()
+            com.mcqapp.ui.editor.EditorSession.clear()
+            navController.navigate(route)
+        }
+    }
+    LaunchedEffect(Unit) { viewModel.checkFirstRun() }
+    LaunchedEffect(firstStudyRoute) {
+        firstStudyRoute?.let { route ->
+            viewModel.consumeFirstStudyRoute()
+            navController.navigate(route)
+        }
+    }
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var categoryDialogPaperId by rememberSaveable { mutableStateOf("") }
     var categoryDialogParentId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -530,6 +551,7 @@ fun LibraryScreen(
                                         com.mcqapp.ui.navigation.editorRoute("", paper.id, categoryId)
                                     )
                                 },
+                                onAddFirstQuestion = { viewModel.ensureCategoryAndEditor(paper.id) },
                                 onMoveCategory = { categoryId, delta ->
                                     viewModel.moveCategory(categoryId, delta)
                                 },
@@ -644,6 +666,10 @@ fun LibraryScreen(
             negativeMarking = request.paper.negativeMarking,
             savedTest = unfinishedTest,
             onOpenSettings = { navController.navigate("settings") },
+            onStudyFlashcards = { ids ->
+                viewModel.setPendingTestSetup(null)
+                navController.navigate(com.mcqapp.ui.navigation.studyRoute(request.paper.id, ids))
+            },
             onKeepSavedTest = {
                 viewModel.setPendingTestSetup(null)
                 unfinishedTest?.let { navController.navigate(unfinishedTestRoute(it)) }
@@ -786,6 +812,40 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissImportReport() }) { Text(stringResource(R.string.ok)) }
+            },
+            dismissButton = {
+                val paperId = lastImportedPaperId
+                if (paperId != null) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        TextButton(
+                            onClick = {
+                                viewModel.dismissImportReport()
+                                navController.navigate(com.mcqapp.ui.navigation.studyRoute(paperId))
+                            },
+                            modifier = Modifier.testTag("import-study-now")
+                        ) { Text(stringResource(R.string.of_study_now)) }
+                        TextButton(
+                            onClick = {
+                                viewModel.dismissImportReport()
+                                viewModel.setPendingTestSetup(
+                                    LibraryViewModel.PendingTestSetup(
+                                        papers.firstOrNull { it.id == paperId }
+                                            ?: com.mcqapp.domain.Paper(paperId, ""),
+                                        emptyList(), com.mcqapp.domain.TestType.RANDOM
+                                    )
+                                )
+                            },
+                            modifier = Modifier.testTag("import-take-test")
+                        ) { Text(stringResource(R.string.of_take_test)) }
+                        TextButton(
+                            onClick = {
+                                viewModel.dismissImportReport()
+                                navController.navigate(com.mcqapp.ui.navigation.browseRoute(paperId))
+                            },
+                            modifier = Modifier.testTag("import-open-paper")
+                        ) { Text(stringResource(R.string.of_open_paper)) }
+                    }
+                }
             }
         )
     }
@@ -941,6 +1001,41 @@ fun LibraryScreen(
             dismissButton = {
                 TextButton(enabled = !isSharing, onClick = { closeExportDialog() }) {
                     Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (firstRun.showChooser) {
+        AlertDialog(
+            onDismissRequest = { viewModel.markFirstRunChooserShown() },
+            title = { Text(stringResource(R.string.of_welcome_title)) },
+            text = { Text(stringResource(R.string.of_welcome_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.trySampleAndStudy() },
+                    enabled = !isLoadingSample,
+                    modifier = Modifier.testTag("onboarding-try-sample")
+                ) { Text(stringResource(R.string.of_welcome_sample)) }
+            },
+            dismissButton = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    TextButton(
+                        onClick = {
+                            viewModel.markFirstRunChooserShown()
+                            showPaperDialog = true
+                        },
+                        modifier = Modifier.testTag("onboarding-create-paper")
+                    ) { Text(stringResource(R.string.of_welcome_create)) }
+                    TextButton(
+                        onClick = {
+                            viewModel.markFirstRunChooserShown()
+                            importLauncher.launch(
+                                arrayOf("application/json", "application/octet-stream", "application/zip", "text/*", "*/*")
+                            )
+                        },
+                        modifier = Modifier.testTag("onboarding-import-bank")
+                    ) { Text(stringResource(R.string.of_welcome_import)) }
                 }
             }
         )

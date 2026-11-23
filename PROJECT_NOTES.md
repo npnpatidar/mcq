@@ -281,8 +281,9 @@ sh gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin \
 - `run-jvm-tests.sh` does not exist on the NixOS arm64 host. Pure-JVM selection: files without
   `^import org.robolectric` that contain `@Test` (helper files break the `--tests` list), with
   **unquoted** class names — zsh passes embedded quotes straight through and Gradle then
-  matches nothing. Full local pass ≈237 classes after the round-2 fix batch (the
-  guard classes are pure JVM too). The
+  matches nothing. The authoritative class count is the number printed by
+  `:app:testPureJvm` on each run (it grows with new guards and features); do not
+  hard-code it here. The
   `:app:testPureJvm` Gradle task now codifies this selection rule so it no longer
   depends on a shell recipe.
 - Robolectric/SQLite tests still fail locally (aarch64); CI remains authoritative.
@@ -362,7 +363,8 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
 - CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
   `lint-report`, `ui-test-results`, and the unit-test results as a 4-way
   matrix `test-results-shard-0..3` (`apk-build/test-shards.sh` partitions the
-  363 classes; a Robolectric lost-wakeup wedge in one shard reports alone and
+  test classes by name or by a measured-duration manifest; a Robolectric
+  lost-wakeup wedge in one shard reports alone and
   dumps its thread stacks instead of holding the branch). After every push,
   download both APKs and keep them under these exact names:
 

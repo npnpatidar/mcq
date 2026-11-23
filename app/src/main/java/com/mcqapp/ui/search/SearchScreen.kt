@@ -3,6 +3,8 @@ package com.mcqapp.ui.search
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,9 +17,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,7 +55,7 @@ import com.mcqapp.R
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingErrorRow
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     navController: NavController,
@@ -60,7 +66,14 @@ fun SearchScreen(
     // The query the visible rows were actually produced for. The snippet below
     // explains a row's match, so it must use this, not the live text field.
     val committedQuery by viewModel.committedQuery.collectAsStateWithLifecycle()
+    val exactCount by viewModel.resultCount.collectAsStateWithLifecycle()
+    val papers by viewModel.papers.collectAsStateWithLifecycle()
+    val chips by viewModel.chips.collectAsStateWithLifecycle()
+    val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
     val hits = viewModel.pagingData.collectAsLazyPagingItems()
+    LaunchedEffect(hits.itemSnapshotList.items) {
+        viewModel.observeBookmarks(hits.itemSnapshotList.items.map { it.question.id })
+    }
 
     Scaffold(
         topBar = {
@@ -113,14 +126,46 @@ fun SearchScreen(
                     )
                 }
             }
+            // Paper / category chips narrow *which cards* are searched (the
+            // scope chips above narrow *where in a card* to look). Many phones
+            // cannot fit a long category list on one line, so both rows wrap.
+            if (papers.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = state.paperFilterIds.isEmpty(),
+                        onClick = { viewModel.clearScopeFilters() },
+                        label = { Text(stringResource(R.string.search_filter_all_papers)) }
+                    )
+                    papers.forEach { paper ->
+                        FilterChip(
+                            selected = paper.id in state.paperFilterIds,
+                            onClick = { viewModel.togglePaper(paper.id) },
+                            label = { Text(paper.title) }
+                        )
+                    }
+                }
+            }
+            if (chips.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = state.categoryFilterIds.isEmpty(),
+                        onClick = { viewModel.clearScopeFilters() },
+                        label = { Text(stringResource(R.string.search_filter_all_categories)) }
+                    )
+                    chips.forEach { chip ->
+                        FilterChip(
+                            selected = chip.id in state.categoryFilterIds,
+                            onClick = { viewModel.toggleCategory(chip.id) },
+                            label = { Text(chip.title) }
+                        )
+                    }
+                }
+            }
             val refresh = hits.loadState.refresh
             val append = hits.loadState.append
             val appending = append is LoadState.Loading
-            // `itemCount` is only the rows Paging has loaded (placeholders are
-            // off, and an append starts near the end of the list), so it is not
-            // a total. Show "+" unless both the refresh and the last append
-            // said there is no next page.
-            val possiblyMore = append.hasMore() && refresh.hasMore()
             Spacer(Modifier.height(8.dp))
             // B6: announce status changes politely, not just the result count.
             val announced = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
@@ -144,22 +189,21 @@ fun SearchScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = announced
                     )
-                refresh is LoadState.NotLoading && hits.itemCount == 0 && state.query.isNotBlank() ->
+                refresh is LoadState.NotLoading && exactCount == 0 && state.query.isNotBlank() ->
                     Text(
                         stringResource(R.string.no_matches),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = announced
                     )
-                hits.itemCount > 0 ->
+                exactCount != null && exactCount!! > 0 ->
                     Text(
+                        // An exact total from the repository's count of the
+                        // same two-phase pipeline the pages use — no "120+".
                         pluralStringResource(
-                            if (possiblyMore) R.plurals.search_result_count_more
-                            else R.plurals.search_result_count,
-                            hits.itemCount, hits.itemCount
+                            R.plurals.search_result_count,
+                            exactCount!!, exactCount!!
                         ),
                         style = MaterialTheme.typography.labelMedium,
-                        // The count changes as paged results arrive; speak the
-                        // new total without stealing focus.
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                     )
             }
@@ -254,6 +298,17 @@ fun SearchScreen(
                                     )
                                 }
                             }
+                            IconButton(onClick = { viewModel.toggleBookmark(hit.question.id) }) {
+                                Icon(
+                                    if (hit.question.id in bookmarkedIds) Icons.Default.Bookmark
+                                    else Icons.Default.BookmarkBorder,
+                                    contentDescription = stringResource(
+                                        if (hit.question.id in bookmarkedIds)
+                                            R.string.browse_remove_bookmark
+                                        else R.string.browse_add_bookmark
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -297,11 +352,3 @@ internal fun backSnippetLabelRes(isFlashcard: Boolean): Int =
     if (isFlashcard) R.string.r2_browse_answer_snippet
     else R.string.r2_browse_explanation_snippet
 
-/**
- * Whether a Paging load state can still have a next page. The count label
- * uses it so the loaded row count is never printed as if it were an exact
- * total: only a finished append (or refresh) that reached the end drops the
- * "+".
- */
-private fun LoadState.hasMore(): Boolean =
-    this !is LoadState.NotLoading || !endOfPaginationReached

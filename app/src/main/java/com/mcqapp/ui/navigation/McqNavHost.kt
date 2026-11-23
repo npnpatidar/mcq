@@ -136,8 +136,18 @@ fun McqNavHost(repository: McqRepository) {
 
     val pendingImport by SharedImport.pending.collectAsStateWithLifecycle()
     val pendingImportError by SharedImport.error.collectAsStateWithLifecycle()
+    // Plain text shared from another app becomes a flashcard through a small
+    // front/back dialog, not an import preview. Held in saveable state so a
+    // rotation cannot drop the shared snippet.
+    val pendingQuickCapture by SharedImport.pendingText.collectAsStateWithLifecycle()
+    var quickCaptureText by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingQuickCapture) {
+        val captured = SharedImport.consumeText() ?: return@LaunchedEffect
+        quickCaptureText = captured.text
+    }
     // Resolve in the composable body: LaunchedEffect's block is not @Composable.
     val importFailure = pendingImportError
+    val quickCaptureSaved = stringResource(R.string.of_quick_capture_saved)
     val importErrorMessage = if (importFailure != null) {
         stringResource(importFailure.resId, *importFailure.args.toTypedArray())
     } else null
@@ -333,11 +343,13 @@ fun McqNavHost(repository: McqRepository) {
             )
         }
         composable(
-            route = "study/{paperId}?categories={categories}&leechesOnly={leechesOnly}",
+            route = "study/{paperId}?categories={categories}&leechesOnly={leechesOnly}&tag={tag}&mistakes={mistakes}",
             arguments = listOf(
                 navArgument("paperId") { type = NavType.StringType },
                 navArgument("categories") { type = NavType.StringType; defaultValue = "" },
-                navArgument("leechesOnly") { type = NavType.BoolType; defaultValue = false }
+                navArgument("leechesOnly") { type = NavType.BoolType; defaultValue = false },
+                navArgument("tag") { type = NavType.StringType; defaultValue = "" },
+                navArgument("mistakes") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val paperId = entry.arguments?.getString("paperId").orEmpty()
@@ -345,15 +357,20 @@ fun McqNavHost(repository: McqRepository) {
                 entry.arguments?.getString("categories").orEmpty()
             )
             val leechesOnly = entry.arguments?.getBoolean("leechesOnly") ?: false
+            val tag = entry.arguments?.getString("tag").orEmpty()
+            val mistakes = entry.arguments?.getBoolean("mistakes") ?: false
             Logger.i(
                 "NAV",
-                "study screen: paperId=$paperId, categories=$categories, leechesOnly=$leechesOnly"
+                "study screen: paperId=$paperId, categories=$categories, leechesOnly=$leechesOnly, " +
+                    "tag='$tag', mistakes=$mistakes"
             )
             StudyScreen(
                 repository = repository,
                 paperId = paperId,
                 categoryIds = categories,
                 leechesOnly = leechesOnly,
+                tag = tag,
+                mistakes = mistakes,
                 navController = navController
             )
         }
@@ -382,6 +399,19 @@ fun McqNavHost(repository: McqRepository) {
         tone = currentTone,
         modifier = Modifier.align(Alignment.BottomCenter)
     )
+
+    quickCaptureText?.let { text ->
+        val capturePapers by libraryViewModel.papers.collectAsStateWithLifecycle()
+        com.mcqapp.ui.library.QuickCaptureDialog(
+            papers = capturePapers,
+            sharedText = text,
+            onSave = { pid, pt, cid, ct, front, back, tag ->
+                libraryViewModel.saveQuickCapture(pid, pt, cid, ct, front, back, tag)
+            },
+            onSaved = { messageBus.send(UiMessage(quickCaptureSaved)) },
+            onDismiss = { quickCaptureText = null }
+        )
+    }
 
     // Round-2 E4: a blocked external exit surfaces the same leave copy the
     // editor uses. Discard drops the unsaved edit and performs the held

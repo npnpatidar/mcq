@@ -516,13 +516,11 @@ private fun StudyBody(
         // Reading it as "hidden" would pause the clock on a card that is about
         // to be shown, and nothing would clear the reading again.
         if (container.size.height <= 0 || card.size.height <= 0) return
-        val top = card.localPositionOf(container, Offset.Zero).y
+        // Window positions, not localPositionOf: the local position is the
+        // layout slot inside the scrolling column and does not move when the
+        // column scrolls, so it can never tell whether the card is on screen.
+        val top = card.positionInWindow().y - container.positionInWindow().y
         questionOnScreen = top < container.size.height && top + card.size.height > 0f
-        com.mcqapp.util.Logger.i(
-            "STUDY",
-            "geom ${question.id} scroll=${scrollState.value} top=$top " +
-                "containerH=${container.size.height} cardH=${card.size.height} onScreen=$questionOnScreen"
-        )
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
     // The pull clocked this card from the PREVIOUS card's reading, so a new
@@ -543,13 +541,9 @@ private fun StudyBody(
         // former option back into view and apply its offset to the new scroll
         // state, and the single geometry read would stick as "hidden".
         focusManager.clearFocus(force = true)
-        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} before=${scrollState.value}")
         scrollState.scrollTo(0)
-        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} after=${scrollState.value}")
         withFrameNanos { }
-        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} frame=${scrollState.value} onScreen=$questionOnScreen")
         reportVisibility()
-        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} reported=${scrollState.value} onScreen=$questionOnScreen")
     }
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live

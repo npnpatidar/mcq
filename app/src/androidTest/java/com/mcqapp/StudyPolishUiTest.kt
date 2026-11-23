@@ -170,7 +170,9 @@ class StudyPolishUiTest {
             waitFor("Reviewed ${n + 1} this session")
         }
 
-        waitFor(app.getString(R.plurals.break_suggestion, 10, 10))
+        // A plural must go through getQuantityString; getString resolves the
+        // raw array resource and throws Resources$NotFoundException on device.
+        waitFor(app.resources.getQuantityString(R.plurals.break_suggestion, 10, 10))
         compose.onNodeWithTag("study-take-break").performClick()
         waitForTag("study-resume-break")
         compose.onNodeWithTag("study-resume-break").assertIsDisplayed()

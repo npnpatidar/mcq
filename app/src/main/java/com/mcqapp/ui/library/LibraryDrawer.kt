@@ -245,6 +245,12 @@ internal fun DrawerContent(
                 val rolled = remember(paper.categories, countsByPaper[paper.id]) {
                     rollUpCategoryCounts(paper.categories, countsByPaper[paper.id].orEmpty())
                 }
+                // The whole tree is navigable: every parent's children render.
+                // expandedMore stays separate and means only "show the >6
+                // extra siblings at this level", never "hide this branch".
+                val allCategoryIds = remember(paper.categories) {
+                    CategoryTreePager.allIds(paper.categories)
+                }
                 Column {
                     Row(
                         modifier = Modifier
@@ -279,7 +285,8 @@ internal fun DrawerContent(
                                 states = states,
                                 counts = rolled,
                                 onToggle = { id -> onToggleCategory(paper.id, id) },
-                                expanded = expandedMore[paper.id].orEmpty(),
+                                expanded = allCategoryIds,
+                                expandedMore = expandedMore[paper.id].orEmpty(),
                                 onToggleMore = { key ->
                                     val current = expandedMore[paper.id].orEmpty()
                                     expandedMore = expandedMore + (paper.id to
@@ -349,12 +356,15 @@ private fun CategoryTree(
     states: Map<String, CategoryCheckState>,
     counts: Map<String, CategoryCounts>,
     onToggle: (String) -> Unit,
+    /** Nodes whose children are rendered — the full tree in the picker. */
     expanded: Set<String> = emptySet(),
+    /** Only the >6 overflow levels that were explicitly revealed. */
+    expandedMore: Set<String> = emptySet(),
     onToggleMore: (String) -> Unit = {}
 ) {
     // A bank with hundreds of branches used to make the drawer unusable. Bound
     // each level and reveal the rest behind an explicit "show N more".
-    CategoryTreePager.page(nodes, expanded).forEach { line ->
+    CategoryTreePager.page(nodes, expanded = expanded, revealed = expandedMore).forEach { line ->
         val node = line.node
         // Resolve in the composable scope; `semantics {}` is not composable.
         val selectLabel = stringResource(R.string.r2_lib_select_category, node.title)
@@ -404,7 +414,7 @@ private fun CategoryTree(
                     .testTag("drawer-more-${node.id}")
             ) {
                 Text(
-                    if (node.id in expanded) {
+                    if (node.id in expandedMore) {
                         stringResource(R.string.of_show_less)
                     } else {
                         pluralStringResource(R.plurals.of_show_more_categories, line.hiddenAfter, line.hiddenAfter)

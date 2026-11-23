@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.SelectAll
@@ -317,6 +318,9 @@ fun BrowseScreen(
         com.mcqapp.data.export.ExportFormat.APKG -> exportApkgLauncher
         com.mcqapp.data.export.ExportFormat.DOCX -> exportDocxLauncher
     }
+    // Select-mode's secondary actions share one overflow menu; keeping it in
+    // state here means a rotation does not leave a menu hanging over the list.
+    var selectOverflowOpen by remember { mutableStateOf(false) }
     var showBulkDialog by remember { mutableStateOf(false) }
     var bulkMarks by remember { mutableStateOf("") }
     var bulkTags by remember { mutableStateOf("") }
@@ -349,10 +353,101 @@ fun BrowseScreen(
                 },
                 actions = {
                     if (selectionMode) {
-                        // Select all in the current queue. The button was
-                        // asked for as an icon, alongside the selection
-                        // actions, and it resolves the live filter so a
-                        // selection never includes rows outside the list.
+                        // Twelve text buttons in the top bar pushed Export and
+                        // Delete off the right edge of a phone. One labelled
+                        // overflow holds the secondary actions; the primary set
+                        // below is short and stays on screen (TopAppBar places
+                        // the last actions closest to the edge). All labels and
+                        // tags remain reachable — only their location changed.
+                        IconButton(
+                            onClick = { selectOverflowOpen = true },
+                            modifier = Modifier.testTag("browse-select-overflow")
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.of_more_actions)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = selectOverflowOpen,
+                            onDismissRequest = { selectOverflowOpen = false }
+                        ) {
+                            // Range mode and invert work over the rows the
+                            // window currently holds, so a giant paper never
+                            // has to materialise its whole list to select a block.
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_select_range)) },
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    rangeMode = !rangeMode
+                                    rangeAnchor = null
+                                },
+                                modifier = Modifier.testTag("browse-select-range")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_invert_selection)) },
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    selectedIds = viewModel.invertSelection(selectedIds)
+                                },
+                                modifier = Modifier.testTag("browse-select-invert")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_bookmark)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.setBookmarks(selectedIds, true) { changed ->
+                                        if (changed > 0) sendMessage(
+                                            UiMessage(bookmarkAddedText, UiMessageTone.Success)
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("browse-select-bookmark")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_duplicate)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.bulkDuplicate(selectedIds) { done ->
+                                        if (done > 0) sendMessage(
+                                            UiMessage(
+                                                platformResources.getQuantityString(
+                                                    R.plurals.questions_copied_count, done, done
+                                                ),
+                                                UiMessageTone.Success
+                                            )
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("browse-select-duplicate")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_assign_passage)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
+                                    unassignMode = false
+                                    showAssignDialog = true
+                                },
+                                modifier = Modifier.testTag("browse-select-assign")
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.browse_bulk_unassign_passage)) },
+                                enabled = selectedIds.isNotEmpty(),
+                                onClick = {
+                                    selectOverflowOpen = false
+                                    viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
+                                    unassignMode = true
+                                    showAssignDialog = true
+                                },
+                                modifier = Modifier.testTag("browse-select-unassign")
+                            )
+                        }
+                        // Select all in the current queue: resolves the live
+                        // filter so a selection never includes hidden rows.
                         IconButton(
                             onClick = {
                                 viewModel.selectAllInScope { ids -> selectedIds = ids }
@@ -364,59 +459,6 @@ fun BrowseScreen(
                                 contentDescription = stringResource(R.string.select_all)
                             )
                         }
-                        // Range mode and invert: both work over the rows the
-                        // window currently holds, so a giant paper never has
-                        // to materialise its whole list to select a block.
-                        TextButton(onClick = {
-                            rangeMode = !rangeMode
-                            rangeAnchor = null
-                        }) {
-                            Text(stringResource(R.string.browse_select_range))
-                        }
-                        TextButton(onClick = { selectedIds = viewModel.invertSelection(selectedIds) }) {
-                            Text(stringResource(R.string.browse_invert_selection))
-                        }
-                        TextButton(
-                            enabled = selectedIds.isNotEmpty(),
-                            onClick = {
-                                viewModel.setBookmarks(selectedIds, true) { changed ->
-                                    if (changed > 0) sendMessage(
-                                        UiMessage(bookmarkAddedText, UiMessageTone.Success)
-                                    )
-                                }
-                            }
-                        ) { Text(stringResource(R.string.browse_bulk_bookmark)) }
-                        TextButton(
-                            enabled = selectedIds.isNotEmpty(),
-                            onClick = {
-                                viewModel.bulkDuplicate(selectedIds) { done ->
-                                    if (done > 0) sendMessage(
-                                        UiMessage(
-                                            platformResources.getQuantityString(
-                                                R.plurals.questions_copied_count, done, done
-                                            ),
-                                            UiMessageTone.Success
-                                        )
-                                    )
-                                }
-                            }
-                        ) { Text(stringResource(R.string.browse_bulk_duplicate)) }
-                        TextButton(
-                            enabled = selectedIds.isNotEmpty(),
-                            onClick = {
-                                viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
-                                unassignMode = false
-                                showAssignDialog = true
-                            }
-                        ) { Text(stringResource(R.string.browse_bulk_assign_passage)) }
-                        TextButton(
-                            enabled = selectedIds.isNotEmpty(),
-                            onClick = {
-                                viewModel.passageResetCards(selectedIds) { cards -> resetCards = cards }
-                                unassignMode = true
-                                showAssignDialog = true
-                            }
-                        ) { Text(stringResource(R.string.browse_bulk_unassign_passage)) }
                         TextButton(
                             onClick = {
                                 bulkMarks = ""
@@ -1485,7 +1527,10 @@ fun BrowseScreen(
                                 val keeperPreview = duplicateCandidatePreview(
                                     duplicatePreviews[keeper], keeper
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     group.questionIds.forEachIndexed { index, id ->
                                         // Identical "Keep this one" chips were
                                         // indistinguishable beyond the first two
@@ -1514,6 +1559,11 @@ fun BrowseScreen(
                                                 .semantics { contentDescription = description }
                                         )
                                     }
+                                }
+                                // N chips can wrap to several lines; keep the
+                                // destructive/merge actions on their own row so
+                                // they never sit off the right edge.
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     TextButton(onClick = {
                                         viewModel.resolveDuplicates(group, keeper, merge = true) { changed ->
                                             if (changed > 0) sendMessage(

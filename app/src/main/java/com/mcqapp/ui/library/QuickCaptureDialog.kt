@@ -23,6 +23,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -60,24 +62,30 @@ internal fun QuickCaptureDialog(
     onSaved: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var front by remember { mutableStateOf(sharedText.take(2000)) }
-    var back by remember { mutableStateOf("") }
-    var tag by remember { mutableStateOf("") }
-    var newPaperTitle by remember { mutableStateOf("") }
-    var newCategoryTitle by remember { mutableStateOf("") }
-    var selectedPaperId by remember { mutableStateOf(papers.firstOrNull()?.id.orEmpty()) }
+    // Every field the learner typed is saveable: a rotation used to clear the
+    // front/back/tag and the new paper/category names, and a second Save then
+    // wrote a second card. The ephemeral menu/error flags stay plain remember.
+    var front by rememberSaveable { mutableStateOf(sharedText.take(2000)) }
+    var back by rememberSaveable { mutableStateOf("") }
+    var tag by rememberSaveable { mutableStateOf("") }
+    var newPaperTitle by rememberSaveable { mutableStateOf("") }
+    var newCategoryTitle by rememberSaveable { mutableStateOf("") }
+    var selectedPaperId by rememberSaveable { mutableStateOf(papers.firstOrNull()?.id.orEmpty()) }
     // Distinguish "papers not loaded yet" from the learner deliberately picking
     // "New paper" — both leave selectedPaperId blank, but only the first may be
     // filled in when the papers flow emits.
-    var paperChosen by remember { mutableStateOf(false) }
+    var paperChosen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(papers) {
         if (!paperChosen) selectedPaperId = initialQuickCapturePaperId(selectedPaperId, papers)
     }
-    var selectedCategoryId by remember { mutableStateOf("") }
+    var selectedCategoryId by rememberSaveable { mutableStateOf("") }
     var paperExpanded by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var frontError by remember { mutableStateOf(false) }
+    // Tied to this composition: on rotation the in-flight save is cancelled
+    // instead of writing through a detached MainScope into a dead composition.
+    val saveScope = rememberCoroutineScope()
     val selectedPaper = papers.firstOrNull { it.id == selectedPaperId }
     val categories = selectedPaper?.categories.orEmpty()
 
@@ -202,7 +210,7 @@ internal fun QuickCaptureDialog(
                         return@TextButton
                     }
                     saving = true
-                    kotlinx.coroutines.MainScope().launch {
+                    saveScope.launch {
                         val paperId = onSave(
                             selectedPaperId.ifBlank { null },
                             newPaperTitle,
@@ -213,10 +221,11 @@ internal fun QuickCaptureDialog(
                             tag
                         )
                         saving = false
-                        if (paperId != null) {
-                            onSaved("saved")
-                            onDismiss()
-                        }
+                        // The NavHost owns dismissal through its saveable flag.
+                        // Dismissing here reached a dead composition after a
+                        // rotation and left the shared text queued for a second
+                        // Save — which wrote a duplicate card.
+                        if (paperId != null) onSaved("saved")
                     }
                 },
                 modifier = Modifier.testTag("quick-capture-save")

@@ -39,6 +39,36 @@ class CategoryTreePagerTest {
         assertEquals(7, expanded.last().hiddenAfter)
     }
 
+    /**
+     * The pickers pass every id as [CategoryTreePager.page]'s `expanded` set,
+     * so a nested child row always exists. Passing only the "show N more"
+     * overflow ids used to fold every branch shut and made child categories
+     * unselectable.
+     */
+    @Test
+    fun everyIdExpandedKeepsNestedChildrenVisible() {
+        val tree = listOf(node("root", listOf(node("mid", listOf(node("leaf"))))))
+        val allIds = CategoryTreePager.allIds(tree)
+        val page = CategoryTreePager.page(tree, expanded = allIds)
+        assertEquals(listOf("root", "mid", "leaf"), page.map { it.node.id })
+        assertEquals(listOf(0, 1, 2), page.map { it.depth })
+        assertTrue(page.all { it.hiddenAfter == 0 })
+    }
+
+    @Test
+    fun revealedBoundsOnlyTheOverflowNotTheChildren() {
+        val tree = listOf(node("p", (1..10).map { node("child$it") }))
+        val allIds = CategoryTreePager.allIds(tree)
+        val bounded = CategoryTreePager.page(tree, expanded = allIds, limit = 6)
+        assertEquals(7, bounded.size) // parent + six visible children
+        assertEquals(4, bounded.last().hiddenAfter)
+        val revealed = CategoryTreePager.page(
+            tree, expanded = allIds, revealed = setOf("child6"), limit = 6
+        )
+        assertEquals(11, revealed.size)
+        assertEquals(0, revealed.last().hiddenAfter)
+    }
+
     @Test
     fun smallTreesAreUnchangedAndOrderIsPreserved() {
         val nodes = listOf(node("a"), node("b"))

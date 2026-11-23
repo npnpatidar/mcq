@@ -943,8 +943,18 @@ object StatsAggregator {
          * The weakest card behind a bar: lowest pass rate first, then the most
          * reviews, then the id so the choice is stable across builds. A group
          * with no attributable row has no card to open.
+         *
+         * [paperId] is the paper this bar belongs to, when known. The global
+         * [questionPaperId] map is first-writer-wins and so is unreliable for an
+         * id that exists in two papers: a paper-breakdown bar must open *its*
+         * paper's version of the card, not the other paper's copy with its own
+         * schedule and history. Bars that span papers (tag, category, interval,
+         * guess) have no single paper to claim and keep the map fallback.
          */
-        private fun weakestCardOf(byQuestion: Map<String, Counts>): CardReference? =
+        private fun weakestCardOf(
+            byQuestion: Map<String, Counts>,
+            paperId: String? = null
+        ): CardReference? =
             byQuestion.filterValues { it.reviews > 0 }
                 .minWithOrNull(
                     compareBy<Map.Entry<String, Counts>> {
@@ -954,7 +964,7 @@ object StatsAggregator {
                         .thenBy { it.key }
                 )
                 ?.let { entry ->
-                    questionPaperId[entry.key]?.let { CardReference(it, entry.key) }
+                    (paperId ?: questionPaperId[entry.key])?.let { CardReference(it, entry.key) }
                 }
 
         private fun countCalibration(review: ReplayReview) {
@@ -1060,7 +1070,13 @@ object StatsAggregator {
                 label = label,
                 reviews = counts.reviews,
                 passes = counts.passes,
-                drill = weakestCardOf(groupQuestions[key].orEmpty())
+                // The group key is the paper id in the all-papers view (and the
+                // scope's paper in the scoped one), so the drill-down must carry
+                // that paper rather than the global first-writer-wins map.
+                drill = weakestCardOf(
+                    groupQuestions[key].orEmpty(),
+                    paperId = if (scopePaperId == null) key else scopePaperId
+                )
             )
         }
             .sortedWith(compareBy({ it.retention ?: 1.0 }, { -it.reviews }, { it.label }))

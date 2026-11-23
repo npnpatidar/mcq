@@ -764,6 +764,20 @@ class StudyAndSelectionUiTest {
         compose.onNodeWithText("Edit", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Move", substring = false).assertIsDisplayed()
         compose.onNodeWithText("Delete", substring = false).assertIsDisplayed()
+
+        // The secondary actions share one overflow so the top bar fits a
+        // phone. They must still be reachable, not silently gone.
+        compose.onNodeWithTag("browse-select-overflow").performClick()
+        listOf(
+            R.string.browse_select_range,
+            R.string.browse_invert_selection,
+            R.string.browse_bulk_bookmark,
+            R.string.browse_bulk_duplicate,
+            R.string.browse_bulk_assign_passage,
+            R.string.browse_bulk_unassign_passage
+        ).forEach { res ->
+            compose.onNodeWithText(app.getString(res), substring = false).assertIsDisplayed()
+        }
     }
 
     /**
@@ -1186,6 +1200,10 @@ class StudyAndSelectionUiTest {
         openDrawer("ui-scope")
         drawerNode("drawer-paper-ui-scope").performClick()
         waitForTag("drawer-cat-ui-scope-p")
+        // The nested rows must exist before the parent is ticked: they used to
+        // never render because overflow state doubled as "show children".
+        waitForTag("drawer-cat-ui-scope-ca")
+        waitForTag("drawer-cat-ui-scope-cb")
 
         drawerNode("drawer-cat-ui-scope-p").performClick()
         drawerNode("drawer-cat-ui-scope-ca").assertIsOn()

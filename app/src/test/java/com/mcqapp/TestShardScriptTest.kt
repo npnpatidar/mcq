@@ -93,19 +93,60 @@ class TestShardScriptTest {
 
     @Test
     fun durationManifestKeepsTheSamePartitionWithMeasuredCosts() {
+        val all = classesDir().listFiles { f -> f.name.endsWith("Test.kt") }!!
+            .map { it.name.removeSuffix(".kt") }
+        val heavy = "StreamingImporterEquivalenceTest"
+        val heavyArg = "--tests com.mcqapp.$heavy"
         val durations = File.createTempFile("mcq-durations", ".tsv").apply {
-            // One deliberately enormous class: a duration-aware partition must
-            // still place it exactly once, not duplicate it to fill a shard.
-            writeText("com.mcqapp.StreamingImporterEquivalenceTest\t600000\n")
+            // Two distinct weights, not one: with a single weight the script's
+            // fallback default (the median) equals it, so every class weighs
+            // the same and the cost-aware split can look like the count-balanced
+            // one. One enormous class against a light default for everything
+            // else makes the third argument observable.
+            writeText(all.joinToString("\n") { name ->
+                "com.mcqapp.$name\t${if (name == heavy) 600000 else 1000}"
+            } + "\n")
         }
         try {
-            val fallback = shards(4).flatten().toSet()
-            val measured = shards(4, durations).flatten()
-            assertEquals("measured shards must cover the same classes", fallback, measured.toSet())
-            assertEquals("no class may be duplicated", measured.size, measured.toSet().size)
+            val fallback = shards(4)
+            val measured = shards(4, durations)
+            val fallbackFlat = fallback.flatten()
+            val measuredFlat = measured.flatten()
+
+            // The third argument must change the partition. If the script
+            // ignores it, both calls return the same lists and this fails.
             assertTrue(
-                "the measured class must still be present",
-                "--tests com.mcqapp.StreamingImporterEquivalenceTest" in measured
+                "a measured partition must differ from the count-balanced one — " +
+                    "the third argument is being ignored",
+                fallback != measured
+            )
+
+            // Coverage stays complete and duplicate-free on both paths.
+            assertEquals(
+                "measured shards must cover the same classes",
+                fallbackFlat.toSet(), measuredFlat.toSet()
+            )
+            assertEquals(
+                "measured shards must cover every test class",
+                all.toSet(),
+                measuredFlat.map { it.removePrefix("--tests com.mcqapp.") }.toSet()
+            )
+            assertEquals("no class may be duplicated", measuredFlat.size, measuredFlat.toSet().size)
+            assertTrue("the measured class must still be present", heavyArg in measuredFlat)
+            assertEquals("the heavy class must appear exactly once", 1, measuredFlat.count { it == heavyArg })
+
+            // A specific placement only the cost-aware algorithm produces: the
+            // heavy class is moved out of the contiguous count-balanced range.
+            val fallbackShard = fallback.indexOfFirst { heavyArg in it }
+            val measuredShard = measured.indexOfFirst { heavyArg in it }
+            assertTrue(
+                "the heavy class must be present in both partitions",
+                fallbackShard >= 0 && measuredShard >= 0
+            )
+            assertTrue(
+                "the cost-aware split must move the heavy class to a different shard " +
+                    "(fallback $fallbackShard, measured $measuredShard)",
+                fallbackShard != measuredShard
             )
         } finally {
             durations.delete()

@@ -188,6 +188,9 @@ internal fun PaperCard(
     // "Show N more" reveals for the read-only tree, keyed by the last visible
     // node at each level (see CategoryTreePager).
     var showMoreIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    // Every category is navigable in the card too; showMoreIds bounds only the
+    // >6 siblings, it must never fold a branch out of existence.
+    val allCategoryIds = remember(paper.categories) { CategoryTreePager.allIds(paper.categories) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -482,7 +485,11 @@ internal fun PaperCard(
                         // Show is read-only (D7): pick what to study, manage
                         // nothing. No manage icons, no Add/Delete row.
                         CardExpansion.Show ->
-                            CategoryTreePager.page(paper.categories, showMoreIds).forEach { line ->
+                            CategoryTreePager.page(
+                                paper.categories,
+                                expanded = allCategoryIds,
+                                revealed = showMoreIds
+                            ).forEach { line ->
                                 ShowCategoryRow(
                                     node = line.node,
                                     depth = line.depth,

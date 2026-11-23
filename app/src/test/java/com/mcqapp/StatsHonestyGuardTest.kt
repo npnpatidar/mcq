@@ -288,6 +288,34 @@ class StatsHonestyGuardTest {
     }
 
     @Test
+    fun aSharedQuestionIdOpensEachPapersOwnCopyFromItsRetentionBar() {
+        // The global questionPaperId map is first-writer-wins. With one id in
+        // two papers the p1 review is seen first, so the OLD code made both
+        // paper bars open p1 — the p2 bar carried the wrong paper, with the
+        // wrong schedule and paper-scoped history. The group key must win for
+        // a paper-breakdown bar.
+        val data = StatsAggregator.buildRetention(
+            input(
+                listOf(
+                    review("shared", rating = 1, paperId = "p1", wasCorrect = false),
+                    review("shared", rating = 1, paperId = "p2", wasCorrect = false)
+                )
+            ),
+            scopePaperId = null,
+            range = StatsAggregator.Range.ALL
+        )
+        val byPaper = data.groupRetention.associateBy { it.label }
+        assertEquals("shared", byPaper.getValue("Paper One").drill!!.questionId)
+        assertEquals("p1", byPaper.getValue("Paper One").drill!!.paperId)
+        assertEquals("shared", byPaper.getValue("Paper Two").drill!!.questionId)
+        assertEquals(
+            "the p2 bar must open p2's copy of the shared id",
+            "p2",
+            byPaper.getValue("Paper Two").drill!!.paperId
+        )
+    }
+
+    @Test
     fun aSinglePaperGroupStillOpensACard() {
         val bundle = StatsAggregator.buildRetention(
             input(listOf(review("solo", wasCorrect = true))),

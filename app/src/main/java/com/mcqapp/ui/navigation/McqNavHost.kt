@@ -141,13 +141,22 @@ fun McqNavHost(repository: McqRepository) {
     // rotation cannot drop the shared snippet.
     val pendingQuickCapture by SharedImport.pendingText.collectAsStateWithLifecycle()
     var quickCaptureText by rememberSaveable { mutableStateOf<String?>(null) }
+    // Save completion and dismissal live here, not in the dialog: a dialog
+    // launched from a rotation-old composition cannot dismiss the new one.
+    var quickCaptureSaved by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(pendingQuickCapture) {
         val captured = SharedImport.consumeText() ?: return@LaunchedEffect
         quickCaptureText = captured.text
     }
     // Resolve in the composable body: LaunchedEffect's block is not @Composable.
     val importFailure = pendingImportError
-    val quickCaptureSaved = stringResource(R.string.of_quick_capture_saved)
+    val quickCaptureSavedText = stringResource(R.string.of_quick_capture_saved)
+    LaunchedEffect(quickCaptureSaved) {
+        if (!quickCaptureSaved) return@LaunchedEffect
+        quickCaptureSaved = false
+        quickCaptureText = null
+        messageBus.send(UiMessage(quickCaptureSavedText))
+    }
     val importErrorMessage = if (importFailure != null) {
         stringResource(importFailure.resId, *importFailure.args.toTypedArray())
     } else null
@@ -408,7 +417,7 @@ fun McqNavHost(repository: McqRepository) {
             onSave = { pid, pt, cid, ct, front, back, tag ->
                 libraryViewModel.saveQuickCapture(pid, pt, cid, ct, front, back, tag)
             },
-            onSaved = { messageBus.send(UiMessage(quickCaptureSaved)) },
+            onSaved = { quickCaptureSaved = true },
             onDismiss = { quickCaptureText = null }
         )
     }

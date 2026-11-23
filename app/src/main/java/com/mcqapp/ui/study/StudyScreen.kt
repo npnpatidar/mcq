@@ -390,16 +390,25 @@ fun StudyScreen(
                     currentTag = tag,
                     currentMistakes = mistakes,
                     loadTags = { pid, cats -> repository.tagCountsForStudyScope(pid, cats) },
+                    // Switching scope pushes a new study route, so the old
+                    // screen's ViewModel stays alive in the back stack. End the
+                    // sitting first, exactly as Back and "Done for now" do:
+                    // otherwise its ticker keeps running and a later pop writes
+                    // an inflated study_sessions row for a sitting that ended
+                    // here. stop() banks both clocks and writes the row once.
                     onPickWhole = {
                         showScopeDialog = false
+                        viewModel.stop()
                         navController.navigate(scopeRoute(StudyScopeMenuChoice.WHOLE))
                     },
                     onPickTag = { folded ->
                         showScopeDialog = false
+                        viewModel.stop()
                         navController.navigate(scopeRoute(StudyScopeMenuChoice.TAG, folded))
                     },
                     onPickMistakes = {
                         showScopeDialog = false
+                        viewModel.stop()
                         navController.navigate(scopeRoute(StudyScopeMenuChoice.MISTAKES))
                     },
                     onSaveMistakes = {
@@ -424,9 +433,18 @@ fun StudyScreen(
     }
 }
 
-/** Space/1-4 grading honours the app's optional confirm-before-next setting. */
+/**
+ * Space/1-4 grading honours the app's optional confirm-before-next setting in
+ * Classic only. Simplified ignores the toggle: Check already staged its auto
+ * grade and Change grade owns edits, so a digit must not restage it through
+ * [StudyViewModel.stageGrade] and flip AUTO/CHOSEN provenance.
+ */
 private fun gradeByKey(viewModel: StudyViewModel, state: StudyUiState, grade: ReviewGrade) {
-    if (state.confirmGradeBeforeNext) viewModel.stageGrade(grade) else viewModel.grade(grade)
+    if (StudyKeyboard.gradeKeyStages(state.simplified, state.confirmGradeBeforeNext)) {
+        viewModel.stageGrade(grade)
+    } else {
+        viewModel.grade(grade)
+    }
 }
 
 /** Left/Right walk the answer options, keeping at most one selected. */

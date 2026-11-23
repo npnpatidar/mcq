@@ -157,6 +157,56 @@ class StudyPolishSessionTest {
         assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.reviewed == 1 })
     }
 
+    /**
+     * Scope switching navigates to a fresh study route, which retains the old
+     * ViewModel in the back stack. The screen now calls stop() on that old VM
+     * before navigating (like Back and "Done for now"). Its sitting clock is
+     * banked at the switch and no ticker keeps publishing a running clock, so a
+     * later pop cannot write an inflated study_sessions row.
+     */
+    @Test
+    fun stoppingTheOldSittingBeforeAScopeSwitchBanksItsClockAndStopsTheTicker() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1"))
+            repository.saveQuestion(question("q2"))
+        }
+        val vm = StudyViewModel(app, "p1")
+        assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.current != null })
+        assertTrue("a live sitting runs its clock", bool("sessionRunning", vm))
+        assertTrue(vm.state.value.clockRunning)
+
+        // One review in the bank, mirroring a switch mid-sitting — the case that
+        // used to leave the old ticker running and inflate the row on a pop.
+        vm.toggleOption("q1-a")
+        vm.check()
+        vm.next()
+        assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.reviewed == 1 })
+
+        // What each scope handler now does before navController.navigate(...).
+        vm.stop()
+        assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.finished })
+
+        assertFalse("the old sitting's clock must be banked", bool("sessionRunning", vm))
+        assertFalse(vm.state.value.clockRunning)
+        val frozen = vm.sessionSeconds.value
+        // Even if the ticker coroutine is still alive, a stopped sitting
+        // publishes a frozen clock: no live seconds accrue on later ticks.
+        repeat(4) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(25)
+        }
+        assertEquals("the clock must not grow after a scope switch", frozen, vm.sessionSeconds.value)
+
+        // Exactly one session row, written at the switch rather than inflated
+        // later; a repeated stop (or a later pop) must not add a second one.
+        assertTrue("the sitting row must be written", awaitCondition {
+            runBlocking { repository.db().studySessionDao().getAll().size } == 1
+        })
+        vm.stop()
+        runBlocking { assertEquals(1, repository.db().studySessionDao().getAll().size) }
+    }
+
     /** Crossing the leech threshold is announced once, on the card that follows. */
     @Test
     fun crossingTheLeechThresholdShowsTheNoticeOnce() {

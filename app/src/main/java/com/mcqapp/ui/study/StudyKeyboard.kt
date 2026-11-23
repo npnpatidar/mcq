@@ -63,4 +63,19 @@ internal object StudyKeyboard {
             StudyKey.OTHER -> StudyKeyAction.NONE
         }
     }
+
+    /**
+     * Whether a digit-key grade is staged before it is written (Classic with
+     * the opt-in on) or written in one tap.
+     *
+     * Simplified ignores the opt-in entirely: Check has already staged the auto
+     * grade and the result card owns corrections through Change grade. Staging
+     * from a digit here would call `stageGrade`, which nulls `proposedGrade`
+     * and `gradeEdited` — flipping the saved row's AUTO/CHOSEN provenance and,
+     * for a self-graded card, fabricating a "Recalled %" line on the summary.
+     * Keeping this decision pure lets the keyboard rules stay testable on the
+     * JVM (StudyKeyboardTest).
+     */
+    internal fun gradeKeyStages(simplified: Boolean, confirmGradeBeforeNext: Boolean): Boolean =
+        confirmGradeBeforeNext && !simplified
 }

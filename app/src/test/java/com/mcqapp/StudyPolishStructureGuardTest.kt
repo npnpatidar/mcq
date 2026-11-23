@@ -155,6 +155,31 @@ class StudyPolishStructureGuardTest {
     }
 
     @Test
+    fun switchingScopeStopsTheOldSittingBeforeNavigating() {
+        // Changing scope pushes a fresh study route, so navigate() retains the
+        // old ViewModel in the back stack. Every scope pick must end that sitting
+        // first (exactly as Back and "Done for now" do), or its ticker keeps
+        // running and a later pop writes an inflated study_sessions row.
+        val start = screen.indexOf("onPickWhole = {")
+        assertTrue("scope handlers are missing", start >= 0)
+        val handlers = screen.substring(start, screen.indexOf("onSaveMistakes", start))
+        val stops = Regex("""viewModel\.stop\(\)""").findAll(handlers).count()
+        val navigations = Regex("""navController\.navigate\(scopeRoute\(""").findAll(handlers).count()
+        assertEquals("all three scope picks must stop the sitting", 3, stops)
+        assertEquals("all three scope picks must navigate", 3, navigations)
+        assertEquals(
+            "each scope pick must stop before it navigates",
+            3,
+            Regex("""viewModel\.stop\(\)\s*\n\s*navController\.navigate\(scopeRoute\(""")
+                .findAll(handlers).count()
+        )
+        // stop() is the thing that banks both clocks and writes the row once.
+        val stop = functionOf(viewModel, "fun stop() {")
+        assertTrue(stop.contains("bankSessionClock()"))
+        assertTrue(stop.contains("publishSessionSeconds()"))
+    }
+
+    @Test
     fun enableNewCardsRestartsBothClocksAndTheSitting() {
         val enable = functionOf(viewModel, "fun enableNewCards() {")
         assertTrue("the sitting clock must be re-based", enable.contains("resetSessionClock()"))

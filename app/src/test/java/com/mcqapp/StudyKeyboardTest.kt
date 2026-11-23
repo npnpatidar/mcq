@@ -4,6 +4,8 @@ import com.mcqapp.ui.study.StudyKey
 import com.mcqapp.ui.study.StudyKeyAction
 import com.mcqapp.ui.study.StudyKeyboard
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Pure-JVM coverage for the keyboard-shortcut decision seam. */
@@ -88,6 +90,29 @@ class StudyKeyboardTest {
         assertEquals(
             StudyKeyAction.SELECT_NEXT_OPTION,
             StudyKeyboard.action(StudyKey.RIGHT, false, false, true)
+        )
+    }
+
+    @Test
+    fun digitGradeStagesOnlyInClassicWithTheOptIn() {
+        // Simplified ignores the opt-in: Check already staged the auto grade and
+        // Change grade owns edits. Restaging from a digit would null proposedGrade
+        // and flip the row's AUTO/CHOSEN provenance (and fabricate a correctness
+        // figure for self-graded cards), so it must always take the one-tap path.
+        assertFalse(
+            "Simplified + opt-in must NOT restage the auto grade",
+            StudyKeyboard.gradeKeyStages(simplified = true, confirmGradeBeforeNext = true)
+        )
+        assertFalse(
+            StudyKeyboard.gradeKeyStages(simplified = true, confirmGradeBeforeNext = false)
+        )
+        assertFalse(
+            "Classic without the opt-in stays one tap",
+            StudyKeyboard.gradeKeyStages(simplified = false, confirmGradeBeforeNext = false)
+        )
+        assertTrue(
+            "Classic + opt-in is the only staging case",
+            StudyKeyboard.gradeKeyStages(simplified = false, confirmGradeBeforeNext = true)
         )
     }
 }

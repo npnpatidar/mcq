@@ -518,6 +518,11 @@ private fun StudyBody(
         if (container.size.height <= 0 || card.size.height <= 0) return
         val top = card.localPositionOf(container, Offset.Zero).y
         questionOnScreen = top < container.size.height && top + card.size.height > 0f
+        com.mcqapp.util.Logger.i(
+            "STUDY",
+            "geom ${question.id} scroll=${scrollState.value} top=$top " +
+                "containerH=${container.size.height} cardH=${card.size.height} onScreen=$questionOnScreen"
+        )
     }
     val cardPositioned = Modifier.onGloballyPositioned { cardCoords = it; reportVisibility() }
     // The pull clocked this card from the PREVIOUS card's reading, so a new

@@ -25,8 +25,12 @@ import java.io.File
  * Wave-1 test/exam findings. The rules are pure so they run on the ARM64 host;
  * the wiring that cannot be rendered here is checked structurally in the same
  * style as [UxRulingsStructureTest].
+ *
+ * BEHAVIOUR: a clean practice or mock run still offers a next step, the resume
+ * route carries only identity fields, and one shared noise rule decides every
+ * "is this change real" label.
  */
-class TestUxImprovementsTest {
+class TestUxImprovementsGuardTest {
 
     // --- Finding 1: exam conditions before Start ---
 

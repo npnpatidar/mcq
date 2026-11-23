@@ -172,6 +172,22 @@ fun SettingsScreen(
             viewModel.prepareRestore(uri)
         }
     }
+    // A manifest that cannot be read leaves no preview. Close the confirm and
+    // forget the picked uri so an enabled "replace everything" button can never
+    // wipe the library using an archive whose contents we failed to inspect.
+    LaunchedEffect(operationError) {
+        if (restoreConfirmShouldClose(
+                showRestoreConfirm,
+                restorePreview != null,
+                operationError?.titleRes,
+                R.string.restore_failed
+            )
+        ) {
+            showRestoreConfirm = false
+            restoreUri = null
+            viewModel.clearRestorePreview()
+        }
+    }
 
     val themeImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -381,11 +397,14 @@ fun SettingsScreen(
                 }
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showRestoreConfirm = false
-                    viewModel.clearRestorePreview()
-                    restoreUri?.let { uri -> viewModel.restoreBackup(uri) }
-                }) { Text(stringResource(R.string.restore_replace_everything)) }
+                androidx.compose.material3.TextButton(
+                    enabled = restoreConfirmCanProceed(restorePreview != null),
+                    onClick = {
+                        showRestoreConfirm = false
+                        viewModel.clearRestorePreview()
+                        restoreUri?.let { uri -> viewModel.restoreBackup(uri) }
+                    }
+                ) { Text(stringResource(R.string.restore_replace_everything)) }
             },
             dismissButton = {
                 Column {
@@ -477,3 +496,22 @@ fun SettingsScreen(
         )
     }
 }
+
+/**
+ * Pure gate for the restore confirmation: the wipe button only becomes usable
+ * once the picked backup's manifest has actually been read.
+ */
+internal fun restoreConfirmCanProceed(manifestReady: Boolean): Boolean = manifestReady
+
+/**
+ * A failed manifest read must close the confirm and drop the picked uri; other
+ * errors (or a ready preview) must leave it alone.
+ */
+internal fun restoreConfirmShouldClose(
+    confirmVisible: Boolean,
+    manifestReady: Boolean,
+    failureTitleRes: Int?,
+    expectedFailureTitleRes: Int
+): Boolean =
+    confirmVisible && !manifestReady && failureTitleRes == expectedFailureTitleRes
+

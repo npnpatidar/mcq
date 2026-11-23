@@ -178,16 +178,20 @@ internal class StudyStore(
         if (questionIds.isEmpty()) return emptyList()
         val config = settings.schedulerConfigNow()
         resetEdited(paperId)
-        val rows = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
-            .filter { row ->
-                row.paperId == paperId &&
-                    !row.suspended &&
-                    (row.buriedUntil == null || row.buriedUntil <= now)
-            }
+        val inPaper = db.cardStateDao().getForQuestionsChunked(questionIds.toList())
+            .filter { it.paperId == paperId }
+        // "Known" means a schedule row exists, whatever its visibility. A
+        // suspended or buried card is hidden from both pools below, not
+        // forgotten: building this set after the visibility filter used to
+        // serve a hidden card straight back as a brand-new one.
+        val knownIds = inPaper.mapTo(HashSet()) { it.questionId }
+        val rows = inPaper.filter { row ->
+            !row.suspended &&
+                (row.buriedUntil == null || row.buriedUntil <= now)
+        }
         val pools = poolsOf(config, rows, now)
         val fresh = if (config.introduceNewCards) {
-            val known = rows.mapTo(HashSet()) { it.questionId }
-            (questionIds - known).map { id ->
+            (questionIds - knownIds).map { id ->
                 com.mcqapp.domain.StudyCard(
                     id,
                     com.mcqapp.domain.StudyReason.NEW,

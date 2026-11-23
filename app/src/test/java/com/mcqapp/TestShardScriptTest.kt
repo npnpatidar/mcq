@@ -6,10 +6,14 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Pure-JVM test for the shard filter generator. The two-argument call is what
- * CI uses today (balanced-by-count fallback); the three-argument call adds a
- * prior JUnit-duration manifest. Both must remain a partition — no class
- * dropped, no class run twice — because a shard is otherwise not a shard.
+ * Pure-JVM test for the shard filter generator. CI passes a third argument: the
+ * duration manifest written by the `test-durations` job and downloaded into
+ * `apk-build/`. The two-argument call is kept for local runs (balanced-by-count
+ * fallback). Both must remain a partition — no class dropped, no class run
+ * twice — because a shard is otherwise not a shard.
+ *
+ * INCIDENT: CI used to call the two-argument form, so the duration-aware path
+ * was dead code and every shard was balanced by name alone.
  */
 class TestShardScriptTest {
 
@@ -36,6 +40,20 @@ class TestShardScriptTest {
             assertEquals("shard $index failed: $output", 0, process.waitFor())
             output.lineSequence().filter { it.isNotBlank() }.toList()
         }
+
+    @Test
+    fun ciPassesTheDownloadedManifestAsTheThirdArgument() {
+        val workflow = listOf(File("../.github/workflows/build.yml"), File(".github/workflows/build.yml"))
+            .firstOrNull { it.isFile }
+            ?.readText()
+            ?: throw AssertionError("cannot find .github/workflows/build.yml")
+        assertTrue("the duration probe must exist", workflow.contains(":app:writeTestDurations"))
+        assertTrue("the shard job must download it", workflow.contains("name: test-durations"))
+        assertTrue(
+            "CI must use the measured-cost path, not the dead two-argument call",
+            workflow.contains("test-shards.sh \${{ matrix.shard }} 4 apk-build/test-durations.tsv")
+        )
+    }
 
     @Test
     fun theFallbackIsACompletePartition() {

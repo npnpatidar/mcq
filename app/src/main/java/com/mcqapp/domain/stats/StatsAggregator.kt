@@ -950,21 +950,22 @@ object StatsAggregator {
                 }
 
         private fun countCalibration(review: ReplayReview) {
-            // The chart is evidence, not a replay of every grade: self-graded
-            // passes, guesses, skips and rows written under a different grading
-            // rule are all excluded by the same gate the cut estimator uses.
-            if (!review.isObjectiveEvidence) return
+            // The chart is honest evidence, not a replay of every grade: it
+            // keeps objective answers right or wrong, and drops self-graded
+            // rows, guesses, skips and clock-graded rows. The cut estimator's
+            // correct-only gate is deliberately NOT reused here — a retention
+            // curve without failures can only ever report 100%.
+            if (!review.isObjectiveAnswerEvidence) return
             val predicted = review.predictedRetention ?: return
             val p = predicted.coerceIn(0.0, 0.999999)
             val bin = floor(p * 10).toInt().coerceIn(0, 9)
             binSums[bin] += p
             binCounts[bin]++
-            // The gate guarantees a recorded, correct answer, so the objective
-            // outcome is 1.0. It is written explicitly rather than falling back
-            // to [ReplayReview.passed], which would let a grade smuggle in a
-            // row the gate rejected.
-            binPasses[bin]++
-            val outcome = 1.0
+            // The gate guarantees a recorded outcome, so read right/wrong from
+            // the answer rather than from the grade, which can be a self-graded
+            // Again on a card with no objective answer.
+            if (review.wasCorrect == true) binPasses[bin]++
+            val outcome = if (review.wasCorrect == true) 1.0 else 0.0
             brier += (p - outcome) * (p - outcome)
             samples++
             predictedSum += predicted

@@ -260,6 +260,37 @@ class FlashcardTestExclusionTest {
     }
 
     @Test
+    fun studyTagPoolIncludesFlashcardsAndItsCountAgrees() = runBlocking {
+        val folded = TagNormalizer.fold("Biology")
+        // Study serves flashcards, so its tag picker counts the card too —
+        // q-mc1, q-mc3 and card1 all carry Biology.
+        val studyCounts = repository.tagCountsForStudyScope(paperId, emptyList())
+        assertEquals(
+            listOf(TagCountExpectation(folded, 3)),
+            studyCounts.map { TagCountExpectation(it.tagFolded, it.count) }
+        )
+        assertEquals(
+            setOf("q-mc1", "q-mc3", "card1"),
+            repository.questionIdsForStudyTagInScope(paperId, emptyList(), folded).toSet()
+        )
+        // A category-scoped sitting uses the same gate for count and pool.
+        assertEquals(
+            listOf(TagCountExpectation(folded, 2)),
+            repository.tagCountsForStudyScope(paperId, listOf("c1"))
+                .map { TagCountExpectation(it.tagFolded, it.count) }
+        )
+        assertEquals(
+            setOf("q-mc1", "card1"),
+            repository.questionIdsForStudyTagInScope(paperId, listOf("c1"), folded).toSet()
+        )
+        // Test's tag filter is untouched: still multiple-choice only.
+        assertEquals(
+            setOf("q-mc1", "q-mc3"),
+            repository.questionIdsForTagInScope(paperId, emptyList(), folded).toSet()
+        )
+    }
+
+    @Test
     fun aBookmarkedFlashcardNeverEntersTheBookmarkedPool() = runBlocking {
         repository.toggleBookmark("q-mc1")
         repository.toggleBookmark("card1")

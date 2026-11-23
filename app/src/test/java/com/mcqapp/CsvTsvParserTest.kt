@@ -74,6 +74,50 @@ class CsvTsvParserTest {
         assertEquals(1, result.warnings.size)
     }
 
+    /**
+     * INCIDENT: `mapIndexedNotNull` compressed a-d positions when blank options
+     * were dropped, so "b" selected the next surviving option and "d" was
+     * rejected as an invalid answer. The answer column uses the original letters.
+     */
+    @Test
+    fun aBlankOptionDoesNotShiftTheLetterAnswer() {
+        val text = "question,a,b,c,d,answer\nCapital?,,New Delhi,Kolkata,Chennai,b\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue(result.warnings.isEmpty())
+        assertEquals(0, result.skippedRows)
+        val q = result.file.papers.single().categories.single().questions.single()
+        assertEquals(3, q.options.size)
+        assertEquals("New Delhi", q.options[0].text)
+        assertEquals(listOf("csv-1-b"), q.correctOptionIds)
+    }
+
+    @Test
+    fun theLastOptionStillAnswersWhenEarlierOptionsAreBlank() {
+        val text = "question,a,b,c,d,answer\nCapital?,,,Kolkata,Chennai,d\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue(result.warnings.isEmpty())
+        assertEquals(0, result.skippedRows)
+        val q = result.file.papers.single().categories.single().questions.single()
+        assertEquals(2, q.options.size)
+        assertEquals(listOf("csv-1-d"), q.correctOptionIds)
+    }
+
+    @Test
+    fun aBlankInterveningOptionDoesNotShiftAnOptionTextAnswer() {
+        val text = "question,a,b,c,d,answer\nPick,,blue,green,red,RED\n"
+        val q = CsvTsvParser.parse(text).file.papers.single().categories.single().questions.single()
+        assertEquals(listOf("csv-1-d"), q.correctOptionIds)
+    }
+
+    @Test
+    fun anAnswerNamingABlankOptionIsStillSkipped() {
+        val text = "question,a,b,c,answer\nPick,,yes,no,a\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue(result.file.papers.single().categories.single().questions.isEmpty())
+        assertEquals(1, result.skippedRows)
+        assertEquals(1, result.warnings.size)
+    }
+
     @Test
     fun tabInsideCsvFieldStaysContent() {
         val text = "question,a,b,answer\n\"line1\tline2\",x,y,a\n"

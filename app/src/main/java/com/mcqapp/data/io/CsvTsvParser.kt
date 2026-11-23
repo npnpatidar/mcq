@@ -151,13 +151,18 @@ object CsvTsvParser {
                 return@forEachIndexed
             }
             val optionTexts = listOf("a", "b", "c", "d").map { cell(row, it) }
-            val options = optionTexts.mapIndexedNotNull { i, text ->
-                if (text.isBlank()) null else OptionDto(
+            // Keep each option's original a-d position. `mapIndexedNotNull`
+            // compresses the indices when a blank option is dropped, while the
+            // answer key is written against the original letters — so a blank
+            // "a" would otherwise make "b" select "c", or reject "d" entirely.
+            val optionsByPosition = optionTexts.mapIndexedNotNull { i, text ->
+                if (text.isBlank()) null else i to OptionDto(
                     id = "csv-${index + 1}-${('a'.code + i).toChar()}",
                     text = text,
                     elements = listOf(ContentElement.TextElement(text))
                 )
-            }
+            }.toMap()
+            val options = optionsByPosition.values.toList()
             if (options.isEmpty()) {
                 // A row with no options is a flashcard (front/back) — valid.
                 val explanationText = cell(row, "explanation")
@@ -179,7 +184,11 @@ object CsvTsvParser {
                 "d", "4" -> 3
                 else -> optionTexts.indexOfFirst { it.isNotBlank() && it.equals(answerRaw, ignoreCase = true) }
             }
-            if (answerIndex < 0 || answerIndex >= options.size) {
+            // Resolve against the original position, never the compressed list:
+            // the answer column uses a-d (or 1-4 / option text), not the index
+            // of the option after blanks were removed.
+            val answerOption = optionsByPosition[answerIndex]
+            if (answerOption == null) {
                 warnings += rowWarning(rowNumber)
                 skipped++
                 return@forEachIndexed
@@ -190,7 +199,7 @@ object CsvTsvParser {
                 text = questionText,
                 elements = listOf(ContentElement.TextElement(questionText)),
                 options = options,
-                correctOptionIds = listOf(options[answerIndex].id),
+                correctOptionIds = listOf(answerOption.id),
                 explanation = explanationText,
                 explanationElements = listOf(ContentElement.TextElement(explanationText)),
                 tags = splitTags(cell(row, "tags"))

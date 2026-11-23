@@ -18,8 +18,11 @@ import java.io.File
  * The leech-crossing and short-term-step labels are pure data: which grade
  * first flags a card, and whether a due step is a first exposure or a recovery
  * from a lapse. Both come from the card's own state, never from the pull reason.
+ *
+ * BEHAVIOUR: the notice fires only on the grade that first flags the card, and
+ * a due step is labelled by the stored state, not by why the card was pulled.
  */
-class StudyLeechLabelTest {
+class StudyLeechLabelGuardTest {
 
     private fun card(
         leech: Boolean = false,

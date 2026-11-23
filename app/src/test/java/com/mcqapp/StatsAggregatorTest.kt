@@ -425,24 +425,48 @@ class StatsAggregatorTest {
 
     @Test
     fun calibrationBucketsPredictionsAndComputesBrier() {
-        // Every row is an objective, correctly graded answer: the chart is the
-        // cut estimator's evidence, not a replay of every grade.
+        // Three objective passes and one objective failure. The failure is an
+        // Again at 0.32 — a real wrong answer, not a self-graded grade — so it
+        // must stay in its bin and pull the actual rate below 100%.
         val reviews = listOf(
             review("q1", rating = 3, reviewedAt = now - hour, predictedRetention = 0.91, wasCorrect = true),
             review("q2", rating = 3, reviewedAt = now - hour, predictedRetention = 0.93, wasCorrect = true),
             review("q3", rating = 3, reviewedAt = now - hour, predictedRetention = 0.95, wasCorrect = true),
-            review("q4", rating = 3, reviewedAt = now - hour, predictedRetention = 0.32, wasCorrect = true)
+            review("q4", rating = 1, reviewedAt = now - hour, predictedRetention = 0.32, wasCorrect = false)
         )
         val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
         assertEquals(4, bundle.calibration.samples)
-        assertEquals(0.119475, bundle.calibration.brier!!, 1e-9)
+        // (0.09^2 + 0.07^2 + 0.05^2 + 0.32^2) / 4 = 0.029475
+        assertEquals(0.029475, bundle.calibration.brier!!, 1e-9)
         val high = bundle.calibration.bins.last()
         assertEquals(1.0, high.actualRate!!, 1e-9)
         assertEquals(3, high.count)
         val low = bundle.calibration.bins.first { it.predictedFrom == 0.3 }
-        assertEquals(1.0, low.actualRate!!, 1e-9)
+        assertEquals(0.0, low.actualRate!!, 1e-9)
+        assertEquals(1, low.count)
         assertEquals(0.7775, bundle.calibration.predictedMean!!, 1e-9)
-        assertEquals(1.0, bundle.calibration.actualMean!!, 1e-9)
+        assertEquals(0.75, bundle.calibration.actualMean!!, 1e-9)
+    }
+
+    @Test
+    fun anObjectiveFailureIsCountedWithAProperBrierContribution() {
+        // Pinned regression: gating calibration on isObjectiveEvidence (a
+        // *correct* answer) dropped this row, leaving no bins and no Brier
+        // score. An Again with a recorded wrong answer is honest evidence.
+        val reviews = listOf(
+            review("fail", rating = 1, reviewedAt = now - hour,
+                predictedRetention = 0.32, wasCorrect = false)
+        )
+        val bundle = StatsAggregator.build(input(reviews), null, StatsAggregator.Range.D7)
+        assertEquals(1, bundle.calibration.samples)
+        val bin = bundle.calibration.bins.single { it.predictedFrom == 0.3 }
+        assertTrue("an objective failure must pull actualRate below 1.0", bin.actualRate!! < 1.0)
+        assertEquals(0.0, bin.actualRate!!, 1e-9)
+        assertEquals(1, bin.count)
+        assertEquals(0.32, bundle.calibration.predictedMean!!, 1e-9)
+        assertEquals(0.0, bundle.calibration.actualMean!!, 1e-9)
+        // Squared error of a 0.32 prediction against a 0.0 outcome.
+        assertEquals(0.32 * 0.32, bundle.calibration.brier!!, 1e-9)
     }
 
     @Test

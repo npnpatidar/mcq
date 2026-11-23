@@ -260,7 +260,7 @@ fun StudyScreen(
             event.nativeKeyEvent.isAltPressed ||
             event.nativeKeyEvent.isMetaPressed
         ) return false
-        if (showScopeDialog || state.showSuspendedDialog || state.finished) return false
+        if (showScopeDialog || state.showSuspendedDialog || state.finished || state.onBreak) return false
         val code = event.nativeKeyEvent.keyCode
         val key = when (code) {
             android.view.KeyEvent.KEYCODE_SPACE -> StudyKey.SPACE
@@ -276,7 +276,8 @@ fun StudyScreen(
             key = key,
             revealed = state.revealed,
             staged = state.pendingGrade != null,
-            canGrade = !state.grading && !state.onBreak
+            canGrade = !state.grading && !state.onBreak,
+            onBreak = state.onBreak
         )
         when (action) {
             StudyKeyAction.NONE -> return false
@@ -384,7 +385,7 @@ fun StudyScreen(
                     categoryIds = categoryIds,
                     currentTag = tag,
                     currentMistakes = mistakes,
-                    loadTags = { pid, cats -> repository.tagCountsForScope(pid, cats) },
+                    loadTags = { pid, cats -> repository.tagCountsForStudyScope(pid, cats) },
                     onPickWhole = {
                         showScopeDialog = false
                         navController.navigate(scopeRoute("", false))

@@ -26,6 +26,8 @@ import com.mcqapp.data.local.bookmarkedCountInScopeChunked
 import com.mcqapp.data.local.questionCountForTagChunked
 import com.mcqapp.data.local.dwellSamplesInScopeChunked
 import com.mcqapp.data.local.questionIdsForTagChunked
+import com.mcqapp.data.local.studyQuestionIdsForTagChunked
+import com.mcqapp.data.local.studyTagCountsChunked
 import com.mcqapp.data.local.tagCountsChunked
 import com.mcqapp.domain.Blueprint
 import com.mcqapp.domain.BlueprintSection
@@ -1151,6 +1153,30 @@ class McqRepository internal constructor(
         categoryIds: List<String>,
         foldedTag: String
     ): List<String> = db.questionTagDao().questionIdsForTagChunked(
+        paperId = paperId,
+        categoryIds = categoryIds,
+        tagFolded = foldedTag
+    )
+
+    /**
+     * Study's tag picker counts, flashcards included. The Test-facing
+     * [tagCountsForScope] deliberately hides cards; Study cannot, because a
+     * flashcard is a normal card there. Counts and pool must use the same gate.
+     */
+    suspend fun tagCountsForStudyScope(
+        paperId: String,
+        categoryIds: List<String>
+    ): List<TagCount> = db.questionTagDao().studyTagCountsChunked(
+        paperId = paperId,
+        categoryIds = categoryIds
+    )
+
+    /** Study's tag-scope pool, flashcards included — twin of [tagCountsForStudyScope]. */
+    suspend fun questionIdsForStudyTagInScope(
+        paperId: String,
+        categoryIds: List<String>,
+        foldedTag: String
+    ): List<String> = db.questionTagDao().studyQuestionIdsForTagChunked(
         paperId = paperId,
         categoryIds = categoryIds,
         tagFolded = foldedTag

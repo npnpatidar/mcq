@@ -102,6 +102,23 @@ internal fun shouldShowFirstRunChooser(
     chooserShown: Boolean
 ): Boolean = isNewInstall && !hasPapers && !chooserShown
 
+/**
+ * Onboarding advances only after the bundled sample actually parsed into at
+ * least one paper. A failed load must leave the chooser marker unset so the
+ * learner can retry, and must never queue a first-study navigation.
+ */
+internal data class FirstRunAfterSample(
+    val markChooserShown: Boolean,
+    val studyRoutePaperId: String?
+)
+
+internal fun firstRunAfterSample(papersCreated: Int, availablePaperId: String?): FirstRunAfterSample =
+    if (papersCreated > 0) {
+        FirstRunAfterSample(true, availablePaperId)
+    } else {
+        FirstRunAfterSample(false, null)
+    }
+
 /** Preference marker that the welcome chooser was answered on this install. */
 private val firstRunChooserShownKey =
     androidx.datastore.preferences.core.booleanPreferencesKey("onboarding_chooser_shown")
@@ -1215,20 +1232,20 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Loads the bundled sample and, when it actually created a paper, offers
      * the first Study card. The chooser marker is written only after a parse
-     * that produced at least one paper, so a failed load can be retried.
+     * that produced at least one paper, so a failed load can be retried and no
+     * first-study route is queued on failure.
      */
     fun trySampleAndStudy() {
-        markFirstRunChooserShown()
-        viewModelScope.launch {
-            loadSampleData()
-            // loadSampleData dispatches its read to IO inside its own launch;
-            // wait for its gate to release before looking for the paper.
-            while (sampleLoadGate.isInFlight) {
-                kotlinx.coroutines.delay(25)
-            }
-            val paper = repository.observePapers().first().firstOrNull()
-            if (paper != null) {
-                _firstStudyRoute.value = com.mcqapp.ui.navigation.studyRoute(paper.id)
+        loadSampleData { papersCreated ->
+            viewModelScope.launch {
+                val paperId = if (papersCreated > 0) {
+                    repository.observePapers().first().firstOrNull()?.id
+                } else null
+                val decision = firstRunAfterSample(papersCreated, paperId)
+                if (decision.markChooserShown) markFirstRunChooserShown()
+                decision.studyRoutePaperId?.let {
+                    _firstStudyRoute.value = com.mcqapp.ui.navigation.studyRoute(it)
+                }
             }
         }
     }
@@ -1244,12 +1261,18 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
      * used to be opened and parsed on Main) and ignores a second tap while one
      * load is in flight. The gate is released in `finally`, so a failed load
      * can be retried and a rotation of the screen does not duplicate it.
+     * [onLoaded] reports how many papers the parse actually created; callers
+     * that advance one-state onboarding use it to avoid marking a failed load.
      */
-    fun loadSampleData() {
-        if (!sampleLoadGate.tryStart()) return
+    fun loadSampleData(onLoaded: ((Int) -> Unit)? = null) {
+        if (!sampleLoadGate.tryStart()) {
+            onLoaded?.invoke(0)
+            return
+        }
         _isLoadingSample.value = true
         Logger.i("LIBVM", "Loading sample data from assets")
         viewModelScope.launch {
+            var papersCreated = 0
             try {
                 val report = withContext(Dispatchers.IO) {
                     val context = getApplication<Application>()
@@ -1258,6 +1281,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     val file = LegacyParser.parse(text)
                     Importer(repository.db(), repository.updateAnswersOnDuplicate().first()).import(file)
                 }
+                papersCreated = report.newPapers
                 Logger.i("LIBVM", "Sample data loaded: ${report.newPapers} papers, ${report.newQuestions} questions")
             } catch (e: Exception) {
                 Logger.e("LIBVM", "Sample load failed", e)
@@ -1265,6 +1289,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             } finally {
                 sampleLoadGate.finish()
                 _isLoadingSample.value = false
+                onLoaded?.invoke(papersCreated)
             }
         }
     }

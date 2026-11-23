@@ -35,6 +35,8 @@
     <string name="browse_move_to_position">Move to position…</string>
     <string name="browse_move_to_position_title">Move to position</string>
     <string name="browse_position_range">Position (1–%1$d)</string>
+    <string name="browse_position_reachable_range">Position (%1$d–%2$d)</string>
+    <string name="browse_moved_to_position">Moved to position %1$d</string>
     <string name="browse_export_progress_preparing" tools:ignore="PluralsCandidate">Preparing %1$d questions…</string>
     <string name="browse_export_progress_rendering">Rendering the file…</string>
     <string name="browse_cancel_export">Cancel</string>

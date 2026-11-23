@@ -3,7 +3,7 @@
   User-facing strings, extracted from inline literals so the app can be
   localised; see audit A36. Names are derived from the English text.
 -->
-<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="UnusedResources">
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name" translatable="false">MCQ App</string>
     <string name="add_block">Add block</string>
     <string name="add_category">Add category</string>

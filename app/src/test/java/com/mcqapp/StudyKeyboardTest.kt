@@ -28,6 +28,31 @@ class StudyKeyboardTest {
     }
 
     @Test
+    fun spaceNeverRevealsOrAdvancesWhileOnBreak() {
+        // A break owns the screen: the old guard omitted onBreak, so SPACE
+        // revealed the answer (or advanced a staged grade) behind the overlay.
+        listOf(false, true).forEach { revealed ->
+            listOf(false, true).forEach { staged ->
+                assertEquals(
+                    StudyKeyAction.NONE,
+                    StudyKeyboard.action(
+                        StudyKey.SPACE, revealed = revealed, staged = staged,
+                        canGrade = true, onBreak = true
+                    )
+                )
+            }
+        }
+        // Every other key is silenced too, not just Space.
+        (StudyKey.entries - StudyKey.OTHER).forEach { key ->
+            assertEquals(
+                StudyKeyAction.NONE,
+                StudyKeyboard.action(key, revealed = true, staged = false,
+                    canGrade = true, onBreak = true)
+            )
+        }
+    }
+
+    @Test
     fun gradesNeverFireBeforeRevealOrWhileGrading() {
         listOf(StudyKey.ONE, StudyKey.TWO, StudyKey.THREE, StudyKey.FOUR).forEach { key ->
             assertEquals(

@@ -31,28 +31,35 @@ internal object StudyKeyboard {
      *   reveal, so a learner cannot grade what they have not seen.
      * @param staged whether a confirmation-style grade is pending; Space then
      *   advances instead of revealing again.
+     * @param onBreak a running break owns the screen: no key may reveal,
+     *   advance, grade or move the selection until the learner resumes.
      */
     fun action(
         key: StudyKey,
         revealed: Boolean,
         staged: Boolean,
-        canGrade: Boolean
-    ): StudyKeyAction = when (key) {
-        StudyKey.SPACE -> when {
-            !revealed -> StudyKeyAction.REVEAL
-            staged -> StudyKeyAction.NEXT
-            else -> StudyKeyAction.NONE
-        }
-        StudyKey.ONE, StudyKey.TWO, StudyKey.THREE, StudyKey.FOUR ->
-            if (!revealed || !canGrade) StudyKeyAction.NONE else when (key) {
-                StudyKey.ONE -> StudyKeyAction.GRADE_AGAIN
-                StudyKey.TWO -> StudyKeyAction.GRADE_HARD
-                StudyKey.THREE -> StudyKeyAction.GRADE_GOOD
-                else -> StudyKeyAction.GRADE_EASY
+        canGrade: Boolean,
+        onBreak: Boolean = false
+    ): StudyKeyAction = if (onBreak) {
+        StudyKeyAction.NONE
+    } else {
+        when (key) {
+            StudyKey.SPACE -> when {
+                !revealed -> StudyKeyAction.REVEAL
+                staged -> StudyKeyAction.NEXT
+                else -> StudyKeyAction.NONE
             }
-        StudyKey.LEFT -> StudyKeyAction.SELECT_PREVIOUS_OPTION
-        StudyKey.RIGHT -> StudyKeyAction.SELECT_NEXT_OPTION
-        StudyKey.OTHER -> StudyKeyAction.NONE
+            StudyKey.ONE, StudyKey.TWO, StudyKey.THREE, StudyKey.FOUR ->
+                if (!revealed || !canGrade) StudyKeyAction.NONE else when (key) {
+                    StudyKey.ONE -> StudyKeyAction.GRADE_AGAIN
+                    StudyKey.TWO -> StudyKeyAction.GRADE_HARD
+                    StudyKey.THREE -> StudyKeyAction.GRADE_GOOD
+                    else -> StudyKeyAction.GRADE_EASY
+                }
+            StudyKey.LEFT -> StudyKeyAction.SELECT_PREVIOUS_OPTION
+            StudyKey.RIGHT -> StudyKeyAction.SELECT_NEXT_OPTION
+            StudyKey.OTHER -> StudyKeyAction.NONE
+        }
     }
 
     /**

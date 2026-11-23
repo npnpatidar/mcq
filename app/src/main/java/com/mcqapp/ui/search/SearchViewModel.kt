@@ -57,6 +57,28 @@ internal data class SearchRequest(
 }
 
 /**
+ * The two chip families are mutually exclusive: [SearchScopeFilter.matches]
+ * ANDs them, and categories belong to papers, so a paper id together with a
+ * category id from a different paper can only ever produce an empty result.
+ * Choosing either family therefore clears the other. Kept as pure functions so
+ * the contract is JVM-testable without an Application.
+ */
+internal fun togglePaperFilter(state: SearchUiState, paperId: String): SearchUiState =
+    state.copy(
+        paperFilterIds = if (paperId in state.paperFilterIds) emptySet() else setOf(paperId),
+        categoryFilterIds = emptySet()
+    )
+
+internal fun toggleCategoryFilter(state: SearchUiState, categoryId: String): SearchUiState {
+    val next = if (categoryId in state.categoryFilterIds) {
+        state.categoryFilterIds - categoryId
+    } else {
+        state.categoryFilterIds + categoryId
+    }
+    return state.copy(categoryFilterIds = next, paperFilterIds = emptySet())
+}
+
+/**
  * True while the live request differs from the last committed one — i.e. the
  * debounce window is still open. Comparing the WHOLE request is the point: a
  * scope-only change used to read as "not debouncing" and show the previous
@@ -178,25 +200,14 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(scope = scope) }
     }
 
-    /** One paper chip at a time; tapping the active one clears it. */
+    /** One paper chip at a time; tapping the active one clears it. Choosing a paper clears the category chips. */
     fun togglePaper(paperId: String) {
-        _state.update { state ->
-            state.copy(
-                paperFilterIds = if (paperId in state.paperFilterIds) emptySet() else setOf(paperId)
-            )
-        }
+        _state.update { togglePaperFilter(it, paperId) }
     }
 
     /** Several categories at once; choosing one clears a stale paper filter. */
     fun toggleCategory(categoryId: String) {
-        _state.update { state ->
-            val next = if (categoryId in state.categoryFilterIds) {
-                state.categoryFilterIds - categoryId
-            } else {
-                state.categoryFilterIds + categoryId
-            }
-            state.copy(categoryFilterIds = next)
-        }
+        _state.update { toggleCategoryFilter(it, categoryId) }
     }
 
     fun clearScopeFilters() {

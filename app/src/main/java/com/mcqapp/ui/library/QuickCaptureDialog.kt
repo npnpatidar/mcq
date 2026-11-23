@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,16 @@ import androidx.compose.ui.unit.dp
 import com.mcqapp.R
 import com.mcqapp.domain.Paper
 import kotlinx.coroutines.launch
+
+/**
+ * The paper field starts on the first real paper, but the papers flow can still
+ * be empty when a shared snippet opens the dialog. Once papers arrive the blank
+ * choice must be filled before Save, or the flashcard silently creates a new
+ * paper. An explicit "New paper" pick is blank too; the caller guards that case
+ * with `paperChosen` so it is not overwritten when the flow emits again.
+ */
+internal fun initialQuickCapturePaperId(current: String, papers: List<Paper>): String =
+    if (current.isBlank()) papers.firstOrNull()?.id.orEmpty() else current
 
 /**
  * Quick capture for plain text shared from another app: a front/back pair with
@@ -55,6 +66,13 @@ internal fun QuickCaptureDialog(
     var newPaperTitle by remember { mutableStateOf("") }
     var newCategoryTitle by remember { mutableStateOf("") }
     var selectedPaperId by remember { mutableStateOf(papers.firstOrNull()?.id.orEmpty()) }
+    // Distinguish "papers not loaded yet" from the learner deliberately picking
+    // "New paper" — both leave selectedPaperId blank, but only the first may be
+    // filled in when the papers flow emits.
+    var paperChosen by remember { mutableStateOf(false) }
+    LaunchedEffect(papers) {
+        if (!paperChosen) selectedPaperId = initialQuickCapturePaperId(selectedPaperId, papers)
+    }
     var selectedCategoryId by remember { mutableStateOf("") }
     var paperExpanded by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
@@ -112,6 +130,7 @@ internal fun QuickCaptureDialog(
                                 text = { Text(paper.title) },
                                 onClick = {
                                     selectedPaperId = paper.id
+                                    paperChosen = true
                                     selectedCategoryId = ""
                                     paperExpanded = false
                                 }
@@ -119,7 +138,7 @@ internal fun QuickCaptureDialog(
                         }
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.of_quick_capture_new_paper)) },
-                            onClick = { selectedPaperId = ""; paperExpanded = false }
+                            onClick = { selectedPaperId = ""; paperChosen = true; paperExpanded = false }
                         )
                     }
                 }

@@ -854,7 +854,14 @@ indicator appears under the paper title; the same menu opens a dialog to
 unsuspend hidden cards. Suspended and buried cards are excluded from Study
 pools and counts, but still take part in tests.
 
-**Gestures/keys:** No keyboard shortcuts. Back = stop (not exit).
+**Gestures/keys:** Study focuses the card surface: **Space** reveals the answer,
+then advances once a grade is staged; **1–4** grade Again / Hard / Good / Easy
+(after reveal only); **←/→** move the option selection. Test focuses its session
+surface the same way: **Space** reveals, then advances; **←/→** go to the
+previous/next question. Digits are inert in Test — a test never grades, so there
+is no Again/Hard/Good/Easy to press. Keys are ignored while a dialog owns the
+screen, a break is running in Study, or a Ctrl/Alt/Meta modifier is held.
+Back = stop (not exit).
 Scroll/background pauses question clock. Haptics: Tick (reveal/advance/grade),
 Confirm (correct), Reject (wrong).
 

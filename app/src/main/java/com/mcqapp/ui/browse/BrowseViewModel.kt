@@ -20,7 +20,7 @@ import com.mcqapp.data.repository.ResetCard
 import com.mcqapp.data.repository.cardsWithSchedule
 import com.mcqapp.data.repository.findDuplicateGroups
 import com.mcqapp.data.repository.mergeDuplicates
-import com.mcqapp.data.repository.moveToPositionOrder
+import com.mcqapp.data.repository.resolveMoveToPosition
 import com.mcqapp.data.repository.orderedSelectionIds
 import com.mcqapp.data.repository.restoreQuestions
 import com.mcqapp.data.repository.setBookmarked
@@ -955,29 +955,37 @@ class BrowseViewModel(
     }
 
     /**
-     * Computes the full new category order once from [PassageReorder] and writes
-     * it once, so a "Move to position…" tap is a single atomic renumber and
-     * never splits a passage group.
+     * Computes the full new category order once and writes it once, so a "Move
+     * to position…" tap is a single atomic renumber and never splits a passage
+     * group. Both the O(N) computation and the write run on IO; the callback
+     * receives the position the question ACTUALLY landed at (0-based), or null
+     * on failure — a target inside a group can only be reached at its edge, so
+     * reporting the requested number would be a lie.
      */
     fun moveToPosition(
         questionId: String,
         categoryId: String,
         targetIndex: Int,
-        onDone: (Boolean) -> Unit = {}
+        onDone: (Int?) -> Unit = {}
     ) {
-        val refs = _state.value.categoryContexts[categoryId]?.refs.orEmpty()
-        val order = moveToPositionOrder(refs, questionId, targetIndex)
-        if (order == null) {
-            onDone(false)
-            return
-        }
         viewModelScope.launch {
             try {
-                onDone(repository.renumberQuestions(categoryId, order))
+                val result = withContext(Dispatchers.IO) {
+                    val refs = _state.value.categoryContexts[categoryId]?.refs.orEmpty()
+                    resolveMoveToPosition(refs, questionId, targetIndex)
+                }
+                if (result == null) {
+                    onDone(null)
+                    return@launch
+                }
+                val ok = withContext(Dispatchers.IO) {
+                    repository.renumberQuestions(categoryId, result.order)
+                }
                 invalidateContexts()
+                onDone(if (ok) result.actualIndex else null)
             } catch (e: Exception) {
                 reportActionFailure(R.string.browse_move_questions_failed, e)
-                onDone(false)
+                onDone(null)
             }
         }
     }

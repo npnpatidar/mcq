@@ -38,7 +38,7 @@ internal fun isRemoteImageSrc(src: String): Boolean =
  * Renders a question's image. The default description is null because a
  * decorative image should be silent — but every *content-bearing* call site must
  * pass a localized description. Study's passage, stem, option and answer/picture
- * sites all do; `StudyPolishStructureTest` guards that so a new call cannot
+ * sites all do; `StudyPolishStructureGuardTest` guards that so a new call cannot
  * quietly drop its spoken description.
  */
 @Composable

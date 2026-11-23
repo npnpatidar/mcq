@@ -360,12 +360,17 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   this; the suite runs as a 4-way shard matrix, and the JVM is recycled every 40
   classes. Do not raise the task timeout to get past a stall — that hides the
   poison.
-- CI uploads five artifacts (`if: always()`): `app-debug`, `app-release`,
-  `lint-report`, `ui-test-results`, and the unit-test results as a 4-way
-  matrix `test-results-shard-0..3` (`apk-build/test-shards.sh` partitions the
-  test classes by name or by a measured-duration manifest; a Robolectric
-  lost-wakeup wedge in one shard reports alone and
-  dumps its thread stacks instead of holding the branch). After every push,
+- CI uploads six artifacts (`if: always()`): `app-debug`, `app-release`,
+  `lint-report`, `ui-test-results`, `test-durations`, and the unit-test results
+  as a 4-way matrix `test-results-shard-0..3`. A `test-durations` probe job runs
+  the unsharded suite once, writes `test-durations.tsv` with
+  `:app:writeTestDurations`, and the shards download it and pass it as the third
+  argument to `apk-build/test-shards.sh` (two arguments still work locally).
+  A Robolectric lost-wakeup wedge in one shard reports alone and dumps its
+  thread stacks instead of holding the branch. Gradle caches use a run-scoped
+  `actions/cache` key with a shared `gradle-nightly-` restore prefix: setup-java
+  never saves on an exact-key hit, so the nightly `--refresh-dependencies`
+  result would otherwise be thrown away. After every push,
   download both APKs and keep them under these exact names:
 
 ```bash

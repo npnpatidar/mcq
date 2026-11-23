@@ -14,8 +14,11 @@ import java.io.File
  * it fails when formatting changes, stays green when the behaviour it claimed
  * to protect is gone, and the next reader cannot tell which of the two it is.
  * Existing guards are grandfathered (migrating all of them is a separate
- * cleanup); every NEW guard must carry a marker. The rule is pure text, so the
- * synthetic cases below prove it is not itself a vacuous guard.
+ * cleanup); every NEW guard must carry a marker. A test that scans the app's own
+ * source/resource text is a guard by definition, so it belongs under
+ * `*GuardTest.kt` and is covered by this rule — the Study/Stats/test-UX
+ * structure tests were renamed for exactly that reason. The rule is pure text,
+ * so the synthetic cases below prove it is not itself a vacuous guard.
  */
 class GuardHygieneTest {
 

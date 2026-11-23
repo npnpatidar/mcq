@@ -38,6 +38,7 @@ import com.mcqapp.data.local.getMatchesByContentHashesChunked
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.domain.ImportWarningSeverity
 import com.mcqapp.domain.ParserWarning
+import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.parserWarningSeverity
 import com.mcqapp.domain.parserWarningText
 import com.mcqapp.util.Logger
@@ -148,6 +149,15 @@ private fun advisoryNotice(message: String): ParserWarning =
  */
 internal fun typedParserWarnings(messages: List<String>): List<ParserWarning> =
     messages.map { ParserWarning(parserWarningText(it), parserWarningSeverity(it)) }
+
+/**
+ * A CSV row whose answer cannot be resolved is *dropped*, not merely annotated.
+ * Tag it at the producer so the completion report's rows-skipped count matches
+ * the warning the preview already showed. Kept pure so the producer/consumer
+ * contract is testable without a ViewModel or Android resources.
+ */
+internal fun csvBadAnswerRowWarning(format: (Int) -> String): (Int) -> String =
+    { row -> droppedParserMessage(format(row)) }
 
 object ImportDataHolder {
     /**
@@ -1002,7 +1012,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
                     val parsed = CsvTsvParser.parse(
                         text,
                         paperTitle = fileName?.let { docxPaperTitle(it) },
-                        rowWarning = { msg(R.string.of_csv_bad_answer, it) }
+                        rowWarning = csvBadAnswerRowWarning { msg(R.string.of_csv_bad_answer, it) }
                     )
                     val warnings = parsed.warnings.toMutableList()
                     if (parsed.file.papers.firstOrNull()

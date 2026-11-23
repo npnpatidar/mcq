@@ -26,8 +26,12 @@ import java.time.LocalDate
  * fails on the old behaviour: self-graded rows in calibration, a second "true"
  * headline, a card in both due buckets, learning stumbles as lapses, aggregates
  * with no card to open, and thin buckets spoken at full weight.
+ *
+ * INCIDENT: each of those findings shipped once — a second "true" headline and
+ * a card in both due buckets among them — so the source assertions below pin
+ * the wiring that makes the honest figures the ones the learner actually sees.
  */
-class StatsHonestyTest {
+class StatsHonestyGuardTest {
 
     private val day = DayBoundary.DAY_MS
     private val hour = 3_600_000L
@@ -116,10 +120,10 @@ class StatsHonestyTest {
     // --- 1. calibration / Brier evidence gate -------------------------------
 
     @Test
-    fun calibrationUsesOnlyObjectiveCorrectlyGradedRows() {
+    fun calibrationUsesOnlyObjectiveAnswersRightOrWrong() {
         val bundle = build(
             listOf(
-                // The one row that qualifies.
+                // An objective pass qualifies.
                 review("objective", predictedRetention = 0.8, wasCorrect = true),
                 // A self-graded pass: no objective outcome at all.
                 review("self", predictedRetention = 0.8, wasCorrect = null),
@@ -128,15 +132,18 @@ class StatsHonestyTest {
                 review("skip", predictedRetention = 0.8, wasCorrect = true, wasSkipped = true),
                 // A row from the clock-tinted grading rule is not a correctness grade.
                 review("timed", predictedRetention = 0.8, wasCorrect = true, correctnessOnly = false),
-                // An objectively wrong answer has no place in a correct-only sample.
+                // An objectively wrong answer is honest evidence too: keeping
+                // only correct rows pins actualRate at 1.0 and Brier one-sided.
                 review("wrong", rating = 1, predictedRetention = 0.8, wasCorrect = false)
             )
         )
-        assertEquals(1, bundle.calibration.samples)
-        assertEquals(0.04, bundle.calibration.brier!!, 1e-9)
-        assertEquals(1, bundle.calibration.bins.single().count)
-        assertEquals(1.0, bundle.calibration.bins.single().actualRate!!, 1e-9)
-        assertEquals(1.0, bundle.calibration.actualMean!!, 1e-9)
+        assertEquals(2, bundle.calibration.samples)
+        // (0.2^2 + 0.8^2) / 2 = 0.34
+        assertEquals(0.34, bundle.calibration.brier!!, 1e-9)
+        assertEquals(2, bundle.calibration.bins.single().count)
+        assertEquals(0.5, bundle.calibration.bins.single().actualRate!!, 1e-9)
+        assertTrue(bundle.calibration.bins.single().actualRate!! < 1.0)
+        assertEquals(0.5, bundle.calibration.actualMean!!, 1e-9)
     }
 
     @Test
@@ -338,7 +345,7 @@ class StatsHonestyTest {
     fun honestyCopyDeclaresTheSameNamesAndPlaceholdersInBothLocales() {
         fun resources(path: String): Map<String, String> {
             val xml = File(path).readText()
-            return Regex("""<string name="([a-z0-9_]+)">(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+            return Regex("""<string name="([a-z0-9_]+)"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(xml).associate { it.groupValues[1] to it.groupValues[2] }
         }
         val english = resources("src/main/res/values/strings_stats_honesty.xml")

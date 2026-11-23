@@ -627,7 +627,7 @@ class StudyViewModel(
                     // No schema change and no schedule rewrite.
                     val allowed = when (studyScope.kind) {
                         com.mcqapp.domain.StudyScopeKind.TAG ->
-                            repository.questionIdsForTagInScope(paperId, scopeIds, studyScope.tag)
+                            repository.questionIdsForStudyTagInScope(paperId, scopeIds, studyScope.tag)
                                 .toHashSet()
                         com.mcqapp.domain.StudyScopeKind.MISTAKES ->
                             repository.getMistakenQuestions(paperId)

@@ -12,8 +12,12 @@ import java.io.File
  * every Study image, a 48 dp option target, matched grade-button colours, the
  * break controls and the drill's honest one-pass note. Pure JVM source guards,
  * so they run on the ARM64 host where the Robolectric/UI suites cannot.
+ *
+ * BEHAVIOUR: a new card's scroll offset dies with the card, every content image
+ * is spoken, a grade's fill and content colour come from one palette, and a
+ * break pauses both clocks without ending the sitting.
  */
-class StudyPolishStructureTest {
+class StudyPolishStructureGuardTest {
 
     private val screen by lazy {
         File("src/main/java/com/mcqapp/ui/study/StudyScreen.kt").readText()

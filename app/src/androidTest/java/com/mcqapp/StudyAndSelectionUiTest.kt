@@ -788,11 +788,13 @@ class StudyAndSelectionUiTest {
         compose.setContent { McqNavHost(repository = repository) }
 
         compose.onNodeWithTag("paper-title-ui-sel").assertIsDisplayed()
-        // Delete is an icon on the card itself now; the action row can sit
-        // below the fold on the small emulator screen, so scroll it in.
+        // Destructive actions live behind the card's overflow menu; the action
+        // row can sit below the fold on the small emulator screen, so scroll
+        // the overflow in, open it, then tap its Delete item.
         compose.waitForIdle()
-        compose.onNodeWithTag("paper-delete-ui-sel").performScrollTo()
+        compose.onNodeWithTag("paper-overflow-ui-sel").performScrollTo()
         compose.waitForIdle()
+        compose.onNodeWithTag("paper-overflow-ui-sel").performClick()
         compose.onNodeWithTag("paper-delete-ui-sel").performClick()
 
         waitFor("This cannot be undone.")

@@ -115,8 +115,8 @@ class WorkflowGuardTest {
         val steps = build.split(Regex("""\n[ \t]*- name:"""))
         val uploads = steps.filter { it.contains("uses: actions/upload-artifact@") }
         assertTrue(
-            "build.yml: expected 5 upload-artifact steps, got ${uploads.size}",
-            uploads.size == 5
+            "build.yml: expected 6 upload-artifact steps, got ${uploads.size}",
+            uploads.size == 6
         )
         uploads.forEach { step ->
             assertTrue(
@@ -127,7 +127,7 @@ class WorkflowGuardTest {
         // The `test-results` upload is a single step in the 4-way unit-test
         // matrix: one YAML step, four artifacts when expanded.
         for (name in listOf(
-            "app-debug", "app-release", "lint-report", "ui-test-results"
+            "app-debug", "app-release", "lint-report", "ui-test-results", "test-durations"
         )) {
             assertTrue(
                 "build.yml: artifact '${name}' is missing",
@@ -163,9 +163,27 @@ class WorkflowGuardTest {
         )
     }
 
-    // Removed: releaseBuildCommentMatchesActualMinifySettings only asserted the
-    // wording of a comment. The live R8 settings are a build property, already
-    // proven by assembleRelease in CI; a comment cannot regress behaviour.
+    /**
+     * BEHAVIOUR: the release variant must keep resource shrinking and R8 on —
+     * the release build job is the only CI check that a keep rule or a
+     * release-only resource regression still works. Replaced the old
+     * comment-wording assertion with one that reads the actual build settings.
+     */
+    @Test
+    fun releaseBuildKeepsShrinkingAndR8Enabled() {
+        val gradle = listOf(File("../app/build.gradle.kts"), File("app/build.gradle.kts"))
+            .firstOrNull { it.isFile }
+            ?.readText()
+            ?: throw AssertionError("cannot find app/build.gradle.kts from $cwd")
+        val release = gradle.substringAfter("        release {")
+        assertTrue("release resource shrinking is off", "isShrinkResources = true" in release)
+        assertTrue("release R8 minification is off", "isMinifyEnabled = true" in release)
+        assertTrue("release must keep its ProGuard rules", "proguard-rules.pro" in release)
+        assertTrue(
+            "CI must assemble the release variant so shrinking is exercised",
+            build.contains(":app:assembleRelease")
+        )
+    }
 
     /** Lines that actually invoke Gradle; comments only mention it. */
     private fun gradleInvocationLines(yaml: String): List<String> =
@@ -217,6 +235,56 @@ class WorkflowGuardTest {
                 blanketRefreshOffences(yaml).isEmpty()
             )
         }
+        // A forced refresh is inert if the same cache is restored every time:
+        // GitHub's actions/cache does not save on an exact-key hit, and
+        // setup-java's hash key is an exact hit on an unchanged repo. Every job
+        // therefore uses a run-scoped key (always a miss, so the refresh is
+        // saved) and a shared restore prefix (so PRs pick up that refresh).
+        assertFalse(
+            "setup-java's own cache would be an unsaved exact hit",
+            Regex("""(?m)^[ \t]*cache: gradle[ \t]*$""").containsMatchIn(build)
+        )
+        val cacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
+            .filter { it.contains("uses: actions/cache@") }
+        assertTrue(
+            "one rotating Gradle cache step per Gradle job, got ${cacheSteps.size}",
+            cacheSteps.size == 6
+        )
+        cacheSteps.forEach { step ->
+            assertTrue(
+                "the cache key must be scoped to the run so it always saves:\n$step",
+                step.contains("github.run_id") &&
+                    (step.contains("gradle-nightly-") || step.contains("gradle-run-"))
+            )
+            assertTrue(
+                "the cache must restore the latest nightly refresh:\n$step",
+                step.contains("restore-keys: gradle-nightly-")
+            )
+        }
+        assertTrue(
+            "exactly one job owns the nightly key — a parallel job saving under it would discard the refresh",
+            cacheSteps.count { it.contains("key: gradle-nightly-\${{ github.run_id }}") } == 1
+        )
+    }
+
+    /** INCIDENT: the duration manifest was written nowhere, so CI always used the dead 2-arg call. */
+    @Test
+    fun durationAwareShardingIsWiredEndToEnd() {
+        assertTrue("a prior job must write the manifest", build.contains(":app:writeTestDurations"))
+        assertTrue("the manifest must be uploaded for the shards", build.contains("name: test-durations"))
+        assertTrue(
+            "the unit-test job must wait for the manifest",
+            build.contains("needs: [wrapper-validation, test-durations]")
+        )
+        assertTrue("the shards must download the manifest", build.contains("actions/download-artifact@"))
+        assertTrue(
+            "the shard call must pass the measured durations as its third argument",
+            build.contains("4 apk-build/test-durations.tsv")
+        )
+        assertFalse(
+            "the two-argument-only CI call is gone; the local fallback stays in the script",
+            build.contains("test-shards.sh \${{ matrix.shard }} 4)")
+        )
     }
 
     @Test

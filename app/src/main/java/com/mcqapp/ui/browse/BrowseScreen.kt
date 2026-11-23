@@ -93,6 +93,8 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.mcqapp.data.repository.BrowseListFilter
 import com.mcqapp.data.repository.McqRepository
+import com.mcqapp.data.repository.clampMoveTarget
+import com.mcqapp.data.repository.reachableMoveRange
 import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.isFlashcard
@@ -104,6 +106,16 @@ import com.mcqapp.util.ContentElements
 import com.mcqapp.util.parseNonNegativeDecimal
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.R
+
+/**
+ * Stable identity for a duplicate group's keeper choice. `contentHash` is NOT
+ * unique: `groupDuplicates` confirms candidates with an element-level
+ * fingerprint after the hash has narrowed them, so two unrelated groups can
+ * share one stale hash. Keying the keepers by hash made picking a keeper in one
+ * group silently change the keeper of every other group with that hash.
+ */
+internal fun duplicateGroupKeeperKey(questionIds: Collection<String>): String =
+    questionIds.sorted().joinToString("\u0000")
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -177,7 +189,6 @@ fun BrowseScreen(
     val unassignText = stringResource(R.string.browse_bulk_unassign_passage)
     val mergeText = stringResource(R.string.duplicates_merge_history)
     val deleteOthersText = stringResource(R.string.duplicates_delete_others)
-    val movePositionText = stringResource(R.string.browse_move_to_position_title)
     val deletedOneText = stringResource(R.string.browse_single_deleted)
 
     val error by viewModel.error.collectAsStateWithLifecycle()
@@ -1347,23 +1358,32 @@ fun BrowseScreen(
             )
         }
 
-        // "Move to position…" computes the full PassageReorder order once in
-        // the ViewModel and writes it once, so the group stays contiguous.
+        // "Move to position…" computes the full order once in the ViewModel and
+        // writes it once, so the group stays contiguous. The dialog advertises
+        // the positions that are actually reachable and snaps the input to one
+        // of them before asking for the write.
         if (movePositionId != null) {
-            val count = state.categoryContexts.values.firstOrNull {
+            val moveContext = state.categoryContexts.values.firstOrNull {
                 it.refs.any { ref -> ref.id == movePositionId }
-            }?.refs?.size ?: 0
+            }
+            val moveRefs = moveContext?.refs.orEmpty()
+            val reachable = reachableMoveRange(moveRefs, movePositionId.orEmpty())
+            val rangeText = if (reachable != null) {
+                stringResource(R.string.browse_position_reachable_range, reachable.first, reachable.last)
+            } else {
+                stringResource(R.string.browse_position_range, moveRefs.size)
+            }
             AlertDialog(
                 onDismissRequest = { movePositionId = null },
                 title = { Text(stringResource(R.string.browse_move_to_position_title)) },
                 text = {
                     Column {
-                        Text(stringResource(R.string.browse_position_range, count))
+                        Text(rangeText)
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = positionText,
                             onValueChange = { positionText = it },
-                            label = { Text(stringResource(R.string.browse_position_range, count)) },
+                            label = { Text(rangeText) },
                             singleLine = true
                         )
                     }
@@ -1373,12 +1393,25 @@ fun BrowseScreen(
                         val id = movePositionId
                         val categoryId = state.categoryContexts.entries
                             .firstOrNull { it.value.refs.any { ref -> ref.id == id } }?.key
-                        val target = positionText.toIntOrNull()?.minus(1)
+                        val requested = positionText.toIntOrNull()?.minus(1)
+                        // Validate/clamp against the passage-group edges: asking
+                        // for the inside of a group must move to its nearest edge
+                        // and report THAT position, not the requested number.
+                        val target = if (id != null) requested?.let {
+                            clampMoveTarget(moveRefs, id, it)
+                        } else null
                         if (id != null && categoryId != null && target != null) {
-                            viewModel.moveToPosition(id, categoryId, target) { ok ->
-                                if (ok) sendMessage(
-                                    UiMessage(movePositionText, UiMessageTone.Success)
-                                )
+                            viewModel.moveToPosition(id, categoryId, target) { actual ->
+                                if (actual != null) {
+                                    sendMessage(
+                                        UiMessage(
+                                            platformResources.getString(
+                                                R.string.browse_moved_to_position, actual + 1
+                                            ),
+                                            UiMessageTone.Success
+                                        )
+                                    )
+                                }
                             }
                         }
                         movePositionId = null
@@ -1406,7 +1439,8 @@ fun BrowseScreen(
                             Text(stringResource(R.string.duplicates_none))
                         } else {
                             duplicateGroups.forEach { group ->
-                                val keeper = duplicateKeepers[group.contentHash]
+                                val keeperKey = duplicateGroupKeeperKey(group.questionIds)
+                                val keeper = duplicateKeepers[keeperKey]
                                     ?: group.questionIds.first()
                                 Text(
                                     pluralStringResource(
@@ -1443,7 +1477,7 @@ fun BrowseScreen(
                                         FilterChip(
                                             selected = id == keeper,
                                             onClick = {
-                                                duplicateKeepers = duplicateKeepers + (group.contentHash to id)
+                                                duplicateKeepers = duplicateKeepers + (keeperKey to id)
                                             },
                                             label = { Text(stringResource(R.string.duplicates_keep_one)) }
                                         )

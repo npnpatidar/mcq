@@ -130,6 +130,27 @@ class SuspendPoolDbTest {
     }
 
     @Test
+    fun hiddenIdsAppearInNeitherPoolOfATagOrMistakeScopedSitting() = runBlocking {
+        seed()
+        repository.saveQuestion(question("q3"))
+        suspend.suspend(paperId, "q1")
+        suspend.bury(paperId, "q2", now + 3_600_000L)
+
+        val queue = repository.getStudyQueueForQuestions(
+            paperId, setOf("q1", "q2", "q3"), now = now
+        )
+        assertEquals(setOf("q3"), queue.map { it.questionId }.toSet())
+        assertTrue(
+            "a suspended card must not be re-served as new",
+            queue.none { it.questionId == "q1" }
+        )
+        assertTrue(
+            "a buried card must not be re-served as new",
+            queue.none { it.questionId == "q2" }
+        )
+    }
+
+    @Test
     fun hidingAStudiedCardDoesNotInflateTheNewBadgeCount() = runBlocking {
         seed()
         repository.recordStudyReview(paperId, "q1", ReviewGrade.AGAIN, now = now)

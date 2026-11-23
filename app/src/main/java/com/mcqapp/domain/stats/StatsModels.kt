@@ -83,9 +83,9 @@ data class ReplayReview(
         get() = wasCorrect != null && wasGuess != true && wasSkipped != true
 
     /**
-     * The cut estimator's gate: an objective, correctly graded row. Used for
-     * the calibration chart and the Brier score so they cannot pool self-graded
-     * passes or rows written under a different grading rule.
+     * The cut estimator's gate: an objective, correctly graded row. A cut is a
+     * boundary between right and wrong, so only the right answers that sat on
+     * one side of it can inform it.
      */
     val isObjectiveEvidence: Boolean
         get() = Calibration.isObjectiveCorrectEvidence(
@@ -94,6 +94,16 @@ data class ReplayReview(
             wasGuess = wasGuess,
             wasSkipped = wasSkipped
         )
+
+    /**
+     * The calibration chart's gate: an objective answer, right **or wrong**.
+     * A retention curve needs failures as much as passes — gating on a correct
+     * answer pins every bin's actual rate at 100% and makes the Brier score
+     * one-sided. Self-graded rows, guesses, skips and clock-graded rows are
+     * still excluded: none of them is an honest right-or-wrong outcome.
+     */
+    val isObjectiveAnswerEvidence: Boolean
+        get() = correctnessOnly && hasObjectiveAnswer
 
     /** The card had survived at least one 21-day interval before this review. */
     val matureAtReview: Boolean get() = (intervalBeforeDays ?: 0) >= MATURE_DAYS

@@ -8,6 +8,7 @@ import com.mcqapp.domain.ImportWarningSeverity
 import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.parserWarningSeverity
 import com.mcqapp.domain.parserWarningText
+import com.mcqapp.ui.importscreen.csvBadAnswerRowWarning
 import com.mcqapp.ui.importscreen.typedParserWarnings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -30,6 +31,21 @@ class Round2ImportParsingTest {
         assertEquals(ImportWarningSeverity.DROPPED, warning.severity)
         assertEquals(parserWarningText(raw), warning.message)
         assertTrue("producer tag must not reach the learner", !warning.message.contains("r2-dropped"))
+    }
+
+    /**
+     * INCIDENT: the CSV path emitted an untagged "bad answer in row N" warning,
+     * so `withRowsSkipped` counted zero and the completion report claimed a
+     * clean import even though the parser had dropped that row.
+     */
+    @Test
+    fun csvBadAnswerWarningsAreCountedAsSkippedRows() {
+        val raw = csvBadAnswerRowWarning { "The answer in row $it must be a, b, c or d." }(4)
+        val warning = typedParserWarnings(listOf(raw)).single()
+        assertEquals(ImportWarningSeverity.DROPPED, warning.severity)
+        assertEquals("The answer in row 4 must be a, b, c or d.", warning.message)
+        // The hidden producer tag never leaks into the learner-facing text.
+        assertTrue(!warning.message.contains("r2-dropped"))
     }
 
     @Test

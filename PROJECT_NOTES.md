@@ -372,9 +372,10 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   `unit-test` has **no** `needs` edge on the probe, so a slow or failed unsharded
   pass can never skip the shards. A Robolectric lost-wakeup wedge in one shard
   reports alone and dumps its thread stacks instead of holding the branch. Gradle caches use a run-scoped
-  `actions/cache` key with a shared `gradle-nightly-` restore prefix: setup-java
-  never saves on an exact-key hit, so the nightly `--refresh-dependencies`
-  result would otherwise be thrown away. After every push,
+  `actions/cache` key, a `gradle-nightly-` restore prefix for the refreshed metadata, and (on the
+  PR jobs, whose saves use `gradle-run-`) a `gradle-run-` fallback prefix so a cache saved by an
+  earlier PR is restorable instead of orphaned. setup-java never saves on an exact-key hit, so
+  the nightly `--refresh-dependencies` result would otherwise be thrown away. After every push,
   download both APKs and keep them under these exact names:
 
 ```bash

@@ -95,6 +95,26 @@ class LoggerWarnOnceTest {
         )
     }
 
+    /**
+     * A per-row or quoted-file message can mint unbounded distinct keys. The
+     * dedup set must stay bounded; the oldest keys are evicted so a rare warning
+     * can be reported again later.
+     */
+    @Test
+    fun theWarnOnceDedupKeysAreBounded() {
+        setUp()
+        stdoutDuring {
+            repeat(1500) { Logger.warnOnce("BOUND", "message $it") }
+        }
+        assertTrue(
+            "the dedup set must stay bounded: ${Logger.warnOnceKeyCount()}",
+            Logger.warnOnceKeyCount() <= 1024
+        )
+        // The first key was evicted, so it is reportable again.
+        stdoutDuring { Logger.warnOnce("BOUND", "message 0") }
+        assertEquals(1, Logger.recentErrors().count { it == "W/BOUND: message 0" })
+    }
+
     private fun countOccurrences(haystack: String, needle: String): Int =
         if (needle.isEmpty()) 0 else haystack.windowed(needle.length).count { it == needle }
 }

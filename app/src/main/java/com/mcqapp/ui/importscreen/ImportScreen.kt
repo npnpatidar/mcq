@@ -250,7 +250,9 @@ fun ImportScreen(
             com.mcqapp.ui.importscreen.ImportDataHolder.pendingDocxName = null
             viewModel.loadDocx(pendingDocx, pendingName)
         } else if (importBytes != null) {
-            viewModel.loadJsonBytes(importBytes)
+            val pendingName = com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonName
+            com.mcqapp.ui.importscreen.ImportDataHolder.pendingJsonName = null
+            viewModel.loadJsonBytes(importBytes, pendingName)
             // Drop the global copy once consumed: the VM owns the parse now
             // (fingerprint-gated), and a 25k-question bank is ~9MB retained.
             // Identity-guarded so a newer pick made meanwhile is never lost.

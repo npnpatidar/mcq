@@ -14,6 +14,7 @@ import com.mcqapp.data.backup.BackupSource
 import com.mcqapp.data.backup.McqBackupFormat
 import com.mcqapp.data.backup.McqBackupFormat.BackupTooLargeException
 import com.mcqapp.data.backup.RestorePartialCopy
+import com.mcqapp.data.backup.writeBackupOrDrop
 import com.mcqapp.data.io.Exporter
 import com.mcqapp.data.repository.AppLanguage
 import com.mcqapp.data.repository.McqRepository
@@ -1010,69 +1011,61 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     // stall every Settings write behind it), so the check is
                     // after it instead: an unchanged guard means the two halves
                     // still describe one instant.
-                    val output = app.contentResolver.openOutputStream(uri)
-                    if (output == null) {
+                    // The write can take minutes; the study section stays
+                    // interactive throughout. If a cut save or a rule switch
+                    // landed in it, these settings and those rows describe two
+                    // different rules and a restore would trust the pair it
+                    // finds. The document is ours (the picker just created it),
+                    // so any refusal or write failure drops it and a retry
+                    // produces a consistent one — a truncated zip must never be
+                    // left behind looking like a backup.
+                    val wrote = writeBackupOrDrop(
+                        open = { app.contentResolver.openOutputStream(uri) },
+                        delete = { deletePickedDocument(app, uri) },
+                        write = { out ->
+                            McqBackupFormat.writeTo(
+                                output = out,
+                                manifest = manifest,
+                                content = { w ->
+                                    // The zip carries the rows verbatim in
+                                    // study.json, so the question-keyed map would
+                                    // only duplicate them.
+                                    com.mcqapp.data.io.Exporter(db)
+                                        .exportAllTo(w, withScheduling = false)
+                                },
+                                study = { w ->
+                                    val source = com.mcqapp.data.backup.BackupSource(db)
+                                    McqBackupFormat.writeStudyRows(
+                                        w = w,
+                                        cardState = { emit -> source.emitCards(emit) },
+                                        reviewLog = { emit -> source.emitReviews(emit) },
+                                        paperCreated = paperCreated,
+                                        inProgressTest = inProgressTest,
+                                        panels = source.panels(),
+                                        blueprints = source.backupBlueprints(),
+                                        gradingVersions = source.gradingVersions(),
+                                        studySessions = source.studySessions()
+                                    )
+                                },
+                                settings = settings
+                            )
+                        },
+                        verify = {
+                            if (!repository.settingsUnchangedSince(settings)) {
+                                Logger.w(
+                                    "SETTINGS",
+                                    "Grading settings moved during the backup; dropping $uri"
+                                )
+                                throw IllegalStateException(BACKUP_RULE_MOVED)
+                            }
+                        }
+                    )
+                    if (!wrote) {
                         operations.fail(
                             R.string.backup_failed,
                             msg(R.string.final_open_for_write_failed)
                         )
                         return@withContext
-                    }
-                    output.use { out ->
-                        McqBackupFormat.writeTo(
-                            output = out,
-                            manifest = manifest,
-                            content = { w ->
-                                // The zip carries the rows verbatim in
-                                // study.json, so the question-keyed map would
-                                // only duplicate them.
-                                com.mcqapp.data.io.Exporter(db)
-                                    .exportAllTo(w, withScheduling = false)
-                            },
-                            study = { w ->
-                                val source = com.mcqapp.data.backup.BackupSource(db)
-                                McqBackupFormat.writeStudyRows(
-                                    w = w,
-                                    cardState = { emit -> source.emitCards(emit) },
-                                    reviewLog = { emit -> source.emitReviews(emit) },
-                                    paperCreated = paperCreated,
-                                    inProgressTest = inProgressTest,
-                                    panels = source.panels(),
-                                    blueprints = source.backupBlueprints(),
-                                    gradingVersions = source.gradingVersions(),
-                                    studySessions = source.studySessions()
-                                )
-                            },
-                            settings = settings
-                        )
-                    }
-                    // The stream above can take minutes; the study section
-                    // stays interactive throughout. If a cut save or a rule
-                    // switch landed in it, these settings and those rows
-                    // describe two different rules and a restore would trust
-                    // the pair it finds. Refuse the file rather than hand the
-                    // learner a backup that lies: the document is ours (the
-                    // picker just created it), so drop it and let a retry
-                    // produce a consistent one.
-                    if (!repository.settingsUnchangedSince(settings)) {
-                        Logger.w(
-                            "SETTINGS",
-                            "Grading settings moved during the backup; dropping $uri"
-                        )
-                        // A document URI is deleted through the provider's own
-                        // call, not ContentResolver.delete: DocumentsProvider
-                        // does not implement the latter.
-                        runCatching {
-                            if (android.provider.DocumentsContract.isDocumentUri(app, uri)) {
-                                android.provider.DocumentsContract.deleteDocument(
-                                    app.contentResolver,
-                                    uri
-                                )
-                            } else {
-                                app.contentResolver.delete(uri, null, null)
-                            }
-                        }.onFailure { Logger.w("SETTINGS", "Could not drop $uri", it) }
-                        throw IllegalStateException(BACKUP_RULE_MOVED)
                     }
                     Logger.i("SETTINGS", "Backup written (streamed)")
                 }
@@ -1091,6 +1084,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 // H4: the original fix was this `finally`; keep clearing busy here.
                 operations.finish()
             }
+        }
+    }
+
+    /**
+     * Drops a document the backup picker created. A document URI is deleted
+     * through the provider's own call, not `ContentResolver.delete`:
+     * `DocumentsProvider` does not implement the latter.
+     */
+    private fun deletePickedDocument(app: Application, uri: Uri) {
+        if (android.provider.DocumentsContract.isDocumentUri(app, uri)) {
+            android.provider.DocumentsContract.deleteDocument(app.contentResolver, uri)
+        } else {
+            app.contentResolver.delete(uri, null, null)
         }
     }
 

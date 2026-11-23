@@ -123,6 +123,29 @@ class TestShardScriptTest {
         }
     }
 
+    /**
+     * INCIDENT: the probe stages its manifest with `|| true`, so a failed
+     * measurement can cache a 0-byte file. The script only checked `-f`, took
+     * the measured-cost path, and every class fell back to the same default
+     * weight: shard 0 got every class and the other shards got an empty ARGS
+     * list, so each of them ran the whole suite unfiltered. An empty file must
+     * take the same balanced-by-count path as no file at all.
+     */
+    @Test
+    fun emptyManifestFallsBackToBalancedByCount() {
+        val empty = File.createTempFile("mcq-empty-durations", ".tsv")
+        try {
+            assertEquals("the fixture must really be empty", 0L, empty.length())
+            assertEquals(
+                "an empty manifest must not change the partition",
+                shards(4),
+                shards(4, empty)
+            )
+        } finally {
+            empty.delete()
+        }
+    }
+
     @Test
     fun durationManifestKeepsTheSamePartitionWithMeasuredCosts() {
         val all = discoveredClasses()

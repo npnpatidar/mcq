@@ -17,10 +17,12 @@
     <string name="data_honesty_anki_note_blank" tools:ignore="PluralsCandidate">%1$d card(s) were left out because their front or answer was blank.</string>
     <string name="data_honesty_anki_note_media" tools:ignore="PluralsCandidate">%1$d picture(s) a card referenced but the package did not contain could not be brought across.</string>
 
-    <!-- Rows the JSON/DOCX reader skipped while parsing. -->
+    <!-- Rows/parts the JSON/DOCX reader skipped while parsing. "Entry" covers
+         both a whole row and a dropped document part, because the DROPPED
+         severity is used for either. -->
     <plurals name="data_honesty_rows_skipped">
-        <item quantity="one">• %1$d row was skipped — see import notes</item>
-        <item quantity="other">• %1$d rows were skipped — see import notes</item>
+        <item quantity="one">• %1$d entry was skipped — see import notes</item>
+        <item quantity="other">• %1$d entries were skipped — see import notes</item>
     </plurals>
 
     <!-- A backup we write must be one we can restore (see SafeZip's caps). -->

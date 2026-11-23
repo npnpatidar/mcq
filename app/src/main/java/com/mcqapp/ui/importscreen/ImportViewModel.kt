@@ -61,6 +61,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 const val JSON_STREAM_THRESHOLD_BYTES: Int = 4 * 1024 * 1024
 
+/** Bytes read from a large picked file to tell a flat CSV/TSV from JSON. */
+private const val CSV_HEAD_BYTES: Long = 64L * 1024
+
 /** How many questions of a large bank the preview keeps on the heap. */
 const val PREVIEW_SAMPLE_SIZE: Int = 500
 
@@ -125,7 +128,11 @@ internal fun importReportLines(report: ImportReport): List<ImportReportLine> = b
     line(ImportReportLineKind.RESTORED_SCHEDULES, report.restoredSchedules)
     line(ImportReportLineKind.RESTORED_BOOKMARKS, report.restoredBookmarks)
     line(ImportReportLineKind.RESTORED_ATTEMPTS, report.restoredAttempts)
-    line(ImportReportLineKind.DROPPED_ANKI_STEMS, report.droppedAnkiStems)
+    // The typed Anki note below the counts already says how many cards were
+    // left out; emitting the count line too repeated the same fact.
+    if (report.importNotes.none { it is com.mcqapp.data.io.ImportNote.AnkiDroppedCards }) {
+        line(ImportReportLineKind.DROPPED_ANKI_STEMS, report.droppedAnkiStems)
+    }
     line(ImportReportLineKind.RECALL_CONVERTED, report.recallConverted)
     line(ImportReportLineKind.ROWS_SKIPPED, report.rowsSkipped)
 }
@@ -170,6 +177,12 @@ object ImportDataHolder {
      * parser even started.
      */
     var pendingJsonBytes: ByteArray? = null
+    /**
+     * Display name of the picked bank (its picked file name). A flat CSV/TSV has
+     * no title of its own, so the import preview uses this instead of the generic
+     * fallback — otherwise every CSV merges into one "Imported Questions" paper.
+     */
+    var pendingJsonName: String? = null
     /**
      * A JSON bank too large to hold as bytes. The import screen re-opens it
      * from here to preview a bounded sample and stream the rest, so the whole
@@ -803,7 +816,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
         val skipped = _state.value.parseWarnings.count {
             it.severity == ImportWarningSeverity.DROPPED
         }
-        return if (skipped == 0) report else report.copy(rowsSkipped = skipped)
+        return if (skipped == 0) report else report.copy(rowsSkipped = report.rowsSkipped + skipped)
     }
 
     // Fingerprint (not the full text: a 25k-question file is ~9MB and must
@@ -849,7 +862,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
      * streaming so the whole DTO tree never exists; smaller files keep the
      * exact whole-file path.
      */
-    fun loadJsonBytes(bytes: ByteArray) {
+    fun loadJsonBytes(bytes: ByteArray, fileName: String? = null) {
         viewModelScope.launch {
             // A flat bank can arrive under any extension, so classify by
             // content before the JSON parser sees it. Only small files are
@@ -857,7 +870,7 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             if (bytes.size <= JSON_STREAM_THRESHOLD_BYTES) {
                 val text = bytes.toString(Charsets.UTF_8)
                 if (CsvTsvParser.looksLikeCsvTsv(text)) {
-                    loadCsvTsv(text)
+                    loadCsvTsv(text, fileName)
                     return@launch
                 }
             }
@@ -893,7 +906,9 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * A JSON bank too large to hold as bytes. The Uri is re-opened for the
      * bounded preview and again for the streaming import, so the pick never
-     * has to fit in the heap.
+     * has to fit in the heap. A flat CSV/TSV bank above the text threshold
+     * cannot take this path; it is recognised from the head and refused with
+     * the CSV limit rather than failing as unreadable JSON.
      */
     fun loadJsonUri(uri: Uri) {
         viewModelScope.launch {
@@ -909,6 +924,23 @@ class ImportViewModel(application: Application) : AndroidViewModel(application) 
             loadedDirectFp = key
             try {
                 withContext(Dispatchers.Default) {
+                    // A flat bank above the text threshold reaches this path as
+                    // a URI. It cannot be streamed like JSON, and handing it to
+                    // the JSON reader reported "couldn't read that file" for a
+                    // perfectly valid CSV. Classify from the head and say what
+                    // the limit actually is.
+                    val head = resolver.openInputStream(uri)?.use { stream ->
+                        com.mcqapp.util.readPrefix(stream, CSV_HEAD_BYTES)
+                    }
+                    if (head != null &&
+                        CsvTsvParser.looksLikeCsvTsv(head.bytes.toString(Charsets.UTF_8))
+                    ) {
+                        loadedDirectFp = null
+                        _state.update {
+                            it.copy(loading = false, error = msg(R.string.of_csv_too_large))
+                        }
+                        return@withContext
+                    }
                     loadLargeJson(
                         open = {
                             resolver.openInputStream(uri)

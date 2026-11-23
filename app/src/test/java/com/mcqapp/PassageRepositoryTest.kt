@@ -250,6 +250,10 @@ class PassageRepositoryTest {
         repository.assignQuestionsToPassage(listOf("q1", "q2"), pid)
         repository.recordStudyReview("p1", "q1", ReviewGrade.GOOD, now = 1000L)
         repository.recordStudyReview("p1", "q2", ReviewGrade.GOOD, now = 1000L)
+        // The learner's own hide decisions are not grades: they must survive
+        // the content reset, or the card quietly reappears in Study.
+        com.mcqapp.data.repository.SuspendStore(db).suspend("p1", "q1")
+        com.mcqapp.data.repository.SuspendStore(db).bury("p1", "q2", 9_999L)
         assertNotNull(db.cardStateDao().get("p1", "q1"))
         assertNotNull(db.cardStateDao().get("p1", "q2"))
 
@@ -262,10 +266,16 @@ class PassageRepositoryTest {
             )
         )
 
-        // Both members learned the old body; one edit clears both schedules,
-        // and the review log stays.
-        assertEquals(null, db.cardStateDao().get("p1", "q1"))
-        assertEquals(null, db.cardStateDao().get("p1", "q2"))
+        // Both members learned the old body; one edit clears both schedules to
+        // NEW, and the review log stays. The flags stay too.
+        val q1State = db.cardStateDao().get("p1", "q1")!!
+        val q2State = db.cardStateDao().get("p1", "q2")!!
+        assertEquals(com.mcqapp.domain.CardStateKind.NEW, q1State.cardState)
+        assertEquals(com.mcqapp.domain.CardStateKind.NEW, q2State.cardState)
+        assertEquals(0, q1State.reps)
+        assertEquals(0, q2State.reps)
+        assertTrue("a suspended card must stay suspended", q1State.suspended)
+        assertEquals("a buried card keeps its deadline", 9_999L, q2State.buriedUntil)
         assertEquals(1, db.reviewLogDao().historyForQuestion("q1").size)
     }
 
@@ -291,6 +301,8 @@ class PassageRepositoryTest {
             )
         )
 
+        // The schedule is dropped (absent means NEW), so only a hidden card
+        // needs a flag-only row to keep its suspend/bury.
         assertEquals(null, db.cardStateDao().get("p1", "q1"))
     }
 

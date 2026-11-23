@@ -207,11 +207,22 @@ class WorkflowGuardTest {
     private fun blanketRefreshOffences(yaml: String): List<String> =
         regularGradleInvocations(yaml).filter { "--refresh-dependencies" in it }
 
+    /** Every prefix a cache step's `restore-keys` declares (inline or block form). */
+    private fun restorePrefixes(step: String): List<String> {
+        val regex = Regex(
+            """(?m)^[ \t]*restore-keys:[ \t]*(?:\|[ \t]*\n((?:[ \t]+\S[^\n]*\n?)*)|(\S+)[ \t]*)$"""
+        )
+        val match = regex.find(step) ?: return emptyList()
+        val body = match.groupValues[1].ifBlank { match.groupValues[2] }
+        return body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    }
+
     @Test
     fun onlyTheNightlyJobForcesDependencyRefresh() {
         // build.yml: one scheduled refresh, and every ordinary Gradle step
         // (build, lint, 4-way unit-test matrix, release build, UI test) relies
-        // on the refreshed cache plus the wrapper's retries.
+        // on the refreshed cache. The wrapper retries only the distribution
+        // download, so a transient plugin fetch on a PR is not retried here.
         val nightly = nightlyRefreshLine(build)
         assertTrue("build.yml: the nightly refresh Gradle step is missing", nightly != null)
         assertTrue(
@@ -263,13 +274,32 @@ class WorkflowGuardTest {
             )
             assertTrue(
                 "the cache must restore the latest nightly refresh:\n$step",
-                step.contains("restore-keys: gradle-nightly-")
+                "gradle-nightly-" in restorePrefixes(step)
             )
         }
         assertTrue(
             "exactly one job owns the nightly key — a parallel job saving under it would discard the refresh",
             cacheSteps.count { it.contains("key: gradle-nightly-\${{ github.run_id }}") } == 1
         )
+    }
+
+    /**
+     * A run-scoped save is only useful if a later run can restore it. The PR
+     * jobs saved under `gradle-run-<run_id>` but declared only the
+     * `gradle-nightly-` restore prefix, so those caches could never be hit.
+     */
+    @Test
+    fun runScopedGradleCachesAreRestorableByALaterRun() {
+        val cacheSteps = build.split(Regex("""\n[ \t]*- name:"""))
+            .filter { it.contains("uses: actions/cache@") }
+        val runKeyed = cacheSteps.filter { it.contains("key: gradle-run-") }
+        assertTrue("expected the PR jobs' run-scoped caches, got ${runKeyed.size}", runKeyed.isNotEmpty())
+        runKeyed.forEach { step ->
+            assertTrue(
+                "a cache saved under gradle-run- must be restored by a later run:\n$step",
+                "gradle-run-" in restorePrefixes(step)
+            )
+        }
     }
 
     /**

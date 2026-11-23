@@ -81,7 +81,7 @@ internal class PassageStore(
                 // member read which block.
                 val members = db.passageDao().memberIds(id)
                 if (members.isNotEmpty()) {
-                    db.cardStateDao().deleteByQuestionsChunked(members)
+                    resetMemberSchedules(members)
                     Logger.i("REPO", "savePassage($id): content changed, reset ${members.size} card(s)")
                 }
             }
@@ -154,7 +154,15 @@ internal class PassageStore(
             questionIds.forEach { db.passageDao().assignToMember(it, passageId) }
             questionIds.forEach { refreshContentHash(it) }
             val moved = before.values.filter { it.passageId != passageId }.map { it.id }
-            if (moved.isNotEmpty()) db.cardStateDao().deleteByQuestionsChunked(moved)
+            if (moved.isNotEmpty()) {
+                // The passage is part of the card's content hash, so the state
+                // needs the new hash — but the learner's suspend/bury flags
+                // must survive a context change, exactly like any other edit.
+                val newHashes = moved.associateWith { id ->
+                    db.questionDao().getById(id)?.let { mapper.contentHashOf(mapper.toDomain(it)) }
+                }
+                resetMemberSchedules(moved) { newHashes[it] }
+            }
             // Category first, placement second: placeWithGroup anchors within
             // the (new) category, so it must already be the passage's.
             if (passage != null) {
@@ -197,6 +205,27 @@ internal class PassageStore(
         val entity = db.questionDao().getById(questionId) ?: return
         val domain = mapper.toDomain(entity)
         db.questionDao().updateContentHash(questionId, mapper.contentHashOf(domain))
+    }
+
+    /**
+     * Resets the schedule of cards whose prompt changed. The row is dropped —
+     * absent is what "new" means everywhere else — except for the learner's own
+     * hide flags, which are re-created as a flag-only row: deleting it silently
+     * un-suspended or un-buried the card and removed it from the unsuspend list.
+     * [newHash] may supply the card's new content hash; null keeps the stored
+     * one (a passage-body edit does not change a member's own hash).
+     */
+    private suspend fun resetMemberSchedules(
+        memberIds: Collection<String>,
+        newHash: (String) -> String? = { null }
+    ) {
+        val hidden = db.cardStateDao().getForQuestionsChunked(memberIds.toList())
+            .filter { it.suspended || it.buriedUntil != null }
+        db.cardStateDao().deleteByQuestionsChunked(memberIds)
+        hidden.forEach { state ->
+            val hash = newHash(state.questionId) ?: state.contentHash
+            db.cardStateDao().upsert(state.resetForNewContent(hash))
+        }
     }
 
     /** Detaches every member of a passage (used before a guarded delete). */

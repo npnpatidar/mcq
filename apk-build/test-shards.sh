@@ -4,12 +4,19 @@
 #
 # With a durations file (one "<fqcn><TAB><millis>" line per class, produced by
 # `gradlew :app:writeTestDurations` from a prior JUnit XML run) classes are
-# partitioned greedily by measured cost — the slowest unassigned class goes to
-# the currently lightest shard. That replaces the old class-name ranges, which
-# put every slow guard/Robolectric class in one alphabetical corner and left a
-# different shard idle. Without the file (no manifest cached from a nightly or
-# main run yet) the original balanced-by-count range partitioning is kept; CI
-# calls the two-argument form explicitly in that case, and local runs always do.
+# partitioned by longest-processing-time-first: the heaviest classes are placed
+# first, each into the currently lightest shard. That replaces the old class-name
+# ranges, which put every slow guard/Robolectric class in one alphabetical corner
+# and left a different shard idle. Without the file (no manifest cached from a
+# nightly or main run yet) the original balanced-by-count range partitioning is
+# kept; CI calls the two-argument form explicitly in that case, and local runs
+# always do.
+#
+# An empty manifest is the same case: the probe stages `|| true`, so a failed
+# measurement can leave a 0-byte file cached. `-s` (not `-f`) keeps that file on
+# the balanced-by-count path — with no rows every class gets the same fallback
+# weight, the greedy split puts all of them in shard 0, and the other shards run
+# Gradle's whole suite unfiltered.
 set -eu
 idx=$1
 total=$2
@@ -30,7 +37,7 @@ classes=$(find "$test_root" -type f -name '*Test.kt' \
   | sed "s|^$test_root/||; s|\.kt$||; s|/|.|g" \
   | sort)
 
-if [ -n "$durations" ] && [ -f "$durations" ]; then
+if [ -n "$durations" ] && [ -s "$durations" ]; then
   tmp=$(mktemp)
   classfile=$(mktemp)
   trap 'rm -f "$tmp" "$classfile"' EXIT
@@ -52,7 +59,9 @@ if [ -n "$durations" ] && [ -f "$durations" ]; then
     { print $1 "\t" (($1 in w) ? w[$1] : def) }
   ' "$durations" "$classfile" > "$tmp"
 
-  awk -F '\t' -v total="$total" -v idx="$idx" '
+  # Longest-processing-time-first: heaviest first, so a 10-minute class cannot
+  # be "discovered late" into a shard that already holds the other heavy ones.
+  sort -t "$(printf '\t')" -k2,2nr "$tmp" | awk -F '\t' -v total="$total" -v idx="$idx" '
     { cls[NR]=$1; weight[NR]=$2; }
     END {
       for (b=0; b<total; b++) load[b]=0

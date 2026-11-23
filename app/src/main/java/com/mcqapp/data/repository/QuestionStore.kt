@@ -657,34 +657,71 @@ internal class QuestionStore(
         tags: List<String>?
     ) {
         // One transaction: a partial bulk edit must not apply to half the selection.
-        db.withTransaction {
-            // One COALESCE update per chunk replaces a getQuestion/saveQuestion
-            // round-trip per question; null binds keep the column, matching the
-            // null fields are kept contract. The tags pair travels together:
-            // the folded bind is the same CSV Kotlin-lowercased, so a bulk edit
-            // to a differently-cased or non-ASCII tag cannot leave the folded
-            // twin stale (see MIGRATION_17_18's contract).
-            val tagsCsv = tags?.joinToString(",")
-            if (tags != null) {
-                db.questionTagDao().deleteByQuestionsChunked(questionIds)
-                val rows = TagNormalizer.fromList(tags)
-                if (rows.isNotEmpty()) {
-                    db.questionTagDao().insertIgnore(
-                        questionIds.toList().flatMap { id ->
-                            rows.map { QuestionTagEntity(id, it.tag, it.folded) }
-                        }
-                    )
-                }
+        db.withTransaction { writeBulkFields(questionIds, marks, difficulty, tags) }
+    }
+
+    /**
+     * The write behind [bulkUpdateQuestions], split out so a caller that already
+     * owns a transaction (see [addTagToQuestions]) can reuse the exact same tag
+     * pair and column semantics instead of nesting transactions.
+     */
+    private suspend fun writeBulkFields(
+        questionIds: Collection<String>,
+        marks: Double?,
+        difficulty: Difficulty?,
+        tags: List<String>?
+    ) {
+        // One COALESCE update per chunk replaces a getQuestion/saveQuestion
+        // round-trip per question; null binds keep the column, matching the
+        // null fields are kept contract. The tags pair travels together:
+        // the folded bind is the same CSV Kotlin-lowercased, so a bulk edit
+        // to a differently-cased or non-ASCII tag cannot leave the folded
+        // twin stale (see MIGRATION_17_18's contract).
+        val tagsCsv = tags?.joinToString(",")
+        if (tags != null) {
+            db.questionTagDao().deleteByQuestionsChunked(questionIds)
+            val rows = TagNormalizer.fromList(tags)
+            if (rows.isNotEmpty()) {
+                db.questionTagDao().insertIgnore(
+                    questionIds.toList().flatMap { id ->
+                        rows.map { QuestionTagEntity(id, it.tag, it.folded) }
+                    }
+                )
             }
-            val count = db.questionDao().updateBulkFieldsChunked(
-                questionIds,
-                marks,
-                difficulty?.label,
-                tagsCsv,
-                tagsCsv?.lowercase()
-            )
-            Logger.i("REPO", "bulkUpdateQuestions($count ids)")
         }
+        val count = db.questionDao().updateBulkFieldsChunked(
+            questionIds,
+            marks,
+            difficulty?.label,
+            tagsCsv,
+            tagsCsv?.lowercase()
+        )
+        Logger.i("REPO", "bulkUpdateQuestions($count ids)")
+    }
+
+    /**
+     * Adds [tag] to every one of [questionIds] in ONE transaction, keeping each
+     * question's existing tags. `bulkUpdateQuestions` replaces the whole tag
+     * list, so tagging a pool used to be one write (and one transaction) per
+     * question: a crash half-way left the pool half-tagged, and a large "my
+     * mistakes" set paid a transaction per row.
+     */
+    suspend fun addTagToQuestions(questionIds: Collection<String>, tag: String): Int {
+        val wanted = questionIds.distinct()
+        if (wanted.isEmpty() || tag.isBlank()) return 0
+        var changed = 0
+        db.withTransaction {
+            // One read for the whole set; the merge is per question because the
+            // existing tag lists differ.
+            val questions = getQuestionsByIds(wanted)
+            for (question in questions) {
+                if (tag in question.tags) continue
+                writeBulkFields(listOf(question.id), null, null, question.tags + tag)
+                changed++
+            }
+        }
+        Logger.i("REPO", "addTagToQuestions($changed of ${wanted.size} ids, tag=$tag)")
+        return changed
     }
 
     /** Swaps the positions of two same-category questions. */

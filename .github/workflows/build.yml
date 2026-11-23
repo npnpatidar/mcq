@@ -8,11 +8,12 @@ on:
   # re-resolution on every step turned one transient plugin fetch or a Maven
   # 429 into a failed PR. This nightly run re-resolves against the repositories
   # on its own, so a stale-plugin or repository problem surfaces in a dedicated
-  # run instead of holding a branch; the wrapper's 60 s timeout and three
-  # retries cover the remaining blips (see gradle/wrapper/gradle-wrapper.properties).
-  # The refreshed metadata reaches the PR jobs through the shared rotating
-  # `gradle-nightly-` cache below — see the cache step in each job for why a
-  # run-scoped key is required for that to work.
+  # run instead of holding a branch. The wrapper's 60 s timeout and three
+  # retries cover the distribution download only — not plugin resolution — so a
+  # transient plugin fetch on a PR fails that step and is retried by the next
+  # push; the refreshed metadata reaches the PR jobs through the shared rotating
+  # cache below — see the cache step in each job for why a run-scoped key is
+  # required for that to work.
   schedule:
     - cron: '17 1 * * *' # 01:17 UTC = 06:47 IST, daily
 
@@ -126,7 +127,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-run-${{ github.run_id }}
-          restore-keys: gradle-nightly-
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -207,7 +213,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-run-${{ github.run_id }}
-          restore-keys: gradle-nightly-
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -225,7 +236,8 @@ jobs:
         # No aapt2 override: the bundled aapt2 runs natively on x86_64
         # (the override is only needed on ARM64 hosts with QEMU).
         # No --refresh-dependencies: the nightly job refreshes the shared
-        # cache, and the wrapper's retries cover a transient plugin fetch.
+        # cache. The wrapper does not retry plugin resolution, so a transient
+        # fetch here fails the step and the next push tries again.
         run: sh gradlew :app:assembleDebug --no-daemon
 
       - name: Lint
@@ -290,7 +302,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-run-${{ github.run_id }}
-          restore-keys: gradle-nightly-
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -375,7 +392,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-run-${{ github.run_id }}
-          restore-keys: gradle-nightly-
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -474,7 +496,12 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-run-${{ github.run_id }}
-          restore-keys: gradle-nightly-
+          # The nightly refresh first; a run-scoped cache saved by an earlier
+          # PR is restorable too (a save under a key no restore prefix matches
+          # would be dead weight and never speed up a later run).
+          restore-keys: |
+            gradle-nightly-
+            gradle-run-
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3

@@ -164,6 +164,11 @@ object CsvTsvParser {
                 skipped++
                 return@forEachIndexed
             }
+            val answerRaw = cell(row, "answer").trim()
+            // A file may carry an unsupported combined `options` column. The
+            // parser has no shape for it, so a row that actually uses it must
+            // be reported, not written as a blank flashcard.
+            val combinedOptions = cell(row, "options").trim()
             val optionTexts = listOf("a", "b", "c", "d").map { cell(row, it) }
             // Keep each option's original a-d position. `mapIndexedNotNull`
             // compresses the indices when a blank option is dropped, while the
@@ -178,7 +183,16 @@ object CsvTsvParser {
             }.toMap()
             val options = optionsByPosition.values.toList()
             if (options.isEmpty()) {
-                // A row with no options is a flashcard (front/back) — valid.
+                // No option columns. Without an answer key this is a flashcard
+                // (front/back) — valid. With a non-blank answer (or a populated
+                // combined `options` column) there is nothing the answer can
+                // name, and writing a blank card would silently discard it:
+                // skip the row and say so instead.
+                if (answerRaw.isNotEmpty() || combinedOptions.isNotEmpty()) {
+                    warnings += rowWarning(rowNumber)
+                    skipped++
+                    return@forEachIndexed
+                }
                 val explanationText = cell(row, "explanation")
                 questions += QuestionDto(
                     id = "csv-${index + 1}",
@@ -190,7 +204,6 @@ object CsvTsvParser {
                 )
                 return@forEachIndexed
             }
-            val answerRaw = cell(row, "answer").trim()
             val answerIndex = when (answerRaw.lowercase()) {
                 "a", "1" -> 0
                 "b", "2" -> 1
@@ -245,24 +258,41 @@ object CsvTsvParser {
 
     private fun hasHeader(cells: List<String>): Boolean {
         val normalized = cells.map { normalizeHeader(it) }
-        return "question" in normalized && ("answer" in normalized || "options" in normalized)
+        return "question" in normalized &&
+            ("answer" in normalized || "options" in normalized || "explanation" in normalized)
     }
 
+    /**
+     * Headers are matched loosely: bank exporters spell the same column
+     * `option a`, `option1`, `opt b`, `choice c` or `back`. Unmapped aliases do
+     * not just lose the column — `hasHeader` accepts `option1..4`, so a row
+     * whose answers named those options became a blank flashcard with no back
+     * and the answer was discarded.
+     */
     private fun normalizeHeader(raw: String): String = raw.trim().lowercase()
         .replace(Regex("[\\s_]+"), " ")
         .let { normalized ->
             when {
                 normalized == "question" || normalized == "questions" -> "question"
                 normalized == "answer" || normalized == "correct" || normalized == "correct answer" -> "answer"
-                normalized.startsWith("explain") -> "explanation"
-                normalized == "option a" || normalized == "a" -> "a"
-                normalized == "option b" || normalized == "b" -> "b"
-                normalized == "option c" || normalized == "c" -> "c"
-                normalized == "option d" || normalized == "d" -> "d"
+                normalized.startsWith("explain") || normalized == "back" -> "explanation"
                 normalized == "tags" || normalized == "tag" -> "tags"
-                else -> normalized
+                normalized == "a" || normalized == "b" ||
+                    normalized == "c" || normalized == "d" -> normalized
+                else -> OPTION_HEADER.matchEntire(normalized)?.groupValues?.get(1)?.let { letter ->
+                    when (letter) {
+                        "1" -> "a"
+                        "2" -> "b"
+                        "3" -> "c"
+                        "4" -> "d"
+                        else -> letter
+                    }
+                } ?: normalized
             }
         }
+
+    /** `option a` / `option1` / `opt b` / `choice c` (and the 1-4 numbers). */
+    private val OPTION_HEADER = Regex("""^(?:option|opt|choice)\s*([1-4a-d])$""")
 
     private fun splitTags(raw: String): List<String> = raw
         .split(';', '|')

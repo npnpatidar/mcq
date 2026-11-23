@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.data.io.CsvTsvParser
+import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -131,5 +132,79 @@ class CsvTsvParserTest {
         assertEquals("Q", CsvTsvParser.parseRows("\uFEFFQ,a,b\n")[0][0])
         assertFalse(CsvTsvParser.looksLikeCsvTsv("{\"papers\":[]}"))
         assertTrue(CsvTsvParser.looksLikeCsvTsv("question,answer\nQ,a\n"))
+    }
+
+    /**
+     * INCIDENT: `hasHeader` accepted `option1..4` / `options`, but
+     * `normalizeHeader` mapped only `a-d` and `option a-d`. Every option column
+     * was ignored, so the row became a blank flashcard with no back and the
+     * answer key was discarded without a warning.
+     */
+    @Test
+    fun numberedOptionColumnsAreMappedAndKeepTheAnswer() {
+        val text = "question,option1,option2,option3,option4,answer\n" +
+            "Capital of India?,Mumbai,New Delhi,Kolkata,Chennai,b\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue("clean file must not warn: ${result.warnings}", result.warnings.isEmpty())
+        val q = result.file.papers.single().categories.single().questions.single()
+        assertEquals(4, q.options.size)
+        assertEquals("New Delhi", q.options[1].text)
+        assertEquals(listOf("csv-1-b"), q.correctOptionIds)
+    }
+
+    @Test
+    fun abbreviatedAndChoiceOptionHeadersAreMapped() {
+        val text = "question,opt a,opt b,choice c,choice d,answer\n" +
+            "Pick,red,blue,green,yellow,c\n"
+        val q = CsvTsvParser.parse(text).file.papers.single().categories.single().questions.single()
+        assertEquals(4, q.options.size)
+        assertEquals(listOf("csv-1-c"), q.correctOptionIds)
+    }
+
+    /** A `back` column is the flashcard's back, exactly like `explanation`. */
+    @Test
+    fun questionAndExplanationHeaderBuildsAFlashcardBack() {
+        val text = "question,explanation\nWhat is FSRS?,A spaced-repetition scheduler.\n"
+        val q = CsvTsvParser.parse(text).file.papers.single().categories.single().questions.single()
+        assertTrue("a card with no options is a flashcard", q.options.isEmpty())
+        assertEquals("What is FSRS?", q.text)
+        assertEquals("A spaced-repetition scheduler.", q.explanation)
+        assertEquals(
+            listOf(ContentElement.TextElement("A spaced-repetition scheduler.")),
+            q.explanationElements
+        )
+    }
+
+    @Test
+    fun backHeaderIsTreatedAsTheFlashcardBack() {
+        val text = "question,back\nFront text,Back text\n"
+        val q = CsvTsvParser.parse(text).file.papers.single().categories.single().questions.single()
+        assertTrue(q.options.isEmpty())
+        assertEquals("Back text", q.explanation)
+    }
+
+    /**
+     * A non-blank answer with no option column has nothing to name. Writing a
+     * blank flashcard silently dropped the answer; skip it with a dropped row
+     * warning instead.
+     */
+    @Test
+    fun anAnswerWithNoOptionColumnsIsSkippedNotWrittenAsABlankCard() {
+        val text = "question,answer\nWhat is 2+2?,a\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue(
+            "the row must not become a blank card",
+            result.file.papers.single().categories.single().questions.isEmpty()
+        )
+        assertEquals(1, result.skippedRows)
+        assertEquals(1, result.warnings.size)
+    }
+
+    @Test
+    fun aCombinedOptionsColumnIsReportedInsteadOfWrittenAsABlankCard() {
+        val text = "question,options,answer\nPick one,red|blue,a\n"
+        val result = CsvTsvParser.parse(text)
+        assertTrue(result.file.papers.single().categories.single().questions.isEmpty())
+        assertEquals(1, result.skippedRows)
     }
 }

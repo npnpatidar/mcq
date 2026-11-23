@@ -19,8 +19,8 @@
 
     <!-- JSON/DOCX रीडर ने पार्स करते समय जो पंक्तियाँ छोड़ीं। -->
     <plurals name="data_honesty_rows_skipped">
-        <item quantity="one">• %1$d पंक्ति छोड़ी गई — आयात नोट्स देखें</item>
-        <item quantity="other">• %1$d पंक्तियाँ छोड़ी गईं — आयात नोट्स देखें</item>
+        <item quantity="one">• %1$d प्रविष्टि छोड़ी गई — आयात नोट्स देखें</item>
+        <item quantity="other">• %1$d प्रविष्टियाँ छोड़ी गईं — आयात नोट्स देखें</item>
     </plurals>
 
     <!-- हमारा लिखा बैकअप वही होना चाहिए जिसे हम पुनर्स्थापित कर सकें (SafeZip सीमाएँ)। -->

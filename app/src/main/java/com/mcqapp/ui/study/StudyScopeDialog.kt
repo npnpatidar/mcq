@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -63,7 +64,9 @@ internal fun StudyScopeDialog(
     LaunchedEffect(paperId, categoryIds) {
         tags = runCatching { loadTags(paperId, categoryIds) }.getOrDefault(emptyList())
     }
-    var choice by remember {
+    // Saveable: a rotation while the sheet is open must keep the learner's
+    // pending choice, not snap back to the route that is still active.
+    var choice by rememberSaveable {
         mutableStateOf(
             when {
                 currentMistakes -> ScopeChoice.MISTAKES
@@ -72,7 +75,7 @@ internal fun StudyScopeDialog(
             }
         )
     }
-    var selectedTag by remember { mutableStateOf(currentTag) }
+    var selectedTag by rememberSaveable { mutableStateOf(currentTag) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

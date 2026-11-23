@@ -219,6 +219,44 @@ class StudyConfirmGradeToggleSessionTest {
         assertEquals("Simplified's auto grade is unchanged", "AUTO", row.gradeSource)
     }
 
+    @Test
+    fun simplifiedDigitGradeChangeKeepsTheProposalGuessAndProvenance() {
+        runBlocking {
+            repository.setSimplifiedStudy(true)
+            repository.setConfirmGradeBeforeNext(false)
+        }
+        seed(question("q1"), question("q2"))
+        val vm = start()
+
+        // The keyboard's digit action for Simplified is changeGrade: Check has
+        // already staged the auto proposal, so the digit edits it rather than
+        // writing a CHOSEN row that drops both the guess and the proposal.
+        vm.setGuess(true)
+        vm.toggleOption("q1-a")
+        vm.check()
+        assertEquals(ReviewGrade.AGAIN, vm.state.value.pendingGrade)
+        assertEquals(ReviewGrade.AGAIN, vm.state.value.proposedGrade)
+
+        vm.changeGrade(ReviewGrade.EASY)
+        assertEquals(ReviewGrade.EASY, vm.state.value.pendingGrade)
+        assertEquals(
+            "the app's original proposal must be kept",
+            ReviewGrade.AGAIN,
+            vm.state.value.proposedGrade
+        )
+        assertTrue(vm.state.value.gradeEdited)
+        assertEquals(0, runBlocking { reviews("q1").size })
+
+        vm.next()
+        assertTrue(awaitCondition { runBlocking { reviews("q1").size } == 1 })
+        val row = runBlocking { reviews("q1") }.single()
+        assertEquals("the corrected grade is stored", 4, row.rating)
+        assertEquals("the app's proposal is stored beside it", 1, row.proposedRating)
+        assertEquals(true, row.wasGuess)
+        assertEquals("EDITED", row.gradeSource)
+        assertEquals(true, row.wasCorrect)
+    }
+
     /**
      * The regression from 0.0.66: staging a Simplified self-graded grade ran
      * the simplified commit path, which recorded a made-up correctness and

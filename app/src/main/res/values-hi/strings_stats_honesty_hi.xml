@@ -4,6 +4,7 @@
     <string name="stats_honest_headline_title">सच्ची स्मरण क्षमता, ईमानदारी से</string>
     <string name="stats_honest_headline_value">%1$s परिपक्व सच्ची स्मरण क्षमता · केवल वस्तुनिष्ठ उत्तर</string>
     <string name="stats_honest_headline_gap">लक्ष्य %1$s · लक्ष्य की तुलना में %2$s</string>
+    <string name="stats_honest_headline_points">%1$s अंक</string>
     <string name="stats_honest_headline_reviews" tools:ignore="PluralsCandidate">%1$d वस्तुनिष्ठ परिपक्व समीक्षाओं के आधार पर</string>
     <string name="stats_honest_headline_empty">अभी पर्याप्त वस्तुनिष्ठ परिपक्व समीक्षाएँ नहीं हैं</string>
     <string name="stats_honest_headline_help">केवल उन परिपक्व कार्डों को गिना जाता है जिनका सही या गलत उत्तर दर्ज है। स्व-आंकलित, अनुमान लगाए गए और छोड़े गए उत्तर शामिल नहीं हैं।</string>

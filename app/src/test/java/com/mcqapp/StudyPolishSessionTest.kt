@@ -52,7 +52,7 @@ class StudyPolishSessionTest {
         return condition()
     }
 
-    private fun question(id: String) = com.mcqapp.domain.Question(
+    private fun question(id: String, tags: List<String> = emptyList()) = com.mcqapp.domain.Question(
         id = id,
         categoryId = "c1",
         text = "Q $id?",
@@ -60,7 +60,8 @@ class StudyPolishSessionTest {
             com.mcqapp.domain.QuestionOption("$id-a", "A"),
             com.mcqapp.domain.QuestionOption("$id-b", "B")
         ),
-        correctOptionIds = setOf("$id-a")
+        correctOptionIds = setOf("$id-a"),
+        tags = tags
     )
 
     private fun field(name: String, vm: StudyViewModel): Any? =
@@ -116,10 +117,61 @@ class StudyPolishSessionTest {
         )
     }
 
+    /**
+     * A tag/mistake sitting serves a snapshot resolved with the new-card toggle
+     * off. Taking the empty-state offer must re-resolve that snapshot, or the
+     * sitting stays empty after the setting flips.
+     */
+    @Test
+    fun enablingNewCardsInATagScopeServesItsFreshCard() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("q1", tags = listOf("Physics")))
+            repository.setSchedulerConfig(
+                repository.schedulerConfigNow().copy(introduceNewCards = false)
+            )
+        }
+        val vm = StudyViewModel(app, "p1", tag = "physics")
+        assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.finished })
+        assertEquals(
+            "a tag scope covering the whole paper still says so",
+            EmptyReason.NothingDueInScope,
+            vm.state.value.emptyReason
+        )
+        assertTrue("the scoped fresh card exists behind the toggle", vm.state.value.freshAvailable)
+
+        vm.enableNewCards()
+        assertTrue(
+            "state=${vm.state.value} — the scoped sitting must re-resolve its pool",
+            awaitCondition { vm.state.value.current?.questionId == "q1" }
+        )
+    }
+
+    /**
+     * The empty-state offer must ask about the scope, not the paper: a fresh
+     * question outside a tag had the old paper-wide eligibility read offering a
+     * flip that could not serve anything in this sitting.
+     */
+    @Test
+    fun aScopedEmptySessionDoesNotOfferNewCardsOutsideTheScope() {
+        runBlocking {
+            repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
+            repository.saveQuestion(question("inside", tags = listOf("Physics")))
+            repository.saveQuestion(question("outside"))
+            repository.recordStudyReview("p1", "inside", ReviewGrade.GOOD)
+        }
+        val vm = StudyViewModel(app, "p1", tag = "physics")
+        assertTrue("state=${vm.state.value}", awaitCondition { vm.state.value.finished })
+        assertEquals(EmptyReason.NothingDueInScope, vm.state.value.emptyReason)
+        assertFalse(
+            "the fresh card outside the tag must not be offered",
+            vm.state.value.freshAvailable
+        )
+    }
+
     /** A break banks both clocks and parks answering, but keeps the sitting open. */
     @Test
-    fun takeBreakBanksBothClocksAndResumeKeepsTheSittingOpen() {
-        runBlocking {
+    fun takeBreakBanksBothClocksAndResumeKeepsTheSittingOpen() {        runBlocking {
             repository.ensurePaperAndCategory("p1", "Paper", "c1", "Cat")
             repository.saveQuestion(question("q1"))
             repository.saveQuestion(question("q2"))

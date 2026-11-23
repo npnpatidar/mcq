@@ -14,6 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /** Pure-JVM coverage for the tag/mistake study scope model. */
 class StudyScopeTest {
@@ -79,6 +80,16 @@ class StudyScopeTest {
                 choice = StudyScopeMenuChoice.WHOLE,
                 foldedTag = "physics"
             )
+        )
+    }
+
+    @Test
+    fun theScopeSheetKeepsAPendingChoiceAcrossRotation() {
+        val dialog = File("src/main/java/com/mcqapp/ui/study/StudyScopeDialog.kt").readText()
+        assertTrue(
+            "both the chip choice and the picked tag must survive rotation",
+            dialog.contains("var choice by rememberSaveable {") &&
+                dialog.contains("var selectedTag by rememberSaveable { mutableStateOf(currentTag) }")
         )
     }
 

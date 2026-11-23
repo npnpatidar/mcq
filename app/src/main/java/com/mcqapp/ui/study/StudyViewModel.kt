@@ -677,22 +677,36 @@ class StudyViewModel(
     }
 
     /**
-     * Resolves a tag/mistake pool from live data, in the source's order: the
-     * tag index's authored `(sortOrder, rowid)` order, or the standings'
-     * most-recently-missed-first order. Both load and "Study again" call this
-     * — a fixed snapshot would replay a card suspended mid-sitting, or a
-     * question that is no longer wrong. The ids stay a List: a HashSet here
-     * used to scramble the authored order of the tag's new cards.
+     * The question ids a tag or mistake scope may serve, in the source's order:
+     * the tag index's authored `(sortOrder, rowid)` order, or the standings'
+     * most-recently-missed-first order. Split out so the empty-state fresh
+     * probe and the queue resolver ask the same scope the same question.
      */
-    private suspend fun resolveScopedDrillCards(): List<StudyCard> {
-        val allowed: List<String> = when (studyScope.kind) {
+    private suspend fun resolveScopedAllowedIds(): List<String> =
+        when (studyScope.kind) {
             com.mcqapp.domain.StudyScopeKind.TAG ->
                 repository.questionIdsForStudyTagInScope(paperId, scopeIds, studyScope.tag)
             com.mcqapp.domain.StudyScopeKind.MISTAKES ->
                 mistakeIdsInScope(repository.getMistakenQuestions(paperId), scopeIds)
             else -> emptyList()
         }
-        return repository.getStudyQueueForQuestions(paperId, allowed)
+
+    private suspend fun resolveScopedDrillCards(): List<StudyCard> =
+        repository.getStudyQueueForQuestions(paperId, resolveScopedAllowedIds())
+
+    /**
+     * Whether a restricted (tag/mistake) empty sitting has a new card behind the
+     * off toggle. The paper-wide eligibility read would answer for questions
+     * outside the scope, so the offer used to appear with nothing it could
+     * actually serve. The scoped queue keeps the same authored order the real
+     * sitting uses.
+     */
+    private suspend fun scopedFreshAvailable(): Boolean {
+        val allowed = resolveScopedAllowedIds()
+        if (allowed.isEmpty()) return false
+        return repository
+            .getStudyQueueForQuestions(paperId, allowed, introduceNewCards = true)
+            .any { it.reason == StudyReason.NEW }
     }
 
     /** Re-runs a failed load after the user asks for it. */
@@ -847,6 +861,12 @@ class StudyViewModel(
                 )
             }
             clockPausedByUser = false
+            // A new card resumes as soon as it is served when the session
+            // already considers it on screen, instead of depending on the
+            // re-composed body's visibility effect being the next thing to run.
+            // The gate still refuses a card that is off screen, revealed, or
+            // paused by the learner.
+            resumeQuestionClock()
             refreshPreviews(exposures)
             publishDwell()
             // Re-anchor the ticker on the card's own start: a ticker launched
@@ -866,13 +886,25 @@ class StudyViewModel(
                 // Ask as if new cards were on: the empty state offers exactly
                 // that flip, and the toggle being off is what emptied the
                 // session — counting under the off flag would always say no.
-                freshAvailable = repository
-                    .getStudyEligibility(paperId, introduceNewCards = true, categoryIds = scopeIds)
-                    .fresh > 0
+                // A tag/mistake scope must be asked about its own pool: the
+                // paper-wide read offered the flip when only cards outside the
+                // scope were fresh, and the sitting stayed empty after taking it.
+                freshAvailable = if (studyScope.isRestricted) {
+                    scopedFreshAvailable()
+                } else {
+                    repository.getStudyEligibility(
+                        paperId,
+                        introduceNewCards = true,
+                        categoryIds = scopeIds
+                    ).fresh > 0
+                }
             } catch (e: Exception) {
                 Logger.e("STUDY", "getStudyEligibility failed", e)
             }
         }
+        // A tag or mistake scope is a restriction even when it covers the whole
+        // paper (empty categoryIds), so its empty copy must name the scope.
+        val scoped = scopeIds.isNotEmpty() || studyScope.isRestricted
         // The sitting is over even though nobody pressed anything: freeze both
         // clocks here, or the summary's total keeps ticking while it is read.
         pauseQuestionClock()
@@ -903,9 +935,9 @@ class StudyViewModel(
                 finished = true,
                 emptyReason = when {
                     it.reviewed > 0 -> EmptyReason.None
-                    leechesOnly && scopeIds.isNotEmpty() -> EmptyReason.NothingTrickyInScope
+                    leechesOnly && scoped -> EmptyReason.NothingTrickyInScope
                     leechesOnly -> EmptyReason.NothingTricky
-                    scopeIds.isNotEmpty() -> EmptyReason.NothingDueInScope
+                    scoped -> EmptyReason.NothingDueInScope
                     else -> EmptyReason.NothingDue
                 },
                 freshAvailable = freshAvailable
@@ -1297,6 +1329,9 @@ class StudyViewModel(
      */
     fun next() {
         val current = _state.value
+        // A grade already landed before the next-card pull failed: the review is
+        // on disk, so Next must not write it a second time.
+        if (current.gradedAndStuck) return
         val question = current.question ?: return
         val proposed = current.pendingGrade ?: return
         if (!current.stagedGrading || !current.revealed) return
@@ -1394,6 +1429,9 @@ class StudyViewModel(
      */
     fun grade(grade: ReviewGrade) {
         val current = _state.value
+        // A previous write for this card already succeeded (only the pull
+        // failed): another grade would append a second review_log row.
+        if (current.gradedAndStuck) return
         val question = current.question ?: return
         // Claim the card before launching: the write is async, so a second tap
         // would otherwise persist two reviews for the same question.
@@ -1890,6 +1928,14 @@ class StudyViewModel(
                         onBreak = false,
                         justFlaggedLeech = false
                     )
+                }
+                // A tag/mistake sitting serves a snapshot resolved at load with
+                // the old toggle off, so flipping the setting alone would leave
+                // this scoped session empty. Re-resolve its pool from live data
+                // before the pull; the whole-paper session pulls live already.
+                if (studyScope.isRestricted) {
+                    drillCards = resolveScopedDrillCards()
+                    drillIndex = 0
                 }
                 pullCard()
                 _state.update { it.copy(loading = false) }

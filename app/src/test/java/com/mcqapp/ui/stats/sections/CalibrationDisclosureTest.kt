@@ -1,5 +1,6 @@
 package com.mcqapp.ui.stats.sections
 
+import com.mcqapp.R
 import com.mcqapp.domain.stats.Calibration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,6 +59,42 @@ class CalibrationDisclosureTest {
                 refitInEpoch = refit
             ),
             hardUnderpowered = false
+        )
+    }
+
+    @Test
+    fun emptyCalibrationExplainsTimedGradingOnlyUnderThatRule() {
+        assertEquals(
+            R.string.stats_calibration_empty_timed,
+            calibrationEmptyRes(samples = 0, timeBasedGrading = true)
+        )
+        assertEquals(
+            "correctness-only keeps the existing line",
+            R.string.stats_calibration_empty,
+            calibrationEmptyRes(samples = 0, timeBasedGrading = false)
+        )
+        assertEquals(
+            "a non-empty sample never shows an empty line",
+            R.string.stats_calibration_empty,
+            calibrationEmptyRes(samples = 3, timeBasedGrading = true)
+        )
+        val english = File("src/main/res/values/strings.xml").readText()
+        val hindi = File("src/main/res/values-hi/strings_hi_5.xml").readText()
+        for (file in listOf(english, hindi)) {
+            assertTrue(
+                "the timed line must exist in every locale",
+                file.contains("name=\"stats_calibration_empty_timed\"")
+            )
+        }
+        assertTrue(
+            "the timed line must point at the switch that fixes the gate",
+            english.contains("Grade on correctness only") &&
+                hindi.contains("केवल सही-गलत के आधार पर ग्रेड करें")
+        )
+        val src = File("src/main/java/com/mcqapp/ui/stats/sections/RetentionSection.kt").readText()
+        assertTrue(
+            src,
+            src.contains("calibrationEmptyRes(calibration.samples, bundle.timeBasedGrading)")
         )
     }
 

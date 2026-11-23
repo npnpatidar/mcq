@@ -4,6 +4,7 @@
     <string name="stats_honest_headline_title">True retention, honestly</string>
     <string name="stats_honest_headline_value">%1$s mature true retention · objective answers only</string>
     <string name="stats_honest_headline_gap">Target %1$s · %2$s against target</string>
+    <string name="stats_honest_headline_points">%1$s points</string>
     <string name="stats_honest_headline_reviews" tools:ignore="PluralsCandidate">Based on %1$d objective mature reviews</string>
     <string name="stats_honest_headline_empty">Not enough objective mature reviews yet</string>
     <string name="stats_honest_headline_help">Only mature cards with a recorded right or wrong answer count. Self-graded, guessed and skipped rows are left out.</string>

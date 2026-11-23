@@ -126,10 +126,12 @@ private fun HonestHeadlineCard(bundle: OverviewData) {
     }
 }
 
-/** A signed difference in percentage points, e.g. "-3 pts" or "+2 pts". */
+/** A signed difference in percentage points, e.g. "+3 points" or "-2 points". */
+@Composable
 private fun signedPoints(value: Double): String {
     val points = (value * 100).roundToInt()
-    return if (points >= 0) "+$points pts" else "$points pts"
+    val signed = if (points >= 0) "+$points" else "$points"
+    return stringResource(R.string.stats_honest_headline_points, signed)
 }
 
 @Composable

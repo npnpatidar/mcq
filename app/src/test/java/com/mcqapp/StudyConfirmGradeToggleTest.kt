@@ -102,12 +102,16 @@ class StudyConfirmGradeToggleTest {
     fun keyboardGradingRespectsSimplifiedsExemptionFromTheOptIn() {
         // The digit-key path used `state.confirmGradeBeforeNext` alone, so with
         // the opt-in on a Simplified card a digit restaged the grade and flipped
-        // AUTO/CHOSEN provenance. It must share the pure, tested decision seam.
+        // AUTO/CHOSEN provenance. It must share the pure, tested decision seam,
+        // and Simplified's keyed card must edit Check's proposal instead of
+        // writing a CHOSEN row that drops the guess flag.
         assertTrue(
             "gradeByKey must use the pure decision, not the raw toggle",
-            screen.contains(
-                "StudyKeyboard.gradeKeyStages(state.simplified, state.confirmGradeBeforeNext)"
-            )
+            screen.contains("StudyKeyboard.digitGradeAction(")
+        )
+        assertTrue(
+            "Simplified digits must change the staged proposal",
+            screen.contains("StudyDigitGrade.CHANGE -> viewModel.changeGrade(grade)")
         )
         assertFalse(
             "the raw toggle must no longer drive the keyboard grade path",

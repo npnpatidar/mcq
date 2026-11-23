@@ -2144,7 +2144,12 @@ object StatsAggregator {
                 counts[0]++
                 counts[bucket + 1]++
             }
-            if (state.dueAt != 0L && state.dueAt < todayStart) {
+            // Study refuses to serve a suspended card, and a buried one is
+            // hidden until its boundary passes. Neither is work the learner owes
+            // right now, so neither belongs in the overdue backlog.
+            val hidden = state.suspended ||
+                (state.buriedUntil != null && state.buriedUntil > now)
+            if (!hidden && state.dueAt != 0L && state.dueAt < todayStart) {
                 val age = floor((now - state.dueAt).toDouble() / DayBoundary.DAY_MS).toInt()
                     .coerceAtLeast(0)
                 overdue++

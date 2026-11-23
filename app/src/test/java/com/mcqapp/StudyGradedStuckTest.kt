@@ -202,6 +202,36 @@ class StudyGradedStuckTest {
     }
 
     @Test
+    fun nextWithAStuckGradeDoesNotWriteItTwice() {
+        seedOverdueRelearningAndFresh()
+        val viewModel = StudyViewModel(app, "p1")
+        assertTrue(
+            "state=${viewModel.state.value}",
+            awaitCondition { viewModel.state.value.current != null }
+        )
+        val before = runBlocking { reviewLogCount("q1") }
+
+        viewModel.toggleOption("q1-a")
+        viewModel.check()
+        assertEquals(ReviewGrade.GOOD, viewModel.state.value.pendingGrade)
+        markGradedAndStuck(viewModel)
+
+        // Before the fix next() claimed the card and launched a second write;
+        // the grade is already on disk, so it must refuse before that claim.
+        viewModel.next()
+        assertFalse("Next must not start a second write", viewModel.state.value.grading)
+        repeat(50) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        assertEquals(
+            "the already-persisted review must not be appended again",
+            before,
+            runBlocking { reviewLogCount("q1") }
+        )
+    }
+
+    @Test
     fun loadNextRecoversFromTheStuckStateWithoutRegrading() {
         seedOverdueRelearningAndFresh()
         val viewModel = StudyViewModel(app, "p1")

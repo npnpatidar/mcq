@@ -74,7 +74,9 @@ class StatsHonestyGuardTest {
         paperId: String = "p1",
         state: CardStateKind = CardStateKind.REVIEW,
         dueAt: Long = 0L,
-        intervalDays: Int = 30
+        intervalDays: Int = 30,
+        suspended: Boolean = false,
+        buriedUntil: Long? = null
     ) = CardSnapshot(
         paperId = paperId,
         state = CardState(
@@ -83,7 +85,9 @@ class StatsHonestyGuardTest {
             difficulty = 5.0,
             intervalDays = intervalDays,
             dueAt = dueAt,
-            state = state
+            state = state,
+            suspended = suspended,
+            buriedUntil = buriedUntil
         )
     )
 
@@ -233,8 +237,31 @@ class StatsHonestyGuardTest {
         )
     }
 
-    // --- 6. lapses, not first-day stumbles ----------------------------------
+    @Test
+    fun suspendedAndBuriedCardsLeaveTheCardsOverdueBacklog() {
+        val overdueAt = todayStart - day
+        val bundle = build(
+            cards = listOf(
+                card("owed", dueAt = overdueAt),
+                card("suspended", dueAt = overdueAt, suspended = true),
+                card("buried", dueAt = overdueAt, buriedUntil = now + day),
+                // A bury that already expired is back in Study, so it counts.
+                card("unburied", dueAt = overdueAt, buriedUntil = now - hour)
+            )
+        )
+        // Study refuses a suspended card and hides a buried one, so neither is
+        // work the learner owes; the overdue backlog must say the same.
+        assertEquals(2, bundle.overdueAge.overdue)
+        // The aggregator can only see the flags if the store maps them; the
+        // entity -> domain copy is the other half of this fix.
+        val store = File("src/main/java/com/mcqapp/data/repository/StatsStore.kt").readText()
+        assertTrue(
+            store,
+            store.contains("suspended = suspended") && store.contains("buriedUntil = buriedUntil")
+        )
+    }
 
+    // --- 6. lapses, not first-day stumbles ----------------------------------
     @Test
     fun learningStepFailuresDoNotMakeACardMostForgotten() {
         val stumbles = listOf(
@@ -403,6 +430,7 @@ class StatsHonestyGuardTest {
             listOf(
                 "stats_honest_headline_value", "stats_honest_headline_gap",
                 "stats_honest_headline_reviews", "stats_calibration_honest_note",
+                "stats_honest_headline_points",
                 "stats_forecast_help_aligned", "stats_chart_small_buckets",
                 "stats_guess_empty_self_graded", "stats_tests_family_row_unweighted",
                 "stats_exam_kpi_average_pooled"

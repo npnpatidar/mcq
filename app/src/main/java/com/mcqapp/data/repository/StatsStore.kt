@@ -853,7 +853,12 @@ internal class StatsStore(
         stability = stability,
         stabilityFast = stabilityFast,
         state = cardState,
-        reviewCount = reviewCount
+        reviewCount = reviewCount,
+        // The hidden flags are schedule state, not statistics scope. Kept here
+        // so the Cards tab can leave a suspended or buried card out of its
+        // overdue backlog: Study refuses to serve it, so it is not work owed.
+        suspended = suspended,
+        buriedUntil = buriedUntil
     )
 
     private companion object {

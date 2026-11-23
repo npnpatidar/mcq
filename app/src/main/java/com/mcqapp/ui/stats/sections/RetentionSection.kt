@@ -248,6 +248,21 @@ private fun notYetLine(suggestion: Calibration.CutSuggestion): String =
         )
     }
 
+/**
+ * The empty calibration card's line. Under timed grading an install can have
+ * plenty of reviews and still no calibration sample, because a clock-tinted
+ * row is not an objective right-or-wrong answer; the generic "needs cards with
+ * a memory state" line then describes the wrong gate. Kept as a pure resource
+ * choice so the branch is JVM-testable.
+ */
+@StringRes
+internal fun calibrationEmptyRes(samples: Int, timeBasedGrading: Boolean): Int =
+    if (samples == 0 && timeBasedGrading) {
+        R.string.stats_calibration_empty_timed
+    } else {
+        R.string.stats_calibration_empty
+    }
+
 @Composable
 private fun CalibrationCard(bundle: RetentionData) {
     val calibration = bundle.calibration
@@ -262,7 +277,7 @@ private fun CalibrationCard(bundle: RetentionData) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (calibration.samples == 0) {
-            ChartEmpty(R.string.stats_calibration_empty)
+            ChartEmpty(calibrationEmptyRes(calibration.samples, bundle.timeBasedGrading))
             return@ChartCard
         }
         CalibrationChart(

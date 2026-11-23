@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -107,6 +106,7 @@ import com.mcqapp.domain.isFlashcard
 import com.mcqapp.ui.StudyViewModelFactory
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.rememberHaptics
+import com.mcqapp.ui.importscreen.displayTitle
 import com.mcqapp.ui.theme.GradePalette
 import com.mcqapp.ui.theme.clockBandColors
 import com.mcqapp.ui.theme.gradePaletteFor
@@ -279,8 +279,12 @@ fun StudyScreen(
         val action = StudyKeyboard.action(
             key = key,
             revealed = state.revealed,
-            staged = state.pendingGrade != null,
-            canGrade = !state.grading && !state.onBreak,
+            staged = state.pendingGrade != null && !state.gradedAndStuck,
+            canGrade = !state.grading && !state.onBreak && !state.gradedAndStuck,
+            // Simplified's keyed card is answered by Check, which also stages
+            // the grade; Space must not reveal it into an ungradeable card.
+            // A self-graded card still uses Space as Show answer.
+            revealAllowed = !state.simplified || state.selfGraded,
             onBreak = state.onBreak
         )
         when (action) {
@@ -413,17 +417,23 @@ fun StudyScreen(
                     },
                     onSaveMistakes = {
                         scope.launch {
-                            val wrong = repository.getMistakenQuestions(paperId)
-                            wrong.forEach { q ->
-                                repository.bulkUpdateQuestions(
-                                    listOf(q.id), null, null,
-                                    (q.tags + com.mcqapp.ui.library.LibraryViewModel.MISTAKES_POOL_TAG)
-                                        .distinct()
+                            // One transaction for the whole pool (`addTagToQuestions`),
+                            // not a write per question: a crash used to leave half
+                            // the pool tagged. A failure says so instead of
+                            // announcing a success the bank does not hold.
+                            try {
+                                val wrong = repository.getMistakenQuestions(paperId)
+                                repository.addTagToQuestions(
+                                    wrong.map { it.id },
+                                    com.mcqapp.ui.library.LibraryViewModel.MISTAKES_POOL_TAG
                                 )
+                                announcer.announce(
+                                    resources.getString(R.string.of_mistakes_pool_saved, wrong.size)
+                                )
+                            } catch (e: Exception) {
+                                com.mcqapp.util.Logger.e("STUDY", "Saving the mistakes pool failed", e)
+                                announcer.announce(resources.getString(R.string.of_mistakes_pool_failed))
                             }
-                            announcer.announce(
-                                resources.getString(R.string.of_mistakes_pool_saved, wrong.size)
-                            )
                         }
                     },
                     onDismiss = { showScopeDialog = false }
@@ -436,14 +446,22 @@ fun StudyScreen(
 /**
  * Space/1-4 grading honours the app's optional confirm-before-next setting in
  * Classic only. Simplified ignores the toggle: Check already staged its auto
- * grade and Change grade owns edits, so a digit must not restage it through
- * [StudyViewModel.stageGrade] and flip AUTO/CHOSEN provenance.
+ * grade, so a digit edits that proposal through [StudyViewModel.changeGrade]
+ * and Next commits it — preserving the app's proposal, the guess flag and the
+ * AUTO/EDITED provenance. A Simplified self-graded card has no Check and no
+ * proposal, so its digits still grade in one tap.
  */
 private fun gradeByKey(viewModel: StudyViewModel, state: StudyUiState, grade: ReviewGrade) {
-    if (StudyKeyboard.gradeKeyStages(state.simplified, state.confirmGradeBeforeNext)) {
-        viewModel.stageGrade(grade)
-    } else {
-        viewModel.grade(grade)
+    when (
+        StudyKeyboard.digitGradeAction(
+            simplified = state.simplified,
+            confirmGradeBeforeNext = state.confirmGradeBeforeNext,
+            selfGraded = state.selfGraded
+        )
+    ) {
+        StudyDigitGrade.STAGE -> viewModel.stageGrade(grade)
+        StudyDigitGrade.CHANGE -> viewModel.changeGrade(grade)
+        StudyDigitGrade.GRADE -> viewModel.grade(grade)
     }
 }
 
@@ -1044,7 +1062,11 @@ private fun StudyStickyHeader(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        state.paperTitle,
+                        // The stored title may be the importer's fallback
+                        // token ("Imported Questions"); resolve it for display
+                        // in the active locale, exactly as the import screen
+                        // and the library card do.
+                        displayTitle(state.paperTitle),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -1079,15 +1101,11 @@ private fun StudyStickyHeader(
                         )
                     }
                 }
-                IconButton(
-                    onClick = onOpenScope,
-                    modifier = Modifier.testTag("study-scope")
-                ) {
-                    Icon(
-                        Icons.Default.Tune,
-                        contentDescription = stringResource(R.string.of_study_scope)
-                    )
-                }
+                // The scope picker lives in the same overflow as the card
+                // actions. A fifth top-bar icon squeezed the paper title to
+                // zero width on a 320 dp phone (the header keeps back, actions,
+                // bookmark and Done), so the session-level choice moved behind
+                // the icon that already holds session-level actions.
                 // Card actions live behind one overflow so the header keeps its
                 // bookmark and Done controls. Suspend and bury act on the card
                 // on screen without writing a grade; the last item opens the
@@ -1095,7 +1113,10 @@ private fun StudyStickyHeader(
                 Box {
                     IconButton(
                         onClick = { cardMenuExpanded = true },
-                        enabled = state.question != null,
+                        // Enabled even with no card: the menu's first item is
+                        // the study scope, which must stay reachable from an
+                        // empty sitting. The card items gate themselves on
+                        // studyCanActOnCard below.
                         modifier = Modifier.testTag("study-card-actions")
                     ) {
                         Icon(
@@ -1108,6 +1129,14 @@ private fun StudyStickyHeader(
                         onDismissRequest = { cardMenuExpanded = false },
                         modifier = Modifier.testTag("study-card-actions-menu")
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.of_study_scope)) },
+                            onClick = {
+                                cardMenuExpanded = false
+                                onOpenScope()
+                            },
+                            modifier = Modifier.testTag("study-scope")
+                        )
                         // A card action hides this card and pulls the next, so
                         // it must stand down while a grade is in flight or only
                         // staged — otherwise a tap loses the learner's decision.

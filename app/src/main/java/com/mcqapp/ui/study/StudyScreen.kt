@@ -538,9 +538,13 @@ private fun StudyBody(
         // former option back into view and apply its offset to the new scroll
         // state, and the single geometry read would stick as "hidden".
         focusManager.clearFocus(force = true)
+        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} before=${scrollState.value}")
         scrollState.scrollTo(0)
+        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} after=${scrollState.value}")
         withFrameNanos { }
+        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} frame=${scrollState.value} onScreen=$questionOnScreen")
         reportVisibility()
+        com.mcqapp.util.Logger.i("STUDY", "reset ${question.id} reported=${scrollState.value} onScreen=$questionOnScreen")
     }
     if (state.simplified) {
         // Like test mode: the question scrolls, but Check, Guess and Next live

@@ -173,7 +173,10 @@ class StudyPolishStructureGuardTest {
             "no post-pull justFlaggedLeech = true write may linger",
             viewModel.contains("justFlaggedLeech = true")
         )
-        assertTrue(screen.contains("LaunchedEffect(state.justFlaggedLeech)"))
+        assertTrue(
+            "consecutive crossings must re-announce on the newly served card",
+            screen.contains("LaunchedEffect(state.current?.questionId, state.justFlaggedLeech)")
+        )
         assertTrue(screen.contains("announcer.announce(leechNoticeMessage)"))
     }
 

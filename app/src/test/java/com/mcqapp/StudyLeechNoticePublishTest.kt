@@ -104,17 +104,20 @@ class StudyLeechNoticePublishTest {
         assertEquals(ReviewGrade.AGAIN, vm.state.value.pendingGrade)
         vm.next()
 
-        assertTrue(
-            "the graded pull must reach the published gate",
-            awaitCondition { gate.reached.isCompleted }
-        )
-        assertEquals("q2", vm.state.value.current?.questionId)
-        assertTrue(
-            "the crossing notice must be published with the card, not in a later update",
-            vm.state.value.justFlaggedLeech
-        )
-
-        gate.release.complete(Unit)
+        try {
+            assertTrue(
+                "the graded pull must reach the published gate",
+                awaitCondition { gate.reached.isCompleted }
+            )
+            assertEquals("q2", vm.state.value.current?.questionId)
+            assertTrue(
+                "the crossing notice must be published with the card, not in a later update",
+                vm.state.value.justFlaggedLeech
+            )
+        } finally {
+            // A failed assertion must never leave the pull suspended on the gate.
+            gate.release.complete(Unit)
+        }
         assertTrue("the gated pull must resolve", awaitCondition { gate.completed.isCompleted })
         assertTrue(runBlocking { repository.cardState("p1", "q1")!!.leech })
     }

@@ -878,6 +878,12 @@ class StudyViewModel(
                 cardPublishedGateForTests = null
                 publishedGate.reached.complete(Unit)
                 publishedGate.release.await()
+                // A stop may have landed while this pull was gated; as with the
+                // pre-publish gate, resume clock/ticker only for a live session.
+                if (stopped.get()) {
+                    publishedGate.completed.complete(Unit)
+                    return
+                }
                 publishedGate.completed.complete(Unit)
             }
             clockPausedByUser = false

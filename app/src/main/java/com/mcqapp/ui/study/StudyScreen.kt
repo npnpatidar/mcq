@@ -191,9 +191,10 @@ fun StudyScreen(
     }
     // Crossing the leech threshold used to be silent: speak the same one-shot
     // line the card shows. The flag lives on the served card, so a card that
-    // stays flagged never repeats it.
+    // stays flagged never repeats it. The card id is a key too: two crossings
+    // in a row both publish true, and a flag-only key would skip the second.
     val leechNoticeMessage = stringResource(R.string.study_polish_leech_notice)
-    LaunchedEffect(state.justFlaggedLeech) {
+    LaunchedEffect(state.current?.questionId, state.justFlaggedLeech) {
         if (state.justFlaggedLeech) announcer.announce(leechNoticeMessage)
     }
     // A card has no result card, so nothing above speaks when its answer

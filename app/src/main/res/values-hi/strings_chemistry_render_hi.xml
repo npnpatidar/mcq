@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Prefix on the text shown when a chemical structure cannot be drawn. -->
+    <string name="chem_structure_unavailable">संरचना उपलब्ध नहीं है</string>
+</resources>

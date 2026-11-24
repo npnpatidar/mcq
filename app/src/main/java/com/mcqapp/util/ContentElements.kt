@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -29,6 +30,7 @@ import com.mcqapp.R
 import com.mcqapp.data.docx.MathNode
 import com.mcqapp.data.docx.decodeXmlEntities
 import com.mcqapp.data.docx.parseMathTree
+import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
@@ -43,7 +45,11 @@ internal enum class ContentRenderPath { PLAIN_TEXT, NATIVE, MIXED }
  * keeps the legacy plain path, anything else uses the native column.
  */
 internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPath = when {
-    elements.any { it is ContentElement.MathElement } -> ContentRenderPath.MIXED
+    // Chemistry is drawn by the bundled SmilesDrawer JavaScript, so it shares
+    // the WebView path with formulas. Never send it down the native column:
+    // that path has no way to turn a SMILES string into a picture.
+    elements.any { it is ContentElement.MathElement || it is ContentElement.ChemElement } ->
+        ContentRenderPath.MIXED
     elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
     else -> ContentRenderPath.NATIVE
 }
@@ -111,6 +117,18 @@ internal fun accessibleContentText(elements: List<ContentElement>): String = bui
                     }
                 })
             is ContentElement.ImageElement -> append(CELL_IMAGE_MARKER)
+            is ContentElement.ChemElement -> {
+                // Spoken copy is written for screen readers and wins over the
+                // caption; the SMILES itself is the last resort. The diagram
+                // is base64 image data, never something TalkBack should read.
+                val label = element.spoken.takeIf { it.isNotBlank() }
+                    ?: element.caption.takeIf { it.isNotBlank() }
+                    ?: element.smiles
+                append(InlineHtml.parse(label).text.trim())
+                if (element.formula.isNotBlank()) {
+                    append(' ').append(InlineHtml.parse(element.formula).text.trim())
+                }
+            }
         }
     }
 }.replace(Regex("\\s+"), " ").trim()
@@ -148,11 +166,13 @@ fun ContentElements(
     modifier: Modifier = Modifier,
     textStyle: TextStyle? = null,
     maxLines: Int = Int.MAX_VALUE,
-    overflow: TextOverflow = TextOverflow.Clip
+    overflow: TextOverflow = TextOverflow.Clip,
+    chemKey: String = "",
+    onChemDiagram: (key: String, pngDataUri: String) -> Unit = { _, _ -> }
 ) {
     val path = contentRenderPath(elements)
     if (path == ContentRenderPath.MIXED) {
-        MixedContentView(elements, textStyle, modifier)
+        MixedContentView(elements, textStyle, modifier, chemKey, onChemDiagram)
         return
     }
     if (path == ContentRenderPath.PLAIN_TEXT) {
@@ -170,6 +190,7 @@ fun ContentElements(
                 )
                 is ContentElement.TableElement -> TableElement(element)
                 is ContentElement.MathElement -> error("mixed view handles formulas")
+                is ContentElement.ChemElement -> error("mixed view handles chemical structures")
             }
         }
     }
@@ -248,8 +269,144 @@ internal const val MATHJAX_ASSET_URL = "file:///android_asset/mathjax/tex-mml-sv
  */
 internal const val CONTENT_HEIGHT_BRIDGE = "McqContentHeight"
 
+/**
+ * Dedicated bridge for the rasterised structure. The height bridge only
+ * accepts an Int, so a diagram cannot reuse it; keeping them separate also
+ * means a bad PNG never affects the measured page height.
+ */
+internal const val CHEM_DIAGRAM_BRIDGE = "McqChemDiagram"
+
 /** A single question's page cannot sensibly be taller than this (CSS px). */
 internal const val MAX_CONTENT_HEIGHT_PX = 20_000
+
+/** SmilesDrawer, bundled verbatim as an offline asset (no Gradle dependency). */
+internal const val SMILES_DRAWER_ASSET_URL =
+    "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
+
+/**
+ * Characters a SMILES string may contain before it is handed to JavaScript.
+ * Anything else (a quote, a semicolon, an angle bracket, whitespace, …) is
+ * dropped: the SMILES is wrapped in a JS string literal and an HTML fallback
+ * line, so a hostile value must never be able to close either one.
+ */
+private val SMILES_ALLOWED_CHARS =
+    ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
+        "@.+-?!()[]{}#\\=\$:*%" + "/").toSet()
+
+/**
+ * Any Kotlin string as a JSON string literal (quotes included) for inline JS.
+ * `<`, `>` and `&` are escaped too: the literal sits inside a `<script>` tag,
+ * where an unescaped `</script>` would end the element before JS ever runs.
+ */
+internal fun jsStringLiteral(value: String): String = buildString {
+    append('"')
+    value.forEach { ch ->
+        when (ch) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            '<' -> append("\\u003c")
+            '>' -> append("\\u003e")
+            '&' -> append("\\u0026")
+            else -> append(ch)
+        }
+    }
+    append('"')
+}
+
+/**
+ * The SMILES as a JSON string literal for inline JS. The allowlist runs
+ * first, so a quote, a tag or a control character can never reach the JS
+ * string; `%` is allowed for OpenSMILES two-digit ring closures.
+ */
+internal fun smilesJsLiteral(smiles: String): String =
+    jsStringLiteral(smiles.filter { it in SMILES_ALLOWED_CHARS })
+
+// PNG validation lives with the exporters (com.mcqapp.data.export.isPngDataUri):
+// one strict check for the signature, shared by every renderer and writer.
+
+/**
+ * One chemistry block: the drawing (or a validated PNG when one is supplied),
+ * its caption/formula line, and an inert text fallback shown only if the
+ * JavaScript drawer is missing or rejects the SMILES. The fallback never
+ * carries SVG or base64 data — only the formula and the SMILES characters.
+ */
+private fun chemBlockHtml(
+    element: ContentElement.ChemElement,
+    index: Int,
+    structureUnavailable: String,
+    chemKey: String
+): String {
+    val svgId = "mcq-chem-$index"
+    val fallbackId = "mcq-chem-$index-fallback"
+    val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
+    val caption = listOf(element.caption, element.formula)
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { escapeHtmlData(it) }
+    val captionLine = if (caption.isBlank()) "" else
+        "<div class=\"mcq-chem-caption\">$caption</div>"
+    val fallbackLine = buildString {
+        if (structureUnavailable.isNotBlank()) append(escapeHtmlData(structureUnavailable)).append(": ")
+        append(escapeHtmlData(visibleText))
+    }
+
+    // A validated PNG is safer and sharper than a redraw: emit it directly.
+    // CSP already allows img-src data:, so no script is needed for this block.
+    if (isPngDataUri(element.diagram)) {
+        return buildString {
+            append("<div class=\"mcq-chem\">")
+            append("<img src=\"").append(escapeHtmlData(element.diagram))
+                .append("\" alt=\"").append(escapeHtmlData(visibleText))
+                .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
+            append(captionLine)
+            append("</div>")
+        }
+    }
+
+    return buildString {
+        append("<div class=\"mcq-chem\">")
+        append("<svg id=\"$svgId\" style=\"max-width:100%;height:auto;\"></svg>")
+        append(captionLine)
+        append("<div id=\"$fallbackId\" class=\"mcq-chem-fallback\" style=\"display:none;\">")
+        append(fallbackLine)
+        append("</div>")
+        append("<script>(function(){")
+        append("var svg=document.getElementById('").append(svgId).append("');")
+        append("var fallback=document.getElementById('").append(fallbackId).append("');")
+        append("function showFallback(){svg.style.display='none';if(fallback)fallback.style.display='';}")
+        // Rasterise the finished drawing so a structure authored in the editor
+        // can be stored in ChemElement.diagram and travel through every export.
+        // The canvas is offscreen: capture never changes the page height, and
+        // failure only leaves the SVG (plus its text fallback) in place.
+        append("function capture(){try{")
+        append("var xml=new XMLSerializer().serializeToString(svg);")
+        append("var img=new Image();")
+        append("img.onload=function(){try{")
+        append("var canvas=document.createElement('canvas');")
+        append("canvas.width=img.naturalWidth||300;canvas.height=img.naturalHeight||300;")
+        append("canvas.getContext('2d').drawImage(img,0,0);")
+        append("var png=canvas.toDataURL('image/png');")
+        append("if(png.indexOf('data:image/png;base64,')===0 && window.").append(CHEM_DIAGRAM_BRIDGE).append("){")
+        append("window.").append(CHEM_DIAGRAM_BRIDGE).append(".onDiagram(")
+        append(jsStringLiteral(chemKey)).append(",png);}")
+        append("}catch(e){}};")
+        append("img.onerror=function(){};")
+        append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
+        append("}catch(e){}}")
+        append("try{")
+        append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
+        append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
+        append(",tree=>{try{")
+        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2}).draw(tree,svg,'light');")
+        append("capture();")
+        append("}catch(e){showFallback();}},err=>showFallback());")
+        append("}catch(e){showFallback();}")
+        append("})();</script>")
+        append("</div>")
+    }
+}
 
 /**
  * Final page heights, keyed by the exact HTML.
@@ -292,8 +449,12 @@ internal object ContentHeightCache {
 internal fun mixedContentHtml(
     elements: List<ContentElement>,
     fontSizePx: Float,
-    textColorCss: String
+    textColorCss: String,
+    structureUnavailable: String = "",
+    chemKey: String = ""
 ): String {
+    var chemIndex = 0
+    val hasChem = elements.any { it is ContentElement.ChemElement }
     val body = buildString {
         for (element in elements) {
             when (element) {
@@ -324,15 +485,23 @@ internal fun mixedContentHtml(
                 is ContentElement.ImageElement -> append("<img src=\"")
                     .append(escapeHtmlData(element.src))
                     .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
+                is ContentElement.ChemElement -> {
+                    append(chemBlockHtml(element, chemIndex, structureUnavailable, chemKey))
+                    chemIndex++
+                }
             }
         }
     }
+    // Loaded once per chemistry page, before the inline draw scripts in the
+    // body run. The asset is local and offline, like MathJax.
+    val chemScript = if (hasChem) "<script src=\"$SMILES_DRAWER_ASSET_URL\"></script>" else ""
     // The policy mirrors what this WebView can actually load: images are
     // data URIs (the picker encodes them, imports downscale to them), so
     // there is no file: image or stylesheet to allow — allowFileAccess=false
     // rules out real files and this page never references an android_asset
-    // image or CSS. script-src keeps file: for the bundled MathJax asset,
-    // and everything else stays off the network, same as the exports.
+    // image or CSS. script-src keeps file: for the bundled MathJax and
+    // SmilesDrawer assets, and everything else stays off the network,
+    // same as the exports.
     return """
         <html>
         <head>
@@ -345,10 +514,14 @@ internal fun mixedContentHtml(
         // stored and rendered as MathML blocks.
         </script>
         <script src="$MATHJAX_ASSET_URL"></script>
+        $chemScript
         <style>
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
         table{border-collapse:collapse;margin:4px 0}
         img{vertical-align:middle}
+        .mcq-chem{margin:4px 0}
+        .mcq-chem-caption{font-size:0.9em}
+        .mcq-chem-fallback{color:inherit}
         </style>
         </head>
         <body>$body</body>
@@ -524,12 +697,21 @@ private fun escapeHtmlData(s: String): String = com.mcqapp.data.escapeHtmlText(s
 private fun MixedContentView(
     elements: List<ContentElement>,
     textStyle: TextStyle?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    chemKey: String = "",
+    onChemDiagram: (key: String, pngDataUri: String) -> Unit = { _, _ -> }
 ) {
+    // The WebView is keyed by the page, so a recomposition must not leave it
+    // holding a stale callback or a stale key from the question it first drew.
+    val currentChemKey by rememberUpdatedState(chemKey)
+    val currentOnChemDiagram by rememberUpdatedState(onChemDiagram)
     val density = androidx.compose.ui.platform.LocalDensity.current
     val colorScheme = MaterialTheme.colorScheme
     val defaultSize = MaterialTheme.typography.bodyLarge.fontSize
-    val targetHtml = remember(elements, textStyle, colorScheme, density) {
+    // Visible fallback copy is resolved here (the composable has the locale)
+    // and handed to the pure HTML builder, which only escapes and embeds it.
+    val chemUnavailable = stringResource(R.string.chem_structure_unavailable)
+    val targetHtml = remember(elements, textStyle, colorScheme, density, chemUnavailable, chemKey) {
         // WebView CSS px are density-independent like dp: scale the Sp
         // value by the font scale only. toPx() would also multiply by
         // the screen density and render several times too big, while
@@ -538,7 +720,7 @@ private fun MixedContentView(
             ?: defaultSize.value) * density.fontScale
         val color = textStyle?.color?.takeUnless { it == androidx.compose.ui.graphics.Color.Unspecified }
             ?: colorScheme.onSurface
-        mixedContentHtml(elements, cssPx, color.toCssRgba())
+        mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey)
     }
     // Coalesce preview updates: the WebView is keyed by the page, so a page
     // rebuilt on every keystroke was destroyed and recreated (with its
@@ -629,6 +811,18 @@ private fun MixedContentView(
                         },
                         CONTENT_HEIGHT_BRIDGE
                     )
+                    // The captured PNG travels through a dedicated bridge: the
+                    // height bridge accepts only an Int. The JS bridge thread
+                    // hops back to main before the app callback runs.
+                    addJavascriptInterface(
+                        object {
+                            @JavascriptInterface
+                            fun onDiagram(key: String, png: String) {
+                                this@apply.post { currentOnChemDiagram(key, png) }
+                            }
+                        },
+                        CHEM_DIAGRAM_BRIDGE
+                    )
                     loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                 }
             },
@@ -640,6 +834,7 @@ private fun MixedContentView(
                 webView.onPause()
                 webView.stopLoading()
                 webView.removeJavascriptInterface(CONTENT_HEIGHT_BRIDGE)
+                webView.removeJavascriptInterface(CHEM_DIAGRAM_BRIDGE)
                 (webView.parent as? android.view.ViewGroup)?.removeView(webView)
                 webView.destroy()
             },

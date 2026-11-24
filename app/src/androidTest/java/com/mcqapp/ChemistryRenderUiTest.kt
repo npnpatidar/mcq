@@ -116,7 +116,9 @@ class ChemistryRenderUiTest {
         // left an empty <svg> shell behind a spoken description.
         var lastState = "not evaluated"
         try {
-            compose.waitUntil(timeoutMillis = 10_000) {
+            // The CI emulator's WebView starts slowly: the drawing can be
+            // ready just after a 10 s wait, so allow a full 30 s here.
+            compose.waitUntil(timeoutMillis = 30_000) {
                 lastState = svgState()
                 lastState.startsWith("ok:")
             }
@@ -139,7 +141,9 @@ class ChemistryRenderUiTest {
                 }
             }
         }
-        compose.waitUntil(timeoutMillis = 10_000) { captured.get() != null }
+        // Same slow CI WebView as the drawing test: the PNG callback can
+        // arrive after a 10 s wait even though the draw itself succeeded.
+        compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }
         val (key, png) = captured.get()!!
         assertEquals("chem-42", key)
         assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))

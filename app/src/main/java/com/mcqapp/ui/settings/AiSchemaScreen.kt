@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -78,9 +80,23 @@ fun AiSchemaScreen(navController: NavController) {
     var math by rememberSaveable { mutableStateOf(false) }
     var image by rememberSaveable { mutableStateOf(false) }
     var passage by rememberSaveable { mutableStateOf(PassageMode.NONE) }
-    var wrapper by rememberSaveable { mutableStateOf(SchemaWrapper.FULL_BANK) }
+    // The old FULL_BANK wrapper is equivalent to papers + categories on and
+    // passages off; the three toggles below are now the only container choice.
+    var includePapers by rememberSaveable { mutableStateOf(true) }
+    var includeCategories by rememberSaveable { mutableStateOf(true) }
+    var includePassages by rememberSaveable { mutableStateOf(false) }
 
-    val options = SchemaOptions(kind, table, math, image, passage, wrapper)
+    val options = SchemaOptions(
+        kind = kind,
+        table = table,
+        math = math,
+        image = image,
+        passage = passage,
+        wrapper = SchemaWrapper.FULL_BANK,
+        includePapers = includePapers,
+        includeCategories = includeCategories,
+        includePassages = includePassages
+    )
     val generated = AiSchemaGenerator.generate(options)
     // A SAF picker can recreate the activity while it is open; read the latest
     // output in its callback instead of the composition that launched it.
@@ -188,25 +204,53 @@ fun AiSchemaScreen(navController: NavController) {
                 BlockChip(R.string.ai_schema_block_image, image, "ai-schema-block-image") { image = it }
             }
             Spacer(Modifier.height(12.dp))
-            ControlCard(R.string.ai_schema_passage, "ai-schema-passage") {
-                PassageChip(PassageMode.NONE, passage, R.string.ai_schema_passage_none) { passage = it }
-                PassageChip(PassageMode.TEXT_ONLY, passage, R.string.ai_schema_passage_text) { passage = it }
-                PassageChip(PassageMode.RICH, passage, R.string.ai_schema_passage_rich) { passage = it }
+            Card(modifier = Modifier.fillMaxWidth().testTag("ai-schema-containers")) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        stringResource(R.string.ai_schema_containers),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ContainerToggle(
+                        R.string.ai_schema_include_papers, includePapers,
+                        "ai-schema-include-papers"
+                    ) { includePapers = it }
+                    ContainerToggle(
+                        R.string.ai_schema_include_categories, includeCategories,
+                        "ai-schema-include-categories"
+                    ) { includeCategories = it }
+                    ContainerToggle(
+                        R.string.ai_schema_include_passages, includePassages,
+                        "ai-schema-include-passages"
+                    ) { on ->
+                        includePassages = on
+                        // Turning passages on must select a visible shape too:
+                        // NONE would be silently overridden by effectivePassage.
+                        if (on && passage == PassageMode.NONE) {
+                            passage = PassageMode.TEXT_ONLY
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.ai_schema_questions_always),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            ControlCard(R.string.ai_schema_wrapper, "ai-schema-wrapper") {
-                FilterChip(
-                    selected = wrapper == SchemaWrapper.FULL_BANK,
-                    onClick = { wrapper = SchemaWrapper.FULL_BANK },
-                    label = { Text(stringResource(R.string.ai_schema_wrapper_full)) },
-                    modifier = Modifier.testTag("ai-schema-wrapper-full")
-                )
-                FilterChip(
-                    selected = wrapper == SchemaWrapper.PAPERLESS,
-                    onClick = { wrapper = SchemaWrapper.PAPERLESS },
-                    label = { Text(stringResource(R.string.ai_schema_wrapper_paperless)) },
-                    modifier = Modifier.testTag("ai-schema-wrapper-paperless")
-                )
+            // The shape of a passage still matters when passages are in; with
+            // them off, "None" would duplicate the passage toggle above.
+            if (includePassages) {
+                Spacer(Modifier.height(12.dp))
+                ControlCard(R.string.ai_schema_passage, "ai-schema-passage") {
+                    PassageChip(
+                        PassageMode.TEXT_ONLY, passage,
+                        R.string.ai_schema_passage_text
+                    ) { passage = it }
+                    PassageChip(
+                        PassageMode.RICH, passage,
+                        R.string.ai_schema_passage_rich
+                    ) { passage = it }
+                }
             }
             Spacer(Modifier.height(12.dp))
             Text(
@@ -222,19 +266,25 @@ fun AiSchemaScreen(navController: NavController) {
             Spacer(Modifier.height(12.dp))
             OutputCard(exampleLabel, generated.example, "ai-schema-output-example")
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = ::copyPrompt,
-                    modifier = Modifier.testTag("ai-schema-copy-prompt")
-                ) { Text(stringResource(R.string.ai_schema_copy_prompt)) }
-                OutlinedButton(
-                    // The SAF default name is a file name, not user-facing copy.
-                    onClick = { saveLauncher.launch("mcq-ai-schema.json") },
-                    modifier = Modifier.testTag("ai-schema-save")
-                ) { Text(stringResource(R.string.ai_schema_save)) }
+            // Three equal-width buttons in one row left Share with a sliver
+            // of space on a 320 dp phone, stacking its letters vertically.
+            // Two rows give the first pair a readable width and Share the
+            // whole line; labels, callbacks and tags are unchanged.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = ::copyPrompt,
+                        modifier = Modifier.weight(1f).testTag("ai-schema-copy-prompt")
+                    ) { Text(stringResource(R.string.ai_schema_copy_prompt)) }
+                    OutlinedButton(
+                        // The SAF default name is a file name, not user-facing copy.
+                        onClick = { saveLauncher.launch("mcq-ai-schema.json") },
+                        modifier = Modifier.weight(1f).testTag("ai-schema-save")
+                    ) { Text(stringResource(R.string.ai_schema_save)) }
+                }
                 OutlinedButton(
                     onClick = ::share,
-                    modifier = Modifier.testTag("ai-schema-share")
+                    modifier = Modifier.fillMaxWidth().testTag("ai-schema-share")
                 ) { Text(stringResource(R.string.ai_schema_share)) }
             }
         }
@@ -267,7 +317,10 @@ private fun OutputCard(title: String, text: String, tag: String) {
             Spacer(Modifier.height(6.dp))
             Text(
                 text = text,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                // The Card keeps its own tag; tests need the JSON text node
+                // itself, which is invisible in the merged tree.
+                modifier = Modifier.testTag("$tag-text")
             )
         }
     }
@@ -296,6 +349,30 @@ private fun BlockChip(labelRes: Int, checked: Boolean, tag: String, onChange: (B
         label = { Text(stringResource(labelRes)) },
         modifier = Modifier.testTag(tag)
     )
+}
+
+@Composable
+private fun ContainerToggle(
+    @StringRes labelRes: Int,
+    checked: Boolean,
+    tag: String,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onChange,
+            modifier = Modifier.testTag(tag)
+        )
+        Text(
+            stringResource(labelRes),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
 }
 
 @Composable

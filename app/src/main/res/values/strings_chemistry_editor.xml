@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Editor chrome for a chemical-structure block. Kept in its own file so
+         the chemistry feature can be added or removed without touching the
+         shared string files. All names are referenced by BlockListEditor. -->
+    <string name="chem_editor_block_label">Chemistry</string>
+    <string name="chem_editor_template">Template</string>
+    <string name="chem_editor_custom">Custom</string>
+    <string name="chem_editor_smiles">SMILES</string>
+    <string name="chem_editor_formula">Formula (optional)</string>
+    <string name="chem_editor_caption">Caption (optional)</string>
+    <string name="chem_editor_spoken">Spoken description (optional)</string>
+    <string name="chem_editor_preview">Preview</string>
+    <string name="chem_editor_structure_cd">Chemical structure: %1$s</string>
+</resources>

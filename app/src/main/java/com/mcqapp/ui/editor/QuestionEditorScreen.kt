@@ -346,7 +346,8 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeTableRow,
                 onAddColumn = viewModel::addTableColumn,
                 onRemoveColumn = viewModel::removeTableColumn,
-                onPickImage = { blockId -> pickBlockImage(ImageTarget.Body(blockId)) }
+                onPickImage = { blockId -> pickBlockImage(ImageTarget.Body(blockId)) },
+                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
             )
             Spacer(Modifier.height(8.dp))
 
@@ -445,6 +446,7 @@ fun QuestionEditorScreen(
                         onPickBlockImage = { blockId ->
                             pickBlockImage(ImageTarget.Option(option.id, blockId))
                         },
+                        onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) },
                         onImageChange = { viewModel.updateOptionImage(option.id, it) },
                         onToggleCorrect = { viewModel.toggleCorrect(option.id) },
                         onMoveUp = { viewModel.moveOptionUp(option.id) },
@@ -524,7 +526,8 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeExplanationTableRow,
                 onAddColumn = viewModel::addExplanationTableColumn,
                 onRemoveColumn = viewModel::removeExplanationTableColumn,
-                onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) }
+                onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) },
+                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
             )
             Spacer(Modifier.height(8.dp))
             if (state.explanationImage.isNotBlank()) {
@@ -810,6 +813,7 @@ private fun OptionEditorRow(
     onMoveBlockUp: (index: Int) -> Unit,
     onMoveBlockDown: (index: Int) -> Unit,
     onPickBlockImage: (blockId: String) -> Unit,
+    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit,
     onImageChange: (String) -> Unit,
     onToggleCorrect: () -> Unit,
     onMoveUp: () -> Unit,
@@ -884,7 +888,8 @@ private fun OptionEditorRow(
             onRemoveRow = onRemoveRow,
             onAddColumn = onAddColumn,
             onRemoveColumn = onRemoveColumn,
-            onPickImage = onPickBlockImage
+            onPickImage = onPickBlockImage,
+            onChemDiagram = onChemDiagram
         )
         // As with the question image, no blank field: an option image is added
         // as an Image block. A pre-existing one stays visible and removable.

@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -74,6 +75,12 @@ fun BlockListEditor(
     onRemoveColumn: ((index: Int, col: Int) -> Unit)? = null,
     /** Starts a gallery pick for the block with this stable id. */
     onPickImage: (blockId: String) -> Unit,
+    /**
+     * Receives a renderer-generated PNG data URI for the chem block named by
+     * [blockId]. The host writes it through `EditorViewModel.updateChemDiagram`,
+     * which keeps the captured diagram on the right block after a reorder.
+     */
+    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val tablesEditable = onUpdateCell != null && onAddRow != null &&
@@ -165,6 +172,12 @@ fun BlockListEditor(
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
+                    is ContentElement.ChemElement -> ChemBlockEditor(
+                        element = element,
+                        blockId = blockIds.getOrNull(index) ?: "index$index",
+                        onUpdate = { onUpdateBlock(index, it) },
+                        onChemDiagram = onChemDiagram
+                    )
                     is ContentElement.TableElement -> {
                         if (tablesEditable) {
                             TableBlockEditor(
@@ -191,6 +204,101 @@ fun BlockListEditor(
 }
 
 /**
+ * Source editor for one chemical structure.
+ *
+ * Deliberately text-first: there is no WYSIWYG drawing canvas here, and a
+ * chem block must never be handed to MathLive — `\ce{}` is silently dropped
+ * into an empty MathML element. The live preview goes through the shared
+ * [ContentElements] renderer, the same one Study and Browse use.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChemBlockEditor(
+    element: ContentElement.ChemElement,
+    blockId: String,
+    onUpdate: (ContentElement.ChemElement) -> Unit,
+    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit
+) {
+    val selected = ChemTemplates.templateFor(element)
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().testTag("chem-block-$blockId")) {
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = selected?.label ?: stringResource(R.string.chem_editor_custom),
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                label = { Text(stringResource(R.string.chem_editor_template)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor()
+                    .testTag("chem-template-$blockId")
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ChemTemplates.ALL.forEach { template ->
+                    DropdownMenuItem(
+                        text = { Text(template.label) },
+                        onClick = {
+                            onUpdate(template.toElement())
+                            expanded = false
+                        },
+                        modifier = Modifier.testTag("chem-template-item-${template.id}-$blockId")
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = element.smiles,
+            onValueChange = { onUpdate(element.copy(smiles = it)) },
+            label = { Text(stringResource(R.string.chem_editor_smiles)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("chem-smiles-$blockId")
+        )
+        OutlinedTextField(
+            value = element.formula,
+            onValueChange = { onUpdate(element.copy(formula = it)) },
+            label = { Text(stringResource(R.string.chem_editor_formula)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("chem-formula-$blockId")
+        )
+        OutlinedTextField(
+            value = element.caption,
+            onValueChange = { onUpdate(element.copy(caption = it)) },
+            label = { Text(stringResource(R.string.chem_editor_caption)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("chem-caption-$blockId")
+        )
+        OutlinedTextField(
+            value = element.spoken,
+            onValueChange = { onUpdate(element.copy(spoken = it)) },
+            label = { Text(stringResource(R.string.chem_editor_spoken)) },
+            modifier = Modifier.fillMaxWidth().testTag("chem-spoken-$blockId")
+        )
+        Text(
+            stringResource(R.string.chem_editor_preview),
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+        val described = element.caption.ifBlank { element.formula }.ifBlank { element.smiles }
+        val structureDescription = stringResource(R.string.chem_editor_structure_cd, described)
+        ContentElements(
+            elements = listOf(element),
+            // The renderer keys its capture callback by identity: a reordered
+            // block must receive its own PNG, and an unchanged capture is a
+            // no-op in the ViewModel (no feedback loop).
+            chemKey = blockId,
+            onChemDiagram = onChemDiagram,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+                .testTag("chem-preview-$blockId")
+                .semantics { contentDescription = structureDescription }
+        )
+    }
+}
+
+/**
  * Stable identity for a content block: owner, block id, kind.
  *
  * Deliberately **not** derived from the content or the position. A
@@ -212,6 +320,7 @@ private fun blockLabelRes(element: ContentElement): Int = when (element) {
     is ContentElement.ImageElement -> R.string.image
     is ContentElement.TableElement -> R.string.table
     is ContentElement.MathElement -> R.string.formula
+    is ContentElement.ChemElement -> R.string.chem_editor_block_label
 }
 
 @Composable
@@ -334,6 +443,10 @@ private fun AddBlockMenu(onAddBlock: (EditorBlockType) -> Unit) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.formula)) },
                 onClick = { onAddBlock(EditorBlockType.MATH); expanded = false }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chem_editor_block_label)) },
+                onClick = { onAddBlock(EditorBlockType.CHEM); expanded = false }
             )
         }
     }

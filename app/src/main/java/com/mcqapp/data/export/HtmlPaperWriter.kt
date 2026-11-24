@@ -273,6 +273,20 @@ object HtmlPaperWriter {
                     sb.append("</table>")
                 }
                 is ContentElement.MathElement -> sb.append(com.mcqapp.data.sanitizeMathml(element.mathml))
+                is ContentElement.ChemElement -> {
+                    sb.append(esc(chemElementText(element)))
+                    // Only the strict shared PNG validator may put a picture in
+                    // the page. An SVG/JPEG/broken diagram gets the text fallback
+                    // alone — never a raw <svg> or a hostile data URI. The alt
+                    // is the same spoken-first fallback the renderer uses, so a
+                    // blank caption still yields a non-empty accessible label.
+                    val diagram = element.diagram
+                    if (isPngDataUri(diagram)) {
+                        sb.append("<img src=\"").append(esc(diagram))
+                            .append("\" alt=\"").append(esc(chemAccessibleText(element)))
+                            .append("\">\n")
+                    }
+                }
             }
         }
         appendImage(sb, legacyImage)

@@ -1,7 +1,9 @@
 package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.MediaSpool
+import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.imageExtension
+import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.export.mediaKey
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
@@ -78,6 +80,13 @@ class AnkiMediaPool : Closeable {
         is ContentElement.MathElement -> normalizeMathText(element.mathml)
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
+        // The readable field carries the structure's text handles. Only a
+        // valid PNG diagram is spooled through the media path, so it lands in
+        // the deck as mcqapp-N.png and Anki resolves it by filename. The full
+        // ChemElement itself rides unchanged in the third (mcqapp) payload.
+        is ContentElement.ChemElement ->
+            escapeHtml(chemElementText(element)) +
+                if (isPngDataUri(element.diagram)) imageElement(element.diagram) else ""
     }
 
     private fun tableToHtml(table: ContentElement.TableElement): String {

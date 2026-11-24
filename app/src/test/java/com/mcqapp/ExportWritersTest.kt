@@ -445,6 +445,38 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlEscapesChemHandlesButKeepsTheDiagramTag() {
+        val chem = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "Benzene <aromatic> & friends",
+            diagram = "data:image/png;base64,iVBORw0KGgo="
+        )
+        val q = QuestionDto(
+            id = "q1",
+            elements = listOf(chem),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue("quiz=$quiz", html.contains("c1ccccc1"))
+            assertTrue("quiz=$quiz", html.contains("C6H6"))
+            assertFalse("inline markup in a caption is text", html.contains("<aromatic>"))
+            assertTrue(
+                "alt uses the spoken-first fallback, not just the caption: $html",
+                html.contains("alt=\"Benzene &lt;aromatic&gt; &amp; friends C6H6\"")
+            )
+            assertTrue(html.contains("<img src=\"data:image/png;base64,iVBORw0KGgo=\""))
+        }
+    }
+
+    @Test
     fun htmlAnswerNamesTheOptionLabelNotItsContent() {
         val q = QuestionDto(
             id = "q1",

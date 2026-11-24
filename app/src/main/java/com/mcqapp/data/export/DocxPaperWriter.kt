@@ -553,6 +553,22 @@ object DocxPaperWriter {
                         items.add(it.copy(breaksParagraph = !flowsInline))
                     }
                 is ContentElement.TableElement -> items.add(Tbl(element.rows))
+                is ContentElement.ChemElement -> {
+                    // A structure prints as its readable handles. [spoken] is an
+                    // accessibility label and [diagram] is base64, so neither is
+                    // text. The diagram is an ordinary word/media picture when it
+                    // is a valid PNG data URI; another format or broken base64
+                    // leaves only the text (no raw SVG/XML in the document).
+                    val text = chemElementText(element)
+                    if (text.isNotBlank()) {
+                        items.add(Runs(inlineRuns(text), breaksParagraph = !flowsInline))
+                    }
+                    if (isPngDataUri(element.diagram)) {
+                        media.embed(element.diagram, warnings)?.let {
+                            items.add(it.copy(breaksParagraph = !flowsInline))
+                        }
+                    }
+                }
             }
         }
         media.embed(legacyImage, warnings)?.let {
@@ -1130,6 +1146,68 @@ internal class XmlEscapingAppendable(private val out: Appendable) : Appendable {
         '>' -> "\u0026gt;"
         else -> c.toString()
     }
+}
+
+/**
+ * The readable text a chemical structure carries in every export: caption,
+ * then formula, then the SMILES source. [ContentElement.ChemElement.spoken]
+ * is an accessibility label and [ContentElement.ChemElement.diagram] is
+ * base64 image data, so neither belongs in printed text. Shared by all three
+ * writers and by the DOCX freshness canon so the body and the hidden payload
+ * describe the same characters on an untouched round trip.
+ */
+internal fun chemElementText(element: ContentElement.ChemElement): String =
+    listOf(element.caption, element.formula, element.smiles)
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+
+/**
+ * The accessibility text for a chemical structure. Spoken copy is written for
+ * screen readers and wins; then caption, then the SMILES source as a last
+ * resort; the formula is appended when present. This mirrors the on-screen
+ * renderer's fallback so an exported `<img alt>` says the same thing TalkBack
+ * does, and it is never empty when any handle exists. The base64 diagram is
+ * image data, not text, and is never included.
+ */
+internal fun chemAccessibleText(element: ContentElement.ChemElement): String {
+    val label = element.spoken.takeIf { it.isNotBlank() }
+        ?: element.caption.takeIf { it.isNotBlank() }
+        ?: element.smiles
+    return buildString {
+        append(label)
+        if (element.formula.isNotBlank()) {
+            if (label.isNotBlank()) append(' ')
+            append(element.formula)
+        }
+    }.trim()
+}
+
+private const val PNG_DATA_URI_PREFIX = "data:image/png;base64,"
+private val PNG_BASE64_PAYLOAD = Regex("^[A-Za-z0-9+/]+={0,2}$")
+private val PNG_SIGNATURE = byteArrayOf(
+    0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+)
+
+/**
+ * The single strict validator for an optional pre-rendered PNG diagram, shared
+ * by every export writer and the on-screen renderer. Only the exact lowercase
+ * PNG data-URI prefix and bare base64 characters are accepted: a quote or an
+ * angle bracket in the payload could otherwise break out of an HTML attribute,
+ * and a different MIME type is not a PNG. The decoded bytes must also carry
+ * the PNG signature, so a well-formed URI with non-PNG bytes is not a diagram.
+ * Everything else falls back to the structure's text handles.
+ */
+internal fun isPngDataUri(value: String): Boolean {
+    if (!value.startsWith(PNG_DATA_URI_PREFIX)) return false
+    val payload = value.substring(PNG_DATA_URI_PREFIX.length)
+    if (payload.isEmpty() || !PNG_BASE64_PAYLOAD.matches(payload)) return false
+    val bytes = try {
+        java.util.Base64.getDecoder().decode(payload)
+    } catch (e: IllegalArgumentException) {
+        return false
+    }
+    return bytes.size >= PNG_SIGNATURE.size &&
+        PNG_SIGNATURE.indices.all { bytes[it] == PNG_SIGNATURE[it] }
 }
 
 /**

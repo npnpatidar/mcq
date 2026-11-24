@@ -180,6 +180,15 @@ object CardContent {
                         row.joinToString(FIELD.toString())
                     }
                 is ContentElement.MathElement -> "m" + element.mathml
+                // Chemistry is one block with five handles. Every field counts:
+                // a flashcard whose back is a structure must reset when its
+                // SMILES, formula, caption, spoken label or diagram changes.
+                // Non-chemical blocks keep the exact bytes they had before.
+                is ContentElement.ChemElement ->
+                    "c" + listOf(
+                        element.smiles, element.formula, element.caption,
+                        element.spoken, element.diagram
+                    ).joinToString(FIELD.toString())
             }
         }
 

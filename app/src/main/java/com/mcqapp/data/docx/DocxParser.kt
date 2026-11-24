@@ -1,5 +1,7 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.io.FALLBACK_CATEGORY_LABEL
 import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
 import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
@@ -273,6 +275,21 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
             is ContentElement.TableElement -> {
                 flushText()
                 parts.add("tbl:" + normalizeStem(element.rows.flatten().joinToString(" ")))
+            }
+            is ContentElement.ChemElement -> {
+                // The writer prints the handles as a text paragraph. Adjacent
+                // paragraphs merge on the visible side, so the payload's
+                // handles join the same text buffer rather than starting a
+                // second `t:` part — a stem of "Identify:" + a structure must
+                // canon to one run, not two. The PNG, when present, is a real
+                // picture and breaks the run after the text is flushed.
+                // Spoken is an accessibility label and is never printed.
+                val handles = chemElementText(element)
+                if (handles.isNotBlank()) text.append(handles)
+                if (isPngDataUri(element.diagram)) {
+                    flushText()
+                    parts.add("i")
+                }
             }
         }
     }

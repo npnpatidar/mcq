@@ -1432,13 +1432,16 @@ object LegacyParser {
     private fun parseQuestion(obj: JsonObject, warnings: MutableList<String>): QuestionDto {
         // question_num (e.g. "1.)") is a bank serial, not question content:
         // it is deliberately ignored so it never becomes part of the text.
-        val elements = parseElements(obj["question_elements"], obj["text"], obj["question"])
+        val elements = parseElements(
+            obj["question_elements"], obj["text"], obj["question"], warnings = warnings
+        )
         val text = elements.textContent
         val image = obj["image"]?.jsonPrimitive?.contentOrNull
             ?: obj["imageUrl"]?.jsonPrimitive?.contentOrNull
         val explanationElements = parseElements(
             obj["explanation_elements"],
-            obj["explanation"], obj["explain"], obj["reason"]
+            obj["explanation"], obj["explain"], obj["reason"],
+            warnings = warnings
         )
         val explanation = explanationElements.textContent
         val explanationImage = obj["explanationImage"]?.jsonPrimitive?.contentOrNull
@@ -1464,7 +1467,7 @@ object LegacyParser {
         // [uniqueIds] renames questions: the first occurrence keeps its id
         // (the answer key names that one), the rest become `id-2`, `id-3`, …
         // skipping ids the file already used, and every rename is warned.
-        val options = uniqueOptionIds(parseOptions(obj), warnings)
+        val options = uniqueOptionIds(parseOptions(obj, warnings), warnings)
         val correctIds = parseCorrectIds(obj, options, warnings)
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: stableQuestionId(text, options)
@@ -1493,11 +1496,15 @@ object LegacyParser {
      * blocks and inline `<img>` tags, which become MathElements/ImageElements
      * so formulas and pictures render instead of showing raw markup.
      */
-    private fun parseElements(elementsJson: JsonElement?, vararg fallbacks: JsonElement?): List<ContentElement> {
+    private fun parseElements(
+        elementsJson: JsonElement?,
+        vararg fallbacks: JsonElement?,
+        warnings: MutableList<String>? = null
+    ): List<ContentElement> {
         val arr = elementsJson as? JsonArray
         if (arr != null) {
             val parsed = arr.flatMap { el ->
-                if (el is JsonObject) parseContentElement(el) else emptyList()
+                if (el is JsonObject) parseContentElement(el, warnings) else emptyList()
             }
             if (parsed.isNotEmpty()) return parsed
         }
@@ -1509,7 +1516,10 @@ object LegacyParser {
     }
 
     /** Parses one `{type, content}` element; image content is an `<img>` tag. */
-    private fun parseContentElement(obj: JsonObject): List<ContentElement> {
+    private fun parseContentElement(
+        obj: JsonObject,
+        warnings: MutableList<String>? = null
+    ): List<ContentElement> {
         return when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "text" -> splitTextRuns(obj["content"]?.jsonPrimitive?.contentOrNull ?: "")
             "image" -> {
@@ -1525,6 +1535,32 @@ object LegacyParser {
             "math" -> {
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
                 listOf(ContentElement.MathElement(content))
+            }
+            // Chemistry is the one block whose content is an object. SMILES is
+            // required: without it there is nothing SmilesDrawer can draw, so
+            // the block is dropped (and warned when the caller can report it).
+            // The optional fields are stored verbatim; no text is reinterpreted.
+            "chem" -> {
+                val content = obj["content"] as? JsonObject
+                if (content == null) {
+                    warnings?.add(droppedParserMessage("Skipped chem element without an object content"))
+                    return emptyList()
+                }
+                fun str(key: String): String = content[key]?.jsonPrimitive?.contentOrNull ?: ""
+                val smiles = str("smiles").trim()
+                if (smiles.isEmpty()) {
+                    warnings?.add(droppedParserMessage("Skipped chem element with no SMILES string"))
+                    return emptyList()
+                }
+                listOf(
+                    ContentElement.ChemElement(
+                        smiles = smiles,
+                        formula = str("formula"),
+                        caption = str("caption"),
+                        spoken = str("spoken"),
+                        diagram = str("diagram")
+                    )
+                )
             }
             else -> emptyList()
         }
@@ -1570,12 +1606,12 @@ object LegacyParser {
         Regex("""<img[^>]*(?:\s|^)src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .find(html)?.groupValues?.get(1)
 
-    private fun parseOptions(obj: JsonObject): List<OptionDto> {
+    private fun parseOptions(obj: JsonObject, warnings: MutableList<String>): List<OptionDto> {
         val elementsMap = obj["options_elements"] as? JsonObject
         if (elementsMap != null) {
             val parsed = elementsMap.entries.mapNotNull { (optionId, raw) ->
                 val elements = (raw as? JsonArray)?.flatMap { el ->
-                    if (el is JsonObject) parseContentElement(el) else emptyList()
+                    if (el is JsonObject) parseContentElement(el, warnings) else emptyList()
                 } ?: return@mapNotNull null
                 OptionDto(
                     id = optionId,

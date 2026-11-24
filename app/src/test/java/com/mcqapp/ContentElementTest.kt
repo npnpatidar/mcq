@@ -4,6 +4,7 @@ import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ContentElementJson
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
 import kotlinx.serialization.json.Json
@@ -150,6 +151,117 @@ class ContentElementTest {
         assertEquals(dto.elements, decoded.elements)
         assertEquals(dto.options.map { it.elements }, decoded.options.map { it.elements })
         assertEquals(dto.explanationElements, decoded.explanationElements)
+    }
+
+    /** Chemistry is the one element whose `content` is an object, not a scalar. */
+    @Test
+    fun chemElementRoundTripsThroughTheFlatCodec() {
+        val chem = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "benzene",
+            spoken = "benzene ring",
+            diagram = "data:image/png;base64,AAA"
+        )
+        val elements = listOf(ContentElement.TextElement("Identify:"), chem)
+
+        val encoded = elements.toContentJson(json)
+        val obj = Json.parseToJsonElement(encoded).jsonArray[1].jsonObject
+        assertEquals("chem", obj["type"]!!.jsonPrimitive.content)
+        val content = obj["content"]!!.jsonObject
+        assertEquals(setOf("smiles", "formula", "caption", "spoken", "diagram"), content.keys)
+        assertEquals("c1ccccc1", content["smiles"]!!.jsonPrimitive.content)
+        assertEquals("C6H6", content["formula"]!!.jsonPrimitive.content)
+        assertEquals("benzene", content["caption"]!!.jsonPrimitive.content)
+        assertEquals("benzene ring", content["spoken"]!!.jsonPrimitive.content)
+        assertEquals("data:image/png;base64,AAA", content["diagram"]!!.jsonPrimitive.content)
+        assertEquals(elements, encoded.parseContentElements(json))
+    }
+
+    /** Empty optional fields are still written, so the wire shape never varies. */
+    @Test
+    fun chemElementWritesAllFiveKeysEvenWhenOptionalFieldsAreBlank() {
+        val chem = ContentElement.ChemElement(smiles = "CCO")
+        val encoded = listOf(chem).toContentJson(json)
+        val content = Json.parseToJsonElement(encoded).jsonArray[0].jsonObject["content"]!!.jsonObject
+        assertEquals(setOf("smiles", "formula", "caption", "spoken", "diagram"), content.keys)
+        assertEquals("", content["formula"]!!.jsonPrimitive.content)
+        assertEquals("", content["caption"]!!.jsonPrimitive.content)
+        assertEquals("", content["spoken"]!!.jsonPrimitive.content)
+        assertEquals("", content["diagram"]!!.jsonPrimitive.content)
+        assertEquals(listOf(chem), encoded.parseContentElements(json))
+    }
+
+    @Test
+    fun hasVisibleContentAcceptsChemAndRejectsBlankChem() {
+        assertTrue(listOf(ContentElement.ChemElement("c1ccccc1")).hasVisibleContent)
+        assertTrue(listOf(ContentElement.ChemElement("", caption = "benzene")).hasVisibleContent)
+        assertTrue(listOf(ContentElement.ChemElement("", diagram = "data:image/png;base64,AAA")).hasVisibleContent)
+        assertFalse(listOf(ContentElement.ChemElement("")).hasVisibleContent)
+    }
+
+    @Test
+    fun searchableTextFindsSmilesFormulaAndCaptionButNotSpokenOrDiagram() {
+        val elements = listOf(
+            ContentElement.ChemElement(
+                smiles = "c1ccccc1",
+                formula = "C6H6",
+                caption = "benzene",
+                spoken = "spoken only",
+                diagram = "data:image/png;base64,AAA"
+            )
+        )
+        val text = elements.searchableText
+        assertTrue(text.contains("c1ccccc1"))
+        assertTrue(text.contains("C6H6"))
+        assertTrue(text.contains("benzene"))
+        assertFalse("spoken is an accessibility label, not search text", text.contains("spoken only"))
+        assertFalse("diagram is base64 image data", text.contains("data:image"))
+    }
+
+    /**
+     * An unknown element used to throw out of ListSerializer, and
+     * parseContentElements' catch-all then turned the whole list into one
+     * TextElement of raw JSON. One bad block must cost only that block.
+     */
+    @Test
+    fun unknownElementDoesNotPoisonTheWholeList() {
+        val raw = """[{"type":"text","content":"keep me"},""" +
+            """{"type":"future-kind","content":"drop me"},""" +
+            """{"type":"text","content":"and me"}]"""
+        assertEquals(
+            listOf(ContentElement.TextElement("keep me"), ContentElement.TextElement("and me")),
+            raw.parseContentElements(json)
+        )
+    }
+
+    /**
+     * Stored/incoming JSON must obey the importer's SMILES rule: a chem block
+     * with no drawable structure is dropped, not kept as an element the
+     * renderer cannot draw. Its neighbours survive.
+     */
+    @Test
+    fun chemBlockWithoutSmilesIsDroppedWithoutPoisoningNeighbours() {
+        val raw = """[{"type":"text","content":"before"},""" +
+            """{"type":"chem","content":{"formula":"C6H6","caption":"benzene"}},""" +
+            """{"type":"chem","content":{"smiles":"   ","formula":"C6H6"}},""" +
+            """{"type":"chem","content":"c1ccccc1"},""" +
+            """{"type":"text","content":"after"}]"""
+        assertEquals(
+            listOf(ContentElement.TextElement("before"), ContentElement.TextElement("after")),
+            raw.parseContentElements(json)
+        )
+    }
+
+    @Test
+    fun malformedKnownElementIsDroppedWithoutLosingItsNeighbours() {
+        val raw = """[{"type":"text","content":"before"},""" +
+            """{"type":"table","content":"not rows"},""" +
+            """{"type":"math","content":"x"}]"""
+        assertEquals(
+            listOf(ContentElement.TextElement("before"), ContentElement.MathElement("x")),
+            raw.parseContentElements(json)
+        )
     }
 
     @Test

@@ -1,0 +1,305 @@
+package com.mcqapp
+
+import com.mcqapp.data.export.isPngDataUri
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CHEM_DIAGRAM_BRIDGE
+import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
+import com.mcqapp.util.ContentRenderPath
+import com.mcqapp.util.SMILES_DRAWER_ASSET_URL
+import com.mcqapp.util.accessibleContentLabelFor
+import com.mcqapp.util.accessibleContentText
+import com.mcqapp.util.contentRenderPath
+import com.mcqapp.util.jsStringLiteral
+import com.mcqapp.util.mixedContentHtml
+import com.mcqapp.util.smilesJsLiteral
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * Rendering and accessibility of chemical structures. The block is drawn by
+ * the bundled SmilesDrawer asset inside the mixed WebView path (the same path
+ * formulas use), so these tests cover the branch decision, the spoken text,
+ * the generated HTML and the two injection boundaries: the JS string literal
+ * and the optional base64 PNG.
+ */
+class ChemistryRenderTest {
+
+    private fun htmlOf(
+        vararg elements: ContentElement,
+        fallback: String = "Unavailable",
+        chemKey: String = ""
+    ): String = mixedContentHtml(elements.toList(), 48f, "rgba(0,0,0,1)", fallback, chemKey)
+
+    // ---- path selection ----------------------------------------------------
+
+    @Test
+    fun aChemistryBlockForcesTheMixedPath() {
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(listOf(
+            ContentElement.ChemElement("CCO", formula = "C2H6O")
+        )))
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(listOf(
+            ContentElement.TextElement("Identify: "),
+            ContentElement.ChemElement("c1ccccc1", caption = "benzene")
+        )))
+        // A chemistry-only question must not be mistaken for the lone plain
+        // text run that keeps the legacy TextView path.
+        assertNotNull(accessibleContentLabelFor(listOf(ContentElement.ChemElement("CCO"))))
+    }
+
+    @Test
+    fun chemistryIsNeverSentDownTheNativeBitmapPath() {
+        // The native column is kept for text/image/table lists only; if a
+        // ChemElement ever reached it there would be no way to draw the SMILES.
+        val renderer = File("src/main/java/com/mcqapp/util/ContentElements.kt").readText()
+        assertTrue("native path must reject chemistry", renderer.contains(
+            "is ContentElement.ChemElement -> error(\"mixed view handles chemical structures\")"
+        ))
+        assertTrue("chem must select MIXED", renderer.contains(
+            "it is ContentElement.MathElement || it is ContentElement.ChemElement"
+        ))
+    }
+
+    @Test
+    fun pathsWithoutChemistryAreUnchanged() {
+        assertEquals(
+            ContentRenderPath.PLAIN_TEXT,
+            contentRenderPath(listOf(ContentElement.TextElement("What is 2+2?")))
+        )
+        assertEquals(
+            ContentRenderPath.NATIVE,
+            contentRenderPath(listOf(ContentElement.TextElement("a"), ContentElement.TextElement("b")))
+        )
+        assertEquals(
+            ContentRenderPath.MIXED,
+            contentRenderPath(listOf(ContentElement.MathElement("<math><mi>x</mi></math>")))
+        )
+    }
+
+    // ---- accessibility -----------------------------------------------------
+
+    @Test
+    fun spokenTextWinsThenCaptionThenSmilesAndFormulaIsAppended() {
+        assertEquals(
+            "ethanol C2H6O",
+            accessibleContentText(listOf(ContentElement.ChemElement(
+                smiles = "CCO", formula = "C2H6O", caption = "ethyl alcohol", spoken = "ethanol"
+            )))
+        )
+        assertEquals(
+            "benzene C6H6",
+            accessibleContentText(listOf(ContentElement.ChemElement(
+                smiles = "c1ccccc1", formula = "C6H6", caption = "benzene"
+            )))
+        )
+        assertEquals(
+            "c1ccccc1",
+            accessibleContentText(listOf(ContentElement.ChemElement("c1ccccc1")))
+        )
+    }
+
+    @Test
+    fun accessibleTextNeverLeaksSvgOrBase64() {
+        val elements = listOf(
+            ContentElement.TextElement("Name: "),
+            ContentElement.ChemElement(
+                smiles = "CCO",
+                formula = "C2H6O",
+                caption = "ethanol",
+                diagram = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+            )
+        )
+        val spoken = accessibleContentText(elements)
+        assertEquals("Name: ethanol C2H6O", spoken)
+        assertFalse("SVG markup leaked: $spoken", spoken.contains("<svg"))
+        assertFalse("base64 leaked: $spoken", spoken.contains("base64"))
+        assertFalse("data URI leaked: $spoken", spoken.contains("data:"))
+        assertEquals(spoken, accessibleContentLabelFor(elements))
+    }
+
+    // ---- generated HTML ----------------------------------------------------
+
+    @Test
+    fun chemistryPageLoadsTheBundledDrawerAndDrawsIntoAnSvg() {
+        val html = htmlOf(ContentElement.ChemElement("c1ccccc1", formula = "C6H6", caption = "Benzene"))
+        assertTrue("offline script missing", html.contains(
+            "<script src=\"$SMILES_DRAWER_ASSET_URL\"></script>"
+        ))
+        assertTrue("no remote script allowed", html.lines().none { it.contains("<script src=\"http") })
+        assertTrue("svg container missing", html.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue("parse call missing", html.contains("SmilesDrawer.parse(\"c1ccccc1\""))
+        assertTrue("SVG drawer missing", html.contains("SmilesDrawer.SvgDrawer"))
+        assertTrue("drawer missing", html.contains("new window.SmilesDrawer.SvgDrawer("))
+        assertTrue("light theme draw missing", html.contains(".draw(tree,svg,'light')"))
+        assertTrue("caption/formula line missing",
+            html.contains("<div class=\"mcq-chem-caption\">Benzene C6H6</div>"))
+        assertTrue("localised fallback text missing", html.contains("Unavailable: C6H6"))
+        // The page must still report its height to Compose.
+        assertTrue(html.contains(CONTENT_HEIGHT_BRIDGE))
+    }
+
+    @Test
+    fun aPageWithoutChemistryDoesNotLoadTheDrawer() {
+        val html = htmlOf(ContentElement.MathElement("<math><mi>x</mi></math>"))
+        assertFalse("unneeded chemistry script", html.contains(SMILES_DRAWER_ASSET_URL))
+        assertFalse(html.contains("SmilesDrawer.parse("))
+    }
+
+    @Test
+    fun multipleBlocksGetDistinctSvgIds() {
+        val html = htmlOf(
+            ContentElement.ChemElement("CCO"),
+            ContentElement.TextElement(" and "),
+            ContentElement.ChemElement("c1ccccc1")
+        )
+        assertTrue(html.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue(html.contains("<svg id=\"mcq-chem-1\""))
+        // One script tag per page, not one per block.
+        assertEquals(1, html.split(SMILES_DRAWER_ASSET_URL).size - 1)
+    }
+
+    @Test
+    fun theBundledAssetIsActuallyPresent() {
+        val js = File("src/main/assets/smiles-drawer/smiles-drawer.min.js")
+        assertTrue("missing: ${js.absolutePath}", js.isFile)
+    }
+
+    // ---- injection boundaries ---------------------------------------------
+
+    @Test
+    fun smilesIsJsonEscapedAndRestrictedToTheAllowlist() {
+        assertEquals("\"c1ccccc1\"", smilesJsLiteral("c1ccccc1"))
+        // A backslash is in the allowlist, so it must survive as a JSON escape.
+        assertEquals("\"\\\\\"", smilesJsLiteral("\\"))
+        assertEquals("\"alert(1)//\"", smilesJsLiteral("\";alert(1)//"))
+        // OpenSMILES two-digit ring closures must survive (%10 is ring 10).
+        assertEquals("\"C1%10CCCCC1\"", smilesJsLiteral("C1%10CCCCC1"))
+        // Control characters and markup are dropped, not forwarded.
+        assertEquals("\"CscriptC\"", smilesJsLiteral("C\n<scr>ipt>C"))
+    }
+
+    @Test
+    fun maliciousSmilesCannotEscapeTheJsStringOrInjectMarkup() {
+        val html = htmlOf(
+            ContentElement.ChemElement(
+                smiles = "\";alert(1)//",
+                formula = "X",
+                caption = "<img src=x onerror=alert(1)>"
+            )
+        )
+        // The quote and semicolon never reach the JS string literal.
+        assertFalse("JS string escaped: $html", html.contains("\"\";alert(1)//"))
+        assertTrue("allowlist-filtered SMILES missing", html.contains("SmilesDrawer.parse(\"alert(1)//\""))
+        // Caption is HTML text, never live markup.
+        assertFalse("caption injected markup", html.contains("<img src=x onerror=alert(1)>"))
+        assertTrue("caption not escaped", html.contains("&lt;img src=x onerror=alert(1)&gt;"))
+        assertFalse("script injected", html.contains("<script>alert(1)</script>"))
+    }
+
+    @Test
+    fun onlyAStrictPngDataUriIsAccepted() {
+        assertTrue(isPngDataUri("data:image/png;base64,iVBORw0KGgo="))
+        assertFalse(isPngDataUri("DATA:IMAGE/PNG;BASE64,iVBORw0KGgo"))
+        assertFalse(isPngDataUri("data:image/jpeg;base64,iVBORw0KGgo"))
+        assertFalse(isPngDataUri("data:image/svg+xml;base64,AAAA"))
+        assertFalse(isPngDataUri("data:image/png;base64,"))
+        assertFalse(isPngDataUri("data:image/png;base64,AA\" onerror=\"alert(1)"))
+    }
+
+    @Test
+    fun aValidDiagramReplacesTheSvgAndAnInvalidOneFallsBackToDrawing() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        val withDiagram = htmlOf(ContentElement.ChemElement("CCO", diagram = png))
+        assertTrue("PNG img missing", withDiagram.contains("<img src=\"$png\""))
+        assertFalse("SVG should not be drawn for a PNG", withDiagram.contains("<svg id=\"mcq-chem-0\""))
+        assertFalse("no draw needed for a PNG", withDiagram.contains("SmilesDrawer.parse("))
+
+        val hostile = "data:image/png;base64,\"/><script>alert(1)</script>"
+        val fallback = htmlOf(ContentElement.ChemElement("CCO", diagram = hostile))
+        assertTrue("invalid diagram must still draw", fallback.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue(fallback.contains("SmilesDrawer.parse(\"CCO\""))
+        assertFalse("data URI injected markup", fallback.contains("<script>alert(1)</script>"))
+    }
+
+    @Test
+    fun aBase64PayloadThatIsNotAPngIsRejectedAndKeepsTheTextFallback() {
+        // "not a png" is valid base64 with the PNG prefix, but the bytes do
+        // not carry the PNG signature — the shared strict validator rejects it.
+        val notAPng = "data:image/png;base64,bm90IGEgcG5n"
+        assertFalse("non-PNG bytes accepted", isPngDataUri(notAPng))
+        val html = htmlOf(ContentElement.ChemElement("CCO", formula = "C2H6O", diagram = notAPng))
+        assertTrue("SVG must be drawn instead", html.contains("<svg id=\"mcq-chem-0\""))
+        assertFalse("bad picture embedded", html.contains("<img src=\"$notAPng\""))
+        assertTrue("text fallback missing", html.contains("Unavailable: C2H6O"))
+    }
+
+    // ---- PNG capture bridge -------------------------------------------------
+
+    @Test
+    fun captureJsSerialisesTheSvgAndHandsThePngToTheBridgeWithItsKey() {
+        val html = htmlOf(
+            ContentElement.ChemElement("CCO", formula = "C2H6O"),
+            chemKey = "chem-42"
+        )
+        assertTrue("capture bridge missing", html.contains(CHEM_DIAGRAM_BRIDGE))
+        assertTrue("bridge name missing", html.contains("window.$CHEM_DIAGRAM_BRIDGE"))
+        assertTrue("wrong key handed to bridge", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"chem-42\",png)"
+        ))
+        assertTrue("SVG not serialised", html.contains("new XMLSerializer().serializeToString(svg)"))
+        assertTrue("not drawn into a canvas", html.contains("canvas.getContext('2d').drawImage(img,0,0)"))
+        assertTrue("not rasterised to PNG", html.contains("canvas.toDataURL('image/png')"))
+        assertTrue("SVG data URI missing", html.contains("img.src='data:image/svg+xml;base64,'"))
+        assertTrue("capture not called after draw", html.contains("capture();"))
+        // A plain page has no bridge calls at all.
+        val plain = htmlOf(ContentElement.MathElement("<math><mi>x</mi></math>"))
+        assertFalse(plain.contains(CHEM_DIAGRAM_BRIDGE))
+    }
+
+    @Test
+    fun captureFailureLeavesTheTextFallbackAndNeverCallsTheBridge() {
+        val html = htmlOf(ContentElement.ChemElement("CCO", formula = "C2H6O"), chemKey = "chem-42")
+        assertTrue("no parse-error fallback", html.contains("err=>showFallback()"))
+        assertTrue("no missing-drawer fallback",
+            html.contains("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');"))
+        assertTrue("no fallback reveal",
+            html.contains("function showFallback(){svg.style.display='none';if(fallback)fallback.style.display='';}"))
+        assertTrue("no fallback text", html.contains("Unavailable: C2H6O"))
+        // The bridge call is in the success path only: nothing after the error
+        // callback may hand a PNG anywhere.
+        val errorCallback = html.indexOf("err=>showFallback()")
+        assertTrue("error callback not found", errorCallback >= 0)
+        assertFalse("bridge called on failure",
+            html.substring(errorCallback).contains("onDiagram"))
+    }
+
+    @Test
+    fun theChemKeyIsJsEscapedAndCannotBreakOutOfTheScript() {
+        val hostileKey = "a\"</script><b>&"
+        val html = htmlOf(ContentElement.ChemElement("CCO"), chemKey = hostileKey)
+        assertFalse("key closed the script tag", html.contains("\"</script><b>&\""))
+        assertTrue("key not escaped for the JS string",
+            html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
+        assertEquals("\"a\\\"\\u003c/script\\u003e\\u003cb\\u003e\\u0026\"", jsStringLiteral(hostileKey))
+    }
+
+    // ---- localised copy ----------------------------------------------------
+
+    @Test
+    fun fallbackCopyExistsInBothLocalesAndIsUsedByTheRenderer() {
+        val en = File("src/main/res/values/strings_chemistry_render.xml").readText()
+        val hi = File("src/main/res/values-hi/strings_chemistry_render_hi.xml").readText()
+        assertTrue("English fallback copy missing", en.contains("name=\"chem_structure_unavailable\""))
+        assertTrue("Hindi fallback copy missing", hi.contains("name=\"chem_structure_unavailable\""))
+        val renderer = File("src/main/java/com/mcqapp/util/ContentElements.kt").readText()
+        assertTrue("fallback copy not resolved", renderer.contains("R.string.chem_structure_unavailable"))
+        assertTrue("fallback copy not passed to the HTML sink", renderer.contains(
+            "mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey)"
+        ))
+        assertTrue("no PNG capture bridge", renderer.contains("CHEM_DIAGRAM_BRIDGE"))
+        assertTrue("bridge not registered", renderer.contains("addJavascriptInterface("))
+    }
+}

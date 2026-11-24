@@ -14,8 +14,10 @@ changed.
 
 Between them the questions exercise every shape the importer understands:
 plain strings, structured elements, MathML formulas, chemical equations,
-tables in the question / options / explanation, pictures in all three, single
-and multiple correct answers, English and Hindi, plus deliberate edge cases.
+a chemical structure drawn from SMILES, tables in the question / options /
+explanation, pictures in all three, reading passages shared by a group of
+questions, flashcard backs of every kind, single and multiple correct answers,
+English and Hindi, plus deliberate edge cases.
 """
 
 import base64
@@ -507,6 +509,13 @@ FIGURES = {
 }
 IMG = {name: data_uri(canvas) for name, canvas in FIGURES.items()}
 
+# The larger labelled pie chart used by q-vis-2 was drawn by hand when that
+# question was added to the bank. Keep the exact bytes here so regenerating the
+# asset can never silently redraw (and therefore re-key) that figure.
+IMG["pie_sectors_large"] = (
+    "data:image/png;base64,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"
+)
+
 
 def img(name, alt):
     """An image content element; content must be an <img> tag for src extraction."""
@@ -523,6 +532,23 @@ def math(s):
 
 def table(rows):
     return {"type": "table", "content": rows}
+
+
+def chem(smiles, formula="", caption="", spoken="", diagram=""):
+    """A chemical structure block. All five keys are written even when empty,
+    matching ContentElement.ChemElement's stable wire shape; SMILES is the one
+    required field, and the bundled offline renderer draws it on every screen.
+    """
+    return {
+        "type": "chem",
+        "content": {
+            "smiles": smiles,
+            "formula": formula,
+            "caption": caption,
+            "spoken": spoken,
+            "diagram": diagram,
+        },
+    }
 
 
 # --------------------------------------------------------------------------
@@ -630,16 +656,27 @@ def q(
     tags=None,
     image=None,
     explanation_image=None,
+    passage_id=None,
 ):
     question = {
         "id": qid,
-        "question_elements": _elements(elements),
-        "options_elements": {key: _elements(value) for key, value in options.items()},
-        "explanation_elements": _elements(explanation),
-        "difficulty": difficulty,
-        "marks": marks,
-        "tags": tags or [],
     }
+    # Passage membership sits next to the id in the authored asset, so keep
+    # that key order when regenerating.
+    if passage_id:
+        question["passageId"] = passage_id
+    question.update(
+        {
+            "question_elements": _elements(elements),
+            "options_elements": {
+                key: _elements(value) for key, value in options.items()
+            },
+            "explanation_elements": _elements(explanation),
+            "difficulty": difficulty,
+            "marks": marks,
+            "tags": tags or [],
+        }
+    )
     if correct:
         question["correctOptionIds"] = correct
     # The older scalar picture fields, kept working alongside the elements.
@@ -824,6 +861,37 @@ CATEGORIES = [
                 difficulty="medium",
                 tags=["hindi", "conservation"],
             ),
+            # The structure is drawn from SMILES, so the bank demonstrates the
+            # bundled offline renderer rather than a flattened picture of it.
+            q(
+                "q-chem-5",
+                [
+                    txt("Which structure is benzene?"),
+                    chem(
+                        smiles="c1ccccc1",
+                        formula="C6H6",
+                        caption="benzene",
+                        spoken="a ring of six carbon atoms with alternating double bonds, benzene",
+                    ),
+                ],
+                {
+                    "a": [txt("Benzene, C6H6")],
+                    "b": [txt("Cyclohexane, C6H12")],
+                    "c": [txt("Toluene, C7H8")],
+                    "d": [txt("Phenol, C6H6O")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "The SMILES c1ccccc1 closes a six-membered aromatic ring, the skeletal "
+                        "structure of benzene with formula C6H6. Cyclohexane has the same six "
+                        "carbons but no aromatic ring and twice as many hydrogens; toluene and "
+                        "phenol both add a substituent to the ring."
+                    )
+                ],
+                difficulty="easy",
+                tags=["chemistry", "smiles", "structure"],
+            ),
         ],
     },
     {
@@ -923,6 +991,28 @@ CATEGORIES = [
                 difficulty="hard",
                 marks=2,
                 tags=["photons", "formula", "image-question"],
+            ),
+            # A flashcard whose back is a table.
+            q(
+                "q-fc-table",
+                [txt("What is the SI unit of force, and what is its symbol?")],
+                {},
+                [],
+                [
+                    txt(
+                        "Force is measured in newtons, written N. The table pairs it with mass "
+                        "for contrast:"
+                    ),
+                    table(
+                        [
+                            ["Quantity", "Unit", "Symbol"],
+                            ["Force", "newton", "N"],
+                            ["Mass", "kilogram", "kg"],
+                        ]
+                    ),
+                ],
+                difficulty="easy",
+                tags=["flashcard", "demo"],
             ),
         ],
     },
@@ -1133,7 +1223,9 @@ CATEGORIES = [
                 "q-math-8",
                 [
                     txt("Find the sum of the first 20 terms of "),
-                    math("<mn>3</mn><mo>+</mo><mn>7</mn><mo>+</mo><mn>11</mn><mo>+</mo><mo>&#x22EF;</mo>"),
+                    math(
+                        "<mn>3</mn><mo>+</mo><mn>7</mn><mo>+</mo><mn>11</mn><mo>+</mo><mo>&#x22EF;</mo>"
+                    ),
                     txt(" using "),
                     math(M_AP_SUM),
                     txt("."),
@@ -1173,8 +1265,10 @@ CATEGORIES = [
             q(
                 "q-math-9",
                 [
-                    txt("A fair six-sided die is rolled twice. What is the probability "
-                        "that the two numbers add up to 7?"),
+                    txt(
+                        "A fair six-sided die is rolled twice. What is the probability "
+                        "that the two numbers add up to 7?"
+                    ),
                     table(
                         [
                             ["First die", "Second die"],
@@ -1208,6 +1302,20 @@ CATEGORIES = [
                 difficulty="hard",
                 marks=2,
                 tags=["probability", "formula", "table-question"],
+            ),
+            # A flashcard whose back is a formula.
+            q(
+                "q-fc-math",
+                [txt("State the quadratic formula.")],
+                {},
+                [],
+                [
+                    txt("For a quadratic equation, the roots are given by "),
+                    math(M_QUADRATIC),
+                    txt(", with one sign chosen for each of the two roots."),
+                ],
+                difficulty="medium",
+                tags=["flashcard", "demo"],
             ),
         ],
     },
@@ -1252,7 +1360,8 @@ CATEGORIES = [
                     txt(
                         "The circle shows four sectors labelled A to D. Which two sectors are "
                         "equal in area?"
-                    )
+                    ),
+                    img("pie_sectors_large", "A pie chart with sectors A to D"),
                 ],
                 {
                     "a": [txt("A and B")],
@@ -1297,6 +1406,235 @@ CATEGORIES = [
                 difficulty="easy",
                 tags=["number-line", "image-question"],
             ),
+            # Picture on the front, answer on the back.
+            q(
+                "q-fc-image",
+                [txt("Which shape is shown?"), img("shape_square", "A square")],
+                {},
+                [],
+                [txt("A square — four equal sides and four right angles.")],
+                difficulty="easy",
+                tags=["flashcard", "demo"],
+            ),
+            # The mirror case: a picture on the back.
+            q(
+                "q-fc-image-back",
+                [
+                    txt(
+                        "What is the shape with four equal sides and four right angles? "
+                        "(Reveal the answer.)"
+                    )
+                ],
+                {},
+                [],
+                [img("shape_square", "A square"), txt("A square.")],
+                difficulty="easy",
+                tags=["flashcard", "demo"],
+            ),
+            q(
+                "q-vis-4",
+                [
+                    txt(
+                        "The picture shows one shape. Which option shows the same shape?"
+                    ),
+                    img("shape_square", "A square"),
+                ],
+                {
+                    "a": [img("shape_rectangle", "A rectangle"), txt(" Rectangle")],
+                    "b": [img("shape_square", "A square"), txt(" Square")],
+                    "c": [
+                        img("shape_triangle", "An equilateral triangle"),
+                        txt(" Triangle"),
+                    ],
+                    "d": [
+                        img("shape_pentagon", "A regular pentagon"),
+                        txt(" Pentagon"),
+                    ],
+                },
+                ["b"],
+                [
+                    txt(
+                        "The stem shows a square, and option (b) is the only option showing that "
+                        "same shape. The other options show a rectangle, a triangle and a "
+                        "pentagon — different shapes, not the one asked for."
+                    )
+                ],
+                difficulty="easy",
+                tags=["images", "stem-and-option-images"],
+            ),
+        ],
+    },
+    {
+        "id": "cat-passage",
+        "title": "Reading Passages",
+        "questions": [
+            q(
+                "q-psg-6",
+                [
+                    txt(
+                        "This question shares the Reading Passages category but belongs to no "
+                        "passage. In the app, what does belonging to a passage change for a "
+                        "question?"
+                    )
+                ],
+                {
+                    "a": [
+                        txt(
+                            "A shared context is shown above it, and tests keep the group together"
+                        )
+                    ],
+                    "b": [txt("It gains extra marks automatically")],
+                    "c": [
+                        txt(
+                            "Its own bookmark and schedule are replaced by the passage's"
+                        )
+                    ],
+                    "d": [txt("Nothing at all — a passage is decoration")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "Membership adds the shared context and the group behaviour and nothing "
+                        "else: scheduling, bookmarks, attempts and stats stay per question, which "
+                        "is exactly what this category demonstrates by mixing one standalone "
+                        "question with two passage groups."
+                    )
+                ],
+                difficulty="easy",
+                tags=["passage", "standalone"],
+            ),
+            q(
+                "q-psg-1",
+                [txt("According to the passage, what keeps the water cycle running?")],
+                {
+                    "a": [txt("Energy from the Sun")],
+                    "b": [txt("The Moon's gravity")],
+                    "c": [txt("Wind alone")],
+                    "d": [txt("Heat from Earth's core")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "The passage opens with the Sun heating water in oceans and rivers; that "
+                        "energy input drives every later step of the cycle."
+                    )
+                ],
+                difficulty="easy",
+                tags=["passage", "water-cycle"],
+                passage_id="passage-1",
+            ),
+            q(
+                "q-psg-2",
+                [
+                    txt(
+                        "Using the passage's table, which two steps of the cycle take place up in "
+                        "the sky?"
+                    )
+                ],
+                {
+                    "a": [txt("Evaporation and Condensation")],
+                    "b": [txt("Condensation and Precipitation")],
+                    "c": [txt("Precipitation and Collection")],
+                    "d": [txt("Collection and Evaporation")],
+                },
+                ["b"],
+                [
+                    txt(
+                        "Condensation builds clouds and precipitation drops their water, so both "
+                        "happen aloft. Evaporation starts at the surface and collection ends "
+                        "there, which is why the other pairings are wrong."
+                    )
+                ],
+                difficulty="medium",
+                marks=2,
+                tags=["passage", "table-question"],
+                passage_id="passage-1",
+            ),
+            q(
+                "q-psg-3",
+                [
+                    txt(
+                        "In the passage's table, dew on morning grass is listed as an everyday "
+                        "example of which step?"
+                    )
+                ],
+                {
+                    "a": [txt("Condensation")],
+                    "b": [txt("Evaporation")],
+                    "c": [txt("Precipitation")],
+                    "d": [txt("Collection")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "The table's Condensation row names dew on morning grass: water vapour "
+                        "cooling into droplets where the ground is cold. Rain, a drying puddle "
+                        "and a river reaching the sea belong to the other three rows."
+                    )
+                ],
+                difficulty="easy",
+                tags=["passage", "table-question"],
+                passage_id="passage-1",
+            ),
+            q(
+                "q-psg-4",
+                [
+                    txt("गद्यांश के अनुसार इस शृंखला में उत्पादक कौन है?"),
+                    txt(
+                        "(According to the passage, who is the producer in this chain?)"
+                    ),
+                ],
+                {
+                    "a": [txt("हरे पौधे")],
+                    "b": [txt("शाकाहारी")],
+                    "c": [txt("मांसाहारी")],
+                    "d": [txt("सूक्ष्म जीव")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "गद्यांश कहता है कि हरे पौधे सूर्य के प्रकाश से अपना भोजन स्वयं बनाते हैं, "
+                        "इसीलिए शृंखला के आरंभ में वे ही उत्पादक हैं। शेष तीनों पौधों पर या "
+                        "एक-दूसरे पर निर्भर रहते हैं।"
+                    )
+                ],
+                difficulty="easy",
+                tags=["passage", "hindi"],
+                passage_id="passage-2",
+            ),
+            q(
+                "q-psg-5",
+                [
+                    txt("ऊर्जा इस शृंखला में कहाँ से प्रवेश करती है?"),
+                    txt("(Where does the energy enter this chain from?)"),
+                ],
+                {
+                    "a": [txt("सूर्य से")],
+                    "b": [txt("मिट्टी से")],
+                    "c": [txt("जल से")],
+                    "d": [txt("वायु से")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "पौधे सूर्य के प्रकाश को भोजन में बदलते हैं, इसलिए ऊर्जा शृंखला में सूर्य से "
+                        "ही प्रवेश करती है और फिर क्रम से जीवों तक पहुँचती है।"
+                    )
+                ],
+                difficulty="medium",
+                tags=["passage", "hindi"],
+                passage_id="passage-2",
+            ),
+            q(
+                "q-fc-passage",
+                [txt("In the passage, how long has the same water been circulating?")],
+                {},
+                [],
+                [txt("For billions of years.")],
+                difficulty="easy",
+                tags=["flashcard", "demo"],
+                passage_id="passage-1",
+            ),
         ],
     },
     {
@@ -1312,18 +1650,10 @@ CATEGORIES = [
                     )
                 ],
                 {
-                    "a": [
-                        table([["Ruler", "Began reign"], ["Akbar", "1556"]])
-                    ],
-                    "b": [
-                        table([["Ruler", "Began reign"], ["Aurangzeb", "1707"]])
-                    ],
-                    "c": [
-                        table([["Ruler", "Began reign"], ["Babur", "1526"]])
-                    ],
-                    "d": [
-                        table([["Ruler", "Began reign"], ["Humayun", "1600"]])
-                    ],
+                    "a": [table([["Ruler", "Began reign"], ["Akbar", "1556"]])],
+                    "b": [table([["Ruler", "Began reign"], ["Aurangzeb", "1707"]])],
+                    "c": [table([["Ruler", "Began reign"], ["Babur", "1526"]])],
+                    "d": [table([["Ruler", "Began reign"], ["Humayun", "1600"]])],
                 },
                 ["a", "c"],
                 [
@@ -1399,7 +1729,9 @@ CATEGORIES = [
             q(
                 "q-geo-1",
                 [
-                    txt("The table lists four dams. Which two stand on the same river?"),
+                    txt(
+                        "The table lists four dams. Which two stand on the same river?"
+                    ),
                     table(
                         [
                             ["Dam", "River"],
@@ -1594,15 +1926,13 @@ CATEGORIES = [
                     txt(
                         "In <strong>Newton\u2019s second law</strong> the acceleration is "
                         "proportional to the net <em>external</em> force and inversely "
-                        "proportional to the <u>total mass</u>. Which statement about "
+                        "proportional to the <u>total mass</u>.<br>Which statement about "
                         "acceleration follows?"
                     )
                 ],
                 {
                     "a": [
-                        txt(
-                            "It <mark>increases</mark> when the net force increases."
-                        )
+                        txt("It <mark>increases</mark> when the net force increases.")
                     ],
                     "b": [txt("It is independent of the net force.")],
                     "c": [txt("It <del>decreases</del> when the net force increases.")],
@@ -1775,6 +2105,16 @@ CATEGORIES = [
                 difficulty="easy",
                 tags=["bilingual", "hindi", "constitution"],
             ),
+            # A flashcard whose front and back are both bilingual.
+            q(
+                "q-fc-hi",
+                [txt("भारत की राजधानी कौन-सी है? / What is the capital of India?")],
+                {},
+                [],
+                [txt("नई दिल्ली / New Delhi.")],
+                difficulty="easy",
+                tags=["flashcard", "demo"],
+            ),
         ],
     },
     {
@@ -1869,11 +2209,7 @@ CATEGORIES = [
             ),
             q(
                 "q-o4",
-                [
-                    txt(
-                        "Which three practices make a numerical answer trustworthy?"
-                    )
-                ],
+                [txt("Which three practices make a numerical answer trustworthy?")],
                 {
                     "a": [txt("Writing the units")],
                     "b": [txt("Checking significant figures")],
@@ -1891,6 +2227,28 @@ CATEGORIES = [
                 ],
                 difficulty="medium",
                 tags=["multi-correct", "measurement"],
+            ),
+            q(
+                "q-o5",
+                [txt("Rank these units of length from shortest to longest.")],
+                {
+                    "a": [txt("Millimetre, centimetre, metre, kilometre")],
+                    "b": [txt("Centimetre, millimetre, metre, kilometre")],
+                    "c": [txt("Metre, centimetre, millimetre, kilometre")],
+                    "d": [txt("Kilometre, metre, centimetre, millimetre")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "Millimetre, centimetre, metre, kilometre is the correct order. This "
+                        "question is worth zero marks on purpose, which is what the zero-mark "
+                        "warning reports: it still imports and can be practised, but it never "
+                        "changes a score."
+                    )
+                ],
+                difficulty="easy",
+                marks=0.0,
+                tags=["ordering", "zero-marks"],
             ),
         ],
     },
@@ -1918,25 +2276,15 @@ CATEGORIES = [
                 difficulty="easy",
                 tags=["edge-case", "ungraded"],
             ),
-            # No options: cannot be answered.
+            # No options: a flashcard, with its answer on the back.
             q(
                 "q-e2",
-                [
-                    txt(
-                        "This question has no options at all, which the import preview flags "
-                        "as unanswerable."
-                    )
-                ],
+                [txt("What is the capital of France?")],
                 {},
                 [],
-                [
-                    txt(
-                        "An empty option list is legal in the file format; the editor will ask "
-                        "for options before the question can be saved from there."
-                    )
-                ],
+                [txt("Paris.")],
                 difficulty="easy",
-                tags=["edge-case", "no-options"],
+                tags=["flashcard", "demo"],
             ),
             # No explanation: nothing shows under the hint icon in Browse.
             q(
@@ -1973,8 +2321,8 @@ CATEGORIES = [
                 "q-e5",
                 [
                     txt(
-                        "This question has only one option and no explanation, so the preview "
-                        "flags both."
+                        "This question has only one option, so on import it becomes a flashcard: "
+                        "the option below is kept as the answer, not as a choice."
                     )
                 ],
                 {"a": ["Only choice"]},
@@ -1982,6 +2330,38 @@ CATEGORIES = [
                 [],
                 difficulty="easy",
                 tags=["edge-case", "one-option"],
+            ),
+            # Three options, HTML entities in the copy, fractional marks and a
+            # deliberately long tag list in one question.
+            q(
+                "q-e6",
+                [
+                    txt(
+                        "Which comparison is correct? (Three options, an HTML entity, decimal "
+                        "marks and a long tag list in one demo.)"
+                    )
+                ],
+                {
+                    "a": [txt("5 &lt; 6")],
+                    "b": [txt("5 &gt; 6")],
+                    "c": [txt("5 = 6")],
+                },
+                ["a"],
+                [
+                    txt(
+                        "Five is less than six, so 5 &lt; 6. The entities render as &lt; and &gt;."
+                    )
+                ],
+                difficulty="easy",
+                marks=0.5,
+                tags=[
+                    "edge-case",
+                    "three-options",
+                    "html-entity",
+                    "fractional-marks",
+                    "many-tags",
+                    "option-entity",
+                ],
             ),
         ],
     },
@@ -2052,6 +2432,56 @@ def check_mathml(doc):
     return bad
 
 
+PASSAGES = [
+    {
+        "id": "passage-1",
+        "title": "The Water Cycle",
+        "categoryId": "cat-passage",
+        "elements": [
+            txt(
+                "The Sun heats water in oceans and rivers. The warm surface turns to vapour "
+                "and rises; high above, the vapour cools and condenses into droplets that "
+                "gather as clouds. When the droplets grow heavy they fall back as rain or "
+                "snow, and the collected water finds its way to the sea. Nothing leaves the "
+                "system — the same water has circulated for billions of years."
+            ),
+            table(
+                [
+                    ["Step", "What happens", "Everyday example"],
+                    [
+                        "Evaporation",
+                        "Liquid becomes vapour",
+                        "A puddle drying on a road",
+                    ],
+                    ["Condensation", "Vapour becomes droplets", "Dew on morning grass"],
+                    ["Precipitation", "Droplets fall", "A monsoon shower"],
+                    ["Collection", "Water gathers again", "A river reaching the sea"],
+                ]
+            ),
+            txt(
+                "Read the passage and the table before answering; the three multiple-choice "
+                "questions and the flashcard that share this passage all draw on them, and in "
+                "a test they arrive together with the passage shown above each one."
+            ),
+        ],
+    },
+    {
+        "id": "passage-2",
+        "title": "खाद्य शृंखला",
+        "categoryId": "cat-passage",
+        "elements": [
+            txt(
+                "हरे पौधे सूर्य के प्रकाश से अपना भोजन स्वयं बनाते हैं, इसलिए उन्हें इस शृंखला का "
+                "उत्पादक कहा जाता है। जो जीव पौधों को खाते हैं वे शाकाहारी कहलाते हैं, और जो "
+                "शाकाहारियों को खाते हैं वे मांसाहारी। इस प्रकार ऊर्जा सूर्य से पौधों तक और "
+                "फिर जीवों तक क्रम से पहुँचती है। मृत जीवों को खाने वाले सूक्ष्म जीव मिट्टी को "
+                "पोषित करते हैं, जिससे यह चक्र फिर आरंभ होता है।"
+            )
+        ],
+    },
+]
+
+
 def build():
     papers = [
         {
@@ -2059,8 +2489,9 @@ def build():
             "title": "Sample Bank — English + हिन्दी",
             "description": "A showcase bank: MathML formulas and chemical equations, tables "
             "and pictures in the question, the options and the explanation, "
-            "single and multiple correct answers, English and Hindi, plus "
-            "deliberate edge cases.",
+            "single and multiple correct answers, English and Hindi, reading "
+            "passages shared by a group of questions, flashcards with text, "
+            "table, formula and picture backs, plus deliberate edge cases.",
             "durationMinutes": 20,
             "negativeMarking": 0.25,
             "categories": CATEGORIES,
@@ -2098,7 +2529,7 @@ def build():
             ],
         }
     ]
-    return {"version": 1, "papers": papers}
+    return {"version": 1, "papers": papers, "passages": PASSAGES}
 
 
 def main():

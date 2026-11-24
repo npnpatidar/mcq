@@ -79,6 +79,7 @@ class AiSchemaGeneratorTest {
         is ContentElement.TableElement -> "table"
         is ContentElement.MathElement -> "math"
         is ContentElement.ImageElement -> "image"
+        is ContentElement.ChemElement -> "chem"
     }
 
     /**
@@ -495,6 +496,118 @@ class AiSchemaGeneratorTest {
         assertEquals("no warnings: ${file.warnings}", emptyList<String>(), file.warnings)
         assertEquals(1, file.papers.size)
         assertEquals(1, file.passages.size)
+    }
+
+    /** The chem toggle adds exactly one optional block, after the existing four. */
+    @Test
+    fun chemOptionAddsTheBlockLast() {
+        assertEquals(listOf(ContentBlock.TEXT), SchemaOptions().blocks)
+        assertEquals(
+            listOf(ContentBlock.TEXT, ContentBlock.CHEM),
+            SchemaOptions(chem = true).blocks
+        )
+    }
+
+    /** Find a `oneOf` arm by its `type.const`, however deeply it is nested. */
+    private fun findBlockSchema(element: JsonElement, const: String): JsonObject? = when (element) {
+        is JsonObject -> {
+            val blockType = ((element["properties"] as? JsonObject)?.get("type") as? JsonObject)
+                ?.get("const") as? JsonPrimitive
+            if (blockType?.content == const) {
+                element
+            } else {
+                element.values.mapNotNull { findBlockSchema(it, const) }.firstOrNull()
+            }
+        }
+        is JsonArray -> element.mapNotNull { findBlockSchema(it, const) }.firstOrNull()
+        else -> null
+    }
+
+    @Test
+    fun chemArmIsAClosedObjectWithNoDiagramKey() {
+        val generated = AiSchemaGenerator.generate(SchemaOptions(chem = true))
+        val schema = Json.parseToJsonElement(generated.schema)
+        val chem = findBlockSchema(schema, "chem")!!
+        val content = chem["properties"]!!.jsonObjectOf()["content"]!!.jsonObjectOf()
+
+        assertEquals("object", content["type"]!!.jsonPrimitive.content)
+        assertEquals(
+            setOf("smiles", "formula", "caption", "spoken"),
+            content["properties"]!!.jsonObjectOf().keys
+        )
+        assertEquals(
+            listOf("smiles"),
+            content["required"]!!.asArray().map { it.jsonPrimitive.content }
+        )
+        assertEquals(JsonPrimitive(false), content["additionalProperties"])
+        assertFalse("diagram is exported, never AI-generated", "diagram" in keys(content))
+        assertClosedObjects(chem)
+        assertEquals(JsonPrimitive(false), chem["additionalProperties"])
+    }
+
+    @Test
+    fun chemOnGuidesTheModelAndChemOffKeepsTheOldShape() {
+        val on = AiSchemaGenerator.generate(SchemaOptions(chem = true))
+        assertTrue("SMILES example in prompt", on.prompt.contains("c1ccccc1"))
+        assertTrue("formula example in prompt", on.prompt.contains("C6H6"))
+        assertTrue("caption example in prompt", on.prompt.contains("benzene"))
+        assertTrue("no diagram from the model", on.prompt.contains("never emit a diagram"))
+        assertTrue("chem named in the block list", on.prompt.contains("chem (SMILES)"))
+        assertTrue("chem arm declared", on.schema.contains("\"const\":\"chem\""))
+
+        val off = AiSchemaGenerator.generate(SchemaOptions())
+        assertFalse("no chem arm when off", off.schema.contains("\"const\":\"chem\""))
+        assertFalse("no SMILES guidance when off", off.prompt.contains("SMILES"))
+    }
+
+    /**
+     * The chem example is the proof: every selection the screen can produce
+     * with chemistry on must import through the real LegacyParser with no
+     * warnings, and each question must carry a fully populated ChemElement.
+     */
+    @Test
+    fun everyChemEnabledExampleParsesThroughTheRealParser() {
+        val combinations = buildList {
+            for (kind in QuestionKind.entries) {
+                for (table in listOf(false, true)) {
+                    for (math in listOf(false, true)) {
+                        for (image in listOf(false, true)) {
+                            for (passage in PassageMode.entries) {
+                                for (wrapper in SchemaWrapper.entries) {
+                                    add(
+                                        SchemaOptions(
+                                            kind = kind, table = table, math = math,
+                                            image = image, passage = passage,
+                                            wrapper = wrapper, chem = true
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals("every chem UI combination is covered", 144, combinations.size)
+        combinations.forEach { options ->
+            val label = options.toString()
+            val generated = AiSchemaGenerator.generate(options)
+            val file = LegacyParser.parse(generated.example)
+            assertEquals("$label: warnings $file.warnings", emptyList<String>(), file.warnings)
+            assertEquals("$label: exactly one paper", 1, file.papers.size)
+            val questions = file.papers.single().categories.single().questions
+            assertTrue("$label: questions present", questions.isNotEmpty())
+            questions.forEach { q ->
+                val chem = q.elements.filterIsInstance<ContentElement.ChemElement>().single()
+                assertEquals("$label: smiles", "c1ccccc1", chem.smiles)
+                assertEquals("$label: formula", "C6H6", chem.formula)
+                assertEquals("$label: caption", "benzene", chem.caption)
+                assertTrue("$label: spoken", chem.spoken.contains("aromatic"))
+                assertEquals("$label: no AI diagram", "", chem.diagram)
+            }
+            assertTrue("$label: chem arm declared", generated.schema.contains("\"const\":\"chem\""))
+            assertTrue("$label: example is JSON", Json.parseToJsonElement(generated.example) is JsonObject)
+        }
     }
 
     @Test

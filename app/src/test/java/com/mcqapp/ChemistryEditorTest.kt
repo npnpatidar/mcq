@@ -9,8 +9,11 @@ import com.mcqapp.ui.editor.EditorBlockType
 import com.mcqapp.ui.editor.EditorUiState
 import com.mcqapp.ui.editor.OptionEditorState
 import com.mcqapp.ui.editor.applyChemDiagram
+import com.mcqapp.ui.editor.applyKeyedChemDiagram
 import com.mcqapp.ui.editor.editorSnapshot
 import com.mcqapp.ui.editor.isSignificant
+import com.mcqapp.ui.editor.withChemSmiles
+import com.mcqapp.util.mixedContentHtml
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -268,5 +271,98 @@ class ChemistryEditorTest {
         assertFalse("\\ce{" in chemBranch)
         // The shared preview, not a second WYSIWYG implementation.
         assertTrue("ContentElements(" in editor && "elements = listOf(element)" in editor)
+    }
+
+    @Test
+    fun editingSmilesDropsTheCapturedPngButKeepsTheOtherFields() {
+        val png = CHEM_DIAGRAM_PREFIX + "BENZENE"
+        val original = ChemTemplates.BENZENE.toElement().copy(diagram = png)
+        val edited = withChemSmiles(original, "c")
+
+        assertNotSame(original, edited)
+        assertEquals("c", edited.smiles)
+        assertEquals("", edited.diagram)
+        assertEquals(original.formula, edited.formula)
+        assertEquals(original.caption, edited.caption)
+        assertEquals(original.spoken, edited.spoken)
+    }
+
+    @Test
+    fun editedChemElementRendersFromSmilesInsteadOfTheStalePng() {
+        // A real PNG signature, so the renderer's diagram validation accepts
+        // it and takes the raster branch before the edit.
+        val png = CHEM_DIAGRAM_PREFIX + "iVBORw0KGgo="
+        val stale = ChemTemplates.BENZENE.toElement().copy(diagram = png)
+        val edited = withChemSmiles(stale, "c")
+
+        val staleHtml = mixedContentHtml(listOf(stale), 18f, "#000000")
+        assertTrue("the old diagram is rendered as a raster", "<img src=\"$png\"" in staleHtml)
+        assertFalse("SmilesDrawer.parse" in staleHtml)
+
+        val freshHtml = mixedContentHtml(listOf(edited), 18f, "#000000")
+        assertTrue("the edited source must be drawn by SmilesDrawer", "SmilesDrawer.parse" in freshHtml)
+        assertTrue("the drawer needs its SVG target", "<svg id=" in freshHtml)
+        assertFalse("no stale raster may survive the edit", "<img src=\"$CHEM_DIAGRAM_PREFIX" in freshHtml)
+        assertNotEquals("the preview HTML must change", staleHtml, freshHtml)
+    }
+
+    @Test
+    fun aCaptureQueuedForAnOldSmilesIsRejectedButACurrentOneIsStored() {
+        val chem = ChemTemplates.BENZENE.toElement()
+        val before = state(listOf(chem), listOf("chem-1"))
+        val oldKey = "chem-1@${chem.smiles}"
+        val current = withChemSmiles(chem, "c")
+        val edited = before.copy(elements = listOf(current))
+
+        // The callback that was already in flight when the user typed carries
+        // the old key; it must not stamp the benzene raster onto "c".
+        assertSame(edited, applyKeyedChemDiagram(edited, oldKey, CHEM_DIAGRAM_PREFIX + "OLD"))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1", CHEM_DIAGRAM_PREFIX + "OLD"))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@", CHEM_DIAGRAM_PREFIX + "OLD"))
+
+        val freshPng = CHEM_DIAGRAM_PREFIX + "NEW"
+        val stored = applyKeyedChemDiagram(edited, "chem-1@c", freshPng)
+        assertNotSame(edited, stored)
+        assertEquals(freshPng, (stored.elements.single() as ContentElement.ChemElement).diagram)
+        assertFalse("a capture is still not a user edit", stored.isDirty)
+        // The invalid-PNG and no-op guards still apply on the keyed path.
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", "data:image/jpeg;base64,AAA"))
+        assertSame(stored, applyKeyedChemDiagram(stored, "chem-1@c", freshPng))
+    }
+
+    @Test
+    fun repeatedIdenticalSmilesEditIsANoOp() {
+        val chem = ChemTemplates.BENZENE.toElement().copy(diagram = CHEM_DIAGRAM_PREFIX + "AAA")
+        assertSame(chem, withChemSmiles(chem, chem.smiles))
+        assertSame(chem, withChemSmiles(chem, "  ${chem.smiles}  "))
+        val edited = withChemSmiles(chem, "c")
+        assertSame(edited, withChemSmiles(edited, "c"))
+    }
+
+    @Test
+    fun chemEditorBindsThePreviewToItsSmilesSource() {
+        val src = File("src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt").readText()
+        assertTrue(
+            "the SMILES field must clear the stale raster on every real edit",
+            "onValueChange = { onUpdate(withChemSmiles(element, it)) }" in src
+        )
+        val keyWiring = "chemKey = \"\$blockId@\${element.smiles}\""
+        assertTrue(
+            "the renderer's capture key must carry the SMILES that produced it: $keyWiring",
+            keyWiring in src
+        )
+    }
+
+    @Test
+    fun pickingATemplateStartsFromAFreshDiagramFreeElement() {
+        ChemTemplates.ALL.forEach { template ->
+            val element = template.toElement()
+            assertEquals("", element.diagram)
+            assertEquals(template.smiles, element.smiles)
+        }
+        // Changing the SMILES by template goes through the same stale-raster
+        // contract as typing it: toElement() never carries the old PNG over.
+        val withDiagram = ChemTemplates.BENZENE.toElement().copy(diagram = CHEM_DIAGRAM_PREFIX + "AAA")
+        assertEquals("", withChemSmiles(withDiagram, ChemTemplates.WATER.smiles).diagram)
     }
 }

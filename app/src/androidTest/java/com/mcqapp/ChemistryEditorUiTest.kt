@@ -78,6 +78,12 @@ class ChemistryEditorUiTest {
     private fun previewDescriptions(): List<String> = compose.onNodeWithTag("chem-preview-chem1")
         .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
 
+    private fun previewSmiles(): String = compose.onNodeWithTag("chem-preview-chem1")
+        .fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+
+    private fun templateLabel(): String = compose.onNodeWithTag("chem-template-chem1")
+        .fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+
     @Test
     fun chemFieldsAndPreviewAreReachableAt320dp() {
         setChemEditor()
@@ -107,6 +113,23 @@ class ChemistryEditorUiTest {
             "an edited chem block must change what the preview describes",
             previewDescriptions().any { it == "Chemical structure: ring" }
         )
+    }
+
+    @Test
+    fun editingSmilesRefreshesThePreviewAndDropsTheTemplate() {
+        setChemEditor()
+        assertEquals("c1ccccc1", previewSmiles())
+        assertTrue(
+            previewDescriptions().any { it == "Chemical structure: benzene" }
+        )
+        val smiles = compose.onNodeWithTag("chem-smiles-chem1").performScrollTo()
+        smiles.performTextClearance()
+        smiles.performTextInput("c")
+        // The preview follows the new source immediately: its semantics carry
+        // the SMILES actually being drawn, and the template no longer claims
+        // benzene. ChemistryEditorTest pins the stale-PNG/HTML side of this.
+        assertEquals("c", previewSmiles())
+        assertEquals("Custom", templateLabel())
     }
 
     @Test

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Search scope sheet: one entry point for paper + categories, applied immediately. -->
+    <string name="search_scope_choose_paper">Choose a paper</string>
+    <string name="search_scope_choose_categories">Choose categories</string>
+    <string name="search_scope_all_categories_in">All categories in %1$s</string>
+    <string name="search_scope_category_with_paper">%1$s in %2$s</string>
+    <string name="search_scope_category_partial">Partially selected</string>
+    <plurals name="search_scope_summary_categories">
+        <item quantity="one">%1$s › %2$d category</item>
+        <item quantity="other">%1$s › %2$d categories</item>
+    </plurals>
+</resources>

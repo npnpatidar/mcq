@@ -6,7 +6,7 @@
     <string name="search_filter_papers" tools:ignore="UnusedResources">पेपर</string>
     <string name="search_filter_categories" tools:ignore="UnusedResources">श्रेणियाँ</string>
     <string name="search_filter_all_papers">सभी पेपर</string>
-    <string name="search_filter_all_categories">सभी श्रेणियाँ</string>
+    <string name="search_filter_all_categories" tools:ignore="UnusedResources">सभी श्रेणियाँ</string>
 
     <!-- ब्राउज़/खोज पंक्तियों पर बुकमार्क टॉगल और बुकमार्क पंक्तियों पर उत्पत्ति। -->
     <string name="browse_add_bookmark">इस प्रश्न को बुकमार्क करें</string>

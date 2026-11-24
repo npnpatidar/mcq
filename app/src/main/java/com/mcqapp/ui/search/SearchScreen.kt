@@ -2,9 +2,6 @@ package com.mcqapp.ui.search
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +19,6 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,10 +28,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -55,7 +54,7 @@ import com.mcqapp.R
 import com.mcqapp.ui.common.PagingAppendErrorItem
 import com.mcqapp.ui.common.PagingErrorRow
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     navController: NavController,
@@ -68,12 +67,19 @@ fun SearchScreen(
     val committedQuery by viewModel.committedQuery.collectAsStateWithLifecycle()
     val resultCount by viewModel.resultCount.collectAsStateWithLifecycle()
     val papers by viewModel.papers.collectAsStateWithLifecycle()
-    val chips by viewModel.chips.collectAsStateWithLifecycle()
     val bookmarkedIds by viewModel.bookmarkedIds.collectAsStateWithLifecycle()
     val hits = viewModel.pagingData.collectAsLazyPagingItems()
     LaunchedEffect(hits.itemSnapshotList.items) {
         viewModel.observeBookmarks(hits.itemSnapshotList.items.map { it.question.id })
     }
+
+    // Sheet choreography is view state: which step, and which paper step 2 is
+    // about. Both survive rotation. The step is initialised only by the OPENING
+    // event — an effect keyed on showScopeSheet also ran on rotation and sent a
+    // sheet the user had backed to step 1 straight back to step 2.
+    var showScopeSheet by rememberSaveable { mutableStateOf(false) }
+    var scopeStep by rememberSaveable { mutableStateOf(SearchScopeStep.PAPERS) }
+    var chosenPaperId by rememberSaveable { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -126,43 +132,23 @@ fun SearchScreen(
                     )
                 }
             }
-            // Paper / category chips narrow *which cards* are searched (the
-            // scope chips above narrow *where in a card* to look). Many phones
-            // cannot fit a long category list on one line, so both rows wrap.
-            if (papers.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = state.paperFilterIds.isEmpty(),
-                        onClick = { viewModel.clearScopeFilters() },
-                        label = { Text(stringResource(R.string.search_filter_all_papers)) }
-                    )
-                    papers.forEach { paper ->
-                        FilterChip(
-                            selected = paper.id in state.paperFilterIds,
-                            onClick = { viewModel.togglePaper(paper.id) },
-                            label = { Text(paper.title) }
-                        )
+            // One entry point for *which cards* are searched. The chips above
+            // still narrow *where in a card* to look, so they stay as chips.
+            Spacer(Modifier.height(6.dp))
+            SearchScopeTrigger(
+                state = state,
+                papers = papers,
+                onClick = {
+                    val appliedPaper = state.paperFilterIds.singleOrNull()
+                    chosenPaperId = appliedPaper
+                    scopeStep = if (appliedPaper != null) {
+                        SearchScopeStep.CATEGORIES
+                    } else {
+                        SearchScopeStep.PAPERS
                     }
+                    showScopeSheet = true
                 }
-            }
-            if (chips.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = state.categoryFilterIds.isEmpty(),
-                        onClick = { viewModel.clearScopeFilters() },
-                        label = { Text(stringResource(R.string.search_filter_all_categories)) }
-                    )
-                    chips.forEach { chip ->
-                        FilterChip(
-                            selected = chip.id in state.categoryFilterIds,
-                            onClick = { viewModel.toggleCategory(chip.id) },
-                            label = { Text(chip.title) }
-                        )
-                    }
-                }
-            }
+            )
             val refresh = hits.loadState.refresh
             val append = hits.loadState.append
             val appending = append is LoadState.Loading
@@ -337,6 +323,25 @@ fun SearchScreen(
                 }
             }
         }
+    }
+
+    if (showScopeSheet) {
+        SearchScopeSheet(
+            papers = papers,
+            selectedCategoryIds = state.categoryFilterIds,
+            showCategories = scopeStep == SearchScopeStep.CATEGORIES,
+            chosenPaperId = chosenPaperId,
+            onChoosePaper = { paperId ->
+                viewModel.choosePaper(paperId)
+                chosenPaperId = paperId
+                scopeStep = SearchScopeStep.CATEGORIES
+            },
+            onToggleCategory = viewModel::toggleCategory,
+            onClearCategoriesInPaper = viewModel::clearCategoriesInPaper,
+            onClearScope = viewModel::clearScopeFilters,
+            onBackToPapers = { scopeStep = SearchScopeStep.PAPERS },
+            onDismiss = { showScopeSheet = false }
+        )
     }
 }
 

@@ -6,7 +6,7 @@
     <string name="search_filter_papers" tools:ignore="UnusedResources">Papers</string>
     <string name="search_filter_categories" tools:ignore="UnusedResources">Categories</string>
     <string name="search_filter_all_papers">All papers</string>
-    <string name="search_filter_all_categories">All categories</string>
+    <string name="search_filter_all_categories" tools:ignore="UnusedResources">All categories</string>
 
     <!-- Bookmark toggle on Browse/Search rows and provenance on Bookmarks rows. -->
     <string name="browse_add_bookmark">Bookmark this question</string>

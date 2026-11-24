@@ -23,6 +23,71 @@ class StatsChartGeometryTest {
     }
 
     @Test
+    fun heatmapWeeksAndWidthCoverAll365Days() {
+        val weeks = ChartGeometry.heatmapWeeks(365)
+        assertEquals(53, weeks)
+        // 53 columns of 12 dp cells plus 52 gaps of 2 dp.
+        val content = ChartGeometry.heatmapWidth(ChartGeometry.HEATMAP_MIN_CELL, weeks)
+        assertEquals(740.dp, content)
+        assertTrue("all days must remain reachable by scrolling", content > 320.dp)
+        assertTrue(content > 256.dp)
+        assertEquals(1, ChartGeometry.heatmapWeeks(1))
+        assertEquals(1, ChartGeometry.heatmapWeeks(0))
+    }
+
+    @Test
+    fun heatmapCellKeepsMinimumOnNarrowViewportsAndFillsWideOnes() {
+        val weeks = ChartGeometry.heatmapWeeks(365)
+        assertEquals(
+            ChartGeometry.HEATMAP_MIN_CELL,
+            ChartGeometry.heatmapCell(320.dp, ChartGeometry.HEATMAP_GAP, weeks)
+        )
+        assertEquals(
+            ChartGeometry.HEATMAP_MIN_CELL,
+            ChartGeometry.heatmapCell(256.dp, ChartGeometry.HEATMAP_GAP, weeks)
+        )
+        // 1164 dp is exactly 20 dp * 53 + 2 dp * 52: the cells fill a wide
+        // viewport rather than staying pinned at the minimum.
+        val wide = 1_164.dp
+        assertEquals(20.dp, ChartGeometry.heatmapCell(wide, ChartGeometry.HEATMAP_GAP, weeks))
+        assertTrue(ChartGeometry.heatmapCell(wide, ChartGeometry.HEATMAP_GAP, weeks) > ChartGeometry.HEATMAP_MIN_CELL)
+        assertEquals(wide, ChartGeometry.heatmapWidth(20.dp, weeks, ChartGeometry.HEATMAP_GAP))
+    }
+
+    @Test
+    fun scrollableHeatmapKeepsIts110DpHeight() {
+        assertEquals(
+            110.dp,
+            ChartGeometry.heatmapHeight(
+                ChartGeometry.HEATMAP_TOP_OFFSET,
+                ChartGeometry.HEATMAP_MIN_CELL,
+                ChartGeometry.HEATMAP_GAP,
+                ChartGeometry.HEATMAP_ROWS
+            )
+        )
+    }
+
+    @Test
+    fun tapFarIntoTheScrollableContentMapsToTheRightDay() {
+        val cellPx = 12f
+        val pitch = ChartGeometry.pitch(cellPx, ChartGeometry.HEATMAP_GAP.value)
+        val topOffset = ChartGeometry.HEATMAP_TOP_OFFSET.value
+        fun indexTappedFor(day: Int): Int? {
+            val col = day / ChartGeometry.HEATMAP_ROWS
+            val row = day % ChartGeometry.HEATMAP_ROWS
+            val x = col * pitch + cellPx / 2f
+            val y = topOffset + row * pitch + cellPx / 2f
+            val (tapCol, tapRow) = ChartGeometry.heatmapCellAt(x, y, topOffset, pitch)
+            return ChartGeometry.heatmapIndex(tapCol, tapRow, ChartGeometry.HEATMAP_ROWS)
+        }
+        // These taps land far past a 320 dp viewport; the canvas coordinates
+        // are content coordinates, so the mapping must still select the day.
+        assertTrue("the last week column lies beyond a 320 dp viewport", 52 * pitch > 320f)
+        assertEquals(300, indexTappedFor(300))
+        assertEquals(364, indexTappedFor(364))
+    }
+
+    @Test
     fun heatmapTapsMapToTheDrawnGridAndNeverGutterToRowZero() {
         val at = ChartGeometry.heatmapCellAt(
             x = 15f,

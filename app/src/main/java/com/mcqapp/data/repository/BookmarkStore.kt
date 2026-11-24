@@ -49,30 +49,68 @@ internal suspend fun McqRepository.setBookmarked(questionIds: Collection<String>
     return changed.size
 }
 
-/** A paper chip filter over the paged bookmark rows (empty id = all papers). */
+/**
+ * The applied bookmarks scope: a single paper and, inside it, the ticked
+ * categories. Empty paper = all papers; empty category ids = all categories in
+ * the chosen paper. The category ids carry every ticked descendant already
+ * (CategorySelection.subtreeIds), so membership is a flat test with no
+ * knowledge of the category tree — the same contract Search uses.
+ */
+internal data class BookmarkScopeFilter(
+    val paperId: String? = null,
+    val categoryIds: Set<String> = emptySet()
+) {
+    val isAll: Boolean get() = paperId == null && categoryIds.isEmpty()
+
+    /** Paper AND (expanded) category membership, both empty sets meaning "all". */
+    fun matches(paperId: String?, categoryId: String): Boolean =
+        (this.paperId == null || this.paperId == paperId) &&
+            (categoryIds.isEmpty() || categoryId in categoryIds)
+
+    fun matches(item: BookmarkedQuestion): Boolean =
+        matches(item.paperId, item.question.categoryId)
+}
+
+/** Narrows the paged bookmark rows by the applied paper + category scope. */
+internal fun filterBookmarksByScope(
+    items: List<BookmarkedQuestion>,
+    scope: BookmarkScopeFilter
+): List<BookmarkedQuestion> = items.filter(scope::matches)
+
+/**
+ * The old paper-only filter, kept for the library-scale tests and as the
+ * unscoped special case of [filterBookmarksByScope].
+ */
 internal fun filterBookmarksByPaper(
     items: List<BookmarkedQuestion>,
     paperId: String?
 ): List<BookmarkedQuestion> =
-    if (paperId.isNullOrBlank()) items else items.filter { it.paperId == paperId }
+    if (paperId.isNullOrBlank()) items
+    else filterBookmarksByScope(items, BookmarkScopeFilter(paperId))
 
 /**
  * Delegates to the repository's live bookmark source and drops rows outside
- * the selected paper. The delegate's invalidation is forwarded so a toggle (or
- * a bulk removal) still refreshes the filtered list in place; the paper filter
- * only narrows what is shown, never the keyset cursor, so no row is skipped.
+ * the applied scope. The delegate's invalidation is forwarded so a toggle (or
+ * a bulk removal) still refreshes the filtered list in place; the filter only
+ * narrows what is shown, never the keyset cursor, so no row is skipped.
  */
 internal class PaperFilteredBookmarkSource(
     private val delegate: PagingSource<BookmarkPageKey, BookmarkedQuestion>,
-    private val paperId: String?
+    private val scope: BookmarkScopeFilter
 ) : PagingSource<BookmarkPageKey, BookmarkedQuestion>() {
+
+    /** Kept for callers that only narrow by paper (no category scope). */
+    constructor(
+        delegate: PagingSource<BookmarkPageKey, BookmarkedQuestion>,
+        paperId: String?
+    ) : this(delegate, BookmarkScopeFilter(paperId))
 
     override suspend fun load(
         params: LoadParams<BookmarkPageKey>
     ): LoadResult<BookmarkPageKey, BookmarkedQuestion> =
         when (val result = delegate.load(params)) {
             is PagingSource.LoadResult.Page -> PagingSource.LoadResult.Page(
-                data = filterBookmarksByPaper(result.data, paperId),
+                data = filterBookmarksByScope(result.data, scope),
                 prevKey = result.prevKey,
                 nextKey = result.nextKey
             )

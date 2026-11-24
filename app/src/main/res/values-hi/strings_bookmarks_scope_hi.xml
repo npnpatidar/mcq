@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- जब अन्यत्र बुकमार्क हों परंतु लागू स्कोप में कोई न हो। -->
+    <string name="no_bookmarks_in_scope">इस स्कोप में कोई बुकमार्क नहीं</string>
+</resources>

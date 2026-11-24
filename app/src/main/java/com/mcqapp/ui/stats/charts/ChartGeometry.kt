@@ -1,6 +1,7 @@
 package com.mcqapp.ui.stats.charts
 
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlin.math.floor
 
 /**
@@ -10,10 +11,30 @@ import kotlin.math.floor
  */
 internal object ChartGeometry {
 
-    /** Width left for one heatmap week column after its gaps. */
-    fun heatmapCell(maxWidth: Dp, gap: Dp, weeks: Int): Dp {
+    const val HEATMAP_ROWS = 7
+    val HEATMAP_GAP = 2.dp
+    val HEATMAP_TOP_OFFSET = 14.dp
+    val HEATMAP_MIN_CELL = 12.dp
+
+    /** Number of week columns needed to show [days] study days. */
+    fun heatmapWeeks(days: Int): Int =
+        ((days + HEATMAP_ROWS - 1) / HEATMAP_ROWS).coerceAtLeast(1)
+
+    /** Full (unscrolled) width of a [weeks]-column heatmap. */
+    fun heatmapWidth(cell: Dp, weeks: Int, gap: Dp = HEATMAP_GAP): Dp {
         val columns = weeks.coerceAtLeast(1)
-        return (maxWidth - gap * (columns - 1)) / columns
+        return cell * columns + gap * (columns - 1)
+    }
+
+    /**
+     * Width of one heatmap week column: fill [maxWidth] when there is room, but
+     * never shrink below [minCell] — a wider calendar scrolls instead of
+     * turning into unreadable squares.
+     */
+    fun heatmapCell(maxWidth: Dp, gap: Dp, weeks: Int, minCell: Dp = HEATMAP_MIN_CELL): Dp {
+        val columns = weeks.coerceAtLeast(1)
+        val fitted = (maxWidth - gap * (columns - 1)) / columns
+        return maxOf(minCell, fitted)
     }
 
     /** Grid height: the month-label strip plus [rows] cells and their gaps. */

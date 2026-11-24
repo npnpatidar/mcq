@@ -47,7 +47,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.AndroidViewModel
@@ -57,9 +60,14 @@ import com.mcqapp.data.local.QuestionRef
 import com.mcqapp.data.repository.McqRepository
 import com.mcqapp.data.repository.ResetCard
 import com.mcqapp.data.repository.cardsWithSchedule
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Passage
 import com.mcqapp.util.ContentElements
 import com.mcqapp.R
+import com.mcqapp.ui.common.ScopeModalSheet
+import com.mcqapp.ui.common.ScopeSheetContent
+import com.mcqapp.ui.common.ScopeStep
+import com.mcqapp.ui.common.ScopeTrigger
 import androidx.paging.LoadState
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -78,6 +86,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -91,8 +100,131 @@ data class PassagesUiState(
     val memberCounts: Map<String, Int> = emptyMap(),
     /** The one passage whose member list is open; null when none is. */
     val expandedId: String? = null,
-    val papers: List<com.mcqapp.domain.Paper> = emptyList()
+    val papers: List<com.mcqapp.domain.Paper> = emptyList(),
+    /** Empty = all papers; otherwise exactly one paper id (mirrors SearchUiState). */
+    val paperFilterIds: Set<String> = emptySet(),
+    /**
+     * Selected category ids, expanded to every ticked descendant. Empty = all
+     * categories in the chosen paper. Storing them flat keeps filtering a plain
+     * membership test against each passage's own `categoryId`.
+     */
+    val categoryFilterIds: Set<String> = emptySet()
 )
+
+/**
+ * The scope sheet applies changes immediately, so these are the whole state
+ * transition. Mirrors the SearchViewModel contract: a paper and its categories
+ * travel together (a new paper drops the old categories, re-choosing the same
+ * paper keeps them), and a category toggle stores its full subtree. Pure so the
+ * JVM tests can drive them without an Application or a repository.
+ */
+internal fun choosePassagesPaper(state: PassagesUiState, paperId: String): PassagesUiState =
+    state.copy(
+        paperFilterIds = setOf(paperId),
+        categoryFilterIds = if (state.paperFilterIds == setOf(paperId)) {
+            state.categoryFilterIds
+        } else {
+            emptySet()
+        }
+    )
+
+internal fun toggleCategoryInPassagesPaper(
+    state: PassagesUiState,
+    categoryId: String,
+    categories: List<com.mcqapp.domain.CategoryNode>
+): PassagesUiState {
+    val subtree = CategorySelection.subtreeIds(CategorySelection.flatten(categories), categoryId)
+        .orEmpty()
+    if (subtree.isEmpty()) return state // unknown id: leave the selection alone
+    val next = if (subtree.all { it in state.categoryFilterIds }) {
+        state.categoryFilterIds - subtree
+    } else {
+        state.categoryFilterIds + subtree
+    }
+    return state.copy(categoryFilterIds = next)
+}
+
+/** No cross-paper interpretation of a category: with no single paper, nothing changes. */
+internal fun toggleCategoryInChosenPassagesPaper(
+    state: PassagesUiState,
+    categoryId: String,
+    papers: List<com.mcqapp.domain.Paper>
+): PassagesUiState {
+    val chosenPaperId = state.paperFilterIds.singleOrNull() ?: return state
+    val categories = papers.firstOrNull { it.id == chosenPaperId }?.categories ?: return state
+    return toggleCategoryInPassagesPaper(state, categoryId, categories)
+}
+
+/** Categories-only clear: the chosen paper stays put. */
+internal fun clearCategoriesInPassagesPaper(state: PassagesUiState): PassagesUiState =
+    if (state.categoryFilterIds.isEmpty()) {
+        state
+    } else {
+        state.copy(categoryFilterIds = emptySet())
+    }
+
+/** "All papers": drop the paper and its categories together. */
+internal fun clearPassagesScope(state: PassagesUiState): PassagesUiState =
+    if (state.paperFilterIds.isEmpty() && state.categoryFilterIds.isEmpty()) {
+        state
+    } else {
+        state.copy(paperFilterIds = emptySet(), categoryFilterIds = emptySet())
+    }
+
+/**
+ * Drop ids that no longer exist in the loaded papers. A stale paper would keep
+ * restricting the list to zero hits while the trigger read "All papers"; an
+ * empty [papers] is the initial-load state, not a deletion, so it clears nothing.
+ */
+internal fun prunePassagesScope(
+    state: PassagesUiState,
+    papers: List<com.mcqapp.domain.Paper>
+): PassagesUiState {
+    if (papers.isEmpty()) return state
+    val chosenPaperId = state.paperFilterIds.singleOrNull()
+    if (chosenPaperId == null) {
+        return if (state.categoryFilterIds.isEmpty()) {
+            state
+        } else {
+            state.copy(categoryFilterIds = emptySet())
+        }
+    }
+    val paper = papers.firstOrNull { it.id == chosenPaperId } ?: return clearPassagesScope(state)
+    val liveIds = CategorySelection.flatten(paper.categories).mapTo(mutableSetOf()) { it.first.id }
+    val kept = state.categoryFilterIds intersect liveIds
+    return if (kept == state.categoryFilterIds) state else state.copy(categoryFilterIds = kept)
+}
+
+/** Every category id's owning paper, precomputed once per papers emission. */
+internal fun buildPassagesPaperIndex(
+    papers: List<com.mcqapp.domain.Paper>
+): Map<String, com.mcqapp.domain.Paper> = buildMap {
+    papers.forEach { paper ->
+        CategorySelection.flatten(paper.categories).forEach { (node, _) ->
+            put(node.id, paper)
+        }
+    }
+}
+
+/**
+ * The passage list the screen shows. Filtering is on each passage's OWN
+ * `categoryId` — never on its member questions — and a ticked category includes
+ * its whole subtree. With no paper chosen every passage is visible, whatever
+ * stale category ids the state may hold.
+ */
+internal fun visiblePassages(
+    passages: List<Passage>,
+    state: PassagesUiState,
+    paperIndex: Map<String, com.mcqapp.domain.Paper> = buildPassagesPaperIndex(state.papers)
+): List<Passage> {
+    val chosenPaperId = state.paperFilterIds.singleOrNull() ?: return passages
+    val paper = paperIndex.values.firstOrNull { it.id == chosenPaperId } ?: return emptyList()
+    val inPaper = passages.filter { paperIndex[it.categoryId]?.id == chosenPaperId }
+    if (state.categoryFilterIds.isEmpty()) return inPaper
+    val ticked = CategorySelection.tickedIds(paper.categories, state.categoryFilterIds)
+    val inScope = CategorySelection.orderedIds(paper.categories, ticked).toSet()
+    return inPaper.filter { it.categoryId in inScope }
+}
 
 /**
  * The edit/create form, owned by the ViewModel rather than the dialog. When a
@@ -245,10 +377,16 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     val passages: StateFlow<List<Passage>> = repository.observePassages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** The list the screen renders: the live passages narrowed by the applied scope. */
+    val visiblePassages: StateFlow<List<Passage>> = combine(passages, _state) { list, state ->
+        visiblePassages(list, state, buildPassagesPaperIndex(state.papers))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     init {
         viewModelScope.launch {
             repository.observePapers().collect { papers ->
                 _state.update { it.copy(loading = false, papers = papers) }
+                updateScope { prunePassagesScope(it, papers) }
             }
         }
         viewModelScope.launch {
@@ -372,6 +510,39 @@ class PassagesViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
+     * Applies one scope transition and closes any open member list in the same
+     * update. Without the collapse, an expanded passage hidden by the new scope
+     * left its member rows in the list, backed by a pager for a passage the
+     * learner could no longer see.
+     */
+    private fun updateScope(transform: (PassagesUiState) -> PassagesUiState) {
+        _state.update { current ->
+            val next = transform(current)
+            if (next === current) {
+                current
+            } else {
+                expandedId.value = null
+                next.copy(expandedId = null)
+            }
+        }
+    }
+
+    /** Choose one paper; re-choosing it keeps its category selection. */
+    fun choosePaper(paperId: String) = updateScope { choosePassagesPaper(it, paperId) }
+
+    /** Toggle a whole category subtree inside the chosen paper, if one is chosen. */
+    fun toggleCategory(categoryId: String) {
+        val papers = _state.value.papers
+        updateScope { toggleCategoryInChosenPassagesPaper(it, categoryId, papers) }
+    }
+
+    /** Clear only the categories, leaving the chosen paper selected. */
+    fun clearCategoriesInPaper() = updateScope { clearCategoriesInPassagesPaper(it) }
+
+    /** "All papers": clear the paper and its categories together. */
+    fun clearScopeFilters() = updateScope { clearPassagesScope(it) }
+
+    /**
      * Opens (or closes) one passage's member list. Only one is open at a time
      * so a single pager can back the rows.
      */
@@ -438,7 +609,16 @@ fun PassagesScreen(
 ) {
     val viewModel: PassagesViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val passages by viewModel.passages.collectAsStateWithLifecycle()
+    val visiblePassages by viewModel.visiblePassages.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Sheet choreography is view state: which step and which paper step 2 is
+    // about. Both survive rotation. Only the opening event seeds them — an
+    // effect keyed on the open flag would send a sheet the user backed to step 1
+    // straight back to step 2 after a rotation (the SearchScreen rule).
+    var showScopeSheet by rememberSaveable { mutableStateOf(false) }
+    var scopeStep by rememberSaveable { mutableStateOf(ScopeStep.PAPERS) }
+    var chosenPaperId by rememberSaveable { mutableStateOf<String?>(null) }
 
     // The edit form lives in the ViewModel (E1/E2); these two are just local
     // dialog flags. saveable so rotation does not drop the delete refusal (E2).
@@ -460,20 +640,9 @@ fun PassagesScreen(
     }
 
     // categoryId -> owning paper, hoisted: the per-row firstOrNull below ran
-    // once per scroll frame for every visible row.
-    val paperByCategoryId = remember(state.papers) {
-        buildMap {
-            state.papers.forEach { paper ->
-                fun walk(nodes: List<com.mcqapp.domain.CategoryNode>) {
-                    nodes.forEach { node ->
-                        put(node.id, paper)
-                        walk(node.children)
-                    }
-                }
-                walk(paper.categories)
-            }
-        }
-    }
+    // once per scroll frame for every visible row. The same index backs the
+    // ViewModel's filter, so the rows and the list agree on a passage's paper.
+    val paperByCategoryId = remember(state.papers) { buildPassagesPaperIndex(state.papers) }
 
     Scaffold(
         topBar = {
@@ -500,18 +669,45 @@ fun PassagesScreen(
             }
         }
     ) { padding ->
-        if (passages.isEmpty() && !state.loading) {
-            Text(
-                stringResource(R.string.passages_empty),
-                modifier = Modifier.padding(padding).padding(16.dp)
+        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+            PassagesScopeTrigger(
+                state = state,
+                papers = state.papers,
+                onClick = {
+                    // Only the opening event seeds the step. Reopening a scoped
+                    // list starts at the applied paper's categories, like Search.
+                    val applied = state.paperFilterIds.singleOrNull()
+                    chosenPaperId = applied
+                    scopeStep = if (applied != null) ScopeStep.CATEGORIES else ScopeStep.PAPERS
+                    showScopeSheet = true
+                }
             )
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                passages.forEach { passage ->
+            Spacer(Modifier.height(8.dp))
+            if (passages.isEmpty() && !state.loading) {
+                Text(stringResource(R.string.passages_empty))
+            } else if (visiblePassages.isEmpty() && !state.loading) {
+                // Passages exist, but none live in the scoped paper/category.
+                // Offer the one-tap way back to the whole list instead of a
+                // dead-end message, like Bookmarks' scoped-empty state.
+                Column {
+                    Text(
+                        stringResource(R.string.passages_scope_empty),
+                        modifier = Modifier.testTag("passages-scope-empty")
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        modifier = Modifier.testTag("passages-scope-clear"),
+                        onClick = viewModel::clearScopeFilters
+                    ) {
+                        Text(stringResource(R.string.search_filter_all_papers))
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                visiblePassages.forEach { passage ->
                     val paperTitle = paperByCategoryId[passage.categoryId]
                     val paperId = paperTitle?.id.orEmpty()
                     val expanded = passage.id == state.expandedId
@@ -521,15 +717,33 @@ fun PassagesScreen(
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
+                                    // On a 320 dp screen an unbroken title or
+                                    // paper name wrapped into a column of words
+                                    // and pushed the four actions off-screen.
+                                    // One ellipsised line keeps the row intact;
+                                    // TalkBack still gets the full name.
+                                    val fallbackTitle = stringResource(R.string.passage)
+                                    val title = passage.title.ifBlank { fallbackTitle }
                                     Text(
-                                        passage.title.ifBlank { stringResource(R.string.passage) },
+                                        title,
                                         style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.semantics {
+                                            contentDescription = title
+                                        }
                                     )
                                     if (paperTitle != null && paperTitle.title.isNotBlank()) {
+                                        val paperName = paperTitle.title
                                         Text(
-                                            paperTitle.title,
-                                            style = MaterialTheme.typography.labelSmall
+                                            paperName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.semantics {
+                                                contentDescription = paperName
+                                            }
                                         )
                                     }
                                     Text(
@@ -730,6 +944,7 @@ fun PassagesScreen(
                         }
                     }
                 }
+                }
             }
         }
 
@@ -835,6 +1050,25 @@ fun PassagesScreen(
                 }
             )
         }
+    }
+
+    if (showScopeSheet) {
+        PassagesScopeSheet(
+            papers = state.papers,
+            selectedCategoryIds = state.categoryFilterIds,
+            step = scopeStep,
+            chosenPaperId = chosenPaperId,
+            onChoosePaper = { id ->
+                viewModel.choosePaper(id)
+                chosenPaperId = id
+                scopeStep = ScopeStep.CATEGORIES
+            },
+            onToggleCategory = viewModel::toggleCategory,
+            onClearCategoriesInPaper = viewModel::clearCategoriesInPaper,
+            onClearScope = viewModel::clearScopeFilters,
+            onBackToPapers = { scopeStep = ScopeStep.PAPERS },
+            onDismiss = { showScopeSheet = false }
+        )
     }
 }
 
@@ -1005,4 +1239,83 @@ private fun CategoryPicker(
             }
         }
     }
+}
+
+/** Above the passage list: one button for *which passages* are shown. */
+@Composable
+internal fun PassagesScopeTrigger(
+    state: PassagesUiState,
+    papers: List<com.mcqapp.domain.Paper>,
+    onClick: () -> Unit
+) {
+    val paper = papers.firstOrNull { it.id == state.paperFilterIds.singleOrNull() }
+    ScopeTrigger(
+        paper = paper,
+        selectedCategoryIds = state.categoryFilterIds,
+        tag = "passages-scope-button",
+        onClick = onClick
+    )
+}
+
+/**
+ * Modal host for the two-step sheet. Delegates to the shared primitive so
+ * Passages gets the identical choreography and tag contract as Search, with a
+ * distinct tag prefix for the tests.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun PassagesScopeSheet(
+    papers: List<com.mcqapp.domain.Paper>,
+    selectedCategoryIds: Set<String>,
+    step: ScopeStep,
+    chosenPaperId: String?,
+    onChoosePaper: (String) -> Unit,
+    onToggleCategory: (String) -> Unit,
+    onClearCategoriesInPaper: () -> Unit,
+    onClearScope: () -> Unit,
+    onBackToPapers: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ScopeModalSheet(
+        papers = papers,
+        selectedCategoryIds = selectedCategoryIds,
+        step = step,
+        chosenPaperId = chosenPaperId,
+        tagPrefix = "passages-scope",
+        onChoosePaper = onChoosePaper,
+        onToggleCategory = onToggleCategory,
+        onClearCategoriesInPaper = onClearCategoriesInPaper,
+        onClearScope = onClearScope,
+        onBackToPapers = onBackToPapers,
+        onDismiss = onDismiss
+    )
+}
+
+/** Stateless two-step body for UI tests: no ViewModel or repository needed. */
+@Composable
+internal fun PassagesScopeSheetContent(
+    papers: List<com.mcqapp.domain.Paper>,
+    selectedCategoryIds: Set<String>,
+    step: ScopeStep,
+    chosenPaperId: String?,
+    onChoosePaper: (String) -> Unit,
+    onToggleCategory: (String) -> Unit,
+    onClearCategoriesInPaper: () -> Unit,
+    onClearScope: () -> Unit,
+    onBackToPapers: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ScopeSheetContent(
+        papers = papers,
+        selectedCategoryIds = selectedCategoryIds,
+        step = step,
+        chosenPaperId = chosenPaperId,
+        tagPrefix = "passages-scope",
+        onChoosePaper = onChoosePaper,
+        onToggleCategory = onToggleCategory,
+        onClearCategoriesInPaper = onClearCategoriesInPaper,
+        onClearScope = onClearScope,
+        onBackToPapers = onBackToPapers,
+        onDismiss = onDismiss
+    )
 }

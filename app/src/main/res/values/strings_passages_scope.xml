@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Passages scope: shown when passages exist but none match the chosen paper/category.
+         The sheet itself reuses the shared search_scope_* strings. -->
+    <string name="passages_scope_empty">No passages in this paper or category</string>
+</resources>

@@ -14,7 +14,11 @@ import java.io.File
 class SearchScopeSheetStructureTest {
 
     private val screen = File("src/main/java/com/mcqapp/ui/search/SearchScreen.kt").readText()
-    private val sheet = File("src/main/java/com/mcqapp/ui/search/SearchScopeSheet.kt").readText()
+    // The sheet lives in shared primitives now; the search file is a thin
+    // wrapper. Guards read both so a regression on either side is caught.
+    private val commonSheet = File("src/main/java/com/mcqapp/ui/common/ScopeSheet.kt").readText()
+    private val searchSheet = File("src/main/java/com/mcqapp/ui/search/SearchScopeSheet.kt").readText()
+    private val sheet = commonSheet + searchSheet
 
     private fun occurrences(haystack: String, needle: String): Int =
         Regex(Regex.escape(needle)).findAll(haystack).count()

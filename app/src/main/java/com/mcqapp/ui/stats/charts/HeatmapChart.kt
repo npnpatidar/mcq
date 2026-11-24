@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -94,7 +96,17 @@ internal fun HeatmapChart(
         val gap = ChartGeometry.HEATMAP_GAP
         val cell = ChartGeometry.heatmapCell(maxWidth, gap, weeks)
         val contentWidth = ChartGeometry.heatmapWidth(cell, weeks, gap)
-        Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        val scrollState = rememberScrollState()
+        val density = LocalDensity.current
+        // Days run oldest-first, so a fresh calendar must open at the newest
+        // end. Passing the full content width is deliberate: scrollTo's value
+        // is clamped to the actual maximum once the container has measured,
+        // which has not happened yet on first composition. Re-anchor when the
+        // data, the week count or the viewport changes.
+        LaunchedEffect(scrollState, days, contentWidth, maxWidth) {
+            scrollState.scrollTo(with(density) { contentWidth.toPx() }.toInt())
+        }
+        Box(modifier = Modifier.horizontalScroll(scrollState)) {
             Canvas(
                 modifier = Modifier
                     .testTag("stats-heatmap-canvas")
@@ -135,7 +147,10 @@ internal fun HeatmapChart(
                     if (date.monthValue != lastMonth && index % rows == 0) {
                         lastMonth = date.monthValue
                         val text = textMeasurer.measure(date.format(monthFmt), TextStyle(fontSize = 9.sp, color = labelColor))
-                        val x = (index / rows) * pitch
+                        // The last column's label is wider than a cell; keep
+                        // it inside the full canvas instead of clipping it.
+                        val maxLabelX = (size.width - text.size.width).coerceAtLeast(0f)
+                        val x = ((index / rows) * pitch).coerceIn(0f, maxLabelX)
                         drawText(text, topLeft = Offset(x, 0f))
                     }
                 }

@@ -474,6 +474,39 @@ internal fun applyChemDiagram(
 }
 
 /**
+ * Applies a PNG capture whose key is `"<blockId>@<smiles>"`.
+ *
+ * The renderer draws from the SMILES in the HTML; by the time it rasterises
+ * the SVG the user may already have typed a different source. Such a stale
+ * capture must be dropped — writing it back would resurrect the old picture
+ * after [withChemSmiles] cleared the diagram. An unkeyed or malformed key is
+ * rejected for the same reason.
+ */
+internal fun applyKeyedChemDiagram(
+    s: EditorUiState,
+    chemKey: String,
+    pngDataUri: String
+): EditorUiState {
+    val at = chemKey.indexOf('@')
+    if (at <= 0 || at == chemKey.lastIndex) return s
+    val blockId = chemKey.substring(0, at)
+    val smiles = chemKey.substring(at + 1)
+
+    fun currentSmiles(ids: List<String>, elements: List<ContentElement>): String? {
+        val i = ids.indexOf(blockId)
+        if (i !in elements.indices) return null
+        return (elements[i] as? ContentElement.ChemElement)?.smiles
+    }
+
+    val liveSmiles = currentSmiles(s.blockIds, s.elements)
+        ?: currentSmiles(s.explanationBlockIds, s.explanationElements)
+        ?: s.options.firstNotNullOfOrNull { currentSmiles(it.blockIds, it.elements) }
+        ?: return s
+    if (liveSmiles != smiles) return s
+    return applyChemDiagram(s, blockId, pngDataUri)
+}
+
+/**
  * Unambiguous canonical snapshot of exactly what a save would persist.
  *
  * The old signature joined raw user content with `|`, `;`, `,` and newlines,
@@ -1340,11 +1373,12 @@ class EditorViewModel(
      * [updateState] and preserves the dirty flag: capturing a diagram must
      * not make a clean form look edited (or clear a real edit). A no-op leaves
      * the state instance untouched, so repeated capture callbacks do not
-     * churn composition.
+     * churn composition. The key also carries the SMILES the PNG was drawn
+     * from; stale captures are rejected by [applyKeyedChemDiagram].
      */
-    fun updateChemDiagram(blockId: String, pngDataUri: String) {
+    fun updateChemDiagram(chemKey: String, pngDataUri: String) {
         _state.update { current ->
-            val next = applyChemDiagram(current, blockId, pngDataUri)
+            val next = applyKeyedChemDiagram(current, chemKey, pngDataUri)
             if (next === current) {
                 current
             } else {

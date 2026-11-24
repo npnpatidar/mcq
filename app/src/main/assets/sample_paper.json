@@ -416,6 +416,67 @@
               "correctOptionIds": [
                 "c"
               ]
+            },
+            {
+              "id": "q-chem-5",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "Which structure is benzene?"
+                },
+                {
+                  "type": "chem",
+                  "content": {
+                    "smiles": "c1ccccc1",
+                    "formula": "C6H6",
+                    "caption": "benzene",
+                    "spoken": "a ring of six carbon atoms with alternating double bonds, benzene",
+                    "diagram": ""
+                  }
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "Benzene, C6H6"
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "Cyclohexane, C6H12"
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "Toluene, C7H8"
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "Phenol, C6H6O"
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The SMILES c1ccccc1 closes a six-membered aromatic ring, the skeletal structure of benzene with formula C6H6. Cyclohexane has the same six carbons but no aromatic ring and twice as many hydrogens; toluene and phenol both add a substituent to the ring."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "chemistry",
+                "smiles",
+                "structure"
+              ],
+              "correctOptionIds": [
+                "a"
+              ]
             }
           ]
         },

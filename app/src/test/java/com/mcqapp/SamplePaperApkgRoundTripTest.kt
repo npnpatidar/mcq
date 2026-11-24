@@ -167,6 +167,28 @@ class SamplePaperApkgRoundTripTest {
     }
 
     /**
+     * The chemistry demo rides in the third (mcqapp) payload: the readable Anki
+     * fields carry only its text handles. All five fields of the authored
+     * element must come back unchanged, twice over.
+     */
+    @Test
+    fun theChemistryStructureSurvivesBothDirections() {
+        val index = allQuestions(samplePaper).indexOfFirst { it.id == "q-chem-5" }
+        assertTrue("the sample must author a chemistry question", index >= 0)
+        fun structureAt(doc: com.mcqapp.data.io.McqFileDto) =
+            allQuestions(doc.papers.first())[index]
+                .elements.filterIsInstance<ContentElement.ChemElement>().single()
+
+        val before = structureAt(sampleFile)
+        val first = AnkiPackageReader.read(write(samplePaper))
+        assertEquals(before, structureAt(first.file))
+        val second = AnkiPackageReader.read(
+            write(first.file.papers.first(), domainPassages(first.file))
+        )
+        assertEquals(before, structureAt(second.file))
+    }
+
+    /**
      * Pins the only two fields that normalise, so neither can change unnoticed.
      * The content itself is asserted byte-identical by
      * [theFirstPassPreservesEveryElement]; this is about the derived fields.

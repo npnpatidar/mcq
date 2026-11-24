@@ -60,7 +60,9 @@ class ChemistryRenderUiTest {
             }
         }
         check(latch.await(10, TimeUnit.SECONDS)) { "JS evaluation timed out: $script" }
-        return result.get()
+        // evaluateJavascript hands back the value JSON-encoded: a JS string
+        // arrives with surrounding quotes, so unwrap it before comparing.
+        return result.get().removePrefix("\"").removeSuffix("\"")
     }
 
     /**

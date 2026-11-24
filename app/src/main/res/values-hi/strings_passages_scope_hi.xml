@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- अनुच्छेद स्कोप: जब अनुच्छेद मौजूद हों पर चुने पेपर/श्रेणी में कोई न मिले।
+         शीट साझा search_scope_* स्ट्रिंग्स का ही उपयोग करती है। -->
+    <string name="passages_scope_empty">इस पेपर या श्रेणी में कोई अनुच्छेद नहीं है</string>
+</resources>

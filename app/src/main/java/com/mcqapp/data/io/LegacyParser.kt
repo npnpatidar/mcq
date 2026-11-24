@@ -1346,10 +1346,12 @@ object LegacyParser {
             id = paperId,
             title = FALLBACK_PAPER_TITLE,
             categories = allCategories,
-            // The uncat category already owns the root questions when real
-            // root categories exist. Keeping them here too would make the
-            // importer synthesize a second -root category and upsert them twice.
-            questions = if (categories.isNotEmpty()) emptyList() else questions
+            // The synthesized uncat category already owns every root question.
+            // Keeping them here too would make the importer synthesize a
+            // second -root category and upsert them twice. The importer's
+            // categories.isEmpty() fallback covers DTOs with no categories at
+            // all, which this wrapper never is once it holds questions.
+            questions = emptyList()
         )
     }
 

@@ -111,8 +111,17 @@ object LegacyParser {
         return JsonArray(emptyList())
     }
 
-    /** A `<math>...</math>` block, attributes and line breaks included. */
-    private val mathBlockPattern = Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    /**
+     * The two things a text run may embed: a `<math>...</math>` block
+     * (attributes and line breaks included) or an inline `<img ...>` tag that
+     * actually carries a `src`. They are matched together so a run mixing both
+     * splits in document order. An `<img>` without a `src` is deliberately not
+     * matched — it stays literal text instead of becoming a broken picture.
+     */
+    private val textRunPattern = Regex(
+        "<math\\b.*?</math\\s*>|<img\\b[^>]*(?:\\s|^)src\\s*=\\s*[\"'][^\"']+[\"'][^>]*>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
 
     /**
      * Parses the legacy JSON document from a stream.
@@ -331,15 +340,17 @@ object LegacyParser {
         var passages = emptyList<PassageDto>()
         var version = 1
         var papersEmitted = 0
+        var rootCategories: List<CategoryDto> = emptyList()
         // The DOCX wrapper decision waits for the end of the object: JSON
         // objects are unordered, so `questions` may precede `papers`, and
         // deciding at key-read time fabricated a phantom ephemeral paper
         // beside the real ones (consolidated_bugs.md A5). The batches are
         // buffered here; only a file that ended with no paper flushes them,
-        // exactly as [walkRootObject] decides after the object ends. Only
-        // the last `questions` key counts, as the whole-file reader's
-        // overwrite does, and an empty array builds no paper.
-        var deferredRoot: Triple<String, String, MutableList<List<QuestionDto>>>? = null
+        // exactly as [walkRootObject] decides after the object ends. Root
+        // categories are kept even beside real papers. Only the last
+        // `questions` key counts, as the whole-file reader's overwrite does,
+        // and an empty array builds no paper.
+        var deferredRoot: MutableList<List<QuestionDto>>? = null
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -349,8 +360,6 @@ object LegacyParser {
                     // become one ephemeral paper. When `papers` is present the
                     // questions are still read (for the malformed-row warnings)
                     // but, as in the whole-file walk, dropped.
-                    val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
-                    val categoryId = "$paperId-uncat"
                     val seen = HashSet<String>()
                     val batches = mutableListOf<List<QuestionDto>>()
                     readQuestionsStreaming(
@@ -358,7 +367,17 @@ object LegacyParser {
                         onFirst = {},
                         onBatch = { batches.add(it) }
                     )
-                    if (batches.isNotEmpty()) deferredRoot = Triple(paperId, categoryId, batches)
+                    if (batches.isNotEmpty()) deferredRoot = batches
+                }
+                "categories" -> {
+                    // Root categories are the categories-first twin of the
+                    // root-questions wrapper. Read them whole (a file rarely
+                    // has many top-level categories), then emit the same
+                    // ephemeral paper / category / questions sequence the
+                    // per-paper path uses so both streams agree.
+                    val cats = mutableListOf<CategoryDto>()
+                    readCategories(reader, warnings, cats, mutableListOf())
+                    rootCategories = cats
                 }
                 "passages" -> passages = readArrayOrWarn(
                     reader, "File", "passages", "passage", warnings
@@ -388,11 +407,21 @@ object LegacyParser {
             }
         }
         reader.endObject()
-        if (papersEmitted == 0) {
-            deferredRoot?.let { (paperId, categoryId, batches) ->
-                sink.onPaper(PaperHeader(paperId, FALLBACK_PAPER_TITLE, "", 0, 0.0))
+        val emitRootCategories = rootCategories.isNotEmpty()
+        val emitRootQuestions = papersEmitted == 0 && deferredRoot != null
+        if (emitRootCategories || emitRootQuestions) {
+            val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+            sink.onPaper(PaperHeader(paperId, FALLBACK_PAPER_TITLE, "", 0, 0.0))
+            if (emitRootCategories) {
+                for (cat in rootCategories) {
+                    sink.onCategory(CategoryDto(cat.id, cat.title, cat.parentId))
+                    if (cat.questions.isNotEmpty()) sink.onQuestions(cat.id, cat.questions)
+                }
+            }
+            if (emitRootQuestions) {
+                val categoryId = "$paperId-uncat"
                 sink.onCategory(CategoryDto(categoryId, FALLBACK_CATEGORY_TITLE))
-                for (batch in batches) sink.onQuestions(categoryId, batch)
+                for (batch in deferredRoot!!) sink.onQuestions(categoryId, batch)
             }
         }
         return StreamedFile(version, passages, emptyList(), emptyList(), emptyMap(), warnings)
@@ -686,6 +715,7 @@ object LegacyParser {
         onPaper: (PaperDto) -> Unit
     ): StreamedFile {
         var topLevelQuestions: List<QuestionDto>? = null
+        var topLevelCategories: List<CategoryDto> = emptyList()
         var passages = emptyList<PassageDto>()
         var attempts = emptyList<AttemptDto>()
         var bookmarks = emptyList<String>()
@@ -699,6 +729,14 @@ object LegacyParser {
                 "questions" -> topLevelQuestions = uniqueIds(
                     readQuestionsArray(reader, "question", warnings)
                 ).ifEmpty { null }
+                "categories" -> {
+                    // A categories-first file is the twin of the root-questions
+                    // wrapper: the categories would otherwise be skipped and
+                    // the whole file import as empty.
+                    val cats = mutableListOf<CategoryDto>()
+                    readCategories(reader, warnings, cats, mutableListOf())
+                    topLevelCategories = cats
+                }
                 "passages" -> passages = readArrayOrWarn(
                     reader, "File", "passages", "passage", warnings
                 ) { index, obj ->
@@ -726,10 +764,18 @@ object LegacyParser {
             }
         }
         reader.endObject()
-        // A root-level `questions` array with no `papers` is the DOCX pipeline's
-        // wrapper shape (`{"questions": [...], "passages": [...]}`). It wraps the
-        // questions in the same ephemeral paper the bare-array path builds, so
-        // the passage block beside it is not stranded without a home.
+        // Root categories are never dropped, even beside real papers, so they
+        // get their own ephemeral paper. With no papers they share one wrapper
+        // with root questions (and a passage block beside them) exactly as the
+        // bare-array path does. Both streams decide after the object ends,
+        // since JSON key order is not fixed.
+        if (topLevelCategories.isNotEmpty()) {
+            onPaper(
+                if (papersEmitted == 0) ephemeralPaper(topLevelQuestions ?: emptyList(), topLevelCategories)
+                else ephemeralPaper(emptyList(), topLevelCategories)
+            )
+            topLevelQuestions = null
+        }
         if (papersEmitted == 0 && topLevelQuestions != null) {
             onPaper(ephemeralPaper(topLevelQuestions!!))
         }
@@ -1275,24 +1321,35 @@ object LegacyParser {
     }
 
     /**
-     * The throwaway paper the bare-questions shapes (root array, DOCX wrapper)
-     * are wrapped in: one paper "Imported Questions" holding one category
-     * "Uncategorized". The importer's own-id path keeps re-imports merging
-     * into it.
+     * The throwaway paper the paperless shapes (root array, root questions,
+     * root categories, DOCX wrapper) are wrapped in. Root categories keep
+     * their own ids; root questions get the usual "Uncategorized" category.
+     * The importer's own-id path keeps re-imports merging into it.
      */
-    private fun ephemeralPaper(questions: List<QuestionDto>): PaperDto {
+    private fun ephemeralPaper(questions: List<QuestionDto>): PaperDto =
+        ephemeralPaper(questions, emptyList())
+
+    private fun ephemeralPaper(
+        questions: List<QuestionDto>,
+        categories: List<CategoryDto>
+    ): PaperDto {
         val paperId = EPHEMERAL_PAPER_ID_PREFIX + System.currentTimeMillis().toString(36)
+        val allCategories = categories.toMutableList()
+        if (questions.isNotEmpty()) {
+            allCategories += CategoryDto(
+                id = "$paperId-uncat",
+                title = FALLBACK_CATEGORY_TITLE,
+                questions = questions
+            )
+        }
         return PaperDto(
             id = paperId,
             title = FALLBACK_PAPER_TITLE,
-            categories = listOf(
-                CategoryDto(
-                    id = "$paperId-uncat",
-                    title = FALLBACK_CATEGORY_TITLE,
-                    questions = questions
-                )
-            ),
-            questions = questions
+            categories = allCategories,
+            // The uncat category already owns the root questions when real
+            // root categories exist. Keeping them here too would make the
+            // importer synthesize a second -root category and upsert them twice.
+            questions = if (categories.isNotEmpty()) emptyList() else questions
         )
     }
 
@@ -1431,8 +1488,8 @@ object LegacyParser {
     /**
      * Reads a structured element list, falling back to a plain string (old
      * format) wrapped as one TextElement. A text run may embed `<math>`
-     * blocks, which become MathElements so formulas render instead of
-     * showing raw markup.
+     * blocks and inline `<img>` tags, which become MathElements/ImageElements
+     * so formulas and pictures render instead of showing raw markup.
      */
     private fun parseElements(elementsJson: JsonElement?, vararg fallbacks: JsonElement?): List<ContentElement> {
         val arr = elementsJson as? JsonArray
@@ -1472,19 +1529,30 @@ object LegacyParser {
     }
 
     /**
-     * Splits a text run on `<math>...</math>` blocks so embedded formulas
-     * become MathElements. Anything else (including an unclosed `<math`)
-     * stays plain text: a malformed formula must remain visible, never
+     * Splits a text run on `<math>...</math>` blocks and inline `<img ...>`
+     * tags so embedded formulas and pictures become MathElements/ImageElements
+     * instead of raw markup. Runs stay in document order with the surrounding
+     * text preserved. Anything else (an unclosed `<math`, an `<img>` without a
+     * `src`) stays plain text: malformed markup must remain visible, never
      * silently reinterpreted or dropped.
      */
     private fun splitTextRuns(text: String): List<ContentElement> {
-        if (!text.contains("<math", ignoreCase = true)) return listOf(ContentElement.TextElement(text))
+        if (!textRunPattern.containsMatchIn(text)) return listOf(ContentElement.TextElement(text))
         val out = mutableListOf<ContentElement>()
         var pos = 0
-        for (match in mathBlockPattern.findAll(text)) {
+        for (match in textRunPattern.findAll(text)) {
             val before = text.substring(pos, match.range.first)
             if (before.isNotEmpty()) out += ContentElement.TextElement(before)
-            out += ContentElement.MathElement(match.value)
+            val token = match.value
+            if (token.startsWith("<img", ignoreCase = true)) {
+                // The pattern guarantees a src, but go through the same
+                // extractor the standalone image block uses so both agree.
+                val src = extractImgSrc(token)
+                out += if (src != null) ContentElement.ImageElement(src)
+                       else ContentElement.TextElement(token)
+            } else {
+                out += ContentElement.MathElement(token)
+            }
             pos = match.range.last + 1
         }
         val tail = text.substring(pos)
@@ -1492,9 +1560,12 @@ object LegacyParser {
         return out.ifEmpty { listOf(ContentElement.TextElement(text)) }
     }
 
-    /** Pulls the `src` out of an `<img ...>` tag; null when there is none. */
+    /**
+     * Pulls the `src` out of an `<img ...>` tag; null when there is none.
+     * The attribute must be a standalone `src`, not `data-src` or `xsrc`.
+     */
     private fun extractImgSrc(html: String): String? =
-        Regex("""<img[^>]*src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        Regex("""<img[^>]*(?:\s|^)src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .find(html)?.groupValues?.get(1)
 
     private fun parseOptions(obj: JsonObject): List<OptionDto> {

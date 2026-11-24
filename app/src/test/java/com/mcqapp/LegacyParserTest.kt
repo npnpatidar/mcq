@@ -832,6 +832,137 @@ class LegacyParserTest {
         assertEquals("Solve  then  done", question.text)
     }
 
+    /**
+     * A text block may carry an inline `<img>` between prose runs. The parser
+     * splits on it with extractImgSrc, so the picture renders instead of the
+     * tag showing as literal text (owner: "no schema for inline image").
+     */
+    @Test
+    fun inlineImgInTextSplitsIntoTextImageText() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Before <img src=\"data:image/png;base64,AA\"> after"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val question = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Before "),
+                com.mcqapp.domain.ContentElement.ImageElement("data:image/png;base64,AA"),
+                com.mcqapp.domain.ContentElement.TextElement(" after")
+            ),
+            question.elements
+        )
+        assertEquals("Before  after", question.text)
+    }
+
+    /** A malformed `<img>` with no src is content, not a broken picture. */
+    @Test
+    fun inlineImgWithoutSrcStaysPlainText() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Look <img alt=\"broken\"> here"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val question = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Look <img alt=\"broken\"> here")),
+            question.elements
+        )
+    }
+
+    /** `data-src` is a different attribute: the tag stays literal text. */
+    @Test
+    fun inlineImgWithOnlyDataSrcStaysPlainText() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Look <img data-src=\"https://example.com/x.png\"> here"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val question = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("Look <img data-src=\"https://example.com/x.png\"> here")),
+            question.elements
+        )
+    }
+
+    /** With both attributes present, the plain `src` wins. */
+    @Test
+    fun inlineImgPrefersSrcOverDataSrc() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "See <img data-src=\"https://example.com/no.png\" src=\"data:image/png;base64,AA\"> now"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val question = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("See "),
+                com.mcqapp.domain.ContentElement.ImageElement("data:image/png;base64,AA"),
+                com.mcqapp.domain.ContentElement.TextElement(" now")
+            ),
+            question.elements
+        )
+    }
+
+    /** Math and image splitting share one ordered pass over the text run. */
+    @Test
+    fun mathAndInlineImgInOneTextRunSplitInOrder() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "A <math><mi>x</mi></math> B <img src=\"https://example.com/f.png\"> C <math><mi>y</mi></math> D"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val question = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("A "),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>x</mi></math>"),
+                com.mcqapp.domain.ContentElement.TextElement(" B "),
+                com.mcqapp.domain.ContentElement.ImageElement("https://example.com/f.png"),
+                com.mcqapp.domain.ContentElement.TextElement(" C "),
+                com.mcqapp.domain.ContentElement.MathElement("<math><mi>y</mi></math>"),
+                com.mcqapp.domain.ContentElement.TextElement(" D")
+            ),
+            question.elements
+        )
+    }
+
     @Test
     fun unclosedMathStaysPlainText() {
         val json = """
@@ -1140,5 +1271,73 @@ class LegacyParserTest {
         val tail = LegacyParser.streamPapers(ByteArrayInputStream(json.toByteArray())) { papers += it }
         assertEquals(1, papers.size)
         assertTrue(tail.passages.isEmpty())
+    }
+
+    private val rootCategoriesJson = """
+        {
+          "categories": [
+            {"id":"c1","title":"One","questions":[
+              {"id":"q1","text":"Q1?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}
+            ]},
+            {"id":"c2","title":"Two","questions":[
+              {"id":"q2","text":"Q2?","options":[{"id":"a","text":"A"}],"correctOptionIds":["a"]}
+            ]}
+          ]
+        }
+    """.trimIndent()
+
+    /** Root `categories` used to be skipped, importing as an empty bank. */
+    @Test
+    fun rootCategoriesBecomeAnEphemeralPaper() {
+        val file = LegacyParser.parse(rootCategoriesJson)
+        assertEquals("no warnings: ${file.warnings}", emptyList<String>(), file.warnings)
+        assertEquals(1, file.papers.size)
+        val paper = file.papers.single()
+        assertTrue(paper.id.startsWith(LegacyParser.EPHEMERAL_PAPER_ID_PREFIX))
+        assertEquals(listOf("c1", "c2"), paper.categories.map { it.id })
+        assertEquals(
+            listOf("q1", "q2"),
+            paper.categories.flatMap { cat -> cat.questions.map { it.id } }
+        )
+    }
+
+    /** Both whole-file entry points must see root categories identically. */
+    @Test
+    fun rootCategoriesMatchBetweenParseAndStreamPapers() {
+        val whole = LegacyParser.parse(rootCategoriesJson)
+        val streamed = mutableListOf<com.mcqapp.data.io.PaperDto>()
+        LegacyParser.streamPapers(ByteArrayInputStream(rootCategoriesJson.toByteArray())) { streamed += it }
+        assertEquals(1, whole.papers.size)
+        assertEquals(1, streamed.size)
+        assertEquals(whole.papers.single().categories.map { it.id }, streamed.single().categories.map { it.id })
+        assertEquals(
+            whole.papers.single().categories.flatMap { it.questions.map { q -> q.id } },
+            streamed.single().categories.flatMap { it.questions.map { q -> q.id } }
+        )
+    }
+
+    /** The sink-driven importer path also emits the root categories. */
+    @Test
+    fun rootCategoriesStreamThroughImportSink() {
+        val categoryIds = mutableListOf<String>()
+        val questionIds = mutableListOf<String>()
+        val tail = LegacyParser.streamImport(
+            ByteArrayInputStream(rootCategoriesJson.toByteArray()),
+            object : LegacyParser.ImportStreamSink {
+                override fun onPaper(header: LegacyParser.PaperHeader) = Unit
+                override fun onCategory(category: com.mcqapp.data.io.CategoryDto) {
+                    categoryIds += category.id
+                }
+                override fun onQuestions(
+                    categoryId: String,
+                    questions: List<com.mcqapp.data.io.QuestionDto>
+                ) {
+                    questionIds += questions.map { it.id }
+                }
+            }
+        )
+        assertEquals(emptyList<String>(), tail.warnings)
+        assertEquals(listOf("c1", "c2"), categoryIds)
+        assertEquals(listOf("q1", "q2"), questionIds)
     }
 }

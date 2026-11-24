@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- खोज स्कोप शीट: पेपर और श्रेणियाँ एक ही प्रवेश बिंदु, तुरंत लागू। -->
+    <string name="search_scope_choose_paper">पेपर चुनें</string>
+    <string name="search_scope_choose_categories">श्रेणियाँ चुनें</string>
+    <string name="search_scope_all_categories_in">%1$s की सभी श्रेणियाँ</string>
+    <string name="search_scope_category_with_paper">%2$s में %1$s</string>
+    <string name="search_scope_category_partial">आंशिक रूप से चुना गया</string>
+    <plurals name="search_scope_summary_categories">
+        <item quantity="one">%1$s › %2$d श्रेणी</item>
+        <item quantity="other">%1$s › %2$d श्रेणियाँ</item>
+    </plurals>
+</resources>

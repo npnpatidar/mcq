@@ -15,6 +15,8 @@ import com.mcqapp.data.repository.SearchCount
 import com.mcqapp.data.repository.SearchScopeFilter
 import com.mcqapp.data.repository.searchCount
 import com.mcqapp.data.repository.searchCountBounded
+import com.mcqapp.domain.CategoryNode
+import com.mcqapp.domain.CategorySelection
 import com.mcqapp.domain.Paper
 import com.mcqapp.domain.QuestionSearch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -37,15 +39,16 @@ import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** A chip option: a paper, or a category labelled with its paper. */
-data class SearchChip(val id: String, val title: String, val paperId: String, val isPaper: Boolean)
-
 data class SearchUiState(
     val query: String = "",
     val scope: QuestionSearch.Scope = QuestionSearch.Scope.ALL,
-    /** Selected paper ids; empty = all papers. */
+    /** Empty = All papers; otherwise exactly one paper id. */
     val paperFilterIds: Set<String> = emptySet(),
-    /** Selected category ids; empty = all categories. */
+    /**
+     * Selected subtree ids, expanded and interpreted inside [paperFilterIds].
+     * Empty = all categories in that paper. Storing them expanded is what lets
+     * the search layer stay a flat, paper-AND-category membership test.
+     */
     val categoryFilterIds: Set<String> = emptySet()
 )
 
@@ -60,25 +63,82 @@ internal data class SearchRequest(
 }
 
 /**
- * The two chip families are mutually exclusive: [SearchScopeFilter.matches]
- * ANDs them, and categories belong to papers, so a paper id together with a
- * category id from a different paper can only ever produce an empty result.
- * Choosing either family therefore clears the other. Kept as pure functions so
- * the contract is JVM-testable without an Application.
+ * The scope sheet applies changes immediately, so these functions are the whole
+ * state transition. A paper and its categories travel together: changing paper
+ * drops the old paper's categories, while re-choosing the same paper keeps them.
+ * Selecting a category stores every id in its subtree, so
+ * [SearchScopeFilter.matches] needs no knowledge of the category tree.
+ * Kept as pure functions so the contract is JVM-testable without an Application.
  */
-internal fun togglePaperFilter(state: SearchUiState, paperId: String): SearchUiState =
+internal fun chooseSearchPaper(state: SearchUiState, paperId: String): SearchUiState =
     state.copy(
-        paperFilterIds = if (paperId in state.paperFilterIds) emptySet() else setOf(paperId),
-        categoryFilterIds = emptySet()
+        paperFilterIds = setOf(paperId),
+        categoryFilterIds = if (state.paperFilterIds == setOf(paperId)) {
+            state.categoryFilterIds
+        } else {
+            emptySet()
+        }
     )
 
-internal fun toggleCategoryFilter(state: SearchUiState, categoryId: String): SearchUiState {
-    val next = if (categoryId in state.categoryFilterIds) {
-        state.categoryFilterIds - categoryId
+internal fun toggleCategoryInPaper(
+    state: SearchUiState,
+    categoryId: String,
+    categories: List<CategoryNode>
+): SearchUiState {
+    val subtree = CategorySelection.subtreeIds(CategorySelection.flatten(categories), categoryId)
+        .orEmpty()
+    if (subtree.isEmpty()) return state // unknown id: leave the selection alone
+    val next = if (subtree.all { it in state.categoryFilterIds }) {
+        state.categoryFilterIds - subtree
     } else {
-        state.categoryFilterIds + categoryId
+        state.categoryFilterIds + subtree
     }
-    return state.copy(categoryFilterIds = next, paperFilterIds = emptySet())
+    return state.copy(categoryFilterIds = next)
+}
+
+/**
+ * The paper the sheet is currently scoped to, with its category tree. There is
+ * no sensible cross-paper interpretation of a category toggle: with no single
+ * chosen paper (All papers), or a paper not yet loaded, nothing changes.
+ */
+internal fun toggleCategoryInChosenPaper(
+    state: SearchUiState,
+    categoryId: String,
+    papers: List<Paper>
+): SearchUiState {
+    val chosenPaperId = state.paperFilterIds.singleOrNull() ?: return state
+    val categories = papers.firstOrNull { it.id == chosenPaperId }?.categories ?: return state
+    return toggleCategoryInPaper(state, categoryId, categories)
+}
+
+/** Categories-only clear for the sheet: the chosen paper stays put. */
+internal fun clearCategoriesInPaper(state: SearchUiState): SearchUiState =
+    state.copy(categoryFilterIds = emptySet())
+
+/** "All papers": drop the paper and every category with it. */
+internal fun clearSearchScope(state: SearchUiState): SearchUiState =
+    state.copy(paperFilterIds = emptySet(), categoryFilterIds = emptySet())
+
+/**
+ * Drop ids that no longer exist in the loaded papers. A stale paper would keep
+ * restricting the filter to zero hits while the trigger read "All papers"; a
+ * stale category would do the same inside a live paper. An empty [papers] is
+ * the initial-load state, not a deletion, so it must not clear anything.
+ */
+internal fun pruneSearchScope(state: SearchUiState, papers: List<Paper>): SearchUiState {
+    if (papers.isEmpty()) return state
+    val chosenPaperId = state.paperFilterIds.singleOrNull()
+    if (chosenPaperId == null) {
+        return if (state.categoryFilterIds.isEmpty()) {
+            state
+        } else {
+            state.copy(categoryFilterIds = emptySet())
+        }
+    }
+    val paper = papers.firstOrNull { it.id == chosenPaperId } ?: return clearSearchScope(state)
+    val liveIds = CategorySelection.flatten(paper.categories).mapTo(mutableSetOf()) { it.first.id }
+    val kept = state.categoryFilterIds intersect liveIds
+    return if (kept == state.categoryFilterIds) state else state.copy(categoryFilterIds = kept)
 }
 
 /**
@@ -95,7 +155,8 @@ internal fun searchShowsTypeHint(query: String, debouncing: Boolean): Boolean =
     query.isBlank() && !debouncing
 
 /**
- * Cross-paper search, paged, with paper/category chips and an exact total.
+ * Cross-paper search, paged, with an immediate-apply paper/category scope sheet
+ * and an exact total.
  * The old path asked the repository for every hit at once, which for a
  * one-letter query over a 250k-question bank materialised the entire match set
  * before showing a single row. Here the first page paints after the 300 ms
@@ -190,26 +251,16 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         .cachedIn(viewModelScope)
 
-    /** Papers for the chip row. */
+    /** Papers, each carrying its category tree for the scope sheet. */
     val papers: StateFlow<List<Paper>> = repository.observePapers()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    /** Categories for the chip row, paired with their owning paper's title. */
-    val chips: StateFlow<List<SearchChip>> = combine(
-        repository.observePapers(),
-        repository.db().categoryDao().observeAll()
-    ) { papers, categories ->
-        val paperById = papers.associateBy { it.id }
-        categories.mapNotNull { category ->
-            paperById[category.paperId]?.let {
-                SearchChip(category.id, category.title, category.paperId, isPaper = false)
-            }
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
             repository.observeBrowseInvalidation().collect { invalidationRelay.invalidate() }
+        }
+        viewModelScope.launch {
+            papers.collect { list -> _state.update { pruneSearchScope(it, list) } }
         }
     }
 
@@ -221,18 +272,24 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(scope = scope) }
     }
 
-    /** One paper chip at a time; tapping the active one clears it. Choosing a paper clears the category chips. */
-    fun togglePaper(paperId: String) {
-        _state.update { togglePaperFilter(it, paperId) }
+    /** Choose one paper; re-choosing it keeps its category selection. */
+    fun choosePaper(paperId: String) {
+        _state.update { chooseSearchPaper(it, paperId) }
     }
 
-    /** Several categories at once; choosing one clears a stale paper filter. */
+    /** Toggle a whole category subtree inside the chosen paper, if one is chosen. */
     fun toggleCategory(categoryId: String) {
-        _state.update { toggleCategoryFilter(it, categoryId) }
+        _state.update { toggleCategoryInChosenPaper(it, categoryId, papers.value) }
     }
 
+    /** Clear only the categories, leaving the chosen paper selected. */
+    fun clearCategoriesInPaper() {
+        _state.update { clearCategoriesInPaper(it) }
+    }
+
+    /** "All papers": clear the paper and its categories together. */
     fun clearScopeFilters() {
-        _state.update { it.copy(paperFilterIds = emptySet(), categoryFilterIds = emptySet()) }
+        _state.update { clearSearchScope(it) }
     }
 
     private val _bookmarkedIds = MutableStateFlow<Set<String>>(emptySet())

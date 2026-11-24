@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chem_editor_block_label">रसायन विज्ञान</string>
+    <string name="chem_editor_template">टेम्पलेट</string>
+    <string name="chem_editor_custom">कस्टम</string>
+    <string name="chem_editor_smiles">SMILES</string>
+    <string name="chem_editor_formula">सूत्र (वैकल्पिक)</string>
+    <string name="chem_editor_caption">कैप्शन (वैकल्पिक)</string>
+    <string name="chem_editor_spoken">बोली जाने वाली जानकारी (वैकल्पिक)</string>
+    <string name="chem_editor_preview">पूर्वावलोकन</string>
+    <string name="chem_editor_structure_cd">रासायनिक संरचना: %1$s</string>
+</resources>

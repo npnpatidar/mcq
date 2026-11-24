@@ -324,11 +324,15 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.69` is the
-  published release (the general-improvements programme: scoped search, undo,
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.70` is the
+  published release (screenshot-driven UI polish: single-line paper titles,
+  Browse row Delete replacing per-question Duplicate, a compact passage action,
+  a reachable AI-schema Share button, optional schema containers with
+  base64-only inline images, a fast-stop Study fix and a shard-script fix).
+  `0.0.69` was the general-improvements programme: scoped search, undo,
   bulk actions, duplicate finder, first-run chooser, tag/mistake Study, CSV
   import, quick capture, keyboard shortcuts, honest statistics, test UX,
-  accessibility and theme fixes). `0.0.68` added optional grade confirmation,
+  accessibility and theme fixes. `0.0.68` added optional grade confirmation,
   the reporting-only daily goal, suspend/bury (schema 30), the AI schema
   generator and toned messages. `0.0.67` fixed modern Anki `.apkg` import;
   `0.0.66` added flashcards, keyless self-grading and the sample reload;

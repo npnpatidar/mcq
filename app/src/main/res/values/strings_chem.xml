@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ai_schema_block_chem">Chemistry (SMILES)</string>
+</resources>

@@ -744,6 +744,89 @@ class LegacyParserTest {
         )
     }
 
+    /** Chemistry is the one block whose content is an object, read in all three positions. */
+    @Test
+    fun chemElementReadsAllFiveFieldsInEveryPosition() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Draw:"},
+              {"type": "chem", "content": {
+                "smiles": "c1ccccc1", "formula": "C6H6", "caption": "benzene",
+                "spoken": "benzene ring", "diagram": "data:image/png;base64,AAA"
+              }}
+            ],
+            "options_elements": {
+              "a": [{"type": "chem", "content": {"smiles": "CCO", "caption": "ethanol"}}],
+              "b": [{"type": "text", "content": "water"}]
+            },
+            "answer": "a",
+            "explanation_elements": [
+              {"type": "chem", "content": {"smiles": "CCO", "formula": "C2H6O"}}
+            ]
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val q = file.papers[0].categories[0].questions[0]
+        assertEquals(emptyList<String>(), file.warnings)
+        assertEquals(
+            listOf(
+                com.mcqapp.domain.ContentElement.TextElement("Draw:"),
+                com.mcqapp.domain.ContentElement.ChemElement(
+                    smiles = "c1ccccc1", formula = "C6H6", caption = "benzene",
+                    spoken = "benzene ring", diagram = "data:image/png;base64,AAA"
+                )
+            ),
+            q.elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.ChemElement("CCO", caption = "ethanol")),
+            q.options.single { it.id == "a" }.elements
+        )
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.ChemElement("CCO", formula = "C2H6O")),
+            q.explanationElements
+        )
+    }
+
+    /** SMILES is required: a chem block with none is dropped, not guessed. */
+    @Test
+    fun chemElementWithoutSmilesIsDroppedWithAWarning() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "text", "content": "Draw:"},
+              {"type": "chem", "content": {"formula": "C6H6", "caption": "benzene"}},
+              {"type": "chem", "content": "c1ccccc1"}
+            ],
+            "options": ["A"],
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val q = file.papers[0].categories[0].questions[0]
+        assertEquals(listOf(com.mcqapp.domain.ContentElement.TextElement("Draw:")), q.elements)
+        assertEquals(2, file.warnings.count { it.contains("chem element") })
+    }
+
+    /** Existing prose that happens to be a SMILES string is never reinterpreted. */
+    @Test
+    fun plainTextSmilesStaysPlainText() {
+        val json = """[{"text":"c1ccccc1","options":["A"],"answer":"a"}]"""
+        val q = LegacyParser.parse(json).papers[0].categories[0].questions[0]
+        assertEquals(
+            listOf(com.mcqapp.domain.ContentElement.TextElement("c1ccccc1")),
+            q.elements
+        )
+        assertTrue(q.elements.none { it is com.mcqapp.domain.ContentElement.ChemElement })
+    }
+
     @Test
     fun oldStringFormatStillParsesWithElementsPopulated() {
         val json = """

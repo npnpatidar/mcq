@@ -79,6 +79,7 @@ fun AiSchemaScreen(navController: NavController) {
     var table by rememberSaveable { mutableStateOf(false) }
     var math by rememberSaveable { mutableStateOf(false) }
     var image by rememberSaveable { mutableStateOf(false) }
+    var chem by rememberSaveable { mutableStateOf(false) }
     var passage by rememberSaveable { mutableStateOf(PassageMode.NONE) }
     // The old FULL_BANK wrapper is equivalent to papers + categories on and
     // passages off; the three toggles below are now the only container choice.
@@ -91,6 +92,7 @@ fun AiSchemaScreen(navController: NavController) {
         table = table,
         math = math,
         image = image,
+        chem = chem,
         passage = passage,
         wrapper = SchemaWrapper.FULL_BANK,
         includePapers = includePapers,
@@ -202,6 +204,7 @@ fun AiSchemaScreen(navController: NavController) {
                 BlockChip(R.string.ai_schema_block_table, table, "ai-schema-block-table") { table = it }
                 BlockChip(R.string.ai_schema_block_math, math, "ai-schema-block-math") { math = it }
                 BlockChip(R.string.ai_schema_block_image, image, "ai-schema-block-image") { image = it }
+                BlockChip(R.string.ai_schema_block_chem, chem, "ai-schema-block-chem") { chem = it }
             }
             Spacer(Modifier.height(12.dp))
             Card(modifier = Modifier.fillMaxWidth().testTag("ai-schema-containers")) {

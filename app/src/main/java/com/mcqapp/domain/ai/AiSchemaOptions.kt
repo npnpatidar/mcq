@@ -7,8 +7,8 @@ package com.mcqapp.domain.ai
  */
 enum class QuestionKind { FLASHCARDS, MCQ, MIXED }
 
-/** Text is always on; the other three are optional. */
-enum class ContentBlock { TEXT, TABLE, MATH, IMAGE }
+/** Text is always on; the other four are optional. */
+enum class ContentBlock { TEXT, TABLE, MATH, IMAGE, CHEM }
 
 enum class PassageMode { NONE, TEXT_ONLY, RICH }
 
@@ -32,7 +32,13 @@ data class SchemaOptions(
      */
     val includePapers: Boolean? = null,
     val includeCategories: Boolean? = null,
-    val includePassages: Boolean? = null
+    val includePassages: Boolean? = null,
+    /**
+     * Chemistry blocks are SMILES structures drawn offline by the bundled
+     * SmilesDrawer asset. Off by default so existing callers keep their shape;
+     * last in the constructor so positional callers are unaffected.
+     */
+    val chem: Boolean = false
 ) {
     /** The block types the schema must declare, text first and always present. */
     val blocks: List<ContentBlock> = buildList {
@@ -40,6 +46,7 @@ data class SchemaOptions(
         if (table) add(ContentBlock.TABLE)
         if (math) add(ContentBlock.MATH)
         if (image) add(ContentBlock.IMAGE)
+        if (chem) add(ContentBlock.CHEM)
     }
 
     /** Root `papers` are on unless the caller explicitly turned them off. */

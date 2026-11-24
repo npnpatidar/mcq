@@ -1,0 +1,29 @@
+smiles-drawer (bundled offline copy)
+====================================
+
+Package: smiles-drawer
+Version: 2.1.1
+License: MIT (see LICENSE in this directory; copyright 2017 GDB / Reymond Research Group)
+
+Asset: smiles-drawer.min.js
+Source: https://unpkg.com/smiles-drawer@2.1.1/dist/smiles-drawer.min.js
+Fetched: 2026-11-24
+
+This is the browser build bundled verbatim from the URL above. It is shipped
+inside the app so chemical structures can be drawn offline, with no network
+access and no Gradle dependency. Do not edit the minified file; replace all
+three files together when upgrading, and update the version and source URL
+above.
+
+Bundled transitive notices
+--------------------------
+chroma-js 2.4.2 — BSD-3-Clause / Apache-2.0
+  smiles-drawer 2.1.1 depends on chroma-js ^2.4.2, so the browser build
+  vendors it. Its full notice is preserved verbatim in the `@preserve`
+  comment at the top of smiles-drawer.min.js: the BSD-3-Clause copyright
+  for Gregor Aisch, followed by the Apache-2.0 notice for the colour data
+  from colorbrewer2.org (Copyright 2002 Cynthia Brewer, Mark Harrower and
+  The Pennsylvania State University). Nothing was stripped or rewritten;
+  keep that comment intact when upgrading.
+
+Upstream repository: https://github.com/reymond-group/smilesDrawer

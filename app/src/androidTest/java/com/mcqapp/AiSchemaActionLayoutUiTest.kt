@@ -118,6 +118,23 @@ class AiSchemaActionLayoutUiTest {
         compose.onNodeWithTag("ai-schema-passage").performScrollTo().assertIsDisplayed()
     }
 
+    /** The chemistry chip is a real control, not a decorative label. */
+    @Test
+    fun chemChipChangesTheGeneratedSchema() {
+        compose.setContent {
+            Box(Modifier.width(320.dp).height(640.dp)) {
+                AiSchemaScreen(navController = rememberNavController())
+            }
+        }
+        compose.onNodeWithTag("ai-schema-block-chem").performScrollTo().assertIsOff()
+        val before = schemaText()
+        compose.onNodeWithTag("ai-schema-block-chem").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("ai-schema-block-chem").assertIsOn()
+        assertTrue("chem chip did not change the schema", schemaText() != before)
+        assertTrue("chem arm not declared", schemaText().contains("\"const\":\"chem\""))
+    }
+
     /**
      * The output-card tag sits on the Card, which does not merge its children.
      * Read the JSON Text node from the unmerged tree, with the same empty

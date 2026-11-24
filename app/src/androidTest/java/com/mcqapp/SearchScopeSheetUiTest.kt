@@ -441,7 +441,7 @@ class SearchScopeSheetUiTest {
         compose.onNodeWithTag("search-scope-title-categories")
             .assertContentDescriptionEquals("Physics")
         compose.onNodeWithTag("search-scope-category-p1-c1").assertIsOn()
-        assertEquals(0, pickedPapers)
+        assertTrue(pickedPapers.isEmpty())
         assertTrue(toggledCategories.isEmpty())
         assertEquals(setOf("p1-c1"), triggerState.categoryFilterIds)
     }
@@ -462,6 +462,7 @@ class SearchScopeSheetSystemBackUiTest {
     @Test
     fun systemBackOnStepTwoStepsBackAndKeepsTheSheetOpen() {
         var showCategories by mutableStateOf(true)
+        var showSheet by mutableStateOf(true)
         var dismisses = 0
         val paper = Paper(
             id = "p1",
@@ -471,18 +472,25 @@ class SearchScopeSheetSystemBackUiTest {
             )
         )
         compose.setContent {
-            SearchScopeSheet(
-                papers = listOf(paper),
-                selectedCategoryIds = emptySet(),
-                showCategories = showCategories,
-                chosenPaperId = "p1",
-                onChoosePaper = {},
-                onToggleCategory = {},
-                onClearCategoriesInPaper = {},
-                onClearScope = {},
-                onBackToPapers = { showCategories = false },
-                onDismiss = { dismisses++ }
-            )
+            // Removal must be driven by state: counting a dismissal without
+            // removing the host leaves the sheet in the semantics tree.
+            if (showSheet) {
+                SearchScopeSheet(
+                    papers = listOf(paper),
+                    selectedCategoryIds = emptySet(),
+                    showCategories = showCategories,
+                    chosenPaperId = "p1",
+                    onChoosePaper = {},
+                    onToggleCategory = {},
+                    onClearCategoriesInPaper = {},
+                    onClearScope = {},
+                    onBackToPapers = { showCategories = false },
+                    onDismiss = {
+                        dismisses++
+                        showSheet = false
+                    }
+                )
+            }
         }
         // Wait until the dialog window has actually been composed and focused;
         // pressing Back before then can land on the Activity instead.

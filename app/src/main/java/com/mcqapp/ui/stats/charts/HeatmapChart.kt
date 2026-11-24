@@ -1,11 +1,15 @@
 package com.mcqapp.ui.stats.charts
 
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.Canvas
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -19,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -56,7 +61,7 @@ internal fun HeatmapChart(
     val tooltipText = MaterialTheme.colorScheme.onSurface
     var selected by remember(days) { mutableIntStateOf(-1) }
 
-    val weeks = ((days.size + 6) / 7).coerceAtLeast(1)
+    val weeks = ChartGeometry.heatmapWeeks(days.size)
     val maxReviews = (days.maxOfOrNull { it.reviews } ?: 0).coerceAtLeast(1)
     // Month names follow the selected in-app locale, not hard-coded English
     // (ST2). The formatter patterns are language-neutral; the locale supplies
@@ -83,74 +88,94 @@ internal fun HeatmapChart(
         )
     )
 
+    // BoxWithConstraints must stay outside the scroll container: inside one,
+    // maxWidth is infinite and the cell would never be sized to the viewport.
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val gap = 2.dp
+        val gap = ChartGeometry.HEATMAP_GAP
         val cell = ChartGeometry.heatmapCell(maxWidth, gap, weeks)
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(ChartGeometry.heatmapHeight(14.dp, cell, gap))
-                .semantics { contentDescription = summary }
-                .pointerInput(days, gap, cell) {
-                    detectTapGestures { tap ->
-                        val pitch = ChartGeometry.pitch(cell.toPx(), gap.toPx())
-                        val topOffset = 14.dp.toPx()
-                        val (col, row) = ChartGeometry.heatmapCellAt(tap.x, tap.y, topOffset, pitch)
-                        val index = ChartGeometry.heatmapIndex(col, row)
-                        selected = if (index != null && index in days.indices) index else -1
+        val contentWidth = ChartGeometry.heatmapWidth(cell, weeks, gap)
+        Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            Canvas(
+                modifier = Modifier
+                    .testTag("stats-heatmap-canvas")
+                    .width(contentWidth)
+                    .height(
+                        ChartGeometry.heatmapHeight(
+                            ChartGeometry.HEATMAP_TOP_OFFSET,
+                            cell,
+                            gap,
+                            ChartGeometry.HEATMAP_ROWS
+                        )
+                    )
+                    .semantics { contentDescription = summary }
+                    .pointerInput(days, gap, cell) {
+                        detectTapGestures { tap ->
+                            // Tap offsets are local to the canvas, which spans
+                            // the full content width, so no scroll offset is
+                            // added here.
+                            val pitch = ChartGeometry.pitch(cell.toPx(), gap.toPx())
+                            val topOffset = ChartGeometry.HEATMAP_TOP_OFFSET.toPx()
+                            val (col, row) = ChartGeometry.heatmapCellAt(tap.x, tap.y, topOffset, pitch)
+                            val index = ChartGeometry.heatmapIndex(col, row, ChartGeometry.HEATMAP_ROWS)
+                            selected = if (index != null && index in days.indices) index else -1
+                        }
+                    }
+            ) {
+                val gapPx = gap.toPx()
+                val cellPx = cell.toPx()
+                val pitch = cellPx + gapPx
+                val topOffset = ChartGeometry.HEATMAP_TOP_OFFSET.toPx()
+                val corner = CornerRadius(2.dp.toPx())
+                val rows = ChartGeometry.HEATMAP_ROWS
+
+                // Month labels above the first column of each new month.
+                var lastMonth = -1
+                days.forEachIndexed { index, day ->
+                    val date = dayDate(day)
+                    if (date.monthValue != lastMonth && index % rows == 0) {
+                        lastMonth = date.monthValue
+                        val text = textMeasurer.measure(date.format(monthFmt), TextStyle(fontSize = 9.sp, color = labelColor))
+                        val x = (index / rows) * pitch
+                        drawText(text, topLeft = Offset(x, 0f))
                     }
                 }
-        ) {
-            val gapPx = gap.toPx()
-            val cellPx = cell.toPx()
-            val pitch = cellPx + gapPx
-            val topOffset = 14.dp.toPx()
-            val corner = CornerRadius(2.dp.toPx())
 
-            // Month labels above the first column of each new month.
-            var lastMonth = -1
-            days.forEachIndexed { index, day ->
-                val date = dayDate(day)
-                if (date.monthValue != lastMonth && index % 7 == 0) {
-                    lastMonth = date.monthValue
-                    val text = textMeasurer.measure(date.format(monthFmt), TextStyle(fontSize = 9.sp, color = labelColor))
-                    val x = (index / 7) * pitch
-                    drawText(text, topLeft = Offset(x, 0f))
+                days.forEachIndexed { index, day ->
+                    val col = index / rows
+                    val row = index % rows
+                    val intensity = (day.reviews.toFloat() / maxReviews.coerceAtMost(4)).coerceIn(0f, 1f)
+                    val color = if (day.reviews == 0) emptyColor else lerp(strong.copy(alpha = 0.35f), strong, intensity)
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(col * pitch, topOffset + row * pitch),
+                        size = Size(cellPx, cellPx),
+                        cornerRadius = corner
+                    )
                 }
-            }
 
-            days.forEachIndexed { index, day ->
-                val col = index / 7
-                val row = index % 7
-                val intensity = (day.reviews.toFloat() / maxReviews.coerceAtMost(4)).coerceIn(0f, 1f)
-                val color = if (day.reviews == 0) emptyColor else lerp(strong.copy(alpha = 0.35f), strong, intensity)
-                drawRoundRect(
-                    color = color,
-                    topLeft = Offset(col * pitch, topOffset + row * pitch),
-                    size = Size(cellPx, cellPx),
-                    cornerRadius = corner
-                )
-            }
-
-            if (selected in days.indices) {
-                val day = days[selected]
-                val text = textMeasurer.measure(
-                    dayDate(day).format(dateFmt) + " \u00b7 " + tooltipCount(day.reviews),
-                    TextStyle(fontSize = 10.sp, color = tooltipText)
-                )
-                val boxWidth = text.size.width + 16.dp.toPx()
-                val boxHeight = text.size.height + 10.dp.toPx()
-                val col = selected / 7
-                val topLeft = Offset(
-                    (col * pitch - boxWidth / 2f).coerceIn(0f, size.width - boxWidth),
-                    topOffset + 2.dp.toPx()
-                )
-                drawRoundRect(tooltipBg, topLeft, Size(boxWidth, boxHeight), CornerRadius(4.dp.toPx()))
-                drawRoundRect(
-                    emptyColor, topLeft, Size(boxWidth, boxHeight),
-                    CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1f)
-                )
-                drawText(text, topLeft = topLeft + Offset(8.dp.toPx(), 5.dp.toPx()))
+                if (selected in days.indices) {
+                    val day = days[selected]
+                    val text = textMeasurer.measure(
+                        dayDate(day).format(dateFmt) + " \u00b7 " + tooltipCount(day.reviews),
+                        TextStyle(fontSize = 10.sp, color = tooltipText)
+                    )
+                    val boxWidth = text.size.width + 16.dp.toPx()
+                    val boxHeight = text.size.height + 10.dp.toPx()
+                    val col = selected / rows
+                    // Clamp to the whole canvas, which spans every day: the
+                    // scroll container reveals the rest, so no clamping to the
+                    // currently visible window is required.
+                    val topLeft = Offset(
+                        (col * pitch - boxWidth / 2f).coerceIn(0f, size.width - boxWidth),
+                        topOffset + 2.dp.toPx()
+                    )
+                    drawRoundRect(tooltipBg, topLeft, Size(boxWidth, boxHeight), CornerRadius(4.dp.toPx()))
+                    drawRoundRect(
+                        emptyColor, topLeft, Size(boxWidth, boxHeight),
+                        CornerRadius(4.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1f)
+                    )
+                    drawText(text, topLeft = topLeft + Offset(8.dp.toPx(), 5.dp.toPx()))
+                }
             }
         }
     }

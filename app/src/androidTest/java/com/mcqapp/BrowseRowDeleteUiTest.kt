@@ -89,7 +89,9 @@ class BrowseRowDeleteUiTest {
         )
 
         delete.performClick()
-        val title = app.getString(R.plurals.delete_n_questions, 1, 1)
+        // Context.getString cannot resolve a <plurals> resource; use the
+        // quantity helper, as the screen itself does.
+        val title = app.resources.getQuantityString(R.plurals.delete_n_questions, 1, 1)
         compose.waitUntil(20_000) {
             compose.onAllNodesWithText(title, substring = false)
                 .fetchSemanticsNodes().isNotEmpty()

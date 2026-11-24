@@ -367,6 +367,16 @@ internal class StudyGradeGateForTests {
 }
 
 /**
+ * Test-only synchronisation for the instant a card is published
+ * (see [StudyViewModel.cardPublishedGateForTests]).
+ */
+internal class StudyCardPublishedGateForTests {
+    val reached = CompletableDeferred<Unit>()
+    val release = CompletableDeferred<Unit>()
+    val completed = CompletableDeferred<Unit>()
+}
+
+/**
  * Pure gate for changing the proposed grade, shared by the ViewModel and the
  * screen's toggle. The write is asynchronous: a tap in the frame before
  * recomposition must not rewrite `pendingGrade` after `next()` captured it.
@@ -762,7 +772,7 @@ class StudyViewModel(
      * Pulls the next card onto the screen. Cards whose question vanished
      * mid-session are skipped; when nothing eligible remains the session ends.
      */
-    private suspend fun pullCard() {
+    private suspend fun pullCard(flagLeechCrossing: Boolean = false) {
         if (failPullForTests) {
             failPullForTests = false
             throw IllegalStateException("simulated next-card pull failure")
@@ -844,9 +854,11 @@ class StudyViewModel(
                     gradeEdited = false,
                     lastResult = null,
                     isGuess = false,
-                    // A fresh card has not just crossed the leech threshold:
-                    // the notice is set AFTER this pull by the grade that did.
-                    justFlaggedLeech = false,
+                    // The crossing belongs to the card being published, so the
+                    // notice is carried in this very update: a test or a reader
+                    // can never observe the new card without its notice. Every
+                    // other caller leaves the flag at its default of false.
+                    justFlaggedLeech = flagLeechCrossing,
                     // The break always ends when a new card is served.
                     onBreak = false,
                     questionStartedAt = now,
@@ -860,6 +872,13 @@ class StudyViewModel(
                     reviewsSinceNew = if (card.reason == StudyReason.NEW) 0 else it.reviewsSinceNew + 1,
                     finished = false
                 )
+            }
+            val publishedGate = cardPublishedGateForTests
+            if (publishedGate != null) {
+                cardPublishedGateForTests = null
+                publishedGate.reached.complete(Unit)
+                publishedGate.release.await()
+                publishedGate.completed.complete(Unit)
             }
             clockPausedByUser = false
             // A new card resumes as soon as it is served when the session
@@ -1106,6 +1125,16 @@ class StudyViewModel(
      * Cleared once used; nothing in the app sets it.
      */
     internal var pullGateForTests: StudyPullGateForTests? = null
+
+    /**
+     * Test-only gate: when set, [pullCard] signals
+     * [StudyCardPublishedGateForTests.reached] immediately after it publishes
+     * the next card and suspends on [StudyCardPublishedGateForTests.release]
+     * before previews and the ticker run, so a test can observe the published
+     * card and its leech notice at that exact interleaving. Cleared once used;
+     * nothing in the app sets it.
+     */
+    internal var cardPublishedGateForTests: StudyCardPublishedGateForTests? = null
 
     /**
      * Test-only gate: when set, the next grade write signals
@@ -1389,12 +1418,9 @@ class StudyViewModel(
                     return@launch
                 }
                 val becameLeech = crossedLeechThreshold(current.current?.state, next)
-                pullCard()
-                // Set AFTER the pull: the notice belongs to the card just
-                // served and is cleared by the following one.
-                if (becameLeech && !_state.value.finished) {
-                    _state.update { it.copy(justFlaggedLeech = true) }
-                }
+                // Publish the crossing together with the card it belongs to:
+                // every other caller pulls with the flag defaulting to false.
+                pullCard(flagLeechCrossing = becameLeech)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // A closed database surfaces its failure as cancellation, not
                 // as an exception; rethrow only when THIS job is actually
@@ -1498,12 +1524,9 @@ class StudyViewModel(
                     return@launch
                 }
                 val becameLeech = crossedLeechThreshold(current.current?.state, next)
-                pullCard()
-                // Set AFTER the pull: the notice belongs to the card just
-                // served and is cleared by the following one.
-                if (becameLeech && !_state.value.finished) {
-                    _state.update { it.copy(justFlaggedLeech = true) }
-                }
+                // Publish the crossing together with the card it belongs to:
+                // every other caller pulls with the flag defaulting to false.
+                pullCard(flagLeechCrossing = becameLeech)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // A closed database surfaces its failure as cancellation, not
                 // as an exception; rethrow only when THIS job is actually

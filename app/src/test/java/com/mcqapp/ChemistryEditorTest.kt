@@ -340,20 +340,6 @@ class ChemistryEditorTest {
     }
 
     @Test
-    fun chemEditorBindsThePreviewToItsSmilesSource() {
-        val src = File("src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt").readText()
-        assertTrue(
-            "the SMILES field must clear the stale raster on every real edit",
-            "onValueChange = { onUpdate(withChemSmiles(element, it)) }" in src
-        )
-        val keyWiring = "chemKey = \"\$blockId@\${element.smiles}\""
-        assertTrue(
-            "the renderer's capture key must carry the SMILES that produced it: $keyWiring",
-            keyWiring in src
-        )
-    }
-
-    @Test
     fun pickingATemplateStartsFromAFreshDiagramFreeElement() {
         ChemTemplates.ALL.forEach { template ->
             val element = template.toElement()

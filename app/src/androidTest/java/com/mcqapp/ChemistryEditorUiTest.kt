@@ -42,7 +42,11 @@ class ChemistryEditorUiTest {
     @get:Rule
     val compose = createComposeRule()
 
+    /** Keys the real renderer reports when it rasterises the preview. */
+    private val diagramKeys = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
     private fun setChemEditor() {
+        diagramKeys.clear()
         compose.setContent {
             MaterialTheme {
                 var element by remember { mutableStateOf(EditorBlockType.CHEM.defaultElement()) }
@@ -65,7 +69,7 @@ class ChemistryEditorUiTest {
                         onMoveUp = {},
                         onMoveDown = {},
                         onPickImage = {},
-                        onChemDiagram = { _, _ -> }
+                        onChemDiagram = { key, _ -> diagramKeys.add(key) }
                     )
                 }
             }
@@ -117,19 +121,30 @@ class ChemistryEditorUiTest {
 
     @Test
     fun editingSmilesRefreshesThePreviewAndDropsTheTemplate() {
+        // No diagram is seeded, so the renderer draws from SMILES, rasterises
+        // the SVG and reports a capture keyed by "<blockId>@<smiles>".
         setChemEditor()
         assertEquals("c1ccccc1", previewSmiles())
         assertTrue(
             previewDescriptions().any { it == "Chemical structure: benzene" }
         )
+        compose.waitUntil(30_000) { diagramKeys.contains("chem1@c1ccccc1") }
+
         val smiles = compose.onNodeWithTag("chem-smiles-chem1").performScrollTo()
         smiles.performTextClearance()
         smiles.performTextInput("c")
         // The preview follows the new source immediately: its semantics carry
-        // the SMILES actually being drawn, and the template no longer claims
-        // benzene. ChemistryEditorTest pins the stale-PNG/HTML side of this.
+        // the SMILES actually being drawn, the template no longer claims
+        // benzene, and the capture emitted by the redrawn WebView is bound to
+        // the new SMILES. The rejection of a queued old-key capture is pinned
+        // by the pure ViewModel tests.
         assertEquals("c", previewSmiles())
         assertEquals("Custom", templateLabel())
+        compose.waitUntil(30_000) { diagramKeys.contains("chem1@c") }
+        assertTrue(
+            "renderer must emit a capture keyed by the edited SMILES, saw $diagramKeys",
+            diagramKeys.contains("chem1@c")
+        )
     }
 
     @Test

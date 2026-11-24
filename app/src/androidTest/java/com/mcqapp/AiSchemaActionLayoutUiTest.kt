@@ -8,8 +8,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -126,13 +128,18 @@ class AiSchemaActionLayoutUiTest {
                 AiSchemaScreen(navController = rememberNavController())
             }
         }
-        compose.onNodeWithTag("ai-schema-block-chem").performScrollTo().assertIsOff()
+        // A FilterChip exposes Selected semantics, not ToggleableState — the
+        // assertIsOff/On helpers used by the Checkbox toggles do not apply.
+        compose.onNodeWithTag("ai-schema-block-chem").performScrollTo().assertIsNotSelected()
         val before = schemaText()
+        val beforeExample = exampleText()
         compose.onNodeWithTag("ai-schema-block-chem").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("ai-schema-block-chem").assertIsOn()
+        compose.onNodeWithTag("ai-schema-block-chem").assertIsSelected()
         assertTrue("chem chip did not change the schema", schemaText() != before)
         assertTrue("chem arm not declared", schemaText().contains("\"const\":\"chem\""))
+        assertTrue("chem chip did not change the example", exampleText() != beforeExample)
+        assertTrue("chem block not in the example", exampleText().contains("\"type\":\"chem\""))
     }
 
     /**
@@ -140,10 +147,12 @@ class AiSchemaActionLayoutUiTest {
      * Read the JSON Text node from the unmerged tree, with the same empty
      * fallback StudyAndSelectionUiTest uses for its clock label.
      */
-    private fun schemaText(): String {
-        val nodes = compose.onAllNodesWithTag(
-            "ai-schema-output-schema-text", useUnmergedTree = true
-        ).fetchSemanticsNodes()
+    private fun schemaText(): String = outputText("ai-schema-output-schema-text")
+
+    private fun exampleText(): String = outputText("ai-schema-output-example-text")
+
+    private fun outputText(tag: String): String {
+        val nodes = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
         return nodes.firstOrNull()?.config
             ?.getOrElse(SemanticsProperties.Text) { emptyList() }
             ?.joinToString("\n") { it.text } ?: ""

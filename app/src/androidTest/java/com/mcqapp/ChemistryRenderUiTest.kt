@@ -63,6 +63,30 @@ class ChemistryRenderUiTest {
         return result.get()
     }
 
+    /**
+     * SmilesDrawer 2.1.1's SvgDrawer emits bonds as <line> and atoms as
+     * <text>/<g> — there is no <path> in its output (that tag only appears in
+     * an arrowhead marker in a different module). Check the real geometry,
+     * that the SVG is still visible, and that the failure fallback stayed
+     * hidden; a bare spoken description would pass all three checks if the
+     * drawer had never run.
+     */
+    private fun svgState(): String = evaluate(
+        "(function(){" +
+            "var s=document.getElementById('mcq-chem-0');" +
+            "var f=document.getElementById('mcq-chem-0-fallback');" +
+            "if(!s)return 'no-svg';" +
+            "if(!f)return 'no-fallback';" +
+            "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
+            "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
+            "var h=s.getBoundingClientRect().height;" +
+            "if(!(h>0))return 'zero-height';" +
+            "var n=s.querySelectorAll('line,text,circle,polygon').length;" +
+            "if(!(n>0))return 'no-shapes';" +
+            "return 'ok:'+n+':'+Math.round(h);" +
+            "})()"
+    )
+
     private fun structure() = listOf(
         ContentElement.TextElement("Compound: "),
         ContentElement.ChemElement(
@@ -90,8 +114,14 @@ class ChemistryRenderUiTest {
 
         // The bundled drawer must have put real geometry in the SVG, not just
         // left an empty <svg> shell behind a spoken description.
-        compose.waitUntil(timeoutMillis = 10_000) {
-            evaluate("document.querySelector('#mcq-chem-0 path') != null") == "true"
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 10_000) {
+                lastState = svgState()
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            throw AssertionError("SmilesDrawer did not draw a visible SVG; last state=$lastState", t)
         }
     }
 

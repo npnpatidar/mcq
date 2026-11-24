@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
@@ -52,9 +53,15 @@ class StatsHeatmapScrollUiTest {
         compose.waitForIdle()
     }
 
-    private fun hostBounds() = compose.onNodeWithTag("heatmap-host").fetchSemanticsNode().boundsInRoot
+    // boundsInRoot is clipped by the parent horizontalScroll viewport, which
+    // hides both the real content width and the scroll offset. The unclipped
+    // bounds still follow the canvas's placement, so they expose scroll.
+    // This API returns a DpRect, so host and canvas bounds must both use it.
+    private fun hostBounds() = compose.onNodeWithTag("heatmap-host").getUnclippedBoundsInRoot()
 
-    private fun canvasBounds() = compose.onNodeWithTag("stats-heatmap-canvas").fetchSemanticsNode().boundsInRoot
+    private fun canvasBounds() = compose.onNodeWithTag("stats-heatmap-canvas").getUnclippedBoundsInRoot()
+
+    private fun rightEdgeGap() = (canvasBounds().right - hostBounds().right).value
 
     @Test
     fun calendarOpensOnTheNewestEndWithoutScrolling() {
@@ -62,14 +69,16 @@ class StatsHeatmapScrollUiTest {
 
         val host = hostBounds()
         val canvas = canvasBounds()
+        val canvasWidth = (canvas.right - canvas.left).value
+        val hostWidth = (host.right - host.left).value
         assertTrue(
-            "canvas width (${canvas.width} px) must exceed the 320 dp host (${host.width} px)",
-            canvas.width > host.width
+            "canvas width ($canvasWidth dp) must exceed the 320 dp host ($hostWidth dp)",
+            canvasWidth > hostWidth
         )
         assertTrue(
             "the newest column must be visible on first composition " +
                 "(canvas right ${canvas.right}, host right ${host.right})",
-            abs(canvas.right - host.right) <= 2f
+            abs(rightEdgeGap()) <= 2f
         )
         assertTrue(
             "the calendar must not open on the oldest end (canvas left ${canvas.left})",
@@ -90,7 +99,7 @@ class StatsHeatmapScrollUiTest {
         compose.waitForIdle()
         assertTrue(
             "the 53-week calendar starts at the newest end",
-            abs(canvasBounds().right - hostBounds().right) <= 2f
+            abs(rightEdgeGap()) <= 2f
         )
 
         // 300 days is 43 weeks: a different content width must re-anchor too.
@@ -98,7 +107,7 @@ class StatsHeatmapScrollUiTest {
         compose.waitForIdle()
         assertTrue(
             "a shorter window must also open at the newest end after a data change",
-            abs(canvasBounds().right - hostBounds().right) <= 2f
+            abs(rightEdgeGap()) <= 2f
         )
     }
 

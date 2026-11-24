@@ -40,6 +40,7 @@ import com.mcqapp.ui.editor.PassagesScopeSheetContent
 import com.mcqapp.ui.editor.PassagesScopeTrigger
 import com.mcqapp.ui.editor.PassagesUiState
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -373,10 +374,13 @@ class PassagesScopeFilterUiTest {
     private val repository
         get() = (ApplicationProvider.getApplicationContext() as McqApplication).repository
 
-    private val seeded = mutableListOf<String>()
+    // Only papers this test instance created; deleting a paper cascades its
+    // categories and the passages seeded into them. Never touch sample data or
+    // another test's papers (PassagesUiTest uses its own pui-* ids).
+    private val seededPaperIds = mutableSetOf<String>()
 
     private fun seedPaper(id: String, title: String, categoryId: String, categoryTitle: String) {
-        seeded += id
+        seededPaperIds += id
         runBlocking { repository.ensurePaperAndCategory(id, title, categoryId, categoryTitle) }
     }
 
@@ -384,10 +388,10 @@ class PassagesScopeFilterUiTest {
         repository.savePassage(Passage(id = id, categoryId = categoryId, title = title))
     }
 
-    @Before
-    fun clear() = runBlocking {
-        seeded.forEach { repository.deletePaper(it) }
-        seeded.clear()
+    @After
+    fun cleanup() = runBlocking {
+        seededPaperIds.forEach { repository.deletePaper(it) }
+        seededPaperIds.clear()
     }
 
     private fun waitForContent(text: String) {

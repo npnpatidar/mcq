@@ -73,7 +73,7 @@ if [ -n "$durations" ] && [ -s "$durations" ]; then
       }
       for (i=1; i<=NR; i++) if (bucket[i]==idx) print cls[i]
     }
-  ' "$tmp" | sort
+  ' | sort
 else
   count=$(echo "$classes" | wc -l)
   per=$(( (count + total - 1) / total ))

@@ -203,6 +203,11 @@ class TestShardScriptTest {
                     "(fallback $fallbackShard, measured $measuredShard)",
                 fallbackShard != measuredShard
             )
+            assertEquals(
+                "longest-processing-time-first places the heaviest class in shard 0",
+                0,
+                measuredShard
+            )
         } finally {
             durations.delete()
         }

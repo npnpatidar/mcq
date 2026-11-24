@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The optional containers in a generated question bank. Questions are always present. -->
+    <string name="ai_schema_containers">Include in the question bank</string>
+    <string name="ai_schema_include_papers">Papers</string>
+    <string name="ai_schema_include_categories">Categories</string>
+    <string name="ai_schema_include_passages">Passages</string>
+    <string name="ai_schema_questions_always">Questions are always included</string>
+</resources>

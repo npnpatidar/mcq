@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ai_schema_containers">प्रश्न बैंक में शामिल करें</string>
+    <string name="ai_schema_include_papers">पेपर</string>
+    <string name="ai_schema_include_categories">श्रेणियाँ</string>
+    <string name="ai_schema_include_passages">पैसेज</string>
+    <string name="ai_schema_questions_always">प्रश्न हमेशा शामिल होते हैं</string>
+</resources>

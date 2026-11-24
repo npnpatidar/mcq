@@ -7,6 +7,7 @@ import com.mcqapp.data.local.ReviewLogEntity
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.ReviewGrade
+import com.mcqapp.ui.study.StudyPullGateForTests
 import com.mcqapp.ui.study.StudyViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -295,6 +296,12 @@ class StudyConfirmGradeToggleSessionTest {
         assertFalse(vm.state.value.showsRecallAccuracy)
     }
 
+    /**
+     * One-tap self-graded grade, then an immediate Stop before the next-card
+     * pull published anything. The write has landed but the graded card is
+     * still current: it must not be left behind the summary. The pull is held
+     * at a gate so this timing is deterministic rather than a race in CI.
+     */
     @Test
     fun simplifiedSelfGradedToggleOnStopKeepsTheSameProvenance() {
         runBlocking {
@@ -304,12 +311,22 @@ class StudyConfirmGradeToggleSessionTest {
         seed(question("card1", flashcard = true), question("card2", flashcard = true))
         val vm = start()
         vm.reveal()
+        val pull = StudyPullGateForTests()
+        vm.pullGateForTests = pull
         vm.grade(ReviewGrade.GOOD)
         assertTrue(awaitCondition { runBlocking { reviews("card1").size } == 1 })
+        assertTrue("the write must reach the gated pull", awaitCondition { pull.reached.isCompleted })
+        assertEquals(
+            "the card is still current because the pull has not published",
+            "card1",
+            vm.state.value.current?.questionId
+        )
 
         vm.stop()
+        pull.release.complete(Unit)
         assertTrue("Stop ends the sitting", awaitCondition { vm.state.value.finished })
-        assertNull("Stop must not serve another card", vm.state.value.current?.questionId)
+        assertTrue("the gated pull must resolve", awaitCondition { pull.completed.isCompleted })
+        assertNull("the graded card must not sit behind the summary", vm.state.value.current?.questionId)
 
         val rows = runBlocking { reviews("card1") }
         assertEquals("one honest review, not a staged duplicate", 1, rows.size)
@@ -320,5 +337,33 @@ class StudyConfirmGradeToggleSessionTest {
         assertEquals(false, row.wasSkipped)
         assertEquals(1, vm.state.value.selfGradedReviewed)
         assertFalse("no fabricated Recalled line", vm.state.value.showsRecallAccuracy)
+        assertEquals("the next card must never be graded", 0, runBlocking { reviews("card2").size })
+    }
+
+    /** The mirror case: the grade landed but the pull failed, so Stop keeps its card. */
+    @Test
+    fun simplifiedSelfGradedStuckStopKeepsItsCard() {
+        runBlocking {
+            repository.setSimplifiedStudy(true)
+            repository.setConfirmGradeBeforeNext(true)
+        }
+        seed(question("card1", flashcard = true), question("card2", flashcard = true))
+        val vm = start()
+        vm.reveal()
+        vm.failPullForTests = true
+        vm.grade(ReviewGrade.GOOD)
+
+        assertTrue("the write lands but the pull fails", awaitCondition { vm.state.value.gradedAndStuck })
+        assertEquals("card1", vm.state.value.current?.questionId)
+        assertTrue(awaitCondition { runBlocking { reviews("card1").size } == 1 })
+
+        vm.stop()
+        assertTrue("Stop ends the sitting", awaitCondition { vm.state.value.finished })
+        assertEquals(
+            "a graded-and-stuck card is the one the grade belongs to — keep it",
+            "card1",
+            vm.state.value.current?.questionId
+        )
+        assertEquals("still one review — Stop must not write a second", 1, runBlocking { reviews("card1").size })
     }
 }

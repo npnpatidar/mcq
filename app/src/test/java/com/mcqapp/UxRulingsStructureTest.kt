@@ -137,7 +137,8 @@ class UxRulingsStructureTest {
         listOf(
             "ai-schema-kind", "ai-schema-blocks", "ai-schema-block-table",
             "ai-schema-block-math", "ai-schema-block-image", "ai-schema-passage",
-            "ai-schema-wrapper-full", "ai-schema-wrapper-paperless",
+            "ai-schema-containers", "ai-schema-include-papers",
+            "ai-schema-include-categories", "ai-schema-include-passages",
             "ai-schema-char-count", "ai-schema-output-schema", "ai-schema-output-prompt",
             "ai-schema-output-example", "ai-schema-copy-prompt", "ai-schema-save",
             "ai-schema-share"
@@ -145,6 +146,39 @@ class UxRulingsStructureTest {
         assertTrue("Copy prompt uses the clipboard", "ClipboardManager" in screen)
         assertTrue("Save uses a SAF document", "CreateDocument" in screen)
         assertTrue("Share uses the existing helper", "shareIntent" in screen)
+        assertFalse(
+            "the old wrapper control would conflict with the container toggles",
+            screen.contains("ai-schema-wrapper-full")
+        )
+        assertTrue("container toggles must be checkboxes", screen.contains("Checkbox("))
+        listOf("includePapers", "includeCategories", "includePassages").forEach { field ->
+            assertTrue(
+                "the toggle $field must reach the generator",
+                screen.contains("$field = $field")
+            )
+        }
+    }
+
+    @Test
+    fun aiSchemaActionsUseTwoFullWidthRowsOnNarrowPhones() {
+        val screen = source("java/com/mcqapp/ui/settings/AiSchemaScreen.kt")
+        val at = screen.indexOf("ai-schema-copy-prompt")
+        assertTrue("Copy prompt action missing", at >= 0)
+        val actions = screen.substring(
+            screen.lastIndexOf("Column(", at),
+            screen.indexOf("ai-schema-share", at) + 120
+        )
+        assertTrue("the actions need their own column", actions.startsWith("Column("))
+        assertTrue("Copy prompt and Save schema share the first row", actions.contains("Row("))
+        assertTrue(
+            "both first-row buttons must split the width",
+            Regex("""weight\(1f\)""").findAll(actions).count() == 2
+        )
+        assertTrue("Share must span its own row", actions.contains("fillMaxWidth()"))
+        assertTrue(
+            "Share stays the last action",
+            actions.indexOf("ai-schema-share") > actions.indexOf("ai-schema-save")
+        )
     }
 
     private val expectedDaily = setOf(

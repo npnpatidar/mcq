@@ -86,6 +86,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mcqapp.ui.theme.verdictColors
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -429,9 +430,16 @@ fun TestSessionScreen(
         topBar = {
             TopAppBar(
                 title = {
+                    val title = state.paper?.title ?: stringResource(R.string.test)
+                    // One ellipsized line, as in Browse: maxLines alone clips
+                    // mid-word and the uncut title must remain spoken.
                     Text(
-                        state.paper?.title ?: stringResource(R.string.test),
-                        maxLines = 1
+                        title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .testTag("test-paper-title")
+                            .semantics { contentDescription = title }
                     )
                 },
                 navigationIcon = {

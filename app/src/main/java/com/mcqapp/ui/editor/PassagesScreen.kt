@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -665,13 +666,26 @@ fun PassagesScreen(
                                             )
                                         }
                                     }
-                                    TextButton(onClick = {
-                                        viewModel.memberResetCards(setOf(member.id)) { cards ->
-                                            unassignReset = cards
-                                        }
-                                        pendingUnassign = member.id to member.text
-                                    }) {
-                                        Text(stringResource(R.string.passage_unassign_member))
+                                    // A full-width "Remove from passage" text
+                                    // button left only two truncated words of
+                                    // the stem on a phone. The label moves to
+                                    // TalkBack; the compact icon keeps the
+                                    // same click and the same confirmation.
+                                    IconButton(
+                                        onClick = {
+                                            viewModel.memberResetCards(setOf(member.id)) { cards ->
+                                                unassignReset = cards
+                                            }
+                                            pendingUnassign = member.id to member.text
+                                        },
+                                        modifier = Modifier.testTag("passage-unassign-${member.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.LinkOff,
+                                            contentDescription = stringResource(
+                                                R.string.passage_unassign_member
+                                            )
+                                        )
                                     }
                                 }
                             }

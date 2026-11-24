@@ -85,14 +85,15 @@ class CiAndRound2FixGuardTest {
     }
 
     @Test
-    fun stopClearsTheCardOnlyWhenTheLastGradeAdvancedPastIt() {
+    fun stopClearsTheCardAfterAnyPersistedGradeExceptWhenStuck() {
         val vm = source("java/com/mcqapp/ui/study/StudyViewModel.kt")
         assertTrue("the last graded card must be tracked across threads", "@Volatile" in vm &&
             "private var lastPersistedGradeQuestionId: String? = null" in vm)
         val stop = vm.substringAfter("    fun stop() {").substringBefore("\n    }")
         assertTrue(
-            "clear only when the graded card is no longer the current one",
-            "lastPersistedGradeQuestionId != current.question?.id" in stop
+            "a persisted grade clears its card even before the pull published " +
+                "a new one, but a graded-and-stuck card must be kept",
+            "lastPersistedGradeQuestionId != null && !current.gradedAndStuck" in stop
         )
         assertTrue(
             "every grade write records the card it settled",

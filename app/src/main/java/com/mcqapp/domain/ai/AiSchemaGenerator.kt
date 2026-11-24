@@ -111,7 +111,7 @@ object AiSchemaGenerator {
                 "items" to obj("type" to s("string"), "enum" to strings(*letters))
             )
         }
-        if (options.passage != PassageMode.NONE) {
+        if (options.effectivePassage != PassageMode.NONE) {
             props["passageId"] = obj("type" to s("string"))
         }
         val required = buildList {
@@ -131,7 +131,7 @@ object AiSchemaGenerator {
         )
     }
 
-    private fun passageSchema(options: SchemaOptions): JsonObject = when (options.passage) {
+    private fun passageSchema(options: SchemaOptions): JsonObject = when (options.effectivePassage) {
         PassageMode.NONE -> obj("type" to s("object"), "additionalProperties" to no())
         PassageMode.TEXT_ONLY -> obj(
             "type" to s("object"),
@@ -157,12 +157,35 @@ object AiSchemaGenerator {
         }
     }
 
-    private fun paperSchema(options: SchemaOptions): JsonObject = obj(
+    /** A `categories[]` entry at the root: id, optional title, its questions. */
+    private fun rootCategorySchema(options: SchemaOptions): JsonObject = obj(
         "type" to s("object"),
         "properties" to obj(
             "id" to obj("type" to s("string")),
             "title" to obj("type" to s("string")),
-            "categories" to obj(
+            "questions" to obj(
+                "type" to s("array"),
+                "minItems" to n(1),
+                "items" to questionSchema(options)
+            )
+        ),
+        "required" to strings("id", "questions"),
+        "additionalProperties" to no()
+    )
+
+    /**
+     * A paper may hold `categories`, `questions`, or both. Neither is required:
+     * the parser reads either shape and synthesises a category for direct
+     * questions, so forcing one here would reject files the importer accepts.
+     */
+    private fun paperSchema(options: SchemaOptions): JsonObject {
+        val props = LinkedHashMap<String, JsonElement>()
+        props["id"] = obj("type" to s("string"))
+        props["title"] = obj("type" to s("string"))
+        // The toggle is load-bearing: with categories off the schema must not
+        // declare them at all, so a model cannot emit a key the example avoids.
+        if (options.hasCategories) {
+            props["categories"] = obj(
                 "type" to s("array"),
                 "minItems" to n(1),
                 "items" to obj(
@@ -176,32 +199,50 @@ object AiSchemaGenerator {
                             "items" to questionSchema(options)
                         )
                     ),
-                    "required" to strings("id", "title", "questions"),
+                    "required" to strings("id", "questions"),
                     "additionalProperties" to no()
                 )
             )
-        ),
-        "required" to strings("id", "title", "categories"),
-        "additionalProperties" to no()
-    )
+        }
+        props["questions"] = obj(
+            "type" to s("array"),
+            "minItems" to n(1),
+            "items" to questionSchema(options)
+        )
+        return obj(
+            "type" to s("object"),
+            "properties" to JsonObject(props),
+            "required" to strings("id"),
+            "additionalProperties" to no()
+        )
+    }
 
+    /**
+     * Only the selected root keys are declared and required: papers, else root
+     * categories, else root questions, plus passages when enabled. No `anyOf`
+     * or `minProperties` — the importer accepts any of these shapes on its own,
+     * and a wrapper that rejects a subset would be a false constraint.
+     */
     private fun schemaJson(options: SchemaOptions): JsonObject {
         val props = LinkedHashMap<String, JsonElement>()
-        when (options.wrapper) {
-            SchemaWrapper.FULL_BANK -> props["papers"] = obj(
+        when {
+            options.hasPapers -> props["papers"] = obj(
                 "type" to s("array"),
                 "minItems" to n(1),
                 "items" to paperSchema(options)
             )
-            // Paperless: no `papers`, no `categories`. The parser wraps this
-            // root into one ephemeral paper at import time.
-            SchemaWrapper.PAPERLESS -> props["questions"] = obj(
+            options.hasCategories -> props["categories"] = obj(
+                "type" to s("array"),
+                "minItems" to n(1),
+                "items" to rootCategorySchema(options)
+            )
+            else -> props["questions"] = obj(
                 "type" to s("array"),
                 "minItems" to n(1),
                 "items" to questionSchema(options)
             )
         }
-        if (options.passage != PassageMode.NONE) {
+        if (options.effectivePassage != PassageMode.NONE) {
             props["passages"] = obj(
                 "type" to s("array"),
                 "minItems" to n(1),
@@ -232,8 +273,9 @@ object AiSchemaGenerator {
                     )
                     ContentBlock.MATH ->
                         s("<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>")
-                    // Only element blocks use an <img> tag: parseContentElement
-                    // extracts its src. The scalar fields below are read verbatim.
+                    // Element blocks carry an <img> tag with a base64 data URI:
+                    // parseContentElement extracts its src. Scalar image fields
+                    // are bare data URIs too — never web URLs.
                     ContentBlock.IMAGE -> s(imageBlockContent())
                 }
             )
@@ -245,18 +287,30 @@ object AiSchemaGenerator {
         id: String,
         text: String,
         keyed: Boolean = false,
-        card: Boolean = false
+        card: Boolean = false,
+        inlineImage: Boolean = false
     ): JsonObject {
         val q = LinkedHashMap<String, JsonElement>()
         q["id"] = s(id)
-        q["question_elements"] = elementsExample(options.blocks, text)
-        if (options.passage != PassageMode.NONE) q["passageId"] = s("p1")
+        q["question_elements"] = elementsExample(
+            options.blocks,
+            if (inlineImage && options.image) firstQuestionText(text) else text
+        )
+        if (options.effectivePassage != PassageMode.NONE) q["passageId"] = s("p1")
         if (options.kind == QuestionKind.FLASHCARDS || card) {
             q["explanation_elements"] = elementsExample(options.blocks, "This is the back of the card.")
-            if (options.image) q["explanationImage"] = s("https://example.com/back.png")
+            if (options.image) q["explanationImage"] = s(TINY_PNG_DATA_URI)
         } else {
             q["options"] = JsonArray((0 until 4).map { i ->
-                obj("id" to s(letters[i]), "text" to s("Option ${letters[i]}"))
+                if (options.image) {
+                    obj(
+                        "id" to s(letters[i]),
+                        "text" to s("Option ${letters[i]}"),
+                        "image" to s(TINY_PNG_DATA_URI)
+                    )
+                } else {
+                    obj("id" to s(letters[i]), "text" to s("Option ${letters[i]}"))
+                }
             })
             // A keyless MCQ deliberately has options but no correctOptionIds:
             // the app self-grades it. Only MCQ and the keyed Mixed example
@@ -265,13 +319,13 @@ object AiSchemaGenerator {
                 q["correctOptionIds"] = strings("b")
             }
         }
-        // A scalar image is read verbatim by LegacyParser, so it must be a
-        // portable URL/data URI — never the <img> tag used inside an element.
-        if (options.image) q["image"] = s(IMAGE_URL)
+        // A scalar image is read verbatim by LegacyParser. Inline means a
+        // base64 data URI here too — no web URLs anywhere in an image example.
+        if (options.image) q["image"] = s(TINY_PNG_DATA_URI)
         return JsonObject(q)
     }
 
-    private fun passageExample(options: SchemaOptions): JsonObject? = when (options.passage) {
+    private fun passageExample(options: SchemaOptions): JsonObject? = when (options.effectivePassage) {
         PassageMode.NONE -> null
         PassageMode.TEXT_ONLY -> obj(
             "id" to s("p1"),
@@ -282,43 +336,52 @@ object AiSchemaGenerator {
             p["id"] = s("p1")
             p["title"] = s("Reading passage")
             p["elements"] = elementsExample(options.blocks, "A short passage that the questions refer to.")
-            if (options.image) p["image"] = s("https://example.com/passage.png")
+            if (options.image) p["image"] = s(TINY_PNG_DATA_URI)
             JsonObject(p)
         }
     }
 
+    private fun categoryExample(id: String, title: String, questions: List<JsonObject>): JsonObject = obj(
+        "id" to s(id),
+        "title" to s(title),
+        "questions" to JsonArray(questions)
+    )
+
     private fun exampleJson(options: SchemaOptions): JsonObject {
         val questions = when (options.kind) {
             QuestionKind.FLASHCARDS -> listOf(
-                questionExample(options, "q1", "Define the term.", card = true)
+                questionExample(options, "q1", "Define the term.", card = true, inlineImage = true)
             )
             QuestionKind.MCQ -> listOf(
-                questionExample(options, "q1", "Which option is correct?")
+                questionExample(options, "q1", "Which option is correct?", inlineImage = true)
             )
             QuestionKind.MIXED -> listOf(
-                questionExample(options, "q1", "Which option is correct?", keyed = true),
+                questionExample(options, "q1", "Which option is correct?", keyed = true, inlineImage = true),
                 questionExample(options, "q2", "Which option do you think is correct?"),
                 questionExample(options, "q3", "Define the term.", card = true)
             )
         }
         val root = LinkedHashMap<String, JsonElement>()
-        when (options.wrapper) {
-            SchemaWrapper.FULL_BANK -> root["papers"] = arr(
-                obj(
-                    "id" to s("paper-1"),
-                    "title" to s("Sample paper"),
-                    "categories" to arr(
-                        obj(
-                            "id" to s("cat-1"),
-                            "title" to s("General"),
-                            "questions" to JsonArray(questions)
-                        )
-                    )
-                )
-            )
-            SchemaWrapper.PAPERLESS -> root["questions"] = JsonArray(questions)
+        when {
+            options.hasPapers -> {
+                val paper = LinkedHashMap<String, JsonElement>()
+                paper["id"] = s("paper-1")
+                paper["title"] = s("Sample paper")
+                if (options.hasCategories) {
+                    paper["categories"] = arr(categoryExample("cat-1", "General", questions))
+                } else {
+                    paper["questions"] = JsonArray(questions)
+                }
+                root["papers"] = arr(JsonObject(paper))
+            }
+            options.hasCategories -> {
+                root["categories"] = arr(categoryExample("cat-1", "General", questions))
+            }
+            else -> root["questions"] = JsonArray(questions)
         }
-        passageExample(options)?.let { root["passages"] = arr(it) }
+        if (options.effectivePassage != PassageMode.NONE) {
+            passageExample(options)?.let { root["passages"] = arr(it) }
+        }
         return JsonObject(root)
     }
 
@@ -336,19 +399,22 @@ object AiSchemaGenerator {
             if (options.math) add("math (MathML)")
             if (options.image) add("image")
         }.joinToString(", ")
-        val passageText = when (options.passage) {
+        val passageText = when (options.effectivePassage) {
             PassageMode.NONE -> "no passages"
             PassageMode.TEXT_ONLY -> "one text-only passage with id and text"
             PassageMode.RICH -> "one rich passage with typed elements"
         }
         val imageText = if (options.image) {
-            "image blocks and image fields are allowed"
+            "image blocks and image fields are allowed; an inline image in a text block must be " +
+                "a base64 data URI such as <img src=\"data:image/png;base64,...\">, not a web URL"
         } else {
             "use no image fields anywhere"
         }
-        val wrapperText = when (options.wrapper) {
-            SchemaWrapper.FULL_BANK -> "group questions into papers and categories"
-            SchemaWrapper.PAPERLESS -> "use no papers/categories; the root holds passages (when any) and questions"
+        val wrapperText = when {
+            options.hasPapers && options.hasCategories -> "group questions into papers and categories"
+            options.hasPapers -> "group questions directly into papers (no categories)"
+            options.hasCategories -> "group questions into root categories"
+            else -> "use no papers/categories; the root holds passages (when any) and questions"
         }
         val sentence = "Make $kindText with $blockNames blocks, $passageText; $imageText; $wrapperText."
         return "Output only JSON matching the schema. No markdown or commentary. $sentence"
@@ -369,9 +435,23 @@ object AiSchemaGenerator {
         )
     }
 
-    /** Portable scalar value for `image` / `explanationImage` / passage `image`. */
-    private const val IMAGE_URL = "https://example.com/diagram.png"
+    /**
+     * A valid 1×1 PNG, base64-encoded. Every image value in an image-on
+     * example uses this one payload: inline means a data URI, never a URL,
+     * and a format sample must stay tiny.
+     */
+    private const val TINY_PNG_DATA_URI =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+
+    /**
+     * The first question's text block embeds one inline image so the example
+     * demonstrates that prose may carry a base64 `<img>` alongside the other
+     * blocks. Only used when images are on, so an image-off example stays free
+     * of any image markup.
+     */
+    private fun firstQuestionText(text: String): String =
+        "$text <img src=\"$TINY_PNG_DATA_URI\" alt=\"inline figure\"> (see figure)"
 
     /** Element blocks carry an HTML tag; the parser extracts its src. */
-    private fun imageBlockContent(): String = "<img src=\"$IMAGE_URL\" alt=\"diagram\">"
+    private fun imageBlockContent(): String = "<img src=\"$TINY_PNG_DATA_URI\" alt=\"diagram\">"
 }

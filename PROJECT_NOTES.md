@@ -324,10 +324,13 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.71` is the
-  published release (a shared paper/category scope sheet on Search, Bookmarks
-  and Passages; scoped Bookmarks count and export; a paperless-import fix; and
-  a larger, sideways-scrolling review calendar). `0.0.70` was screenshot-driven
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.72` is the
+  published release (chemical formulas and SMILES structural diagrams across
+  editor, AI schema, on-screen content, TalkBack and exports, bundled offline
+  SmilesDrawer with no Gradle dependency, plus a benzene question in the
+  sample bank). `0.0.71` added the shared paper/category scope sheet on Search,
+  Bookmarks and Passages; scoped Bookmarks count and export; a paperless-import
+  fix; and a larger, sideways-scrolling review calendar. `0.0.70` was screenshot-driven
   UI polish: single-line paper titles, Browse row Delete replacing per-question
   Duplicate, a compact passage action, a reachable AI-schema Share button,
   optional schema containers with base64-only inline images, a fast-stop Study

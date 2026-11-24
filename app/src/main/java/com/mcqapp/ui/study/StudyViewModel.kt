@@ -503,10 +503,11 @@ class StudyViewModel(
     private var gradeWriteJob: Job? = null
 
     /**
-     * The question whose grade write last succeeded. stop() uses this to tell
-     * "graded, then advanced to another card" from "graded and stuck on the
-     * same card": only the former leaves a stray card behind the summary, while
-     * the latter must keep the card the learner has already paid for. Written
+     * The question whose grade write last succeeded, or null if no grade has
+     * landed in this sitting. stop() uses non-null as "a grade was persisted,
+     * so its card must not sit behind the summary", including a fast stop that
+     * lands before the next-card pull published anything; [StudyUiState.gradedAndStuck]
+     * is the one case that keeps the card because that pull failed. Written
      * from the durable session-scope write, read on Main, hence @Volatile.
      */
     @Volatile
@@ -1588,13 +1589,15 @@ class StudyViewModel(
             // decision to keep, and a grade already persisted before a failed
             // pull must not be written again — a second review would double the
             // tally, FSRS state and review_log.
-            // A grade that already advanced to a different card left that card
-            // behind the summary, so clear it. When the graded card is still on
-            // screen (graded-and-stuck, or a stop that landed during the write)
-            // keep it — that is the card the learner's grade belongs to.
+            // Any grade persisted in this sitting leaves its card behind the
+            // summary once the sitting closes, so clear it — including the fast
+            // stop that lands after the write but before the next-card pull has
+            // published a new card, where the graded card is still the current
+            // one. The lone exception is graded-and-stuck: that pull failed, so
+            // the card on screen is the one the learner's grade belongs to and
+            // it must stay.
             finishSession(
-                clearCard = lastPersistedGradeQuestionId != null &&
-                    lastPersistedGradeQuestionId != current.question?.id
+                clearCard = lastPersistedGradeQuestionId != null && !current.gradedAndStuck
             )
             return
         }
@@ -1664,10 +1667,10 @@ class StudyViewModel(
 
     /**
      * Closes the sitting into the summary, with the tally and the times frozen.
-     * [clearCard] is set only by the opt-in staged-stop path: that card has just
-     * been graded but was never advanced, so leaving it in state would show a
-     * second gradeable card behind the summary. Other exits keep the card — a
-     * graded-and-stuck stop, for instance, must still report the card it holds.
+     * [clearCard] drops a card whose grade was already persisted in this sitting
+     * and would otherwise sit behind the summary — a one-tap grade whether or
+     * not the next-card pull published (the fast stop), and a staged grade
+     * written here on Stop. A graded-and-stuck stop keeps the card it holds.
      */
     private fun finishSession(clearCard: Boolean = false) {
         val totalSeconds = _sessionSeconds.value

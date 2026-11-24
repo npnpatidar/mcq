@@ -3,6 +3,7 @@ package com.mcqapp
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Spanned
 import android.text.TextPaint
@@ -13,18 +14,24 @@ import android.text.style.SubscriptSpan
 import android.text.style.UnderlineSpan
 import com.mcqapp.data.export.MathSpan
 import com.mcqapp.data.export.TexNode
+import com.mcqapp.data.export.PdfPaperWriter
+import com.mcqapp.data.export.answerKeyEntry
 import com.mcqapp.data.export.columnEdges
 import com.mcqapp.data.export.drawNodes
 import com.mcqapp.data.export.mathMlToNodes
 import com.mcqapp.data.export.mathToLinear
 import com.mcqapp.data.export.measureNodes
 import com.mcqapp.data.export.spannedFromInlineHtml
+import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
+import java.util.Base64
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
@@ -227,5 +234,71 @@ class PdfMathTest {
         // dropped, as it was before.
         assertEquals("a</one>b", spannedFromInlineHtml("a</one>b").toString())
         assertEquals("ab", spannedFromInlineHtml("a</b>b").toString())
+    }
+
+    /** Robolectric stubs StaticLayout's text drawing, so count bitmaps only. */
+    private class DrawingCanvas : Canvas() {
+        var bitmaps = 0
+        override fun drawBitmap(bitmap: Bitmap, left: Float, top: Float, paint: Paint?) {
+            bitmaps++
+        }
+    }
+
+    private data class ChemDraw(val bitmaps: Int, val endY: Float)
+
+    private fun drawChem(diagram: String): ChemDraw {
+        val canvas = DrawingCanvas()
+        val sink = object : PdfPaperWriter.PdfPageSink {
+            override fun startPage(pageNum: Int) = object : PdfPaperWriter.PdfPageHost {
+                override val canvas = canvas
+                override fun finish() {}
+            }
+        }
+        val writer = PdfPaperWriter.Writer(sink, twoColumn = false)
+        writer.elements(
+            listOf(
+                ContentElement.ChemElement(
+                    smiles = "c1ccccc1", formula = "C6H6", caption = "Benzene ring",
+                    diagram = diagram
+                )
+            )
+        )
+        writer.finish()
+        return ChemDraw(canvas.bitmaps, writer.finalY())
+    }
+
+    @Test
+    fun chemistryHandlesAreReadableInTheAnswerKey() {
+        // Pure counterpart to the canvas path: a card whose back is a
+        // structure must print caption, formula and SMILES, just like a text
+        // back, instead of flattening to nothing.
+        val card = QuestionDto(
+            id = "q-chem",
+            elements = listOf(ContentElement.TextElement("Draw it")),
+            options = emptyList(),
+            explanationElements = listOf(
+                ContentElement.ChemElement("c1ccccc1", "C6H6", "Benzene ring")
+            )
+        )
+        val entry = answerKeyEntry(card, 1)!!
+        assertTrue(entry.contains("Benzene ring"))
+        assertTrue(entry.contains("C6H6"))
+        assertTrue(entry.contains("c1ccccc1"))
+    }
+
+    @Test
+    fun chemistryDrawsOnlyValidPngDiagrams() {
+        val bmp = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val bytes = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, bytes)
+        val png = "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes.toByteArray())
+
+        val withDiagram = drawChem(png)
+        assertTrue("a text paragraph must have been laid out", withDiagram.endY > PdfPaperWriter.MARGIN)
+        assertTrue("a valid PNG must reach the existing image() path", withDiagram.bitmaps >= 1)
+
+        val withoutDiagram = drawChem("data:image/svg+xml;base64,PHN2Zy8+")
+        assertTrue("text handles still print", withoutDiagram.endY > PdfPaperWriter.MARGIN)
+        assertEquals("a non-PNG diagram is text-only, never rasterised", 0, withoutDiagram.bitmaps)
     }
 }

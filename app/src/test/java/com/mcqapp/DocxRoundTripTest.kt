@@ -4,6 +4,7 @@ import com.mcqapp.data.docx.decodeXmlEntities
 import com.mcqapp.data.docx.parseDocx
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.export.DocxPaperWriter
+import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.PaperDto
@@ -56,6 +57,9 @@ class DocxRoundTripTest {
     /** Pictures compare by content: a data class would use array identity. */
     private data class Img(val base64: String) : El
 
+    /** A chemical structure: its printed handles plus the diagram's bytes. */
+    private data class Ch(val text: String, val diagram: String) : El
+
     private fun shape(elements: List<ContentElement>): List<El> = elements.map { element ->
         when (element) {
             // A paragraph before a table carries its newline; trailing
@@ -73,6 +77,8 @@ class DocxRoundTripTest {
             is ContentElement.TableElement -> Tb(element.rows)
             is ContentElement.ImageElement ->
                 Img(element.src.substringAfter(','))
+            is ContentElement.ChemElement ->
+                Ch(chemElementText(element), element.diagram.substringAfter(','))
         }
     }
 

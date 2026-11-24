@@ -483,6 +483,20 @@ object PdfPaperWriter {
                         when (element) {
                             is ContentElement.ImageElement -> image(element.src, indent = indent)
                             is ContentElement.TableElement -> table(element.rows, indent = indent)
+                            is ContentElement.ChemElement -> {
+                                // Caption, formula and SMILES are plain text on
+                                // the page; a valid PNG diagram rides the same
+                                // image() path every other picture uses. No new
+                                // renderer — an SVG or broken URI leaves only
+                                // the text handles.
+                                paragraph(
+                                    chemElementText(element), 11f,
+                                    Typeface.NORMAL, Color.BLACK, indent = indent
+                                )
+                                if (isPngDataUri(element.diagram)) {
+                                    image(element.diagram, indent = indent)
+                                }
+                            }
                             is ContentElement.MathElement -> error("unreachable")
                             is ContentElement.TextElement -> error("unreachable")
                         }
@@ -804,6 +818,7 @@ private fun cardBackText(question: QuestionDto): String {
                 is ContentElement.TableElement ->
                     element.rows.joinToString(" ") { row -> row.joinToString(" ") }
                 is ContentElement.ImageElement -> ""
+                is ContentElement.ChemElement -> chemElementText(element)
             }
         }
         val plain = decodeEntities(stripInlineHtml(text))

@@ -72,8 +72,23 @@ object ContentHash {
      * a row back yields `textContent` of that, so deriving the hash the same
      * way keeps a file DTO and a loaded question on one value.
      */
-    private fun storedText(elements: List<ContentElement>, flat: String): String =
-        elements.ifEmpty { listOf(ContentElement.TextElement(flat)) }.textContent
+    private fun storedText(elements: List<ContentElement>, flat: String): String {
+        val blocks = elements.ifEmpty { listOf(ContentElement.TextElement(flat)) }
+        val base = blocks.textContent
+        // A ChemElement contributes nothing to textContent, so a prompt or an
+        // option whose only content is a structure hashed to the empty string
+        // and collided with every other such block. Append a `c`-prefixed run
+        // for each one. With no chemistry present the result is exactly the
+        // old textContent — every existing question keeps its stored hash.
+        val chem = blocks.filterIsInstance<ContentElement.ChemElement>()
+        if (chem.isEmpty()) return base
+        return base + chem.joinToString("") { element ->
+            "c" + listOf(
+                element.smiles, element.formula, element.caption,
+                element.spoken, element.diagram
+            ).joinToString("\u001f")
+        }
+    }
 
     /**
      * A flashcard's back as the answer comparison sees it: the structured
@@ -109,8 +124,8 @@ object ContentHash {
      */
     fun of(question: Question): String =
         of(
-            question.text,
-            question.options.map { it.text },
+            storedText(question.elements, question.text),
+            question.options.map { storedText(it.elements, it.text) },
             question.options.map { optionImageValue(it.elements, it.image) },
             question.passageId
         )

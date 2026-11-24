@@ -58,6 +58,10 @@ class SampleFlashcardDemoTest {
                     is ContentElement.TableElement ->
                         element.rows.any { row -> row.any { it.isNotBlank() } }
                     is ContentElement.ImageElement -> element.src.isNotBlank()
+                    is ContentElement.ChemElement ->
+                        element.smiles.isNotBlank() || element.formula.isNotBlank() ||
+                            element.caption.isNotBlank() || element.spoken.isNotBlank() ||
+                            element.diagram.isNotBlank()
                 }
             }
 

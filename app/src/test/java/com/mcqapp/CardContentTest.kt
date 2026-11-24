@@ -417,4 +417,52 @@ class CardContentTest {
             CardContent.of(same.copy(elements = emptyList()))
         )
     }
+
+    // ------------------------------------------------------------------
+    // Chemistry: a `c` block, without churning any existing question.
+    // ------------------------------------------------------------------
+
+    /** Digests these two non-chemical cards had before the chemistry axis. */
+    private val legacyQuestionHash = "f4c67d01f73e27e748c1ed362e84959fc8ec796bb9e937bd73f8fb01da659558"
+    private val legacyFlashcardHash = "54b07d5f584250b6aaecab04b9904ab3b1dd5294b56569494d214518280f5d82"
+
+    @Test
+    fun nonChemicalCardsKeepTheirHistoricalFingerprints() {
+        // The `c` prefix only fires for a ChemElement. Text, table, math, image,
+        // options, key and the flashcard back must be byte-for-byte unchanged —
+        // otherwise every existing card would reset on the next save.
+        assertEquals(legacyQuestionHash, CardContent.of(domainQuestion()))
+        assertEquals(legacyFlashcardHash, CardContent.of(flashcard()))
+        assertEquals(legacyQuestionHash, CardContent.of(dto()))
+    }
+
+    @Test
+    fun aChemBlockInTheStemIsContent() {
+        val chem = ContentElement.ChemElement("c1ccccc1", "C6H6", "Benzene")
+        val base = CardContent.of(domainQuestion())
+        val withChem = CardContent.of(domainQuestion(elements = stem + chem))
+        assertNotEquals(base, withChem)
+        assertNotEquals(
+            withChem,
+            CardContent.of(domainQuestion(elements = stem + chem.copy(smiles = "CC")))
+        )
+    }
+
+    @Test
+    fun everyChemBackFieldResetsItsCard() {
+        val chem = ContentElement.ChemElement(
+            smiles = "c1ccccc1", formula = "C6H6", caption = "Benzene",
+            spoken = "aromatic", diagram = "data:image/png;base64,iVBORw0KGgo="
+        )
+        val base = CardContent.of(flashcard(explanation = listOf(chem)))
+        assertEquals(base, CardContent.of(flashcard(explanation = listOf(chem.copy()))))
+        assertNotEquals(base, CardContent.of(flashcard(explanation = listOf(chem.copy(smiles = "CC")))))
+        assertNotEquals(base, CardContent.of(flashcard(explanation = listOf(chem.copy(formula = "CH4")))))
+        assertNotEquals(base, CardContent.of(flashcard(explanation = listOf(chem.copy(caption = "Methane")))))
+        assertNotEquals(base, CardContent.of(flashcard(explanation = listOf(chem.copy(spoken = "gas")))))
+        assertNotEquals(
+            base,
+            CardContent.of(flashcard(explanation = listOf(chem.copy(diagram = "data:image/png;base64,AAAA"))))
+        )
+    }
 }

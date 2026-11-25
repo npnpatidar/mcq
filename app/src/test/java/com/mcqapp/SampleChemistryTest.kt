@@ -40,6 +40,12 @@ class SampleChemistryTest {
             .questions.single { it.id == "q-chem-5" }
     }
 
+    private fun organic(id: String): QuestionDto =
+        paper.categories.single { it.id == "cat-chemistry" }.questions.single { it.id == id }
+
+    private fun structureOf(elements: List<ContentElement>): ContentElement.ChemElement =
+        elements.filterIsInstance<ContentElement.ChemElement>().single()
+
     @Test
     fun theChemistrySampleParsesIntoACompleteChemElement() {
         val elements = chemistry.elements.filterIsInstance<ContentElement.ChemElement>()
@@ -90,6 +96,91 @@ class SampleChemistryTest {
         assertTrue("the explanation must teach the SMILES", chemistry.explanation.contains("c1ccccc1"))
     }
 
+    @Test
+    fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
+        val question = organic("q-org-1")
+        val start = structureOf(question.elements)
+        assertEquals("O=C1OCCCCC(=O)C1", start.smiles)
+        assertEquals("C7H10O3", start.formula)
+        assertEquals("keto lactone", start.caption)
+        assertTrue(start.spoken.contains("lactone"))
+        assertEquals("", start.diagram)
+        assertTrue(question.text.contains("LiAlH₄ in ether"))
+        assertTrue(question.text.contains("→ A"))
+
+        val options = mapOf(
+            "a" to "OC1CCOCCCC1O",
+            "b" to "O=C1OCCCCC(O)C1",
+            "c" to "OCCCCC(O)CC=O",
+            "d" to "OCCCCC(O)CCO"
+        )
+        assertEquals(options.keys, question.options.map { it.id }.toSet())
+        options.forEach { (id, smiles) ->
+            val option = question.options.single { it.id == id }
+            assertEquals("$id must carry exactly one structure", 1,
+                option.elements.count { it is ContentElement.ChemElement })
+            assertEquals(smiles, structureOf(option.elements).smiles)
+            assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+        }
+        assertEquals("LAH opens the lactone to a triol, option 4", listOf("d"), question.correctOptionIds)
+        assertTrue(question.explanation.contains("OCCCCC(O)CCO"))
+        assertTrue(question.explanation.contains("option 4"))
+    }
+
+    @Test
+    fun theRuO4OxidationQuestionParsesEveryStructureWithItsAnswer() {
+        val question = organic("q-org-2")
+        val start = structureOf(question.elements)
+        assertEquals("CC1=CCCCC1O", start.smiles)
+        assertEquals("C7H12O", start.formula)
+        assertEquals("methyl cyclohexenol", start.caption)
+        assertTrue(start.spoken.contains("methyl"))
+        assertEquals("", start.diagram)
+        assertTrue(question.text.contains("RuO₄"))
+        assertTrue(question.text.contains("NaIO₄"))
+        assertTrue(question.text.contains("→ [A]"))
+
+        val options = mapOf(
+            "a" to "CC1=CC(=O)CCC1",
+            "b" to "CC12OC1CCCC2O",
+            "c" to "CC(=O)C(=O)CCCC(=O)O",
+            "d" to "CC(=O)C(O)CCCC(=O)O"
+        )
+        assertEquals(options.keys, question.options.map { it.id }.toSet())
+        options.forEach { (id, smiles) ->
+            val option = question.options.single { it.id == id }
+            assertEquals("$id must carry exactly one structure", 1,
+                option.elements.count { it is ContentElement.ChemElement })
+            assertEquals(smiles, structureOf(option.elements).smiles)
+            assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+        }
+        assertEquals("RuO4 also oxidises the alcohol, so option 3", listOf("c"), question.correctOptionIds)
+        assertTrue(question.explanation.contains("CC(=O)C(=O)CCCC(=O)O"))
+        assertTrue(question.explanation.contains("option 3"))
+    }
+
+    @Test
+    fun theOrganicQuestionsUseStructuresNotPastedPictures() {
+        listOf("q-org-1", "q-org-2").forEach { id ->
+            val question = organic(id)
+            val all = buildList {
+                addAll(question.elements)
+                addAll(question.explanationElements)
+                question.options.forEach { addAll(it.elements) }
+            }
+            assertEquals("$id must draw every structure from SMILES", 0,
+                all.count { it is ContentElement.ImageElement })
+            assertEquals("$id must have a structure in its stem", 1,
+                question.elements.count { it is ContentElement.ChemElement })
+            all.filterIsInstance<ContentElement.ChemElement>().forEach { chem ->
+                assertTrue("$id has a raw markup handle: ${chem.caption}",
+                    "<" !in chem.caption && ">" !in chem.caption)
+                assertTrue("$id has a long SMILES: ${chem.smiles}", chem.smiles.length <= 32)
+                assertTrue("$id has no spoken description", chem.spoken.isNotBlank())
+            }
+        }
+    }
+
     /** No question or coverage shape may disappear when the chemistry demo is added. */
     @Test
     fun theSampleStillHasEveryPreviousQuestionAndCoverage() {
@@ -97,6 +188,7 @@ class SampleChemistryTest {
             "q-top-1",
             "q-sci-1", "q-sci-2",
             "q-chem-1", "q-chem-2", "q-chem-3", "q-chem-4",
+            "q-org-1", "q-org-2",
             "q-phy-1", "q-phy-2", "q-phy-3", "q-fc-table",
             "q-math-1", "q-math-2", "q-math-3", "q-math-4", "q-math-5",
             "q-math-6", "q-math-7", "q-math-8", "q-math-9", "q-fc-math",
@@ -118,8 +210,10 @@ class SampleChemistryTest {
             "these previously bundled questions disappeared: ${previousIds - ids}",
             previousIds.all { it in ids }
         )
-        // One extra chemistry question, and the id-less legacy question still there.
+        // The benzene demo and the id-less legacy question are checked by
+        // their own tests, not by this id list.
         assertEquals(previousIds.size + 2, questions.size)
+        assertEquals(7, paper.categories.single { it.id == "cat-chemistry" }.questions.size)
 
         fun allElements() = buildList {
             questions.forEach { question ->
@@ -136,6 +230,11 @@ class SampleChemistryTest {
         assertTrue(
             "the sample must still carry MathML formulas",
             elements.any { it is ContentElement.MathElement }
+        )
+        assertEquals(
+            "benzene's stem plus a structure in every organic stem and option",
+            11,
+            elements.count { it is ContentElement.ChemElement }
         )
         assertEquals(
             "the seven flashcard demos must remain",

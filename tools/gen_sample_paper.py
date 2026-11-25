@@ -892,6 +892,149 @@ CATEGORIES = [
                 difficulty="easy",
                 tags=["chemistry", "smiles", "structure"],
             ),
+            # Two textbook organic problems. Every structure is a Chemistry
+            # element drawn by SmilesDrawer from SMILES — no pasted pictures —
+            # and the reagent lines stay plain text so they read like the page
+            # in the book. Each option carries a short text label beside its
+            # structure: ChemElements contribute nothing to an option's
+            # flattened `text`, which is what Browse and search show.
+            q(
+                "q-org-1",
+                [
+                    txt(
+                        "Which is the reduction product (A) of the following compound?"
+                    ),
+                    chem(
+                        smiles="O=C1OCCCCC(=O)C1",
+                        formula="C7H10O3",
+                        caption="keto lactone",
+                        spoken="an eight membered ring lactone with a ketone group in the ring",
+                    ),
+                    txt("LiAlH₄ in ether, then aqueous work-up → A"),
+                ],
+                {
+                    "a": [
+                        chem(
+                            smiles="OC1CCOCCCC1O",
+                            formula="C7H14O3",
+                            caption="cyclic ether diol",
+                            spoken="an eight membered cyclic ether with two hydroxyl groups",
+                        ),
+                        txt("(1) Cyclic ether diol"),
+                    ],
+                    "b": [
+                        chem(
+                            smiles="O=C1OCCCCC(O)C1",
+                            formula="C7H12O3",
+                            caption="hydroxy lactone",
+                            spoken="a lactone ring with one hydroxyl group",
+                        ),
+                        txt("(2) Hydroxy lactone"),
+                    ],
+                    "c": [
+                        chem(
+                            smiles="OCCCCC(O)CC=O",
+                            formula="C7H14O3",
+                            caption="hydroxy aldehyde",
+                            spoken="a chain with an aldehyde and three hydroxyl groups",
+                        ),
+                        txt("(3) Hydroxy aldehyde"),
+                    ],
+                    "d": [
+                        chem(
+                            smiles="OCCCCC(O)CCO",
+                            formula="C7H16O3",
+                            caption="triol",
+                            spoken="a seven carbon chain with three hydroxyl groups",
+                        ),
+                        txt("(4) Triol"),
+                    ],
+                },
+                ["d"],
+                [
+                    txt(
+                        "LiAlH₄ reduces both carbonyls. The ring ketone becomes a "
+                        "secondary alcohol, and the lactone ring opens: its acyl carbon "
+                        "becomes a primary alcohol (CH₂OH) while the ring oxygen stays "
+                        "on its neighbouring carbon as an OH. The product is the "
+                        "seven-carbon triol OCCCCC(O)CCO, so the answer is option 4. "
+                        "Option 2 leaves the lactone closed, option 3 stops its acyl "
+                        "carbon at an aldehyde, and option 1 treats the lactone as an "
+                        "ether that stays in a ring."
+                    )
+                ],
+                difficulty="hard",
+                marks=2,
+                tags=["organic-chemistry", "reduction", "lactone", "smiles"],
+            ),
+            q(
+                "q-org-2",
+                [
+                    txt("The compound below is treated with RuO₄ and NaIO₄."),
+                    chem(
+                        smiles="CC1=CCCCC1O",
+                        formula="C7H12O",
+                        caption="methyl cyclohexenol",
+                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it",
+                    ),
+                    txt("Compound → [A]. Which structure is [A]?"),
+                ],
+                {
+                    "a": [
+                        chem(
+                            smiles="CC1=CC(=O)CCC1",
+                            formula="C7H10O",
+                            caption="methyl cyclohexenone",
+                            spoken="a methyl substituted cyclohexenone ring",
+                        ),
+                        txt("(1) Methyl cyclohexenone"),
+                    ],
+                    "b": [
+                        chem(
+                            smiles="CC12OC1CCCC2O",
+                            formula="C7H12O2",
+                            caption="epoxide",
+                            spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
+                        ),
+                        txt("(2) Epoxide with OH"),
+                    ],
+                    "c": [
+                        chem(
+                            smiles="CC(=O)C(=O)CCCC(=O)O",
+                            formula="C7H10O4",
+                            caption="keto acid",
+                            spoken="a carboxylic acid chain with two ketones, one of them a methyl ketone",
+                        ),
+                        txt("(3) Keto acid"),
+                    ],
+                    "d": [
+                        chem(
+                            smiles="CC(=O)C(O)CCCC(=O)O",
+                            formula="C7H12O4",
+                            caption="hydroxy keto acid",
+                            spoken="a carboxylic acid chain with a ketone, a hydroxyl group and a methyl ketone",
+                        ),
+                        txt("(4) Hydroxy keto acid"),
+                    ],
+                },
+                ["c"],
+                [
+                    txt(
+                        "RuO₄ with NaIO₄ cleaves the double bond. The alkene carbon "
+                        "carrying the methyl group has no hydrogen, so it becomes a "
+                        "methyl ketone (–C(=O)CH₃); the other alkene carbon has a "
+                        "hydrogen and is oxidised all the way to –COOH. The same "
+                        "reagent also oxidises the secondary alcohol to a ketone, "
+                        "giving HOOC–CH₂–CH₂–CH₂–C(=O)–C(=O)–CH₃ (SMILES "
+                        "CC(=O)C(=O)CCCC(=O)O), which is option 3. Option 4 leaves "
+                        "that alcohol unoxidised; options 1 and 2 never cleave the "
+                        "double bond."
+                    )
+                ],
+                difficulty="hard",
+                marks=2,
+                tags=["organic-chemistry", "oxidation", "alkene-cleavage", "smiles"],
+            ),
         ],
     },
     {
@@ -2432,6 +2575,41 @@ def check_mathml(doc):
     return bad
 
 
+def check_chem(doc):
+    """Every chemistry block must carry the handles the renderer and a11y need.
+
+    SMILES is the one field LegacyParser insists on; an empty formula, caption
+    or spoken line still parses but leaves exports, labels and TalkBack with
+    nothing useful, so the generator rejects those before writing the asset.
+    """
+    bad = []
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if node.get("type") == "chem":
+                content = node.get("content", {})
+                if not isinstance(content, dict):
+                    bad.append(f"{where}: chem content is not an object")
+                else:
+                    for key in ("smiles", "formula", "caption", "spoken", "diagram"):
+                        if key not in content:
+                            bad.append(f"{where}: chem block is missing {key}")
+                    for key in ("smiles", "formula", "caption", "spoken"):
+                        value = content.get(key, "")
+                        if not isinstance(value, str) or not value.strip():
+                            bad.append(f"{where}: chem block has no {key}")
+                        elif "<" in value or ">" in value:
+                            bad.append(f"{where}: raw markup in chem {key}")
+            for key, value in node.items():
+                walk(value, f"{where}/{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{where}[{index}]")
+
+    walk(doc, "")
+    return bad
+
+
 PASSAGES = [
     {
         "id": "passage-1",
@@ -2537,6 +2715,9 @@ def main():
     bad = check_mathml(doc)
     if bad:
         raise SystemExit("invalid MathML in the sample bank:\n  " + "\n  ".join(bad))
+    bad = check_chem(doc)
+    if bad:
+        raise SystemExit("invalid chemistry in the sample bank:\n  " + "\n  ".join(bad))
     text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write(text)

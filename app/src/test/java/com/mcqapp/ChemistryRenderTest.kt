@@ -224,6 +224,8 @@ class ChemistryRenderTest {
     @Test
     fun svgStructureIsCappedAtTheDisplayMax() {
         val html = htmlOf(ContentElement.ChemElement("CCO"))
+        // The owner chose the compact 96 px cap for standalone structures.
+        assertEquals(96, CHEM_DISPLAY_MAX_PX)
         assertTrue("SVG not capped: $html", html.contains(
             "<svg id=\"mcq-chem-0\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;" +
                 "max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>"
@@ -340,15 +342,29 @@ class ChemistryRenderTest {
     }
 
     @Test
-    fun reactionDrawReappliesTheDisplayCapAfterDrawing() {
+    fun reactionStructureUsesTheFullCardWidthNotTheMoleculeCap() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
-        val cap = "svg.style.cssText=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;" +
-            "max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\";"
-        assertTrue("cap not reapplied after draw: $html", html.contains(cap))
+        assertTrue("reaction svg must span the card: $html", html.contains(
+            "<svg id=\"mcq-chem-0\" style=\"max-width:100%;width:100%;" +
+                "height:auto;vertical-align:middle;\"></svg>"
+        ))
+        assertFalse("reaction must not use the narrow molecule width",
+            html.contains("id=\"mcq-chem-0\" style=\"width:${CHEM_DISPLAY_MAX_PX}px"))
+        assertFalse("reaction must not carry a small max-height", html.contains("max-height:96px"))
+    }
+
+    @Test
+    fun reactionDrawReappliesTheFullWidthStyleAfterDrawing() {
+        val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        val style = "svg.style.cssText=\"max-width:100%;width:100%;" +
+            "height:auto;vertical-align:middle;\";"
+        assertTrue("full-width style not reapplied after draw: $html", html.contains(style))
         val drawAt = html.indexOf(".draw(reaction,svg,'mcq'")
-        val capAt = html.indexOf("svg.style.cssText=")
+        val styleAt = html.indexOf("svg.style.cssText=")
         assertTrue("live reaction draw missing", drawAt >= 0)
-        assertTrue("cap must be reapplied after the draw", capAt > drawAt)
+        assertTrue("style must be reapplied after the draw", styleAt > drawAt)
+        assertFalse("reapplied style must not restore the molecule cap",
+            html.contains("svg.style.cssText=\"width:96px"))
         assertTrue("capture must stay hidden", html.contains(
             "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
         ))
@@ -358,10 +374,15 @@ class ChemistryRenderTest {
     @Test
     fun reactionLiveOptionsAreTunedButCaptureAndLightStayUnchanged() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
-        listOf("padding:10", "bondThickness:1.1", "fontSizeLarge:13",
-            "overlapResolutionIterations:2", "experimentalSSSR:true").forEach { option ->
-            assertTrue("live option missing: $option", html.contains(option))
-        }
+        // Compact geometry: shorter bonds, smaller labels and tighter padding
+        // keep reactants + arrow + products on one line at 320 dp.
+        assertTrue("reaction mol options not compact: $html", html.contains(
+            "var molOptions={width:300,height:300,padding:4,bondThickness:1," +
+                "bondLength:16,fontSizeLarge:8,overlapResolutionIterations:2," +
+                "experimentalSSSR:true,"
+        ))
+        assertFalse("large molecule geometry leaked into the reaction",
+            html.contains("bondLength:30") || html.contains("fontSizeLarge:13"))
         assertTrue("custom mcq theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
         ))

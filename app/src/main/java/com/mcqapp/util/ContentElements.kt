@@ -284,23 +284,29 @@ internal const val SMILES_DRAWER_ASSET_URL =
     "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
 
 /**
- * Display cap for the live structure, in CSS px. SmilesDrawer's `width` and
- * `height` options are inert when it draws into an existing `<svg>` target,
- * so the cap is applied as CSS on the live element instead. The hidden capture
- * SVG carries no such cap: only its clone's `display:none` style is removed
- * before serialisation, so the PNG keeps the drawer's viewBox-derived size.
+ * Display cap for a STANDALONE structure, in CSS px. SmilesDrawer's `width`
+ * and `height` options are inert when it draws into an existing `<svg>` target,
+ * so the cap is applied as CSS on the live element instead. A reaction uses
+ * [CHEM_REACTION_STYLE] instead: its arrow and reagent need the full card
+ * width. The hidden capture SVG carries neither style — only its clone's
+ * `display:none` style is removed before serialisation, so the PNG keeps the
+ * drawer's full viewBox-derived size.
  */
-internal const val CHEM_DISPLAY_MAX_PX = 140
+internal const val CHEM_DISPLAY_MAX_PX = 96
 
-/**
- * The display cap applied to the live SVG's inline style. [chemBlockHtml]
- * writes it on the `<svg>` and re-applies it after a reaction draw, because
- * ReactionDrawer replaces `style.width`/`style.height` with pixel values.
- * The hidden capture SVG never carries it.
- */
+/** Compact standalone display style: one small, self-contained molecule. */
 private const val CHEM_DISPLAY_STYLE =
     "width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;" +
         "height:auto;vertical-align:middle;"
+
+/**
+ * Reaction display style: the whole scheme (reactants + arrow + products + the
+ * reagent text above the arrow) gets the card's full width and scales down as
+ * one line. No narrow fixed width and no small max-height — forcing a wide
+ * reaction into the molecule cap made the reagent overlap the ring.
+ */
+private const val CHEM_REACTION_STYLE =
+    "max-width:100%;width:100%;height:auto;vertical-align:middle;"
 
 /**
  * Characters a SMILES string may contain before it is handed to JavaScript.
@@ -370,6 +376,7 @@ private fun chemBlockHtml(
     // "reactants>>" is the common case). A lone '>' is malformed: leave it on
     // the molecule path rather than letting ReactionParser throw.
     val isReaction = element.smiles.count { it == '>' } == 2
+    val displayStyle = if (isReaction) CHEM_REACTION_STYLE else CHEM_DISPLAY_STYLE
     // The caption becomes the text above the arrow, so there is no separate
     // caption line. Keep it in the fallback too: a broken drawer must not
     // hide the reagent from a sighted reader.
@@ -396,8 +403,14 @@ private fun chemBlockHtml(
             append("<div class=\"mcq-chem\">")
             append("<img src=\"").append(escapeHtmlData(element.diagram))
                 .append("\" alt=\"").append(escapeHtmlData(visibleText))
-                .append("\" style=\"max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
-                .append("height:auto;vertical-align:middle;\"/>")
+                .append("\" style=\"")
+            if (isReaction) {
+                append(CHEM_REACTION_STYLE)
+            } else {
+                append("max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
+                    .append("height:auto;vertical-align:middle;")
+            }
+            append("\"/>")
             append(captionLine)
             append("</div>")
         }
@@ -417,7 +430,7 @@ private fun chemBlockHtml(
 
     return buildString {
         append("<div class=\"mcq-chem\">")
-        append("<svg id=\"$svgId\" style=\"$CHEM_DISPLAY_STYLE\"></svg>")
+        append("<svg id=\"$svgId\" style=\"$displayStyle\"></svg>")
         // A second, hidden SVG is drawn with the bundled light theme so a
         // stored diagram has dark strokes on white export surfaces, whatever
         // theme the learner was using when the editor captured it.
@@ -435,7 +448,7 @@ private fun chemBlockHtml(
         // the editor can be stored in ChemElement.diagram and travel through
         // every export with dark strokes on white surfaces. Serialise a CLONE
         // with the display style removed: the live SVG carries the theme's
-        // text colour and the 140px cap, neither of which belongs in a PNG.
+        // text colour and its display cap, neither of which belongs in a PNG.
         append("function capture(){try{")
         append("var c=captureSvg.cloneNode(true);")
         append("c.removeAttribute('style');")
@@ -456,12 +469,15 @@ private fun chemBlockHtml(
         append("try{")
         if (isReaction) {
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
-            // width/height are inert for an existing <svg> target; the options
-            // below tune only the live reaction. The hidden capture keeps its
-            // original light-theme, padding:2 drawer for white exports.
+            // Compact geometry so reactants + arrow + products + the reagent
+            // text fit ONE line at 320 dp. width/height stay only for parity
+            // with the bundled API (inert for an existing <svg> target). The
+            // hidden capture keeps its original light-theme, padding:2 drawer
+            // at full resolution for white exports.
             append("var rxnOptions={};")
-            append("var molOptions={width:300,height:300,padding:10,bondThickness:1.1,")
-            append("fontSizeLarge:13,overlapResolutionIterations:2,experimentalSSSR:true,")
+            append("var molOptions={width:300,height:300,padding:4,bondThickness:1,")
+            append("bondLength:16,fontSizeLarge:8,overlapResolutionIterations:2,")
+            append("experimentalSSSR:true,")
             append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
             append("var captureMolOptions={width:300,height:300,padding:2};")
             append("window.SmilesDrawer.parseReaction(").append(smilesJsLiteral(element.smiles))
@@ -469,9 +485,10 @@ private fun chemBlockHtml(
             append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,molOptions)")
             append(".draw(reaction,svg,'mcq',null,").append(reagentText).append(",\"\",false);")
             // ReactionDrawer replaces the target's inline width/height with
-            // pixel values. Re-apply the cap on the live SVG only — never on
-            // the hidden capture SVG, whose clone drops its style anyway.
-            append("svg.style.cssText=").append(jsStringLiteral(CHEM_DISPLAY_STYLE)).append(";")
+            // pixel values. Re-apply the full-width reaction style on the live
+            // SVG only — never on the hidden capture SVG, whose clone drops
+            // its style anyway.
+            append("svg.style.cssText=").append(jsStringLiteral(displayStyle)).append(";")
             append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,captureMolOptions)")
             append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")
             append("capture();")

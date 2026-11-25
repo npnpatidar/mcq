@@ -82,18 +82,20 @@ class ChemistryRenderUiTest {
             "if(!f)return 'no-fallback';" +
             "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
             "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
-            "var h=s.getBoundingClientRect().height;" +
-            "if(!(h>0))return 'zero-height';" +
+            "var b=s.getBoundingClientRect();" +
+            "if(!(b.height>0))return 'zero-height';" +
             "var n=s.querySelectorAll('line,text,circle,polygon').length;" +
             "if(!(n>0))return 'no-shapes';" +
-            "return 'ok:'+n+':'+Math.round(h);" +
+            "return 'ok:'+n+':'+Math.round(b.height)+':'+Math.round(b.width);" +
             "})()"
     )
 
     /**
      * ReactionDrawer draws the arrow as a <line marker-end=...> and the
-     * caption as a <tspan> above it. Check both, so a reaction block that
-     * merely fell back to text — or lost its reagent label — cannot pass.
+     * caption as a <tspan> above it. Check both, and report the SVG's rendered
+     * width/height so the test can pin a single full-width line. (The caption
+     * uses an ideographic baseline, so comparing tspan and line boxes is not a
+     * reliable overlap probe across emulators — bounded height is.)
      */
     private fun reactionSvgState(): String = evaluate(
         "(function(){" +
@@ -103,13 +105,13 @@ class ChemistryRenderUiTest {
             "if(!f)return 'no-fallback';" +
             "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
             "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
-            "var h=s.getBoundingClientRect().height;" +
-            "if(!(h>0))return 'zero-height';" +
+            "var b=s.getBoundingClientRect();" +
+            "if(!(b.height>0))return 'zero-height';" +
             "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +
             "if(s.textContent.indexOf('reagent')<0)return 'no-reagent-text';" +
             "var n=s.querySelectorAll('line,text,tspan,circle,polygon').length;" +
             "if(!(n>0))return 'no-shapes';" +
-            "return 'ok:'+n+':'+Math.round(h);" +
+            "return 'ok:'+n+':'+Math.round(b.height)+':'+Math.round(b.width);" +
             "})()"
     )
 
@@ -183,10 +185,15 @@ class ChemistryRenderUiTest {
         } catch (t: Throwable) {
             throw AssertionError("SmilesDrawer did not draw a visible SVG; last state=$lastState", t)
         }
-        val heightPx = lastState.split(':').getOrNull(2)?.toIntOrNull()
+        val parts = lastState.split(':')
+        val heightPx = parts.getOrNull(2)?.toIntOrNull()
+            ?: throw AssertionError("unexpected SVG state: $lastState")
+        val widthPx = parts.getOrNull(3)?.toIntOrNull()
             ?: throw AssertionError("unexpected SVG state: $lastState")
         assertTrue("structure has no height: $lastState", heightPx > 0)
-        assertTrue("structure too tall ($heightPx px): $lastState", heightPx <= 160)
+        // Owner chose the compact 96 px cap for standalone structures.
+        assertTrue("structure too tall ($heightPx px): $lastState", heightPx <= 100)
+        assertTrue("structure too wide ($widthPx px): $lastState", widthPx <= 100)
 
         var lastColor = "not evaluated"
         try {
@@ -260,10 +267,18 @@ class ChemistryRenderUiTest {
                     "last state=$lastState; error=${t.message}", t
             )
         }
-        val heightPx = lastState.split(':').getOrNull(2)?.toIntOrNull()
+        val parts = lastState.split(':')
+        val heightPx = parts.getOrNull(2)?.toIntOrNull()
+            ?: throw AssertionError("unexpected reaction SVG state: $lastState")
+        val widthPx = parts.getOrNull(3)?.toIntOrNull()
             ?: throw AssertionError("unexpected reaction SVG state: $lastState")
         assertTrue("reaction has no height: $lastState", heightPx > 0)
-        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 160)
+        // A whole reaction must read as ONE line at 320 dp: full card width,
+        // but short enough that the reagent sits above the arrow and ring
+        // instead of being squeezed into the old 140 px molecule cap.
+        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 90)
+        assertTrue("reaction not using the full card width ($widthPx px): $lastState",
+            widthPx >= 280)
 
         // The light-theme capture bridge must still fire for a reaction.
         compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }

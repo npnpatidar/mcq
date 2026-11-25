@@ -50,7 +50,7 @@ class ChemistrySchemaAssetTest {
         // a typo would be silently swallowed by the deep option merge.
         val text = File(dir, "smiles-drawer.min.js").readText()
         listOf(
-            "padding:10", "bondThickness:1", "fontSizeLarge:11",
+            "padding:10", "bondThickness:1", "bondLength:30", "fontSizeLarge:11",
             "overlapResolutionIterations:1", "experimentalSSSR:!1"
         ).forEach { option ->
             assertTrue("option not found in the bundled drawer: $option", text.contains(option))

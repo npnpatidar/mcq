@@ -122,6 +122,11 @@ class SampleChemistryTest {
             assertEquals(smiles, structureOf(option.elements).smiles)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
         }
+        assertEquals(
+            "option 3 has an aldehyde and two hydroxyls, not three hydroxyls",
+            "a chain with an aldehyde and two hydroxyl groups",
+            structureOf(question.options.single { it.id == "c" }.elements).spoken
+        )
         assertEquals("LAH opens the lactone to a triol, option 4", listOf("d"), question.correctOptionIds)
         assertTrue(question.explanation.contains("OCCCCC(O)CCO"))
         assertTrue(question.explanation.contains("option 4"))
@@ -154,6 +159,11 @@ class SampleChemistryTest {
             assertEquals(smiles, structureOf(option.elements).smiles)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
         }
+        assertEquals(
+            "option 4 has one methyl ketone, one hydroxyl and one acid",
+            "a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
+            structureOf(question.options.single { it.id == "d" }.elements).spoken
+        )
         assertEquals("RuO4 also oxidises the alcohol, so option 3", listOf("c"), question.correctOptionIds)
         assertTrue(question.explanation.contains("CC(=O)C(=O)CCCC(=O)O"))
         assertTrue(question.explanation.contains("option 3"))

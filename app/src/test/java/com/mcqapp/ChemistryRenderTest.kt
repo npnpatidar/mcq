@@ -377,12 +377,13 @@ class ChemistryRenderTest {
         // Compact geometry: shorter bonds, smaller labels and tighter padding
         // keep reactants + arrow + products on one line at 320 dp.
         assertTrue("reaction mol options not compact: $html", html.contains(
-            "var molOptions={width:300,height:300,padding:4,bondThickness:1," +
-                "bondLength:16,fontSizeLarge:8,overlapResolutionIterations:2," +
+            "var molOptions={width:300,height:300,padding:2,bondThickness:1," +
+                "bondLength:12,fontSizeLarge:7,overlapResolutionIterations:2," +
                 "experimentalSSSR:true,"
         ))
         assertFalse("large molecule geometry leaked into the reaction",
-            html.contains("bondLength:30") || html.contains("fontSizeLarge:13"))
+            html.contains("bondLength:30") || html.contains("fontSizeLarge:13") ||
+                html.contains("bondLength:16") || html.contains("fontSizeLarge:8"))
         assertTrue("custom mcq theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
         ))

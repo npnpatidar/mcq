@@ -475,8 +475,8 @@ private fun chemBlockHtml(
             // hidden capture keeps its original light-theme, padding:2 drawer
             // at full resolution for white exports.
             append("var rxnOptions={};")
-            append("var molOptions={width:300,height:300,padding:4,bondThickness:1,")
-            append("bondLength:16,fontSizeLarge:8,overlapResolutionIterations:2,")
+            append("var molOptions={width:300,height:300,padding:2,bondThickness:1,")
+            append("bondLength:12,fontSizeLarge:7,overlapResolutionIterations:2,")
             append("experimentalSSSR:true,")
             append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
             append("var captureMolOptions={width:300,height:300,padding:2};")

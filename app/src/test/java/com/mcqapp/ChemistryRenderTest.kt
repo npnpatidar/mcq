@@ -383,18 +383,20 @@ class ChemistryRenderTest {
     }
 
     @Test
-    fun reactionDrawReappliesTheCompactInlineStyleAfterDrawing() {
+    fun reactionDrawKeepsTheDrawerWidthAndAddsOnlyConstraints() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
-        val style = "svg.style.cssText=\"max-width:100%;height:auto;flex:0 1 auto;\";"
-        assertTrue("compact inline style not reapplied after draw: $html", html.contains(style))
+        // ReactionDrawer sets the scheme's natural pixel width. Replacing the
+        // whole cssText would drop it and scale the compact viewBox up to
+        // 300 px, making bonds and labels look bold/oversized.
+        val constraints = "svg.style.maxWidth='100%';svg.style.height='auto';" +
+            "svg.style.flex='0 1 auto';"
+        assertTrue("inline constraints not added after draw: $html", html.contains(constraints))
+        assertFalse("reaction must not overwrite the drawer's width with cssText",
+            html.contains("svg.style.cssText="))
         val drawAt = html.indexOf(".draw(reaction,svg,'mcq'")
-        val styleAt = html.indexOf("svg.style.cssText=")
+        val constraintsAt = html.indexOf("svg.style.maxWidth=")
         assertTrue("live reaction draw missing", drawAt >= 0)
-        assertTrue("style must be reapplied after the draw", styleAt > drawAt)
-        assertFalse("reapplied style must not restore the molecule cap",
-            html.contains("svg.style.cssText=\"width:96px"))
-        assertFalse("reapplied style must not restore full width",
-            html.contains("svg.style.cssText=\"max-width:100%;width:100%"))
+        assertTrue("constraints must be added after the draw", constraintsAt > drawAt)
         assertTrue("capture must stay hidden", html.contains(
             "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
         ))

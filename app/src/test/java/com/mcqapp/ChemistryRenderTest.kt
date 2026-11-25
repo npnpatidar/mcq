@@ -137,7 +137,12 @@ class ChemistryRenderTest {
         assertTrue("parse call missing", html.contains("SmilesDrawer.parse(\"c1ccccc1\""))
         assertTrue("SVG drawer missing", html.contains("SmilesDrawer.SvgDrawer"))
         assertTrue("drawer missing", html.contains("new window.SmilesDrawer.SvgDrawer("))
-        assertFalse("unreadable light theme still drawn", html.contains(".draw(tree,svg,'light')"))
+        assertTrue("hidden capture svg missing", html.contains(
+            "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
+        ))
+        assertTrue("capture must use the built-in light theme",
+            html.contains(".draw(tree,captureSvg,'light')"))
+        assertFalse("live svg must not use light", html.contains(".draw(tree,svg,'light')"))
         assertTrue("custom theme draw missing", html.contains(".draw(tree,svg,'mcq')"))
         assertTrue("custom theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
@@ -155,11 +160,49 @@ class ChemistryRenderTest {
         assertTrue("theme colour not threaded from textColorCss", html.contains(
             "themes:{mcq:{C:\"$darkTextCss\",H:\"$darkTextCss\"}}"
         ))
-        assertFalse("unreadable light theme still drawn", html.contains(".draw(tree,svg,'light')"))
+        assertFalse("live svg must not use light", html.contains(".draw(tree,svg,'light')"))
+        assertTrue("capture must not bake onSurface into the PNG",
+            html.contains(".draw(tree,captureSvg,'light')"))
+        assertFalse("capture must not use the live theme",
+            html.contains(".draw(tree,captureSvg,'mcq')"))
         // The drawer deep-merges options into its defaults, so supplying a
         // single 'mcq' theme cannot drop the bundled light/dark themes.
         val js = File("src/main/assets/smiles-drawer/smiles-drawer.min.js").readText()
         assertTrue("built-in themes would be lost", js.contains("Options.extend(!0,this.defaultOptions,options)"))
+    }
+
+    @Test
+    fun captureUsesASeparateHiddenSvgWithTheBuiltInLightTheme() {
+        val html = htmlOf(ContentElement.ChemElement("CCO"), textColorCss = darkTextCss)
+        assertTrue("no offscreen capture svg", html.contains(
+            "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
+        ))
+        assertTrue("capture must not carry the live display cap",
+            !html.contains("id=\"mcq-chem-0-capture\" style=\"width:"))
+        // No themes override on the capture drawer: light's dark C/H and
+        // conventional heteroatom colours are what white exports need.
+        assertTrue("capture drawer must be theme-free", html.contains(
+            "new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})" +
+                ".draw(tree,captureSvg,'light');"
+        ))
+        assertTrue("live drawer lost its colour theme", html.contains(".draw(tree,svg,'mcq')"))
+        assertTrue("live theme lost the text colour", html.contains(
+            "themes:{mcq:{C:\"$darkTextCss\",H:\"$darkTextCss\"}}"
+        ))
+    }
+
+    @Test
+    fun captureSerialisesACloneWithTheDisplayStyleRemoved() {
+        val html = htmlOf(ContentElement.ChemElement("CCO"))
+        assertTrue("capture serialises the wrong node", html.contains("var c=captureSvg.cloneNode(true);"))
+        assertTrue("display style not stripped", html.contains("c.removeAttribute('style');"))
+        assertTrue("clone not serialised",
+            html.contains("var xml=new XMLSerializer().serializeToString(c);"))
+        assertFalse("live themed svg serialised instead",
+            html.contains("XMLSerializer().serializeToString(svg)"))
+        // Only a real PNG is handed to the bridge.
+        assertTrue("PNG prefix guard missing",
+            html.contains("png.indexOf('data:image/png;base64,')===0"))
     }
 
     @Test
@@ -179,16 +222,18 @@ class ChemistryRenderTest {
     }
 
     @Test
-    fun svgStructureIsCappedAtTheDisplayMaxWithoutChangingDrawScale() {
+    fun svgStructureIsCappedAtTheDisplayMax() {
         val html = htmlOf(ContentElement.ChemElement("CCO"))
         assertTrue("SVG not capped: $html", html.contains(
             "<svg id=\"mcq-chem-0\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;" +
-                "height:auto;vertical-align:middle;\"></svg>"
+                "max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>"
         ))
-        assertFalse("SVG still at the 300px default",
-            html.contains("<svg id=\"mcq-chem-0\" style=\"max-width:100%;height:auto;"))
-        // The offscreen capture keeps full resolution: only display is capped.
-        assertTrue("draw options changed", html.contains("width:300,height:300,padding:2"))
+        assertFalse("SVG missing its height cap",
+            html.contains("<svg id=\"mcq-chem-0\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;" +
+                "max-width:100%;height:auto;"))
+        assertTrue("capture svg missing", html.contains("<svg id=\"mcq-chem-0-capture\""))
+        // The width/height drawer options are inert for an <svg> target; the
+        // cap lives only in the live element's CSS, never in the capture clone.
     }
 
     @Test
@@ -311,7 +356,8 @@ class ChemistryRenderTest {
         assertTrue("wrong key handed to bridge", html.contains(
             "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"chem-42\",png)"
         ))
-        assertTrue("SVG not serialised", html.contains("new XMLSerializer().serializeToString(svg)"))
+        assertTrue("capture clone not serialised",
+            html.contains("var xml=new XMLSerializer().serializeToString(c);"))
         assertTrue("not drawn into a canvas", html.contains("canvas.getContext('2d').drawImage(img,0,0)"))
         assertTrue("not rasterised to PNG", html.contains("canvas.toDataURL('image/png')"))
         assertTrue("SVG data URI missing", html.contains("img.src='data:image/svg+xml;base64,'"))

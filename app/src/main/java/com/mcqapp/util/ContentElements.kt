@@ -284,10 +284,11 @@ internal const val SMILES_DRAWER_ASSET_URL =
     "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
 
 /**
- * Display cap for a structure, in CSS px. SmilesDrawer defaults to a 300×300
- * box when the SVG has no width/height, which magnifies its 11pt atom labels
- * far beyond the surrounding text. Both the live SVG and a stored PNG are
- * capped at this size; the captured PNG itself stays full resolution.
+ * Display cap for the live structure, in CSS px. SmilesDrawer's `width` and
+ * `height` options are inert when it draws into an existing `<svg>` target,
+ * so the cap is applied as CSS on the live element instead. The hidden capture
+ * SVG carries no such cap: only its clone's `display:none` style is removed
+ * before serialisation, so the PNG keeps the drawer's viewBox-derived size.
  */
 internal const val CHEM_DISPLAY_MAX_PX = 140
 
@@ -349,6 +350,7 @@ private fun chemBlockHtml(
     chemColorCss: String
 ): String {
     val svgId = "mcq-chem-$index"
+    val captureId = "$svgId-capture"
     val fallbackId = "mcq-chem-$index-fallback"
     val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
     val caption = listOf(element.caption, element.formula)
@@ -378,21 +380,29 @@ private fun chemBlockHtml(
     return buildString {
         append("<div class=\"mcq-chem\">")
         append("<svg id=\"$svgId\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;")
-        append("height:auto;vertical-align:middle;\"></svg>")
+        append("max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>")
+        // A second, hidden SVG is drawn with the bundled light theme so a
+        // stored diagram has dark strokes on white export surfaces, whatever
+        // theme the learner was using when the editor captured it.
+        append("<svg id=\"$captureId\" style=\"display:none;\"></svg>")
         append(captionLine)
         append("<div id=\"$fallbackId\" class=\"mcq-chem-fallback\" style=\"display:none;\">")
         append(fallbackLine)
         append("</div>")
         append("<script>(function(){")
         append("var svg=document.getElementById('").append(svgId).append("');")
+        append("var captureSvg=document.getElementById('").append(captureId).append("');")
         append("var fallback=document.getElementById('").append(fallbackId).append("');")
         append("function showFallback(){svg.style.display='none';if(fallback)fallback.style.display='';}")
-        // Rasterise the finished drawing so a structure authored in the editor
-        // can be stored in ChemElement.diagram and travel through every export.
-        // The canvas is offscreen: capture never changes the page height, and
-        // failure only leaves the SVG (plus its text fallback) in place.
+        // Rasterise the hidden light-theme drawing so a structure authored in
+        // the editor can be stored in ChemElement.diagram and travel through
+        // every export with dark strokes on white surfaces. Serialise a CLONE
+        // with the display style removed: the live SVG carries the theme's
+        // text colour and the 140px cap, neither of which belongs in a PNG.
         append("function capture(){try{")
-        append("var xml=new XMLSerializer().serializeToString(svg);")
+        append("var c=captureSvg.cloneNode(true);")
+        append("c.removeAttribute('style');")
+        append("var xml=new XMLSerializer().serializeToString(c);")
         append("var img=new Image();")
         append("img.onload=function(){try{")
         append("var canvas=document.createElement('canvas');")
@@ -417,9 +427,15 @@ private fun chemBlockHtml(
         append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
         append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
         append(",tree=>{try{")
+        // width/height are inert for an existing <svg> target (they size a
+        // canvas target); they stay only for parity with the bundled API.
         append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
         append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
         append("}}}).draw(tree,svg,'mcq');")
+        // The capture copy uses the built-in light theme: its conventional
+        // dark C/H and heteroatom colours survive white export surfaces.
+        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
+        append(".draw(tree,captureSvg,'light');")
         append("capture();")
         append("}catch(e){showFallback();}},err=>showFallback());")
         append("}catch(e){showFallback();}")

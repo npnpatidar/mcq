@@ -411,16 +411,18 @@ class ChemistryRenderTest {
     fun reactionLiveOptionsAreTunedButCaptureAndLightStayUnchanged() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
         // Very compact geometry keeps reactants + arrow + products on one
-        // line; the reagent caption itself is kept short by the sample data.
+        // line; the 4 pt atom labels match the 96 px answer structures once
+        // the 1.7x scheme scale is applied.
         assertTrue("reaction mol options not compact: $html", html.contains(
             "var molOptions={width:300,height:300,padding:1,bondThickness:0.8," +
-                "bondLength:10,fontSizeLarge:5.5,overlapResolutionIterations:2," +
+                "bondLength:10,fontSizeLarge:4,overlapResolutionIterations:2," +
                 "experimentalSSSR:true,"
         ))
         assertFalse("large molecule geometry leaked into the reaction",
             html.contains("bondLength:30") || html.contains("fontSizeLarge:13") ||
                 html.contains("bondLength:16") || html.contains("bondLength:12") ||
-                html.contains("fontSizeLarge:8") || html.contains("fontSizeLarge:7"))
+                html.contains("fontSizeLarge:8") || html.contains("fontSizeLarge:7") ||
+                html.contains("fontSizeLarge:5.5"))
         assertTrue("custom mcq theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
         ))

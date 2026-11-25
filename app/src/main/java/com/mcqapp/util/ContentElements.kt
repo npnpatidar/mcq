@@ -513,13 +513,14 @@ private fun chemBlockHtml(
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
             // rxnOptions stays at ReactionDrawer's defaults (light arrow and
             // plus signs); only the molecule options are compacted so the
-            // scheme fits ONE line. width/height stay only for parity with the
-            // bundled API (inert for an existing <svg> target). The hidden
-            // capture keeps its original light-theme, padding:2 drawer at full
-            // resolution for white exports.
+            // scheme fits ONE line. Atom labels use a small 4 pt font: after
+            // the 1.7x scheme scale they match the 96 px answer structures.
+            // width/height stay only for parity with the bundled API (inert
+            // for an existing <svg> target). The hidden capture keeps its
+            // original light-theme, padding:2 drawer at full resolution.
             append("var rxnOptions={};")
             append("var molOptions={width:300,height:300,padding:1,bondThickness:0.8,")
-            append("bondLength:10,fontSizeLarge:5.5,overlapResolutionIterations:2,")
+            append("bondLength:10,fontSizeLarge:4,overlapResolutionIterations:2,")
             append("experimentalSSSR:true,")
             append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
             append("var captureMolOptions={width:300,height:300,padding:2};")

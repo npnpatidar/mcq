@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.CHEM_DIAGRAM_BRIDGE
+import com.mcqapp.util.CHEM_DISPLAY_MAX_PX
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.SMILES_DRAWER_ASSET_URL
@@ -28,11 +29,14 @@ import java.io.File
  */
 class ChemistryRenderTest {
 
+    private val darkTextCss = "rgba(230,225,229,1)"
+
     private fun htmlOf(
         vararg elements: ContentElement,
         fallback: String = "Unavailable",
-        chemKey: String = ""
-    ): String = mixedContentHtml(elements.toList(), 48f, "rgba(0,0,0,1)", fallback, chemKey)
+        chemKey: String = "",
+        textColorCss: String = "rgba(0,0,0,1)"
+    ): String = mixedContentHtml(elements.toList(), 48f, textColorCss, fallback, chemKey)
 
     // ---- path selection ----------------------------------------------------
 
@@ -133,12 +137,70 @@ class ChemistryRenderTest {
         assertTrue("parse call missing", html.contains("SmilesDrawer.parse(\"c1ccccc1\""))
         assertTrue("SVG drawer missing", html.contains("SmilesDrawer.SvgDrawer"))
         assertTrue("drawer missing", html.contains("new window.SmilesDrawer.SvgDrawer("))
-        assertTrue("light theme draw missing", html.contains(".draw(tree,svg,'light')"))
+        assertFalse("unreadable light theme still drawn", html.contains(".draw(tree,svg,'light')"))
+        assertTrue("custom theme draw missing", html.contains(".draw(tree,svg,'mcq')"))
+        assertTrue("custom theme missing", html.contains(
+            "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
+        ))
         assertTrue("caption/formula line missing",
             html.contains("<div class=\"mcq-chem-caption\">Benzene C6H6</div>"))
         assertTrue("localised fallback text missing", html.contains("Unavailable: C6H6"))
         // The page must still report its height to Compose.
         assertTrue(html.contains(CONTENT_HEIGHT_BRIDGE))
+    }
+
+    @Test
+    fun chemThemeUsesTheBodyTextColourAndKeepsBuiltInThemes() {
+        val html = htmlOf(ContentElement.ChemElement("CCO"), textColorCss = darkTextCss)
+        assertTrue("theme colour not threaded from textColorCss", html.contains(
+            "themes:{mcq:{C:\"$darkTextCss\",H:\"$darkTextCss\"}}"
+        ))
+        assertFalse("unreadable light theme still drawn", html.contains(".draw(tree,svg,'light')"))
+        // The drawer deep-merges options into its defaults, so supplying a
+        // single 'mcq' theme cannot drop the bundled light/dark themes.
+        val js = File("src/main/assets/smiles-drawer/smiles-drawer.min.js").readText()
+        assertTrue("built-in themes would be lost", js.contains("Options.extend(!0,this.defaultOptions,options)"))
+    }
+
+    @Test
+    fun maliciousChemColourCannotEscapeTheJsLiteral() {
+        val hostile = "rgba(0,0,0,1);alert(1)</script><b>&\""
+        val html = htmlOf(ContentElement.ChemElement("CCO"), textColorCss = hostile)
+        // textColorCss also feeds the page's CSS `color:` declaration, so
+        // scope the injection check to the JS theme literal itself.
+        assertFalse("colour broke out of the JS theme",
+            html.contains("C:\"rgba(0,0,0,1);alert(1)</script>"))
+        assertTrue("colour not escaped for JS",
+            html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
+        assertTrue("colour must stay one inert JS string",
+            html.contains("C:\"rgba(0,0,0,1);alert(1)\\u003c/script\\u003e\\u003cb\\u003e\\u0026\\\"\""))
+        assertEquals("\"rgba(0,0,0,1);alert(1)\\u003c/script\\u003e\\u003cb\\u003e\\u0026\\\"\"",
+            jsStringLiteral(hostile))
+    }
+
+    @Test
+    fun svgStructureIsCappedAtTheDisplayMaxWithoutChangingDrawScale() {
+        val html = htmlOf(ContentElement.ChemElement("CCO"))
+        assertTrue("SVG not capped: $html", html.contains(
+            "<svg id=\"mcq-chem-0\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;" +
+                "height:auto;vertical-align:middle;\"></svg>"
+        ))
+        assertFalse("SVG still at the 300px default",
+            html.contains("<svg id=\"mcq-chem-0\" style=\"max-width:100%;height:auto;"))
+        // The offscreen capture keeps full resolution: only display is capped.
+        assertTrue("draw options changed", html.contains("width:300,height:300,padding:2"))
+    }
+
+    @Test
+    fun pngDiagramIsCappedAtTheDisplayMax() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        val html = htmlOf(ContentElement.ChemElement("CCO", diagram = png))
+        assertTrue("PNG not capped: $html", html.contains(
+            "style=\"max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;" +
+                "height:auto;vertical-align:middle;\""
+        ))
+        assertFalse("PNG missing its height cap",
+            html.contains("style=\"max-width:100%;height:auto;vertical-align:middle;\"/>"))
     }
 
     @Test

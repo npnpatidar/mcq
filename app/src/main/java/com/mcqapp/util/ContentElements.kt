@@ -284,6 +284,14 @@ internal const val SMILES_DRAWER_ASSET_URL =
     "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
 
 /**
+ * Display cap for a structure, in CSS px. SmilesDrawer defaults to a 300×300
+ * box when the SVG has no width/height, which magnifies its 11pt atom labels
+ * far beyond the surrounding text. Both the live SVG and a stored PNG are
+ * capped at this size; the captured PNG itself stays full resolution.
+ */
+internal const val CHEM_DISPLAY_MAX_PX = 140
+
+/**
  * Characters a SMILES string may contain before it is handed to JavaScript.
  * Anything else (a quote, a semicolon, an angle bracket, whitespace, …) is
  * dropped: the SMILES is wrapped in a JS string literal and an HTML fallback
@@ -337,7 +345,8 @@ private fun chemBlockHtml(
     element: ContentElement.ChemElement,
     index: Int,
     structureUnavailable: String,
-    chemKey: String
+    chemKey: String,
+    chemColorCss: String
 ): String {
     val svgId = "mcq-chem-$index"
     val fallbackId = "mcq-chem-$index-fallback"
@@ -359,7 +368,8 @@ private fun chemBlockHtml(
             append("<div class=\"mcq-chem\">")
             append("<img src=\"").append(escapeHtmlData(element.diagram))
                 .append("\" alt=\"").append(escapeHtmlData(visibleText))
-                .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
+                .append("\" style=\"max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
+                .append("height:auto;vertical-align:middle;\"/>")
             append(captionLine)
             append("</div>")
         }
@@ -367,7 +377,8 @@ private fun chemBlockHtml(
 
     return buildString {
         append("<div class=\"mcq-chem\">")
-        append("<svg id=\"$svgId\" style=\"max-width:100%;height:auto;\"></svg>")
+        append("<svg id=\"$svgId\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;")
+        append("height:auto;vertical-align:middle;\"></svg>")
         append(captionLine)
         append("<div id=\"$fallbackId\" class=\"mcq-chem-fallback\" style=\"display:none;\">")
         append(fallbackLine)
@@ -395,11 +406,20 @@ private fun chemBlockHtml(
         append("img.onerror=function(){};")
         append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
         append("}catch(e){}}")
+        // textColorCss comes from the WebView's `color` (onSurface, always
+        // rgba(...,1)), which SVG accepts as a paint value. It still goes
+        // through the JSON escaper so no caller-supplied text can break out.
+        // SmilesDrawer deep-merges options, so the built-in light/dark/custom
+        // themes stay intact; 'mcq' only overrides C and H and falls back to C
+        // for every other atom via ThemeManager.getColor.
+        val atomColor = jsStringLiteral(chemColorCss)
         append("try{")
         append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
         append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
         append(",tree=>{try{")
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2}).draw(tree,svg,'light');")
+        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
+        append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
+        append("}}}).draw(tree,svg,'mcq');")
         append("capture();")
         append("}catch(e){showFallback();}},err=>showFallback());")
         append("}catch(e){showFallback();}")
@@ -486,7 +506,7 @@ internal fun mixedContentHtml(
                     .append(escapeHtmlData(element.src))
                     .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
                 is ContentElement.ChemElement -> {
-                    append(chemBlockHtml(element, chemIndex, structureUnavailable, chemKey))
+                    append(chemBlockHtml(element, chemIndex, structureUnavailable, chemKey, textColorCss))
                     chemIndex++
                 }
             }

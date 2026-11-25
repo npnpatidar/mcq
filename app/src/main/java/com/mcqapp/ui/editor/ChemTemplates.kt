@@ -3,6 +3,23 @@ package com.mcqapp.ui.editor
 import com.mcqapp.domain.ContentElement
 
 /**
+ * Changes a chem block's SMILES source without leaving a stale raster behind.
+ *
+ * The shared renderer prefers a valid [ContentElement.ChemElement.diagram]
+ * over drawing from SMILES, and its PNG branch does not depend on the SMILES
+ * text at all. Keeping the old PNG after a SMILES edit therefore produced an
+ * unchanged WebView page — the preview kept showing the previous structure.
+ * Trimming is only for the no-op check; the typed value itself is stored.
+ */
+internal fun withChemSmiles(
+    element: ContentElement.ChemElement,
+    smiles: String
+): ContentElement.ChemElement {
+    if (element.smiles.trim() == smiles.trim()) return element
+    return element.copy(smiles = smiles, diagram = "")
+}
+
+/**
  * A ready-made chemical structure the editor can insert in one tap.
  *
  * Pure data: no Android, no Compose, no resources. The strings are the

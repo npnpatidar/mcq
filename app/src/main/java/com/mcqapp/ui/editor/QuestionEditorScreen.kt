@@ -813,7 +813,8 @@ private fun OptionEditorRow(
     onMoveBlockUp: (index: Int) -> Unit,
     onMoveBlockDown: (index: Int) -> Unit,
     onPickBlockImage: (blockId: String) -> Unit,
-    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit,
+    /** `"<blockId>@<smiles>"` from the chem preview, not a bare block id. */
+    onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit,
     onImageChange: (String) -> Unit,
     onToggleCorrect: () -> Unit,
     onMoveUp: () -> Unit,

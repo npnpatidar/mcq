@@ -76,11 +76,16 @@ fun BlockListEditor(
     /** Starts a gallery pick for the block with this stable id. */
     onPickImage: (blockId: String) -> Unit,
     /**
-     * Receives a renderer-generated PNG data URI for the chem block named by
-     * [blockId]. The host writes it through `EditorViewModel.updateChemDiagram`,
-     * which keeps the captured diagram on the right block after a reorder.
+     * Receives a renderer-generated PNG data URI for one chem preview.
+     *
+     * [chemKey] is `"<blockId>@<smiles>"` — the stable block id *and* the
+     * SMILES that produced the drawing. It is not a bare block id: the host
+     * passes it to `EditorViewModel.updateChemDiagram`, which rejects a key
+     * whose SMILES no longer matches the block (a capture queued before a
+     * SMILES edit must not restore the old picture). Forward the key exactly
+     * as the renderer reports it.
      */
-    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit = { _, _ -> },
+    onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val tablesEditable = onUpdateCell != null && onAddRow != null &&
@@ -217,7 +222,7 @@ private fun ChemBlockEditor(
     element: ContentElement.ChemElement,
     blockId: String,
     onUpdate: (ContentElement.ChemElement) -> Unit,
-    onChemDiagram: (blockId: String, pngDataUri: String) -> Unit
+    onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit
 ) {
     val selected = ChemTemplates.templateFor(element)
     var expanded by remember { mutableStateOf(false) }
@@ -250,7 +255,7 @@ private fun ChemBlockEditor(
         Spacer(Modifier.height(4.dp))
         OutlinedTextField(
             value = element.smiles,
-            onValueChange = { onUpdate(element.copy(smiles = it)) },
+            onValueChange = { onUpdate(withChemSmiles(element, it)) },
             label = { Text(stringResource(R.string.chem_editor_smiles)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().testTag("chem-smiles-$blockId")
@@ -284,16 +289,21 @@ private fun ChemBlockEditor(
         val structureDescription = stringResource(R.string.chem_editor_structure_cd, described)
         ContentElements(
             elements = listOf(element),
-            // The renderer keys its capture callback by identity: a reordered
-            // block must receive its own PNG, and an unchanged capture is a
-            // no-op in the ViewModel (no feedback loop).
-            chemKey = blockId,
+            // The key carries the SMILES that produced this drawing, so a
+            // capture queued before a SMILES edit is rejected by the ViewModel
+            // instead of stamping the old raster onto the new structure.
+            chemKey = "$blockId@${element.smiles}",
             onChemDiagram = onChemDiagram,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 4.dp)
                 .testTag("chem-preview-$blockId")
-                .semantics { contentDescription = structureDescription }
+                .semantics {
+                    contentDescription = structureDescription
+                    // The preview's source is observable to UI tests and to
+                    // TalkBack: it changes the moment the SMILES does.
+                    stateDescription = element.smiles
+                }
         )
     }
 }

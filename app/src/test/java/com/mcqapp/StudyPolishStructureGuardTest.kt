@@ -156,10 +156,27 @@ class StudyPolishStructureGuardTest {
         assertTrue(screen.contains(".testTag(\"study-leech-notice\")"))
         // The crossing is computed from the persisted result...
         assertTrue(viewModel.contains("crossedLeechThreshold(current.current?.state, next)"))
-        // ...and the flag is cleared by the following pull, so it shows once.
-        val pull = functionOf(viewModel, "private suspend fun pullCard() {")
-        assertTrue(pull.contains("justFlaggedLeech = false"))
-        assertTrue(screen.contains("LaunchedEffect(state.justFlaggedLeech)"))
+        // ...and the flag travels in the very update that publishes the card,
+        // so a reader can never see the new card without its one-shot notice.
+        val pull = functionOf(
+            viewModel,
+            "private suspend fun pullCard(flagLeechCrossing: Boolean = false) {"
+        )
+        assertTrue(pull.contains("justFlaggedLeech = flagLeechCrossing"))
+        // Both grade paths hand the crossing to the pull; neither writes the
+        // flag back afterwards, which made the notice lag one state update.
+        assertEquals(
+            2,
+            Regex("""pullCard\(flagLeechCrossing = becameLeech\)""").findAll(viewModel).count()
+        )
+        assertFalse(
+            "no post-pull justFlaggedLeech = true write may linger",
+            viewModel.contains("justFlaggedLeech = true")
+        )
+        assertTrue(
+            "consecutive crossings must re-announce on the newly served card",
+            screen.contains("LaunchedEffect(state.current?.questionId, state.justFlaggedLeech)")
+        )
         assertTrue(screen.contains("announcer.announce(leechNoticeMessage)"))
     }
 

@@ -488,16 +488,16 @@
                 {
                   "type": "chem",
                   "content": {
-                    "smiles": "O=C1OCCCCC(=O)C1",
-                    "formula": "C7H10O3",
-                    "caption": "keto lactone",
-                    "spoken": "an eight membered ring lactone with a ketone group in the ring",
+                    "smiles": "O=C1OCCCCC(=O)C1>>",
+                    "formula": "",
+                    "caption": "LiAlH₄ in ether, then aqueous work-up",
+                    "spoken": "an eight membered ring lactone with a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     "diagram": ""
                   }
                 },
                 {
                   "type": "text",
-                  "content": "LiAlH₄ in ether, then aqueous work-up → A"
+                  "content": "A = ?"
                 }
               ],
               "options_elements": {
@@ -506,8 +506,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "OC1CCOCCCC1O",
-                      "formula": "C7H14O3",
-                      "caption": "cyclic ether diol",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "an eight membered cyclic ether with two hydroxyl groups",
                       "diagram": ""
                     }
@@ -522,8 +522,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "O=C1OCCCCC(O)C1",
-                      "formula": "C7H12O3",
-                      "caption": "hydroxy lactone",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a lactone ring with one hydroxyl group",
                       "diagram": ""
                     }
@@ -538,8 +538,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "OCCCCC(O)CC=O",
-                      "formula": "C7H14O3",
-                      "caption": "hydroxy aldehyde",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a chain with an aldehyde and two hydroxyl groups",
                       "diagram": ""
                     }
@@ -554,8 +554,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "OCCCCC(O)CCO",
-                      "formula": "C7H16O3",
-                      "caption": "triol",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a seven carbon chain with three hydroxyl groups",
                       "diagram": ""
                     }
@@ -589,21 +589,21 @@
               "question_elements": [
                 {
                   "type": "text",
-                  "content": "The compound below is treated with RuO₄ and NaIO₄."
+                  "content": "Which structure is product A of the reaction below?"
                 },
                 {
                   "type": "chem",
                   "content": {
-                    "smiles": "CC1=CCCCC1O",
-                    "formula": "C7H12O",
-                    "caption": "methyl cyclohexenol",
-                    "spoken": "a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it",
+                    "smiles": "CC1=CCCCC1O>>",
+                    "formula": "",
+                    "caption": "RuO₄ and NaIO₄",
+                    "spoken": "a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it, treated with RuO₄ and NaIO₄",
                     "diagram": ""
                   }
                 },
                 {
                   "type": "text",
-                  "content": "Compound → [A]. Which structure is [A]?"
+                  "content": "A = ?"
                 }
               ],
               "options_elements": {
@@ -612,8 +612,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "CC1=CC(=O)CCC1",
-                      "formula": "C7H10O",
-                      "caption": "methyl cyclohexenone",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a methyl substituted cyclohexenone ring",
                       "diagram": ""
                     }
@@ -628,8 +628,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "CC12OC1CCCC2O",
-                      "formula": "C7H12O2",
-                      "caption": "epoxide",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                       "diagram": ""
                     }
@@ -644,8 +644,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "CC(=O)C(=O)CCCC(=O)O",
-                      "formula": "C7H10O4",
-                      "caption": "keto acid",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a carboxylic acid chain with two ketones, one of them a methyl ketone",
                       "diagram": ""
                     }
@@ -660,8 +660,8 @@
                     "type": "chem",
                     "content": {
                       "smiles": "CC(=O)C(O)CCCC(=O)O",
-                      "formula": "C7H12O4",
-                      "caption": "hydroxy keto acid",
+                      "formula": "",
+                      "caption": "",
                       "spoken": "a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                       "diagram": ""
                     }

@@ -894,10 +894,12 @@ CATEGORIES = [
             ),
             # Two textbook organic problems. Every structure is a Chemistry
             # element drawn by SmilesDrawer from SMILES — no pasted pictures —
-            # and the reagent lines stay plain text so they read like the page
-            # in the book. Each option carries a short text label beside its
-            # structure: ChemElements contribute nothing to an option's
-            # flattened `text`, which is what Browse and search show.
+            # and the reagent wording rides in the reaction ChemElement's
+            # caption: a SMILES with two `>` separators draws the arrow and
+            # leaves the product blank. Each option's structure has no caption
+            # or formula of its own; the retained "(n) Name" text element is
+            # its only label, because ChemElements contribute nothing to an
+            # option's flattened `text`, which is what Browse and search show.
             q(
                 "q-org-1",
                 [
@@ -905,19 +907,16 @@ CATEGORIES = [
                         "Which is the reduction product (A) of the following compound?"
                     ),
                     chem(
-                        smiles="O=C1OCCCCC(=O)C1",
-                        formula="C7H10O3",
-                        caption="keto lactone",
-                        spoken="an eight membered ring lactone with a ketone group in the ring",
+                        smiles="O=C1OCCCCC(=O)C1>>",
+                        caption="LiAlH₄ in ether, then aqueous work-up",
+                        spoken="an eight membered ring lactone with a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
-                    txt("LiAlH₄ in ether, then aqueous work-up → A"),
+                    txt("A = ?"),
                 ],
                 {
                     "a": [
                         chem(
                             smiles="OC1CCOCCCC1O",
-                            formula="C7H14O3",
-                            caption="cyclic ether diol",
                             spoken="an eight membered cyclic ether with two hydroxyl groups",
                         ),
                         txt("(1) Cyclic ether diol"),
@@ -925,8 +924,6 @@ CATEGORIES = [
                     "b": [
                         chem(
                             smiles="O=C1OCCCCC(O)C1",
-                            formula="C7H12O3",
-                            caption="hydroxy lactone",
                             spoken="a lactone ring with one hydroxyl group",
                         ),
                         txt("(2) Hydroxy lactone"),
@@ -934,8 +931,6 @@ CATEGORIES = [
                     "c": [
                         chem(
                             smiles="OCCCCC(O)CC=O",
-                            formula="C7H14O3",
-                            caption="hydroxy aldehyde",
                             spoken="a chain with an aldehyde and two hydroxyl groups",
                         ),
                         txt("(3) Hydroxy aldehyde"),
@@ -943,8 +938,6 @@ CATEGORIES = [
                     "d": [
                         chem(
                             smiles="OCCCCC(O)CCO",
-                            formula="C7H16O3",
-                            caption="triol",
                             spoken="a seven carbon chain with three hydroxyl groups",
                         ),
                         txt("(4) Triol"),
@@ -970,21 +963,18 @@ CATEGORIES = [
             q(
                 "q-org-2",
                 [
-                    txt("The compound below is treated with RuO₄ and NaIO₄."),
+                    txt("Which structure is product A of the reaction below?"),
                     chem(
-                        smiles="CC1=CCCCC1O",
-                        formula="C7H12O",
-                        caption="methyl cyclohexenol",
-                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it",
+                        smiles="CC1=CCCCC1O>>",
+                        caption="RuO₄ and NaIO₄",
+                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it, treated with RuO₄ and NaIO₄",
                     ),
-                    txt("Compound → [A]. Which structure is [A]?"),
+                    txt("A = ?"),
                 ],
                 {
                     "a": [
                         chem(
                             smiles="CC1=CC(=O)CCC1",
-                            formula="C7H10O",
-                            caption="methyl cyclohexenone",
                             spoken="a methyl substituted cyclohexenone ring",
                         ),
                         txt("(1) Methyl cyclohexenone"),
@@ -992,8 +982,6 @@ CATEGORIES = [
                     "b": [
                         chem(
                             smiles="CC12OC1CCCC2O",
-                            formula="C7H12O2",
-                            caption="epoxide",
                             spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                         ),
                         txt("(2) Epoxide with OH"),
@@ -1001,8 +989,6 @@ CATEGORIES = [
                     "c": [
                         chem(
                             smiles="CC(=O)C(=O)CCCC(=O)O",
-                            formula="C7H10O4",
-                            caption="keto acid",
                             spoken="a carboxylic acid chain with two ketones, one of them a methyl ketone",
                         ),
                         txt("(3) Keto acid"),
@@ -1010,8 +996,6 @@ CATEGORIES = [
                     "d": [
                         chem(
                             smiles="CC(=O)C(O)CCCC(=O)O",
-                            formula="C7H12O4",
-                            caption="hydroxy keto acid",
                             spoken="a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                         ),
                         txt("(4) Hydroxy keto acid"),
@@ -2575,12 +2559,73 @@ def check_mathml(doc):
     return bad
 
 
+# A small syntax gate, not a chemistry parser: it catches the typos that leave
+# SmilesDrawer with nothing to draw without rejecting any SMILES the bank uses.
+# Reaction strings carry two `>` separators, so `>` is checked here rather than
+# in the raw-markup guard applied to the other handles.
+SMILES_CHARS = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()[]=#-+/\\%@."
+)
+
+
+def valid_smiles_part(part):
+    """One molecule: known characters, balanced branches, paired ring bonds."""
+    if not part:
+        return True  # reagents and products may be left blank in a scheme
+    if any(ch not in SMILES_CHARS for ch in part):
+        return False
+    stack, rings = [], set()
+    i = 0
+    while i < len(part):
+        # OpenSMILES writes ring numbers 10+ as `%nn`; treat them as one bond
+        # instead of counting their two digits separately.
+        if part[i] == "%":
+            token = part[i + 1 : i + 3]
+            if len(token) != 2 or not token.isdigit():
+                return False
+            i += 3
+        else:
+            token = part[i]
+            i += 1
+        if token == "(":
+            stack.append(")")
+        elif token == "[":
+            stack.append("]")
+        elif token in ")]":
+            if not stack or stack.pop() != token:
+                return False
+        elif token.isdigit():
+            if token in rings:
+                rings.remove(token)
+            else:
+                rings.add(token)
+    return not stack and not rings
+
+
+def valid_smiles(value):
+    """A plain molecule or a `reactants>reagents>products` reaction SMILES."""
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if not value or "<" in value:
+        return False
+    parts = value.split(">")
+    if len(parts) == 1:
+        parts = [parts[0], "", ""]
+    elif len(parts) != 3 or not parts[0].strip():
+        return False
+    return all(valid_smiles_part(part.strip()) for part in parts)
+
+
 def check_chem(doc):
     """Every chemistry block must carry the handles the renderer and a11y need.
 
-    SMILES is the one field LegacyParser insists on; an empty formula, caption
-    or spoken line still parses but leaves exports, labels and TalkBack with
-    nothing useful, so the generator rejects those before writing the asset.
+    SMILES is the one field LegacyParser insists on, so it must parse as a
+    structure or as a reaction scheme. Spoken copy stays mandatory for TalkBack.
+    A structure the reader has to identify needs a caption, but an option's
+    drawing is labelled by the retained "(n) Name" text instead: a caption
+    there would duplicate the label in Browse, exports and search. A reaction
+    has no single formula, so formula may be blank there too.
     """
     bad = []
 
@@ -2594,12 +2639,20 @@ def check_chem(doc):
                     for key in ("smiles", "formula", "caption", "spoken", "diagram"):
                         if key not in content:
                             bad.append(f"{where}: chem block is missing {key}")
-                    for key in ("smiles", "formula", "caption", "spoken"):
+                    smiles = content.get("smiles", "")
+                    if not valid_smiles(smiles):
+                        bad.append(f"{where}: invalid chem SMILES: {smiles!r}")
+                    for key in ("formula", "caption", "spoken"):
                         value = content.get(key, "")
-                        if not isinstance(value, str) or not value.strip():
-                            bad.append(f"{where}: chem block has no {key}")
-                        elif "<" in value or ">" in value:
+                        if not isinstance(value, str) or "<" in value or ">" in value:
                             bad.append(f"{where}: raw markup in chem {key}")
+                    spoken = content.get("spoken", "")
+                    if not isinstance(spoken, str) or not spoken.strip():
+                        bad.append(f"{where}: chem block has no spoken")
+                    if "/options_elements/" not in where:
+                        caption = content.get("caption", "")
+                        if not isinstance(caption, str) or not caption.strip():
+                            bad.append(f"{where}: chem block has no caption")
             for key, value in node.items():
                 walk(value, f"{where}/{key}")
         elif isinstance(node, list):

@@ -99,14 +99,17 @@ class SampleChemistryTest {
     @Test
     fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-1")
-        val start = structureOf(question.elements)
-        assertEquals("O=C1OCCCCC(=O)C1", start.smiles)
-        assertEquals("C7H10O3", start.formula)
-        assertEquals("keto lactone", start.caption)
-        assertTrue(start.spoken.contains("lactone"))
-        assertEquals("", start.diagram)
-        assertTrue(question.text.contains("LiAlH₄ in ether"))
-        assertTrue(question.text.contains("→ A"))
+        val scheme = structureOf(question.elements)
+        assertEquals("the scheme is a reaction SMILES with a blank product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
+        assertEquals("", scheme.formula)
+        assertEquals("LiAlH₄ in ether, then aqueous work-up", scheme.caption)
+        assertTrue(scheme.spoken.contains("lactone"))
+        assertTrue(scheme.spoken.contains("LiAlH₄"))
+        assertEquals("", scheme.diagram)
+        assertEquals(1, question.elements.count { it is ContentElement.ChemElement })
+        assertTrue("the reagent must not be duplicated in the stem text", "LiAlH₄" !in question.text)
+        assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
+        assertTrue(question.text.endsWith("A = ?"))
 
         val options = mapOf(
             "a" to "OC1CCOCCCC1O",
@@ -119,7 +122,12 @@ class SampleChemistryTest {
             val option = question.options.single { it.id == id }
             assertEquals("$id must carry exactly one structure", 1,
                 option.elements.count { it is ContentElement.ChemElement })
-            assertEquals(smiles, structureOf(option.elements).smiles)
+            val chem = structureOf(option.elements)
+            assertEquals(smiles, chem.smiles)
+            assertEquals("$id must not repeat its name in the chemistry caption", "", chem.caption)
+            assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
+            assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
+            assertEquals("", chem.diagram)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
         }
         assertEquals(
@@ -135,15 +143,18 @@ class SampleChemistryTest {
     @Test
     fun theRuO4OxidationQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-2")
-        val start = structureOf(question.elements)
-        assertEquals("CC1=CCCCC1O", start.smiles)
-        assertEquals("C7H12O", start.formula)
-        assertEquals("methyl cyclohexenol", start.caption)
-        assertTrue(start.spoken.contains("methyl"))
-        assertEquals("", start.diagram)
-        assertTrue(question.text.contains("RuO₄"))
-        assertTrue(question.text.contains("NaIO₄"))
-        assertTrue(question.text.contains("→ [A]"))
+        val scheme = structureOf(question.elements)
+        assertEquals("the scheme is a reaction SMILES with a blank product", "CC1=CCCCC1O>>", scheme.smiles)
+        assertEquals("", scheme.formula)
+        assertEquals("RuO₄ and NaIO₄", scheme.caption)
+        assertTrue(scheme.spoken.contains("methyl"))
+        assertTrue(scheme.spoken.contains("RuO₄ and NaIO₄"))
+        assertEquals("", scheme.diagram)
+        assertEquals(1, question.elements.count { it is ContentElement.ChemElement })
+        assertTrue("the reagent must not be duplicated in the stem text", "RuO₄" !in question.text)
+        assertTrue("the reagent must not be duplicated in the stem text", "NaIO₄" !in question.text)
+        assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
+        assertTrue(question.text.endsWith("A = ?"))
 
         val options = mapOf(
             "a" to "CC1=CC(=O)CCC1",
@@ -156,7 +167,12 @@ class SampleChemistryTest {
             val option = question.options.single { it.id == id }
             assertEquals("$id must carry exactly one structure", 1,
                 option.elements.count { it is ContentElement.ChemElement })
-            assertEquals(smiles, structureOf(option.elements).smiles)
+            val chem = structureOf(option.elements)
+            assertEquals(smiles, chem.smiles)
+            assertEquals("$id must not repeat its name in the chemistry caption", "", chem.caption)
+            assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
+            assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
+            assertEquals("", chem.diagram)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
         }
         assertEquals(
@@ -170,8 +186,12 @@ class SampleChemistryTest {
     }
 
     @Test
-    fun theOrganicQuestionsUseStructuresNotPastedPictures() {
-        listOf("q-org-1", "q-org-2").forEach { id ->
+    fun theOrganicQuestionsUseReactionSchemesNotPastedPictures() {
+        val reagents = mapOf(
+            "q-org-1" to "LiAlH₄ in ether, then aqueous work-up",
+            "q-org-2" to "RuO₄ and NaIO₄"
+        )
+        reagents.forEach { (id, reagent) ->
             val question = organic(id)
             val all = buildList {
                 addAll(question.elements)
@@ -180,13 +200,23 @@ class SampleChemistryTest {
             }
             assertEquals("$id must draw every structure from SMILES", 0,
                 all.count { it is ContentElement.ImageElement })
-            assertEquals("$id must have a structure in its stem", 1,
+            assertEquals("$id must have one reaction scheme in its stem", 1,
                 question.elements.count { it is ContentElement.ChemElement })
+            val scheme = structureOf(question.elements)
+            assertEquals("$id reagent must ride in the caption", reagent, scheme.caption)
+            assertEquals("$id must leave the product blank", 2, scheme.smiles.count { it == '>' })
+            assertTrue("$id must keep the reactant before the arrow", scheme.smiles.indexOf('>') > 0)
             all.filterIsInstance<ContentElement.ChemElement>().forEach { chem ->
-                assertTrue("$id has a raw markup handle: ${chem.caption}",
+                assertTrue("$id has a raw markup caption: ${chem.caption}",
                     "<" !in chem.caption && ">" !in chem.caption)
                 assertTrue("$id has a long SMILES: ${chem.smiles}", chem.smiles.length <= 32)
                 assertTrue("$id has no spoken description", chem.spoken.isNotBlank())
+                assertTrue("$id has an unlabelled diagram", chem.diagram.isEmpty())
+            }
+            question.options.forEach { option ->
+                val chem = structureOf(option.elements)
+                assertTrue("$id ${option.id} must label its drawing with text only", chem.caption.isEmpty())
+                assertTrue("$id ${option.id} must not print a formula on the drawing", chem.formula.isEmpty())
             }
         }
     }
@@ -242,7 +272,7 @@ class SampleChemistryTest {
             elements.any { it is ContentElement.MathElement }
         )
         assertEquals(
-            "benzene's stem plus a structure in every organic stem and option",
+            "benzene, one reaction scheme in each organic stem and a structure in every option",
             11,
             elements.count { it is ContentElement.ChemElement }
         )

@@ -102,7 +102,7 @@ class SampleChemistryTest {
         val scheme = structureOf(question.elements)
         assertEquals("the scheme is a reaction SMILES with a blank product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
         assertEquals("", scheme.formula)
-        assertEquals("LiAlH₄ in ether, then aqueous work-up", scheme.caption)
+        assertEquals("LiAlH₄ / ether, then H₂O", scheme.caption)
         assertTrue(scheme.spoken.contains("lactone"))
         assertTrue(scheme.spoken.contains("LiAlH₄"))
         assertEquals("", scheme.diagram)
@@ -146,7 +146,7 @@ class SampleChemistryTest {
         val scheme = structureOf(question.elements)
         assertEquals("the scheme is a reaction SMILES with a blank product", "CC1=CCCCC1O>>", scheme.smiles)
         assertEquals("", scheme.formula)
-        assertEquals("RuO₄ and NaIO₄", scheme.caption)
+        assertEquals("RuO₄ / NaIO₄", scheme.caption)
         assertTrue(scheme.spoken.contains("methyl"))
         assertTrue(scheme.spoken.contains("RuO₄ and NaIO₄"))
         assertEquals("", scheme.diagram)
@@ -188,8 +188,8 @@ class SampleChemistryTest {
     @Test
     fun theOrganicQuestionsUseReactionSchemesNotPastedPictures() {
         val reagents = mapOf(
-            "q-org-1" to "LiAlH₄ in ether, then aqueous work-up",
-            "q-org-2" to "RuO₄ and NaIO₄"
+            "q-org-1" to "LiAlH₄ / ether, then H₂O",
+            "q-org-2" to "RuO₄ / NaIO₄"
         )
         reagents.forEach { (id, reagent) ->
             val question = organic(id)

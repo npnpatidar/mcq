@@ -908,7 +908,7 @@ CATEGORIES = [
                     ),
                     chem(
                         smiles="O=C1OCCCCC(=O)C1>>",
-                        caption="LiAlH₄ in ether, then aqueous work-up",
+                        caption="LiAlH₄ / ether, then H₂O",
                         spoken="an eight membered ring lactone with a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
                     txt("A = ?"),
@@ -966,7 +966,7 @@ CATEGORIES = [
                     txt("Which structure is product A of the reaction below?"),
                     chem(
                         smiles="CC1=CCCCC1O>>",
-                        caption="RuO₄ and NaIO₄",
+                        caption="RuO₄ / NaIO₄",
                         spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it, treated with RuO₄ and NaIO₄",
                     ),
                     txt("A = ?"),

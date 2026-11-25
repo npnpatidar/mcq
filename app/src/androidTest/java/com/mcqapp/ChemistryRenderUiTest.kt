@@ -91,24 +91,30 @@ class ChemistryRenderUiTest {
     )
 
     /**
-     * ReactionDrawer draws the arrow as a <line marker-end=...> and the
-     * caption as a <tspan> above it. Check both, and report the SVG's rendered
-     * width/height so the test can pin a single full-width line. (The caption
-     * uses an ideographic baseline, so comparing tspan and line boxes is not a
-     * reliable overlap probe across emulators — bounded height is.)
+     * The reaction is an inline flex row: compact scheme + arrow + reagent
+     * caption + product label on ONE line. Probe the whole container's box (so
+     * a stacked/multi-line layout fails), plus the arrow, reagent text and the
+     * product label. The caption uses an ideographic baseline, so comparing
+     * tspan and line boxes is not a reliable overlap probe across emulators —
+     * a bounded container height is.
      */
     private fun reactionSvgState(): String = evaluate(
         "(function(){" +
+            "var c=document.querySelector('.mcq-chem-reaction');" +
             "var s=document.getElementById('mcq-chem-0');" +
             "var f=document.getElementById('mcq-chem-0-fallback');" +
+            "if(!c)return 'no-container';" +
             "if(!s)return 'no-svg';" +
             "if(!f)return 'no-fallback';" +
             "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
             "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
-            "var b=s.getBoundingClientRect();" +
+            "var b=c.getBoundingClientRect();" +
             "if(!(b.height>0))return 'zero-height';" +
             "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +
             "if(s.textContent.indexOf('reagent')<0)return 'no-reagent-text';" +
+            "var p=c.querySelector('.mcq-chem-product');" +
+            "if(!p)return 'no-product-label';" +
+            "if(p.textContent.trim()!=='A')return 'wrong-product-label';" +
             "var n=s.querySelectorAll('line,text,tspan,circle,polygon').length;" +
             "if(!(n>0))return 'no-shapes';" +
             "return 'ok:'+n+':'+Math.round(b.height)+':'+Math.round(b.width);" +
@@ -153,8 +159,9 @@ class ChemistryRenderUiTest {
     private fun reactionStructure() = listOf(
         ContentElement.TextElement("Reaction: "),
         // Empty reagents and products are allowed by ReactionParser; the
-        // caption is the text drawn above the arrow.
-        ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent")
+        // short caption is the reagent text above the arrow and `formula`
+        // becomes the product label in the inline row.
+        ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent", formula = "A")
     )
 
     @Test
@@ -273,16 +280,13 @@ class ChemistryRenderUiTest {
         val widthPx = parts.getOrNull(3)?.toIntOrNull()
             ?: throw AssertionError("unexpected reaction SVG state: $lastState")
         assertTrue("reaction has no height: $lastState", heightPx > 0)
-        // A whole reaction reads as ONE line at 320 dp: full card width, with
-        // the reagent label above the arrow rather than squeezed into the old
-        // 140 px molecule cap. That label itself contributes most of the
-        // height — CI measures ~110 px for a single-line scheme — so the bound
-        // is generous enough for that, while still rejecting a stacked or
-        // multi-line rendering. The width>=280 px check below and the arrow,
-        // reagent and capture assertions together pin the single-line layout.
-        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 120)
-        assertTrue("reaction not using the full card width ($widthPx px): $lastState",
-            widthPx >= 280)
+        // The inline flex row keeps the compact scheme, arrow, reagent and
+        // product label on ONE line: a short row (<=80 px) that fits the 320 dp
+        // card. A stacked or multi-line rendering would be both taller and
+        // wider; the arrow / reagent / product-label checks above and the
+        // capture assertions below complete the layout guard.
+        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 80)
+        assertTrue("reaction overflows 320dp ($widthPx px): $lastState", widthPx <= 320)
 
         // The light-theme capture bridge must still fire for a reaction.
         compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }

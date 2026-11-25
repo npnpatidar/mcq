@@ -100,16 +100,17 @@ class SampleChemistryTest {
     fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-1")
         val scheme = structureOf(question.elements)
-        assertEquals("the scheme is a reaction SMILES with a blank product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
-        assertEquals("", scheme.formula)
-        assertEquals("LiAlH₄ / ether, then H₂O", scheme.caption)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
+        assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
+        assertEquals("LiAlH₄ / ether", scheme.caption)
         assertTrue(scheme.spoken.contains("lactone"))
         assertTrue(scheme.spoken.contains("LiAlH₄"))
         assertEquals("", scheme.diagram)
         assertEquals(1, question.elements.count { it is ContentElement.ChemElement })
         assertTrue("the reagent must not be duplicated in the stem text", "LiAlH₄" !in question.text)
         assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
-        assertTrue(question.text.endsWith("A = ?"))
+        assertEquals("Which is the reduction product (A) of the following compound?", question.text)
+        assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
             "a" to "OC1CCOCCCC1O",
@@ -144,8 +145,8 @@ class SampleChemistryTest {
     fun theRuO4OxidationQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-2")
         val scheme = structureOf(question.elements)
-        assertEquals("the scheme is a reaction SMILES with a blank product", "CC1=CCCCC1O>>", scheme.smiles)
-        assertEquals("", scheme.formula)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "CC1=CCCCC1O>>", scheme.smiles)
+        assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
         assertEquals("RuO₄ / NaIO₄", scheme.caption)
         assertTrue(scheme.spoken.contains("methyl"))
         assertTrue(scheme.spoken.contains("RuO₄ and NaIO₄"))
@@ -154,7 +155,8 @@ class SampleChemistryTest {
         assertTrue("the reagent must not be duplicated in the stem text", "RuO₄" !in question.text)
         assertTrue("the reagent must not be duplicated in the stem text", "NaIO₄" !in question.text)
         assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
-        assertTrue(question.text.endsWith("A = ?"))
+        assertEquals("Which structure is product A of the reaction below?", question.text)
+        assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
             "a" to "CC1=CC(=O)CCC1",
@@ -188,7 +190,7 @@ class SampleChemistryTest {
     @Test
     fun theOrganicQuestionsUseReactionSchemesNotPastedPictures() {
         val reagents = mapOf(
-            "q-org-1" to "LiAlH₄ / ether, then H₂O",
+            "q-org-1" to "LiAlH₄ / ether",
             "q-org-2" to "RuO₄ / NaIO₄"
         )
         reagents.forEach { (id, reagent) ->
@@ -204,7 +206,9 @@ class SampleChemistryTest {
                 question.elements.count { it is ContentElement.ChemElement })
             val scheme = structureOf(question.elements)
             assertEquals("$id reagent must ride in the caption", reagent, scheme.caption)
-            assertEquals("$id must leave the product blank", 2, scheme.smiles.count { it == '>' })
+            assertEquals("$id must label the inline product with A", "A", scheme.formula)
+            assertTrue("$id must have no standalone A = ? text", "A = ?" !in question.text)
+            assertEquals("$id must leave the SMILES product blank", 2, scheme.smiles.count { it == '>' })
             assertTrue("$id must keep the reactant before the arrow", scheme.smiles.indexOf('>') > 0)
             all.filterIsInstance<ContentElement.ChemElement>().forEach { chem ->
                 assertTrue("$id has a raw markup caption: ${chem.caption}",

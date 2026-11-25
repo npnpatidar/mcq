@@ -908,10 +908,10 @@ CATEGORIES = [
                     ),
                     chem(
                         smiles="O=C1OCCCCC(=O)C1>>",
-                        caption="LiAlH₄ / ether, then H₂O",
+                        formula="A",
+                        caption="LiAlH₄ / ether",
                         spoken="an eight membered ring lactone with a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
-                    txt("A = ?"),
                 ],
                 {
                     "a": [
@@ -946,8 +946,9 @@ CATEGORIES = [
                 ["d"],
                 [
                     txt(
-                        "LiAlH₄ reduces both carbonyls. The ring ketone becomes a "
-                        "secondary alcohol, and the lactone ring opens: its acyl carbon "
+                        "LiAlH₄ reduces both carbonyls; the aqueous work-up then "
+                        "protonates the alkoxide intermediates. The ring ketone becomes "
+                        "a secondary alcohol, and the lactone ring opens: its acyl carbon "
                         "becomes a primary alcohol (CH₂OH) while the ring oxygen stays "
                         "on its neighbouring carbon as an OH. The product is the "
                         "seven-carbon triol OCCCCC(O)CCO, so the answer is option 4. "
@@ -966,10 +967,10 @@ CATEGORIES = [
                     txt("Which structure is product A of the reaction below?"),
                     chem(
                         smiles="CC1=CCCCC1O>>",
+                        formula="A",
                         caption="RuO₄ / NaIO₄",
                         spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it, treated with RuO₄ and NaIO₄",
                     ),
-                    txt("A = ?"),
                 ],
                 {
                     "a": [

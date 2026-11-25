@@ -302,16 +302,25 @@ private const val CHEM_DISPLAY_STYLE =
 /**
  * Reaction SVG style: no fixed width and no molecule cap. ReactionDrawer
  * writes the scheme's natural pixel width/height onto the target; the inline
- * draw script adds only [CHEM_REACTION_CONSTRAINT_JS] afterwards, preserving
- * that width. Replacing the whole `cssText` would drop the width and let the
- * SVG fall back to 300 px, scaling a compact viewBox into a bold drawing.
+ * draw script scales that width moderately (see [CHEM_REACTION_CONSTRAINT_JS])
+ * and then adds constraints. Replacing the whole `cssText` would drop the
+ * width and let the SVG fall back to 300 px, once again scaling a compact
+ * viewBox into a bold drawing.
  */
 private const val CHEM_REACTION_STYLE =
     "max-width:100%;height:auto;flex:0 1 auto;"
 
-/** Constraints added after a reaction draw without touching the drawer's width. */
+/**
+ * After-draw scale for the drawer's computed width. The compact molecule
+ * options keep strokes thin; 1.7x makes the ring and labels readable without
+ * stacking the scheme. `height:auto` then preserves the viewBox aspect ratio.
+ */
+private const val CHEM_REACTION_SCALE = 1.7
+
+/** Scale the drawer's width, then constrain it — never overwrite `cssText`. */
 private const val CHEM_REACTION_CONSTRAINT_JS =
-    "svg.style.maxWidth='100%';svg.style.height='auto';svg.style.flex='0 1 auto';"
+    "var rw=parseFloat(svg.style.width);if(rw>0){svg.style.width=(rw*$CHEM_REACTION_SCALE)+'px';}" +
+        "svg.style.maxWidth='100%';svg.style.height='auto';svg.style.flex='0 1 auto';"
 
 /**
  * Inline row for a whole reaction: the compact scheme and its product label
@@ -519,9 +528,9 @@ private fun chemBlockHtml(
             append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,molOptions)")
             append(".draw(reaction,svg,'mcq',null,").append(reagentText).append(",\"\",false);")
             // ReactionDrawer sets the scheme's natural pixel width/height.
-            // Add only the inline constraints — never cssText, which would
-            // erase that width and blow the compact viewBox up to 300 px —
-            // and never touch the hidden capture SVG's style.
+            // Scale that width moderately, then add only the inline constraints
+            // — never cssText, which would erase the width and fall back to
+            // 300 px — and never touch the hidden capture SVG's style.
             append(CHEM_REACTION_CONSTRAINT_JS)
             append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,captureMolOptions)")
             append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")

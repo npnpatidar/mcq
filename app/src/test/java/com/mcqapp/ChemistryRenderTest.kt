@@ -383,20 +383,24 @@ class ChemistryRenderTest {
     }
 
     @Test
-    fun reactionDrawKeepsTheDrawerWidthAndAddsOnlyConstraints() {
+    fun reactionDrawScalesTheDrawerWidthThenAddsConstraints() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
-        // ReactionDrawer sets the scheme's natural pixel width. Replacing the
-        // whole cssText would drop it and scale the compact viewBox up to
-        // 300 px, making bonds and labels look bold/oversized.
-        val constraints = "svg.style.maxWidth='100%';svg.style.height='auto';" +
+        // Keep ReactionDrawer's computed width as the scale basis, then grow
+        // it moderately so the compact bonds/labels stay thin but readable.
+        // Replacing the whole cssText would drop that width and fall back to
+        // the 300 px default (bold), so it must never appear here.
+        val constraints = "var rw=parseFloat(svg.style.width);" +
+            "if(rw>0){svg.style.width=(rw*1.7)+'px';}" +
+            "svg.style.maxWidth='100%';svg.style.height='auto';" +
             "svg.style.flex='0 1 auto';"
-        assertTrue("inline constraints not added after draw: $html", html.contains(constraints))
+        assertTrue("width scaling/constraints not applied after draw: $html",
+            html.contains(constraints))
         assertFalse("reaction must not overwrite the drawer's width with cssText",
             html.contains("svg.style.cssText="))
         val drawAt = html.indexOf(".draw(reaction,svg,'mcq'")
-        val constraintsAt = html.indexOf("svg.style.maxWidth=")
+        val constraintsAt = html.indexOf("var rw=parseFloat(")
         assertTrue("live reaction draw missing", drawAt >= 0)
-        assertTrue("constraints must be added after the draw", constraintsAt > drawAt)
+        assertTrue("scaling must happen after the draw", constraintsAt > drawAt)
         assertTrue("capture must stay hidden", html.contains(
             "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
         ))

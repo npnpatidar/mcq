@@ -91,6 +91,29 @@ class ChemistryRenderUiTest {
     )
 
     /**
+     * ReactionDrawer draws the arrow as a <line marker-end=...> and the
+     * caption as a <tspan> above it. Check both, so a reaction block that
+     * merely fell back to text — or lost its reagent label — cannot pass.
+     */
+    private fun reactionSvgState(): String = evaluate(
+        "(function(){" +
+            "var s=document.getElementById('mcq-chem-0');" +
+            "var f=document.getElementById('mcq-chem-0-fallback');" +
+            "if(!s)return 'no-svg';" +
+            "if(!f)return 'no-fallback';" +
+            "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
+            "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
+            "var h=s.getBoundingClientRect().height;" +
+            "if(!(h>0))return 'zero-height';" +
+            "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +
+            "if(s.textContent.indexOf('reagent')<0)return 'no-reagent-text';" +
+            "var n=s.querySelectorAll('line,text,tspan,circle,polygon').length;" +
+            "if(!(n>0))return 'no-shapes';" +
+            "return 'ok:'+n+':'+Math.round(h);" +
+            "})()"
+    )
+
+    /**
      * On the dark theme the structure must use the page's text colour; the
      * bundled 'light' theme painted atoms #222/#666, which was unreadable.
      * Compare the luminance of a coloured atom label with the body colour so
@@ -123,6 +146,13 @@ class ChemistryRenderUiTest {
             caption = "ethanol",
             spoken = "ethanol"
         )
+    )
+
+    private fun reactionStructure() = listOf(
+        ContentElement.TextElement("Reaction: "),
+        // Empty reagents and products are allowed by ReactionParser; the
+        // caption is the text drawn above the arrow.
+        ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent")
     )
 
     @Test
@@ -190,6 +220,52 @@ class ChemistryRenderUiTest {
         compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }
         val (key, png) = captured.get()!!
         assertEquals("chem-42", key)
+        assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))
+        assertTrue("empty PNG", png.length > 100)
+    }
+
+    @Test
+    fun reactionFitsA320DpScreenDrawsArrowAndReagentAndCaptures() {
+        val captured = AtomicReference<Pair<String, String>?>(null)
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(
+                        reactionStructure(),
+                        chemKey = "chem-rxn",
+                        onChemDiagram = { key, png -> captured.set(key to png) }
+                    )
+                }
+            }
+        }
+        val node = compose.onNodeWithContentDescription("reagent", substring = true)
+        node.assertIsDisplayed()
+        val bounds = node.getBoundsInRoot()
+        val widthDp = bounds.right.value - bounds.left.value
+        assertTrue("reaction overflows 320dp: $bounds", widthDp <= 320f)
+
+        // The bundled ReactionDrawer must put real arrow geometry and the
+        // reagent label in the SVG, not just a spoken description.
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = reactionSvgState()
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            throw AssertionError(
+                "ReactionDrawer did not draw an arrow and reagent; last state=$lastState", t
+            )
+        }
+        val heightPx = lastState.split(':').getOrNull(2)?.toIntOrNull()
+            ?: throw AssertionError("unexpected reaction SVG state: $lastState")
+        assertTrue("reaction has no height: $lastState", heightPx > 0)
+        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 160)
+
+        // The light-theme capture bridge must still fire for a reaction.
+        compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }
+        val (key, png) = captured.get()!!
+        assertEquals("chem-rxn", key)
         assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))
         assertTrue("empty PNG", png.length > 100)
     }

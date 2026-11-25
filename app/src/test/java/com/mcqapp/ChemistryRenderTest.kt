@@ -274,6 +274,108 @@ class ChemistryRenderTest {
         assertTrue("missing: ${js.absolutePath}", js.isFile)
     }
 
+    // ---- reaction mode -----------------------------------------------------
+
+    @Test
+    fun reactionSmilesUsesParseReactionAndDrawsCaptionAboveTheArrow() {
+        val html = htmlOf(ContentElement.ChemElement(
+            smiles = "CCO>>", caption = "acid catalyst", formula = "C2H4O"
+        ))
+        assertTrue("parseReaction missing: $html", html.contains(
+            "SmilesDrawer.parseReaction(\"CCO\\u003e\\u003e\",reaction=>{try{"
+        ))
+        assertTrue("ReactionDrawer missing", html.contains(
+            "new window.SmilesDrawer.ReactionDrawer(rxnOptions,molOptions)"
+        ))
+        assertTrue("caption not passed as textAbove", html.contains(
+            ".draw(reaction,svg,'mcq',null,\"acid catalyst\",\"\",false);"
+        ))
+        assertFalse("ordinary caption line must be suppressed in reaction mode",
+            html.contains("<div class=\"mcq-chem-caption\">"))
+        assertTrue("text fallback missing", html.contains("Unavailable: C2H4O"))
+        assertTrue("height bridge missing", html.contains(CONTENT_HEIGHT_BRIDGE))
+        // A molecule must still use the ordinary parser.
+        assertFalse("molecule must not use parseReaction",
+            htmlOf(ContentElement.ChemElement("CCO")).contains("parseReaction"))
+    }
+
+    @Test
+    fun reactionWithEmptyReagentsOrProductsStillTakesTheReactionPath() {
+        listOf("CCO>>", ">>CCO", "CCO>CCO>CCO").forEach { smiles ->
+            val html = htmlOf(ContentElement.ChemElement(smiles, caption = "reagent"))
+            assertTrue("$smiles did not use parseReaction", html.contains("SmilesDrawer.parseReaction("))
+            assertFalse("$smiles leaked an ordinary caption line",
+                html.contains("<div class=\"mcq-chem-caption\">"))
+        }
+    }
+
+    @Test
+    fun reactionCaptionIsJsEscapedBeforeItBecomesTextAbove() {
+        val hostile = "cat\"</script><b>&"
+        val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = hostile))
+        assertFalse("caption closed the script", html.contains("\"</script><b>&\""))
+        assertTrue("caption not JS-escaped", html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
+        assertTrue("escaped caption not used as textAbove", html.contains(
+            ".draw(reaction,svg,'mcq',null,\"cat\\\"\\u003c/script\\u003e\\u003cb\\u003e\\u0026\",\"\",false);"
+        ))
+        assertFalse("ordinary caption line leaked", html.contains("<div class=\"mcq-chem-caption\">"))
+    }
+
+    @Test
+    fun reactionDrawReappliesTheDisplayCapAfterDrawing() {
+        val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        val cap = "svg.style.cssText=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;" +
+            "max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\";"
+        assertTrue("cap not reapplied after draw: $html", html.contains(cap))
+        val drawAt = html.indexOf(".draw(reaction,svg,'mcq'")
+        val capAt = html.indexOf("svg.style.cssText=")
+        assertTrue("live reaction draw missing", drawAt >= 0)
+        assertTrue("cap must be reapplied after the draw", capAt > drawAt)
+        assertTrue("capture must stay hidden", html.contains(
+            "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
+        ))
+        assertFalse("capture must not carry a display cap", html.contains("captureSvg.style"))
+    }
+
+    @Test
+    fun reactionLiveOptionsAreTunedButCaptureAndLightStayUnchanged() {
+        val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        listOf("padding:10", "bondThickness:1.1", "fontSizeLarge:13",
+            "overlapResolutionIterations:2", "experimentalSSSR:true").forEach { option ->
+            assertTrue("live option missing: $option", html.contains(option))
+        }
+        assertTrue("custom mcq theme missing", html.contains(
+            "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
+        ))
+        assertTrue("capture options must stay light/padding:2",
+            html.contains("var captureMolOptions={width:300,height:300,padding:2};"))
+        assertTrue("capture must draw with light theme", html.contains(
+            ".draw(reaction,captureSvg,'light',null,\"reagent\",\"\",false);"
+        ))
+        assertFalse("capture must not use the live theme",
+            html.contains(".draw(reaction,captureSvg,'mcq'"))
+    }
+
+    @Test
+    fun reactionBlockStillCapturesTheLightDrawingToThePngBridge() {
+        val html = htmlOf(
+            ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"),
+            chemKey = "chem-42"
+        )
+        assertTrue("capture clone missing", html.contains("var c=captureSvg.cloneNode(true);"))
+        assertTrue("display style not stripped", html.contains("c.removeAttribute('style');"))
+        assertTrue("bridge call missing", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"chem-42\",png)"
+        ))
+        assertTrue("PNG prefix guard missing", html.contains(
+            "png.indexOf('data:image/png;base64,')===0"
+        ))
+        val captureDrawAt = html.indexOf(".draw(reaction,captureSvg,'light'")
+        val captureAt = html.indexOf("capture();")
+        assertTrue("capture draw missing", captureDrawAt >= 0)
+        assertTrue("bridge must run after the capture draw", captureAt > captureDrawAt)
+    }
+
     // ---- injection boundaries ---------------------------------------------
 
     @Test
@@ -284,8 +386,10 @@ class ChemistryRenderTest {
         assertEquals("\"alert(1)//\"", smilesJsLiteral("\";alert(1)//"))
         // OpenSMILES two-digit ring closures must survive (%10 is ring 10).
         assertEquals("\"C1%10CCCCC1\"", smilesJsLiteral("C1%10CCCCC1"))
-        // Control characters and markup are dropped, not forwarded.
-        assertEquals("\"CscriptC\"", smilesJsLiteral("C\n<scr>ipt>C"))
+        // Control characters and '<' are dropped; '>' is now allowed for
+        // reaction SMILES, but jsStringLiteral escapes it as \u003e.
+        assertEquals("\"Cscr\\u003eipt\\u003eC\"", smilesJsLiteral("C\n<scr>ipt>C"))
+        assertEquals("\"CCO\\u003e\\u003e\"", smilesJsLiteral("CCO>>"))
     }
 
     @Test

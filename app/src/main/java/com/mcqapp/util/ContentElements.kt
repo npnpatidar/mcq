@@ -293,14 +293,27 @@ internal const val SMILES_DRAWER_ASSET_URL =
 internal const val CHEM_DISPLAY_MAX_PX = 140
 
 /**
+ * The display cap applied to the live SVG's inline style. [chemBlockHtml]
+ * writes it on the `<svg>` and re-applies it after a reaction draw, because
+ * ReactionDrawer replaces `style.width`/`style.height` with pixel values.
+ * The hidden capture SVG never carries it.
+ */
+private const val CHEM_DISPLAY_STYLE =
+    "width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;" +
+        "height:auto;vertical-align:middle;"
+
+/**
  * Characters a SMILES string may contain before it is handed to JavaScript.
- * Anything else (a quote, a semicolon, an angle bracket, whitespace, …) is
- * dropped: the SMILES is wrapped in a JS string literal and an HTML fallback
- * line, so a hostile value must never be able to close either one.
+ * `>` is included so a three-part reaction SMILES (`reactants>reagents>products`)
+ * reaches ReactionParser; it is safe because [jsStringLiteral] escapes every
+ * `>` as `\u003e` inside the JS string literal. Anything else (a quote, a
+ * semicolon, `<`, whitespace, …) is dropped: the SMILES is wrapped in a JS
+ * string literal and an HTML fallback line, so a hostile value must never be
+ * able to close either one.
  */
 private val SMILES_ALLOWED_CHARS =
     ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
-        "@.+-?!()[]{}#\\=\$:*%" + "/").toSet()
+        "@.+-?!()[]{}#\\=\$:*%" + "/>").toSet()
 
 /**
  * Any Kotlin string as a JSON string literal (quotes included) for inline JS.
@@ -352,11 +365,16 @@ private fun chemBlockHtml(
     val svgId = "mcq-chem-$index"
     val captureId = "$svgId-capture"
     val fallbackId = "mcq-chem-$index-fallback"
+    // ReactionParser splits on '>' into exactly three parts; empty reagents
+    // and products are allowed ("reactants>>" is the common case).
+    val isReaction = element.smiles.contains('>')
     val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
     val caption = listOf(element.caption, element.formula)
         .filter { it.isNotBlank() }
         .joinToString(" ") { escapeHtmlData(it) }
-    val captionLine = if (caption.isBlank()) "" else
+    // In reaction mode the caption is the reagent text drawn above the arrow,
+    // so there is no separate caption line under the diagram.
+    val captionLine = if (isReaction || caption.isBlank()) "" else
         "<div class=\"mcq-chem-caption\">$caption</div>"
     val fallbackLine = buildString {
         if (structureUnavailable.isNotBlank()) append(escapeHtmlData(structureUnavailable)).append(": ")
@@ -377,10 +395,21 @@ private fun chemBlockHtml(
         }
     }
 
+    // textColorCss comes from the WebView's `color` (onSurface, always
+    // rgba(...,1)), which SVG accepts as a paint value. It still goes through
+    // the JSON escaper so no caller-supplied text can break out.
+    // SmilesDrawer deep-merges options, so the built-in light/dark/custom
+    // themes stay intact; 'mcq' only overrides C and H and falls back to C
+    // for every other atom via ThemeManager.getColor.
+    val atomColor = jsStringLiteral(chemColorCss)
+    // In reaction mode the caption is textAbove in JS source, not HTML, so it
+    // goes through the JSON escaper (which also neutralises '<', '>' and '&'
+    // inside the inline <script>).
+    val reagentText = jsStringLiteral(element.caption)
+
     return buildString {
         append("<div class=\"mcq-chem\">")
-        append("<svg id=\"$svgId\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;")
-        append("max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>")
+        append("<svg id=\"$svgId\" style=\"$CHEM_DISPLAY_STYLE\"></svg>")
         // A second, hidden SVG is drawn with the bundled light theme so a
         // stored diagram has dark strokes on white export surfaces, whatever
         // theme the learner was using when the editor captured it.
@@ -416,28 +445,45 @@ private fun chemBlockHtml(
         append("img.onerror=function(){};")
         append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
         append("}catch(e){}}")
-        // textColorCss comes from the WebView's `color` (onSurface, always
-        // rgba(...,1)), which SVG accepts as a paint value. It still goes
-        // through the JSON escaper so no caller-supplied text can break out.
-        // SmilesDrawer deep-merges options, so the built-in light/dark/custom
-        // themes stay intact; 'mcq' only overrides C and H and falls back to C
-        // for every other atom via ThemeManager.getColor.
-        val atomColor = jsStringLiteral(chemColorCss)
         append("try{")
-        append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
-        append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
-        append(",tree=>{try{")
-        // width/height are inert for an existing <svg> target (they size a
-        // canvas target); they stay only for parity with the bundled API.
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
-        append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
-        append("}}}).draw(tree,svg,'mcq');")
-        // The capture copy uses the built-in light theme: its conventional
-        // dark C/H and heteroatom colours survive white export surfaces.
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
-        append(".draw(tree,captureSvg,'light');")
-        append("capture();")
-        append("}catch(e){showFallback();}},err=>showFallback());")
+        if (isReaction) {
+            append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
+            // width/height are inert for an existing <svg> target; the options
+            // below tune only the live reaction. The hidden capture keeps its
+            // original light-theme, padding:2 drawer for white exports.
+            append("var rxnOptions={};")
+            append("var molOptions={width:300,height:300,padding:10,bondThickness:1.1,")
+            append("fontSizeLarge:13,overlapResolutionIterations:2,experimentalSSSR:true,")
+            append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
+            append("var captureMolOptions={width:300,height:300,padding:2};")
+            append("window.SmilesDrawer.parseReaction(").append(smilesJsLiteral(element.smiles))
+            append(",reaction=>{try{")
+            append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,molOptions)")
+            append(".draw(reaction,svg,'mcq',null,").append(reagentText).append(",\"\",false);")
+            // ReactionDrawer replaces the target's inline width/height with
+            // pixel values. Re-apply the cap on the live SVG only — never on
+            // the hidden capture SVG, whose clone drops its style anyway.
+            append("svg.style.cssText=").append(jsStringLiteral(CHEM_DISPLAY_STYLE)).append(";")
+            append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,captureMolOptions)")
+            append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")
+            append("capture();")
+            append("}catch(e){showFallback();}},err=>showFallback());")
+        } else {
+            append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
+            append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
+            append(",tree=>{try{")
+            // width/height are inert for an existing <svg> target (they size a
+            // canvas target); they stay only for parity with the bundled API.
+            append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
+            append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
+            append("}}}).draw(tree,svg,'mcq');")
+            // The capture copy uses the built-in light theme: its conventional
+            // dark C/H and heteroatom colours survive white export surfaces.
+            append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
+            append(".draw(tree,captureSvg,'light');")
+            append("capture();")
+            append("}catch(e){showFallback();}},err=>showFallback());")
+        }
         append("}catch(e){showFallback();}")
         append("})();</script>")
         append("</div>")

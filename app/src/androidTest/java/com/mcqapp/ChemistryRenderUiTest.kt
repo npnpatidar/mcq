@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
@@ -89,6 +90,31 @@ class ChemistryRenderUiTest {
             "})()"
     )
 
+    /**
+     * On the dark theme the structure must use the page's text colour; the
+     * bundled 'light' theme painted atoms #222/#666, which was unreadable.
+     * Compare the luminance of a coloured atom label with the body colour so
+     * a difference in CSS notation (rgb vs rgba) cannot cause a false fail.
+     */
+    private fun structureColorState(): String = evaluate(
+        "(function(){" +
+            "var s=document.getElementById('mcq-chem-0');" +
+            "if(!s)return 'no-svg';" +
+            "var t=s.querySelector('tspan[fill]');" +
+            "if(!t)return 'no-coloured-atom';" +
+            "var body=getComputedStyle(document.body).color;" +
+            "var paint=getComputedStyle(t).fill;" +
+            "function rgb(v){var m=v.match(/[0-9.]+/g);" +
+            "return m&&m.length>=3?[+m[0],+m[1],+m[2]]:null;}" +
+            "var a=rgb(body),b=rgb(paint);" +
+            "if(!a||!b)return 'unparsed:'+body+':'+paint;" +
+            "var lum=function(c){return .2126*c[0]+.7152*c[1]+.0722*c[2];};" +
+            "var d=Math.abs(lum(a)-lum(b));" +
+            "return d<12?'ok:'+Math.round(d)+':'+body+':'+paint:" +
+            "'mismatch:'+Math.round(d)+':'+body+':'+paint;" +
+            "})()"
+    )
+
     private fun structure() = listOf(
         ContentElement.TextElement("Compound: "),
         ContentElement.ChemElement(
@@ -102,7 +128,7 @@ class ChemistryRenderUiTest {
     @Test
     fun chemistryFitsA320DpScreenAndActuallyRendersTheSvg() {
         compose.setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 Box(Modifier.width(320.dp).height(480.dp)) {
                     ContentElements(structure())
                 }
@@ -127,13 +153,29 @@ class ChemistryRenderUiTest {
         } catch (t: Throwable) {
             throw AssertionError("SmilesDrawer did not draw a visible SVG; last state=$lastState", t)
         }
+        val heightPx = lastState.split(':').getOrNull(2)?.toIntOrNull()
+            ?: throw AssertionError("unexpected SVG state: $lastState")
+        assertTrue("structure has no height: $lastState", heightPx > 0)
+        assertTrue("structure too tall ($heightPx px): $lastState", heightPx <= 160)
+
+        var lastColor = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastColor = structureColorState()
+                lastColor.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            throw AssertionError(
+                "drawn structure colour does not match dark-theme text; last state=$lastColor", t
+            )
+        }
     }
 
     @Test
     fun aDrawnStructureIsRasterisedAndReportedWithItsKey() {
         val captured = AtomicReference<Pair<String, String>?>(null)
         compose.setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 Box(Modifier.width(320.dp).height(480.dp)) {
                     ContentElements(
                         structure(),

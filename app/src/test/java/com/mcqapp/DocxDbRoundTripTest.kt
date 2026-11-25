@@ -59,8 +59,9 @@ class DocxDbRoundTripTest {
     @Test
     fun reimportingAnExportUpdatesNothing() = runBlocking {
         val first = Importer(db).import(LegacyParser.parse(sampleJson()))
-        // 63: the sample now includes the benzene/SMILES chemistry question.
-        assertEquals(63, first.newQuestions)
+        // 65: the sample includes the benzene/SMILES chemistry question and
+        // the two organic-reaction questions with SMILES structures in options.
+        assertEquals(65, first.newQuestions)
 
         val exporter = PaperExporter(db)
         // The exporter writes into a stream now, so the test supplies one.
@@ -84,7 +85,7 @@ class DocxDbRoundTripTest {
             0,
             second.updatedQuestions
         )
-        // All 63 sample questions, chemistry included, must skip as duplicates.
-        assertEquals(63, second.duplicateQuestions)
+        // All 65 sample questions, chemistry included, must skip as duplicates.
+        assertEquals(65, second.duplicateQuestions)
     }
 }

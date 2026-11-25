@@ -284,6 +284,15 @@ internal const val SMILES_DRAWER_ASSET_URL =
     "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
 
 /**
+ * Display cap for the live structure, in CSS px. SmilesDrawer's `width` and
+ * `height` options are inert when it draws into an existing `<svg>` target,
+ * so the cap is applied as CSS on the live element instead. The hidden capture
+ * SVG carries no such cap: only its clone's `display:none` style is removed
+ * before serialisation, so the PNG keeps the drawer's viewBox-derived size.
+ */
+internal const val CHEM_DISPLAY_MAX_PX = 140
+
+/**
  * Characters a SMILES string may contain before it is handed to JavaScript.
  * Anything else (a quote, a semicolon, an angle bracket, whitespace, …) is
  * dropped: the SMILES is wrapped in a JS string literal and an HTML fallback
@@ -337,9 +346,11 @@ private fun chemBlockHtml(
     element: ContentElement.ChemElement,
     index: Int,
     structureUnavailable: String,
-    chemKey: String
+    chemKey: String,
+    chemColorCss: String
 ): String {
     val svgId = "mcq-chem-$index"
+    val captureId = "$svgId-capture"
     val fallbackId = "mcq-chem-$index-fallback"
     val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
     val caption = listOf(element.caption, element.formula)
@@ -359,7 +370,8 @@ private fun chemBlockHtml(
             append("<div class=\"mcq-chem\">")
             append("<img src=\"").append(escapeHtmlData(element.diagram))
                 .append("\" alt=\"").append(escapeHtmlData(visibleText))
-                .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
+                .append("\" style=\"max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
+                .append("height:auto;vertical-align:middle;\"/>")
             append(captionLine)
             append("</div>")
         }
@@ -367,21 +379,30 @@ private fun chemBlockHtml(
 
     return buildString {
         append("<div class=\"mcq-chem\">")
-        append("<svg id=\"$svgId\" style=\"max-width:100%;height:auto;\"></svg>")
+        append("<svg id=\"$svgId\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;")
+        append("max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>")
+        // A second, hidden SVG is drawn with the bundled light theme so a
+        // stored diagram has dark strokes on white export surfaces, whatever
+        // theme the learner was using when the editor captured it.
+        append("<svg id=\"$captureId\" style=\"display:none;\"></svg>")
         append(captionLine)
         append("<div id=\"$fallbackId\" class=\"mcq-chem-fallback\" style=\"display:none;\">")
         append(fallbackLine)
         append("</div>")
         append("<script>(function(){")
         append("var svg=document.getElementById('").append(svgId).append("');")
+        append("var captureSvg=document.getElementById('").append(captureId).append("');")
         append("var fallback=document.getElementById('").append(fallbackId).append("');")
         append("function showFallback(){svg.style.display='none';if(fallback)fallback.style.display='';}")
-        // Rasterise the finished drawing so a structure authored in the editor
-        // can be stored in ChemElement.diagram and travel through every export.
-        // The canvas is offscreen: capture never changes the page height, and
-        // failure only leaves the SVG (plus its text fallback) in place.
+        // Rasterise the hidden light-theme drawing so a structure authored in
+        // the editor can be stored in ChemElement.diagram and travel through
+        // every export with dark strokes on white surfaces. Serialise a CLONE
+        // with the display style removed: the live SVG carries the theme's
+        // text colour and the 140px cap, neither of which belongs in a PNG.
         append("function capture(){try{")
-        append("var xml=new XMLSerializer().serializeToString(svg);")
+        append("var c=captureSvg.cloneNode(true);")
+        append("c.removeAttribute('style');")
+        append("var xml=new XMLSerializer().serializeToString(c);")
         append("var img=new Image();")
         append("img.onload=function(){try{")
         append("var canvas=document.createElement('canvas');")
@@ -395,11 +416,26 @@ private fun chemBlockHtml(
         append("img.onerror=function(){};")
         append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
         append("}catch(e){}}")
+        // textColorCss comes from the WebView's `color` (onSurface, always
+        // rgba(...,1)), which SVG accepts as a paint value. It still goes
+        // through the JSON escaper so no caller-supplied text can break out.
+        // SmilesDrawer deep-merges options, so the built-in light/dark/custom
+        // themes stay intact; 'mcq' only overrides C and H and falls back to C
+        // for every other atom via ThemeManager.getColor.
+        val atomColor = jsStringLiteral(chemColorCss)
         append("try{")
         append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
         append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
         append(",tree=>{try{")
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2}).draw(tree,svg,'light');")
+        // width/height are inert for an existing <svg> target (they size a
+        // canvas target); they stay only for parity with the bundled API.
+        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
+        append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
+        append("}}}).draw(tree,svg,'mcq');")
+        // The capture copy uses the built-in light theme: its conventional
+        // dark C/H and heteroatom colours survive white export surfaces.
+        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
+        append(".draw(tree,captureSvg,'light');")
         append("capture();")
         append("}catch(e){showFallback();}},err=>showFallback());")
         append("}catch(e){showFallback();}")
@@ -486,7 +522,7 @@ internal fun mixedContentHtml(
                     .append(escapeHtmlData(element.src))
                     .append("\" style=\"max-width:100%;height:auto;vertical-align:middle;\"/>")
                 is ContentElement.ChemElement -> {
-                    append(chemBlockHtml(element, chemIndex, structureUnavailable, chemKey))
+                    append(chemBlockHtml(element, chemIndex, structureUnavailable, chemKey, textColorCss))
                     chemIndex++
                 }
             }

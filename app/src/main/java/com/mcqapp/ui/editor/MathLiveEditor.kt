@@ -39,8 +39,26 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
     "<!DOCTYPE html><html><head>" +
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
         "<link rel=\"stylesheet\" href=\"" + MATHLIVE_FONTS_CSS_URL + "\">" +
-        "</head><body style=\"margin:0;background:transparent;overflow:auto;\">" +
-        "<math-field id=\"mf\" style=\"min-height:120px;font-size:" + fontPx + "px;\"></math-field>" +
+        // MathLive's context menu and virtual keyboard are inside shadow roots;
+        // CSS variables pass through them (see the MathLive customizing and
+        // virtual-keyboard guides). The bundled build also defines
+        // `[theme='dark']` and `:host([theme='dark'])` variants, so opting in
+        // here keeps the native menu readable on the app's dark theme instead
+        // of showing a bright white panel. No dependency is needed.
+        "<style>" +
+        "body { --keyboard-background: #2b2b2b; --keyboard-border: #444444;" +
+        "--keyboard-accent-color: #8ab4f8; --keyboard-toolbar-background: #303030;" +
+        "--keyboard-toolbar-text: #f5f5f5; --keycap-text: #f5f5f5;" +
+        "--keycap-background: #3c3c3c; --keycap-background-active: #8ab4f8; }" +
+        "math-field { --primary: #8ab4f8; --menu-bg: #303030; --label-color: #f5f5f5;" +
+        "--active-label-color: #101010; --active-bg: #8ab4f8; --active-bg-dimmed: #505050;" +
+        "--ui-menu-bg: #303030; --ui-menu-text: #f5f5f5; --ui-menu-bg-hover: #454545;" +
+        "--ui-menu-bg-active: #8ab4f8; --ui-menu-text-active: #101010;" +
+        "--ui-menu-divider: 1px solid #555555; }" +
+        "math-field::part(menu-toggle) { color: #f5f5f5; }" +
+        "</style>" +
+        "</head><body theme=\"dark\" style=\"margin:0;background:transparent;overflow:auto;\">" +
+        "<math-field id=\"mf\" theme=\"dark\" style=\"font-size:" + fontPx + "px;\"></math-field>" +
         "<script src=\"" + MATHLIVE_JS_URL + "\"></script>" +
         "<script>" +
         "document.addEventListener('DOMContentLoaded', function () {" +
@@ -50,6 +68,36 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "MathLive.MathfieldElement.soundsDirectory = null;" +
         "}" +
         "mf.setValue(" + initialLatexJson + ");" +
+        // The default menu's Insert / Mode / Font Style / Color / matrix
+        // entries are submenus. On a 320dp screen they flip to the left and
+        // are clipped (owner screenshot). MathLive has no documented CSS or
+        // config to force their placement, but `mf.menuItems` is a supported
+        // documented API: keep a short, flat menu so nothing opens sideways.
+        // The default `copy` entry is itself a submenu (no Ctrl+C on touch), so
+        // add a flat Copy using the verified `copyToClipboard` command.
+        "try { var keep = ['cut','paste','select-all']; " +
+        "var rows = mf.menuItems.filter(function (item) { return keep.indexOf(item.id) >= 0; });" +
+        "mf.menuItems = [{ label: 'Copy', id: 'copy-latex', onMenuSelect: function () { " +
+        "mf.executeCommand('copyToClipboard'); } }].concat(rows);" +
+        "} catch (e) {}" +
+        // The WebView is only as tall as the field plus MathLive's virtual
+        // keyboard. MathLive dispatches `geometrychange` when the keyboard has
+        // settled (~300ms after focus); a focus-timed sample reads 0 and would
+        // clip it. `boundingRect.height` is already 0 while hidden, so no
+        // focus gate is needed. Keep load/focus/blur/input reports as well.
+        "function reportGeometry(){" +
+        "var fieldPx = 0; try { fieldPx = Math.round(mf.getBoundingClientRect().height); } catch (e) {}" +
+        "var keyboardPx = 0;" +
+        "try { var kb = window.mathVirtualKeyboard;" +
+        "if (kb && kb.boundingRect) keyboardPx = Math.round(kb.boundingRect.height); } catch (e) {}" +
+        "try { if (window.Android && window.Android.onGeometry) window.Android.onGeometry(fieldPx, keyboardPx); } catch (e) {}" +
+        "}" +
+        "try { var kbEvents = window.mathVirtualKeyboard;" +
+        "if (kbEvents && kbEvents.addEventListener) kbEvents.addEventListener('geometrychange', reportGeometry);" +
+        "} catch (e) {}" +
+        "mf.addEventListener('focusin', reportGeometry);" +
+        "mf.addEventListener('focusout', reportGeometry);" +
+        "reportGeometry(); setTimeout(reportGeometry, 0);" +
         // A programmatic set must not be echoed back as if the user had typed
         // it, or a recycled block would write one formula into another.
         "var applying = false;" +
@@ -74,6 +122,7 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         "mf.addEventListener('input', function () {" +
         "if (applying) return;" +
         "Android.onMathMl(mf.getValue('math-ml'));" +
+        "reportGeometry();" +
         "});" +
         "});" +
         "</script></body></html>"
@@ -89,6 +138,26 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
  */
 internal fun mathLiveFontPx(fontScale: Float): Int =
     (16f * fontScale.coerceIn(0.8f, 1.6f)).roundToInt().coerceIn(12, 26)
+
+/** Upper bound the editor used to hardcode; still the absolute ceiling. */
+internal const val MATHLIVE_MAX_EDITOR_PX = 560
+/** Enough room to edit a one-line formula without feeling like a label. */
+internal const val MATHLIVE_MIN_EDITOR_PX = 56
+
+/**
+ * Height of the WebView wrapper, in CSS pixels (== dp with this page's
+ * viewport), from the geometry the page reports.
+ *
+ * The field alone is compact; MathLive's virtual keyboard is only counted
+ * while focused (the page reports 0 when blurred). Both inputs are clamped
+ * so a bogus bridge value cannot collapse or blow up the layout.
+ */
+internal fun mathLiveEditorHeightPx(fieldPx: Int, keyboardPx: Int): Int {
+    val field = fieldPx.coerceIn(0, MATHLIVE_MAX_EDITOR_PX)
+    val keyboard = keyboardPx.coerceIn(0, MATHLIVE_MAX_EDITOR_PX)
+    val base = if (field <= 0) MATHLIVE_MIN_EDITOR_PX else field.coerceAtLeast(MATHLIVE_MIN_EDITOR_PX)
+    return (base + keyboard).coerceIn(MATHLIVE_MIN_EDITOR_PX, MATHLIVE_MAX_EDITOR_PX)
+}
 
 /**
  * Whether a programmatic write into the field is allowed at all.
@@ -136,14 +205,15 @@ fun MathLiveEditor(
     // this identity-keyed WebView or touching its bridge/teardown.
     val spokenLatex = remember { mutableStateOf(initialLatex) }
     val editorDescription = stringResource(R.string.a11y_formula_editor_value, spokenLatex.value)
+    // CSS px == dp for this page (width=device-width, initial-scale=1).
+    val geometry = remember { mutableStateOf(0 to 0) }
+    val editorHeightPx = mathLiveEditorHeightPx(geometry.value.first, geometry.value.second)
     AndroidView(
-        // The virtual keyboard panel is absolutely positioned at the
-        // bottom of the page; the WebView must be tall enough to show
-        // the field plus the whole keyboard without clipping.
-        // Tall enough for the formula plus MathLive's keyboard panel; the
-        // page scrolls if the layout is bigger than that.
+        // Sized from the field/keyboard geometry reported by the page. The
+        // old fixed 560dp reserved space for a keyboard that was not even
+        // visible, leaving a large empty gap below a one-line formula.
         modifier = modifier
-            .height(560.dp)
+            .height(editorHeightPx.dp)
             .semantics { contentDescription = editorDescription },
         factory = { ctx ->
             val view = WebView(ctx)
@@ -181,6 +251,18 @@ fun MathLiveEditor(
                     view.post {
                         userEdited.value = true
                         emitMathMl(blockId, mml)
+                    }
+                }
+
+                @JavascriptInterface
+                fun onGeometry(fieldPx: Int, keyboardPx: Int) {
+                    // Bridge callbacks arrive off the main thread; only write
+                    // state on the main thread and skip identical reports so a
+                    // redraw cannot loop through the bridge.
+                    view.post {
+                        if (geometry.value.first != fieldPx || geometry.value.second != keyboardPx) {
+                            geometry.value = fieldPx to keyboardPx
+                        }
                     }
                 }
             }, "Android")

@@ -365,10 +365,18 @@ private fun chemBlockHtml(
     val svgId = "mcq-chem-$index"
     val captureId = "$svgId-capture"
     val fallbackId = "mcq-chem-$index-fallback"
-    // ReactionParser splits on '>' into exactly three parts; empty reagents
-    // and products are allowed ("reactants>>" is the common case).
-    val isReaction = element.smiles.contains('>')
-    val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
+    // ReactionParser splits on '>' and requires exactly three parts, so a
+    // reaction needs exactly two '>' (empty reagents/products are allowed:
+    // "reactants>>" is the common case). A lone '>' is malformed: leave it on
+    // the molecule path rather than letting ReactionParser throw.
+    val isReaction = element.smiles.count { it == '>' } == 2
+    // The caption becomes the text above the arrow, so there is no separate
+    // caption line. Keep it in the fallback too: a broken drawer must not
+    // hide the reagent from a sighted reader.
+    val visibleText = buildString {
+        append(element.formula.takeIf { it.isNotBlank() } ?: element.smiles)
+        if (isReaction && element.caption.isNotBlank()) append(' ').append(element.caption)
+    }
     val caption = listOf(element.caption, element.formula)
         .filter { it.isNotBlank() }
         .joinToString(" ") { escapeHtmlData(it) }

@@ -253,8 +253,11 @@ class ChemistryRenderUiTest {
                 lastState.startsWith("ok:")
             }
         } catch (t: Throwable) {
+            // Carry the probe's own failure through to CI: without it a
+            // timed-out evaluateJavascript looks like a drawing failure.
             throw AssertionError(
-                "ReactionDrawer did not draw an arrow and reagent; last state=$lastState", t
+                "ReactionDrawer did not draw an arrow and reagent; " +
+                    "last state=$lastState; error=${t.message}", t
             )
         }
         val heightPx = lastState.split(':').getOrNull(2)?.toIntOrNull()

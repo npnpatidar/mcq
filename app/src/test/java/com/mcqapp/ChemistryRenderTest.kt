@@ -292,11 +292,29 @@ class ChemistryRenderTest {
         ))
         assertFalse("ordinary caption line must be suppressed in reaction mode",
             html.contains("<div class=\"mcq-chem-caption\">"))
-        assertTrue("text fallback missing", html.contains("Unavailable: C2H4O"))
+        assertTrue("text fallback missing",
+            html.contains("Unavailable: C2H4O acid catalyst"))
         assertTrue("height bridge missing", html.contains(CONTENT_HEIGHT_BRIDGE))
         // A molecule must still use the ordinary parser.
         assertFalse("molecule must not use parseReaction",
             htmlOf(ContentElement.ChemElement("CCO")).contains("parseReaction"))
+    }
+
+    @Test
+    fun aSingleAngleBracketStaysOnTheMoleculePath() {
+        // ReactionParser splits on '>' and throws unless there are exactly
+        // two. A malformed one-separator SMILES must not reach it; the
+        // molecule draw (which shows the ordinary caption line) is the safe
+        // fallback.
+        val html = htmlOf(ContentElement.ChemElement("CCO>CCO", caption = "not a reaction"))
+        assertTrue("single '>' must use the molecule parser", html.contains(
+            "SmilesDrawer.parse(\"CCO\\u003eCCO\""
+        ))
+        assertFalse("single '>' must not use parseReaction", html.contains("parseReaction"))
+        assertTrue("single '>' must use SvgDrawer", html.contains("new window.SmilesDrawer.SvgDrawer("))
+        assertTrue("single '>' must keep the ordinary caption line", html.contains(
+            "<div class=\"mcq-chem-caption\">not a reaction</div>"
+        ))
     }
 
     @Test

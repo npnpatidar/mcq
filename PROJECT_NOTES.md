@@ -324,10 +324,12 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.73` is the
-  published release (chemistry preview refreshes when SMILES changes and the
-  leech notice is published atomically with its card, including consecutive
-  crossings). `0.0.72` added chemical formulas and SMILES structural diagrams
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.74` is the
+  published release (readable, theme-coloured chemistry diagrams with exports
+  on light surfaces, a content-sized MathLive editor with a dark flat phone
+  menu, and two organic reaction questions in the sample bank). `0.0.73`
+  fixed the chemistry preview refresh and the one-shot leech notice.
+  `0.0.72` added chemical formulas and SMILES structural diagrams
   across editor, AI schema, on-screen content, TalkBack and exports, bundled
   offline SmilesDrawer with no Gradle dependency, plus a benzene question in
   the sample bank. `0.0.71` added the shared paper/category scope sheet on Search,

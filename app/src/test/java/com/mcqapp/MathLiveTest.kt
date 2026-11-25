@@ -233,7 +233,7 @@ class MathLiveTest {
         assertTrue(html.contains("::part(menu-toggle)"))
         // The clipped submenus (Insert/Mode/Font Style/Color/matrices) are
         // replaced by a short documented flat menu via mf.menuItems.
-        assertTrue(html.contains("mf.menuItems = mf.menuItems.filter"))
+        assertTrue(html.contains("mf.menuItems.filter"))
         assertTrue(html.contains("'cut','paste','select-all'"))
     }
 
@@ -243,5 +243,26 @@ class MathLiveTest {
         assertFalse(".height(560.dp)" in src)
         assertFalse("min-height:120px" in src)
         assertTrue("mathLiveEditorHeightPx(" in src)
+    }
+
+    @Test
+    fun geometryChangesAndFlatCopyAreWired() {
+        val html = mathLiveHtml("\"x^2\"")
+        // MathLive shows the keyboard after ~300ms: a focusin sample is too
+        // early. The documented geometrychange event is the authoritative
+        // signal, and a hidden keyboard already reports height 0.
+        assertTrue(
+            "listen for geometrychange on mathVirtualKeyboard",
+            html.contains("kbEvents.addEventListener('geometrychange', reportGeometry)")
+        )
+        assertFalse("no focus gate", html.contains("if (focused)"))
+        assertFalse("no 60ms focus timer", html.contains("setTimeout(reportGeometry, 60)"))
+        assertTrue(html.contains("Math.round(kb.boundingRect.height)"))
+        // `copy` is a submenu in 0.111.0 and cannot be kept; add a flat leaf
+        // that invokes the verified copyToClipboard command instead.
+        assertTrue("copy must survive without a submenu", html.contains("id: 'copy-latex'"))
+        assertTrue(html.contains("mf.executeCommand('copyToClipboard')"))
+        assertTrue(html.contains("].concat(rows)"))
+        assertTrue(html.contains("'cut','paste','select-all'"))
     }
 }

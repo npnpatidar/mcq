@@ -73,23 +73,30 @@ internal fun mathLiveHtml(initialLatexJson: String, fontPx: Int = DEFAULT_MATHLI
         // are clipped (owner screenshot). MathLive has no documented CSS or
         // config to force their placement, but `mf.menuItems` is a supported
         // documented API: keep a short, flat menu so nothing opens sideways.
+        // The default `copy` entry is itself a submenu (no Ctrl+C on touch), so
+        // add a flat Copy using the verified `copyToClipboard` command.
         "try { var keep = ['cut','paste','select-all']; " +
-        "mf.menuItems = mf.menuItems.filter(function (item) { return keep.indexOf(item.id) >= 0; });" +
+        "var rows = mf.menuItems.filter(function (item) { return keep.indexOf(item.id) >= 0; });" +
+        "mf.menuItems = [{ label: 'Copy', id: 'copy-latex', onMenuSelect: function () { " +
+        "mf.executeCommand('copyToClipboard'); } }].concat(rows);" +
         "} catch (e) {}" +
-        // The WebView must be only as tall as the field (plus MathLive's
-        // virtual keyboard while it is focused). A fixed 560dp wrapper left a
-        // huge empty gap under a one-line formula. Report the real CSS-pixel
-        // geometry on load, focus/blur and input; the host clamps it.
-        "var focused = false;" +
+        // The WebView is only as tall as the field plus MathLive's virtual
+        // keyboard. MathLive dispatches `geometrychange` when the keyboard has
+        // settled (~300ms after focus); a focus-timed sample reads 0 and would
+        // clip it. `boundingRect.height` is already 0 while hidden, so no
+        // focus gate is needed. Keep load/focus/blur/input reports as well.
         "function reportGeometry(){" +
         "var fieldPx = 0; try { fieldPx = Math.round(mf.getBoundingClientRect().height); } catch (e) {}" +
         "var keyboardPx = 0;" +
-        "if (focused) { try { var kb = window.mathVirtualKeyboard;" +
-        "if (kb && kb.boundingRect) keyboardPx = Math.round(kb.boundingRect.height); } catch (e) {} }" +
+        "try { var kb = window.mathVirtualKeyboard;" +
+        "if (kb && kb.boundingRect) keyboardPx = Math.round(kb.boundingRect.height); } catch (e) {}" +
         "try { if (window.Android && window.Android.onGeometry) window.Android.onGeometry(fieldPx, keyboardPx); } catch (e) {}" +
         "}" +
-        "mf.addEventListener('focusin', function () { focused = true; reportGeometry(); setTimeout(reportGeometry, 60); });" +
-        "mf.addEventListener('focusout', function () { focused = false; reportGeometry(); setTimeout(reportGeometry, 60); });" +
+        "try { var kbEvents = window.mathVirtualKeyboard;" +
+        "if (kbEvents && kbEvents.addEventListener) kbEvents.addEventListener('geometrychange', reportGeometry);" +
+        "} catch (e) {}" +
+        "mf.addEventListener('focusin', reportGeometry);" +
+        "mf.addEventListener('focusout', reportGeometry);" +
         "reportGeometry(); setTimeout(reportGeometry, 0);" +
         // A programmatic set must not be echoed back as if the user had typed
         // it, or a recycled block would write one formula into another.

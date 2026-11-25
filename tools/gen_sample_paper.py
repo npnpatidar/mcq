@@ -919,28 +919,28 @@ CATEGORIES = [
                             smiles="OC1CCOCCCC1O",
                             spoken="an eight membered cyclic ether with two hydroxyl groups",
                         ),
-                        txt("(1) Cyclic ether diol"),
+                        txt("(1) Cyclic ether diol, C₇H₁₄O₃"),
                     ],
                     "b": [
                         chem(
                             smiles="O=C1OCCCCC(O)C1",
                             spoken="a lactone ring with one hydroxyl group",
                         ),
-                        txt("(2) Hydroxy lactone"),
+                        txt("(2) Hydroxy lactone, C₇H₁₂O₃"),
                     ],
                     "c": [
                         chem(
                             smiles="OCCCCC(O)CC=O",
                             spoken="a chain with an aldehyde and two hydroxyl groups",
                         ),
-                        txt("(3) Hydroxy aldehyde"),
+                        txt("(3) Hydroxy aldehyde, C₇H₁₄O₃"),
                     ],
                     "d": [
                         chem(
                             smiles="OCCCCC(O)CCO",
                             spoken="a seven carbon chain with three hydroxyl groups",
                         ),
-                        txt("(4) Triol"),
+                        txt("(4) Triol, C₇H₁₆O₃"),
                     ],
                 },
                 ["d"],
@@ -978,28 +978,28 @@ CATEGORIES = [
                             smiles="CC1=CC(=O)CCC1",
                             spoken="a methyl substituted cyclohexenone ring",
                         ),
-                        txt("(1) Methyl cyclohexenone"),
+                        txt("(1) Methyl cyclohexenone, C₇H₁₀O"),
                     ],
                     "b": [
                         chem(
                             smiles="CC12OC1CCCC2O",
                             spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                         ),
-                        txt("(2) Epoxide with OH"),
+                        txt("(2) Epoxide with OH, C₇H₁₂O₂"),
                     ],
                     "c": [
                         chem(
                             smiles="CC(=O)C(=O)CCCC(=O)O",
                             spoken="a carboxylic acid chain with two ketones, one of them a methyl ketone",
                         ),
-                        txt("(3) Keto acid"),
+                        txt("(3) Keto acid, C₇H₁₀O₄"),
                     ],
                     "d": [
                         chem(
                             smiles="CC(=O)C(O)CCCC(=O)O",
                             spoken="a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                         ),
-                        txt("(4) Hydroxy keto acid"),
+                        txt("(4) Hydroxy keto acid, C₇H₁₂O₄"),
                     ],
                 },
                 ["c"],

@@ -510,7 +510,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(1) Cyclic ether diol"
+                    "content": "(1) Cyclic ether diol, C₇H₁₄O₃"
                   }
                 ],
                 "b": [
@@ -526,7 +526,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(2) Hydroxy lactone"
+                    "content": "(2) Hydroxy lactone, C₇H₁₂O₃"
                   }
                 ],
                 "c": [
@@ -542,7 +542,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(3) Hydroxy aldehyde"
+                    "content": "(3) Hydroxy aldehyde, C₇H₁₄O₃"
                   }
                 ],
                 "d": [
@@ -558,7 +558,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(4) Triol"
+                    "content": "(4) Triol, C₇H₁₆O₃"
                   }
                 ]
               },
@@ -612,7 +612,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(1) Methyl cyclohexenone"
+                    "content": "(1) Methyl cyclohexenone, C₇H₁₀O"
                   }
                 ],
                 "b": [
@@ -628,7 +628,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(2) Epoxide with OH"
+                    "content": "(2) Epoxide with OH, C₇H₁₂O₂"
                   }
                 ],
                 "c": [
@@ -644,7 +644,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(3) Keto acid"
+                    "content": "(3) Keto acid, C₇H₁₀O₄"
                   }
                 ],
                 "d": [
@@ -660,7 +660,7 @@
                   },
                   {
                     "type": "text",
-                    "content": "(4) Hydroxy keto acid"
+                    "content": "(4) Hydroxy keto acid, C₇H₁₂O₄"
                   }
                 ]
               },

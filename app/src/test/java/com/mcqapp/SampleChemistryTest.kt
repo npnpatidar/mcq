@@ -118,6 +118,12 @@ class SampleChemistryTest {
             "c" to "OCCCCC(O)CC=O",
             "d" to "OCCCCC(O)CCO"
         )
+        val labels = mapOf(
+            "a" to "(1) Cyclic ether diol, C₇H₁₄O₃",
+            "b" to "(2) Hydroxy lactone, C₇H₁₂O₃",
+            "c" to "(3) Hydroxy aldehyde, C₇H₁₄O₃",
+            "d" to "(4) Triol, C₇H₁₆O₃"
+        )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
             val option = question.options.single { it.id == id }
@@ -130,6 +136,7 @@ class SampleChemistryTest {
             assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
             assertEquals("", chem.diagram)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+            assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
         }
         assertEquals(
             "option 3 has an aldehyde and two hydroxyls, not three hydroxyls",
@@ -164,6 +171,12 @@ class SampleChemistryTest {
             "c" to "CC(=O)C(=O)CCCC(=O)O",
             "d" to "CC(=O)C(O)CCCC(=O)O"
         )
+        val labels = mapOf(
+            "a" to "(1) Methyl cyclohexenone, C₇H₁₀O",
+            "b" to "(2) Epoxide with OH, C₇H₁₂O₂",
+            "c" to "(3) Keto acid, C₇H₁₀O₄",
+            "d" to "(4) Hydroxy keto acid, C₇H₁₂O₄"
+        )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
             val option = question.options.single { it.id == id }
@@ -176,6 +189,7 @@ class SampleChemistryTest {
             assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
             assertEquals("", chem.diagram)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+            assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
         }
         assertEquals(
             "option 4 has one methyl ketone, one hydroxyl and one acid",

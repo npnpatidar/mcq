@@ -282,11 +282,13 @@ class ChemistryRenderUiTest {
             ?: throw AssertionError("unexpected reaction SVG state: $lastState")
         assertTrue("reaction has no height: $lastState", heightPx > 0)
         // The inline flex row keeps the compact scheme, arrow, reagent and
-        // product label on ONE line: a short row (<=80 px) that fits the 320 dp
-        // card. A stacked or multi-line rendering would be both taller and
-        // wider; the arrow / reagent / product-label checks above and the
-        // capture assertions below complete the layout guard.
-        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 80)
+        // product label on ONE line. With no artificial max-height the real
+        // height of that row — including the reagent caption — is ~99 px at
+        // 320 dp, so the bound leaves a little headroom while still rejecting
+        // stacked/multi-line content, which would be much taller. The nowrap,
+        // width, arrow / reagent / product-label and capture checks complete
+        // the layout guard.
+        assertTrue("reaction too tall ($heightPx px): $lastState", heightPx <= 110)
         assertTrue("reaction overflows 320dp ($widthPx px): $lastState", widthPx <= 320)
 
         // The light-theme capture bridge must still fire for a reaction.

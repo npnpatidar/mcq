@@ -96,7 +96,7 @@ class ChemistryRenderUiTest {
      * a stacked/multi-line layout fails), plus the arrow, reagent text and the
      * product label. The caption uses an ideographic baseline, so comparing
      * tspan and line boxes is not a reliable overlap probe across emulators —
-     * a bounded container height is.
+     * a real (uncapped) container height plus an explicit nowrap check are.
      */
     private fun reactionSvgState(): String = evaluate(
         "(function(){" +
@@ -108,6 +108,7 @@ class ChemistryRenderUiTest {
             "if(!f)return 'no-fallback';" +
             "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
             "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
+            "if(getComputedStyle(c).flexWrap!=='nowrap')return 'wrapping';" +
             "var b=c.getBoundingClientRect();" +
             "if(!(b.height>0))return 'zero-height';" +
             "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +

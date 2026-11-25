@@ -342,14 +342,28 @@ class ChemistryRenderTest {
     }
 
     @Test
+    fun hostileProductLabelIsEscapedAsHtmlText() {
+        val hostile = "<img src=x onerror=alert(1)>"
+        val html = htmlOf(ContentElement.ChemElement(
+            smiles = "CCO>>", caption = "reagent", formula = hostile
+        ))
+        assertFalse("product label emitted live markup",
+            html.contains("<img src=x onerror=alert(1)>"))
+        assertTrue("product label not escaped: $html", html.contains(
+            "<span class=\"mcq-chem-product\" style=\"font-size:0.85em\">" +
+                "&lt;img src=x onerror=alert(1)&gt;</span>"
+        ))
+        assertFalse("hostile product label injected an img tag", html.contains("<img "))
+    }
+
+    @Test
     fun reactionStructureUsesAnInlineFlexRowWithProductLabel() {
         val html = htmlOf(ContentElement.ChemElement(
             smiles = "CCO>>", caption = "reagent", formula = "A"
         ))
         assertTrue("reaction needs an inline flex row: $html", html.contains(
             "<div class=\"mcq-chem mcq-chem-reaction\" style=\"display:flex;" +
-                "align-items:center;gap:4px;max-width:100%;max-height:64px;" +
-                "white-space:nowrap;\">"
+                "align-items:center;gap:4px;max-width:100%;white-space:nowrap;\">"
         ))
         assertTrue("reaction svg must be compact, not capped or full-width", html.contains(
             "<svg id=\"mcq-chem-0\" style=\"max-width:100%;height:auto;" +
@@ -364,6 +378,8 @@ class ChemistryRenderTest {
             html.contains("id=\"mcq-chem-0\" style=\"max-width:100%;width:100%"))
         assertFalse("reaction must not emit the old caption line",
             html.contains("<div class=\"mcq-chem-caption\">"))
+        assertFalse("container must not cap its height behind the UI bound",
+            html.contains("max-height:64px"))
     }
 
     @Test

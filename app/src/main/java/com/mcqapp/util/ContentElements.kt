@@ -311,11 +311,11 @@ private const val CHEM_REACTION_STYLE =
 /**
  * Inline row for a whole reaction: the compact scheme and its product label
  * sit on one line. `white-space:nowrap` keeps a short reagent caption from
- * wrapping; the modest max-height rejects a stacked, multi-line scheme.
+ * wrapping. Deliberately NO max-height: the row's measured height must reflect
+ * its real content so the UI bound can actually fail on a stacked layout.
  */
 private const val CHEM_REACTION_CONTAINER_STYLE =
-    "display:flex;align-items:center;gap:4px;max-width:100%;max-height:64px;" +
-        "white-space:nowrap;"
+    "display:flex;align-items:center;gap:4px;max-width:100%;white-space:nowrap;"
 
 /**
  * Characters a SMILES string may contain before it is handed to JavaScript.

@@ -100,7 +100,7 @@ class SampleChemistryTest {
     fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-1")
         val scheme = structureOf(question.elements)
-        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1CCCOC(=O)C1>>", scheme.smiles)
         assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
         assertEquals("LiAlH₄ / ether", scheme.caption)
         assertTrue(scheme.spoken.contains("lactone"))
@@ -113,16 +113,16 @@ class SampleChemistryTest {
         assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
-            "a" to "OC1CCOCCCC1O",
-            "b" to "O=C1OCCCCC(O)C1",
-            "c" to "OCCCCC(O)CC=O",
-            "d" to "OCCCCC(O)CCO"
+            "a" to "OC1CCCOCC1O",
+            "b" to "O=C1CCCOC(O)C1",
+            "c" to "OCCCC(O)C=O",
+            "d" to "OCCCC(O)CCO"
         )
         val labels = mapOf(
-            "a" to "(1) Cyclic ether diol, C₇H₁₄O₃",
-            "b" to "(2) Hydroxy lactone, C₇H₁₂O₃",
-            "c" to "(3) Hydroxy aldehyde, C₇H₁₄O₃",
-            "d" to "(4) Triol, C₇H₁₆O₃"
+            "a" to "(1) Cyclic ether diol, C₆H₁₂O₃",
+            "b" to "(2) Hydroxy lactone, C₆H₁₀O₃",
+            "c" to "(3) Hydroxy aldehyde, C₆H₁₂O₃",
+            "d" to "(4) Hexane-1,3,6-triol, C₆H₁₄O₃"
         )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
@@ -139,12 +139,19 @@ class SampleChemistryTest {
             assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
         }
         assertEquals(
-            "option 3 has an aldehyde and two hydroxyls, not three hydroxyls",
-            "a chain with an aldehyde and two hydroxyl groups",
+            "option 3 has an aldehyde and one hydroxyl on a six carbon chain",
+            "a six carbon chain with an aldehyde at one end and one hydroxyl group",
             structureOf(question.options.single { it.id == "c" }.elements).spoken
         )
+        assertTrue(
+            "option 4 must be named hexane-1,3,6-triol",
+            structureOf(question.options.single { it.id == "d" }.elements).spoken
+                .contains("hexane-1,3,6-triol")
+        )
         assertEquals("LAH opens the lactone to a triol, option 4", listOf("d"), question.correctOptionIds)
-        assertTrue(question.explanation.contains("OCCCCC(O)CCO"))
+        assertTrue(question.explanation.contains("OCCCC(O)CCO"))
+        assertTrue(question.explanation.contains("hexane-1,3,6-triol"))
+        assertTrue(question.explanation.contains("C₆H₁₄O₃"))
         assertTrue(question.explanation.contains("option 4"))
     }
 
@@ -152,7 +159,7 @@ class SampleChemistryTest {
     fun theRuO4OxidationQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-2")
         val scheme = structureOf(question.elements)
-        assertEquals("the scheme is a reaction SMILES with an empty product", "CC1=CCCCC1O>>", scheme.smiles)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "CC1=CCC(O)CC1>>", scheme.smiles)
         assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
         assertEquals("RuO₄ / NaIO₄", scheme.caption)
         assertTrue(scheme.spoken.contains("methyl"))
@@ -166,10 +173,10 @@ class SampleChemistryTest {
         assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
-            "a" to "CC1=CC(=O)CCC1",
-            "b" to "CC12OC1CCCC2O",
-            "c" to "CC(=O)C(=O)CCCC(=O)O",
-            "d" to "CC(=O)C(O)CCCC(=O)O"
+            "a" to "CC1=CCC(=O)CC1",
+            "b" to "CC12OC1CCC(O)C2",
+            "c" to "CC(=O)CCC(=O)CC(=O)O",
+            "d" to "CC(=O)CCC(O)CC(=O)O"
         )
         val labels = mapOf(
             "a" to "(1) Methyl cyclohexenone, C₇H₁₀O",
@@ -196,8 +203,14 @@ class SampleChemistryTest {
             "a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
             structureOf(question.options.single { it.id == "d" }.elements).spoken
         )
+        assertEquals(
+            "option 3 product spacing must match the reference chain",
+            "a carboxylic acid chain with two ketones separated by two CH₂ groups, one of them a methyl ketone",
+            structureOf(question.options.single { it.id == "c" }.elements).spoken
+        )
         assertEquals("RuO4 also oxidises the alcohol, so option 3", listOf("c"), question.correctOptionIds)
-        assertTrue(question.explanation.contains("CC(=O)C(=O)CCCC(=O)O"))
+        assertTrue(question.explanation.contains("CH₃CO–CH₂–CH₂–CO–CH₂–COOH"))
+        assertTrue(question.explanation.contains("CC(=O)CCC(=O)CC(=O)O"))
         assertTrue(question.explanation.contains("option 3"))
     }
 

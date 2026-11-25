@@ -907,40 +907,40 @@ CATEGORIES = [
                         "Which is the reduction product (A) of the following compound?"
                     ),
                     chem(
-                        smiles="O=C1OCCCCC(=O)C1>>",
+                        smiles="O=C1CCCOC(=O)C1>>",
                         formula="A",
                         caption="LiAlH₄ / ether",
-                        spoken="an eight membered ring lactone with a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
+                        spoken="a lactone ring with six carbon atoms and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
                 ],
                 {
                     "a": [
                         chem(
-                            smiles="OC1CCOCCCC1O",
-                            spoken="an eight membered cyclic ether with two hydroxyl groups",
+                            smiles="OC1CCCOCC1O",
+                            spoken="a seven membered cyclic ether ring with six carbons and two hydroxyl groups",
                         ),
-                        txt("(1) Cyclic ether diol, C₇H₁₄O₃"),
+                        txt("(1) Cyclic ether diol, C₆H₁₂O₃"),
                     ],
                     "b": [
                         chem(
-                            smiles="O=C1OCCCCC(O)C1",
-                            spoken="a lactone ring with one hydroxyl group",
+                            smiles="O=C1CCCOC(O)C1",
+                            spoken="a lactone ring with one hydroxyl group on a carbon next to the ring oxygen",
                         ),
-                        txt("(2) Hydroxy lactone, C₇H₁₂O₃"),
+                        txt("(2) Hydroxy lactone, C₆H₁₀O₃"),
                     ],
                     "c": [
                         chem(
-                            smiles="OCCCCC(O)CC=O",
-                            spoken="a chain with an aldehyde and two hydroxyl groups",
+                            smiles="OCCCC(O)C=O",
+                            spoken="a six carbon chain with an aldehyde at one end and one hydroxyl group",
                         ),
-                        txt("(3) Hydroxy aldehyde, C₇H₁₄O₃"),
+                        txt("(3) Hydroxy aldehyde, C₆H₁₂O₃"),
                     ],
                     "d": [
                         chem(
-                            smiles="OCCCCC(O)CCO",
-                            spoken="a seven carbon chain with three hydroxyl groups",
+                            smiles="OCCCC(O)CCO",
+                            spoken="a six carbon chain with hydroxyl groups at carbons 1, 3 and 6, hexane-1,3,6-triol",
                         ),
-                        txt("(4) Triol, C₇H₁₆O₃"),
+                        txt("(4) Hexane-1,3,6-triol, C₆H₁₄O₃"),
                     ],
                 },
                 ["d"],
@@ -950,8 +950,8 @@ CATEGORIES = [
                         "protonates the alkoxide intermediates. The ring ketone becomes "
                         "a secondary alcohol, and the lactone ring opens: its acyl carbon "
                         "becomes a primary alcohol (CH₂OH) while the ring oxygen stays "
-                        "on its neighbouring carbon as an OH. The product is the "
-                        "seven-carbon triol OCCCCC(O)CCO, so the answer is option 4. "
+                        "on its neighbouring carbon as an OH. The product is hexane-1,3,6-triol "
+                        "C₆H₁₄O₃ (SMILES OCCCC(O)CCO), so the answer is option 4. "
                         "Option 2 leaves the lactone closed, option 3 stops its acyl "
                         "carbon at an aldehyde, and option 1 treats the lactone as an "
                         "ether that stays in a ring."
@@ -966,37 +966,37 @@ CATEGORIES = [
                 [
                     txt("Which structure is product A of the reaction below?"),
                     chem(
-                        smiles="CC1=CCCCC1O>>",
+                        smiles="CC1=CCC(O)CC1>>",
                         formula="A",
                         caption="RuO₄ / NaIO₄",
-                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it, treated with RuO₄ and NaIO₄",
+                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group on another ring carbon, treated with RuO₄ and NaIO₄",
                     ),
                 ],
                 {
                     "a": [
                         chem(
-                            smiles="CC1=CC(=O)CCC1",
-                            spoken="a methyl substituted cyclohexenone ring",
+                            smiles="CC1=CCC(=O)CC1",
+                            spoken="a methyl substituted cyclohexenone ring with the ketone away from the methyl group",
                         ),
                         txt("(1) Methyl cyclohexenone, C₇H₁₀O"),
                     ],
                     "b": [
                         chem(
-                            smiles="CC12OC1CCCC2O",
+                            smiles="CC12OC1CCC(O)C2",
                             spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                         ),
                         txt("(2) Epoxide with OH, C₇H₁₂O₂"),
                     ],
                     "c": [
                         chem(
-                            smiles="CC(=O)C(=O)CCCC(=O)O",
-                            spoken="a carboxylic acid chain with two ketones, one of them a methyl ketone",
+                            smiles="CC(=O)CCC(=O)CC(=O)O",
+                            spoken="a carboxylic acid chain with two ketones separated by two CH₂ groups, one of them a methyl ketone",
                         ),
                         txt("(3) Keto acid, C₇H₁₀O₄"),
                     ],
                     "d": [
                         chem(
-                            smiles="CC(=O)C(O)CCCC(=O)O",
+                            smiles="CC(=O)CCC(O)CC(=O)O",
                             spoken="a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                         ),
                         txt("(4) Hydroxy keto acid, C₇H₁₂O₄"),
@@ -1010,8 +1010,8 @@ CATEGORIES = [
                         "methyl ketone (–C(=O)CH₃); the other alkene carbon has a "
                         "hydrogen and is oxidised all the way to –COOH. The same "
                         "reagent also oxidises the secondary alcohol to a ketone, "
-                        "giving HOOC–CH₂–CH₂–CH₂–C(=O)–C(=O)–CH₃ (SMILES "
-                        "CC(=O)C(=O)CCCC(=O)O), which is option 3. Option 4 leaves "
+                        "giving CH₃CO–CH₂–CH₂–CO–CH₂–COOH (SMILES "
+                        "CC(=O)CCC(=O)CC(=O)O), which is option 3. Option 4 leaves "
                         "that alcohol unoxidised; options 1 and 2 never cleave the "
                         "double bond."
                     )

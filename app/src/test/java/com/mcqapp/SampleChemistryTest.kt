@@ -100,7 +100,7 @@ class SampleChemistryTest {
     fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-1")
         val scheme = structureOf(question.elements)
-        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1CCCOC(=O)C1>>", scheme.smiles)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
         assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
         assertEquals("LiAlH₄ / ether", scheme.caption)
         assertTrue(scheme.spoken.contains("lactone"))
@@ -113,16 +113,16 @@ class SampleChemistryTest {
         assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
-            "a" to "OC1CCCOCC1O",
-            "b" to "O=C1CCCOC(O)C1",
-            "c" to "OCCCC(O)C=O",
-            "d" to "OCCCC(O)CCO"
+            "a" to "OC1CCOCCCC1O",
+            "b" to "O=C1OCCCCC(O)C1",
+            "c" to "OCCCCC(O)CC=O",
+            "d" to "OCCCCC(O)CCO"
         )
         val labels = mapOf(
-            "a" to "(1) Cyclic ether diol, C₆H₁₂O₃",
-            "b" to "(2) Hydroxy lactone, C₆H₁₀O₃",
-            "c" to "(3) Hydroxy aldehyde, C₆H₁₂O₃",
-            "d" to "(4) Hexane-1,3,6-triol, C₆H₁₄O₃"
+            "a" to "(1) Cyclic ether diol, C₇H₁₄O₃",
+            "b" to "(2) Hydroxy lactone, C₇H₁₂O₃",
+            "c" to "(3) Hydroxy aldehyde, C₇H₁₄O₃",
+            "d" to "(4) Heptane-1,3,7-triol, C₇H₁₆O₃"
         )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
@@ -139,19 +139,20 @@ class SampleChemistryTest {
             assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
         }
         assertEquals(
-            "option 3 has an aldehyde and one hydroxyl on a six carbon chain",
-            "a six carbon chain with an aldehyde at one end and one hydroxyl group",
+            "option 3 has an aldehyde and one hydroxyl on a seven carbon chain",
+            "a seven carbon chain with an aldehyde at one end and one hydroxyl group",
             structureOf(question.options.single { it.id == "c" }.elements).spoken
         )
         assertTrue(
-            "option 4 must be named hexane-1,3,6-triol",
+            "option 4 must be named heptane-1,3,7-triol",
             structureOf(question.options.single { it.id == "d" }.elements).spoken
-                .contains("hexane-1,3,6-triol")
+                .contains("heptane-1,3,7-triol")
         )
         assertEquals("LAH opens the lactone to a triol, option 4", listOf("d"), question.correctOptionIds)
-        assertTrue(question.explanation.contains("OCCCC(O)CCO"))
-        assertTrue(question.explanation.contains("hexane-1,3,6-triol"))
-        assertTrue(question.explanation.contains("C₆H₁₄O₃"))
+        assertTrue(question.explanation.contains("OCCCCC(O)CCO"))
+        assertTrue(question.explanation.contains("seven-carbon"))
+        assertTrue(question.explanation.contains("heptane-1,3,7-triol"))
+        assertTrue(question.explanation.contains("C₇H₁₆O₃"))
         assertTrue(question.explanation.contains("option 4"))
     }
 

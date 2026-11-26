@@ -488,10 +488,10 @@
                 {
                   "type": "chem",
                   "content": {
-                    "smiles": "O=C1CCCOC(=O)C1>>",
+                    "smiles": "O=C1OCCCCC(=O)C1>>",
                     "formula": "A",
                     "caption": "LiAlH₄ / ether",
-                    "spoken": "a lactone ring with six carbon atoms and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
+                    "spoken": "an eight membered lactone ring with seven carbons and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     "diagram": ""
                   }
                 }
@@ -501,23 +501,23 @@
                   {
                     "type": "chem",
                     "content": {
-                      "smiles": "OC1CCCOCC1O",
+                      "smiles": "OC1CCOCCCC1O",
                       "formula": "",
                       "caption": "",
-                      "spoken": "a seven membered cyclic ether ring with six carbons and two hydroxyl groups",
+                      "spoken": "an eight membered cyclic ether ring with seven carbons and two hydroxyl groups",
                       "diagram": ""
                     }
                   },
                   {
                     "type": "text",
-                    "content": "(1) Cyclic ether diol, C₆H₁₂O₃"
+                    "content": "(1) Cyclic ether diol, C₇H₁₄O₃"
                   }
                 ],
                 "b": [
                   {
                     "type": "chem",
                     "content": {
-                      "smiles": "O=C1CCCOC(O)C1",
+                      "smiles": "O=C1OCCCCC(O)C1",
                       "formula": "",
                       "caption": "",
                       "spoken": "a lactone ring with one hydroxyl group on a carbon next to the ring oxygen",
@@ -526,46 +526,46 @@
                   },
                   {
                     "type": "text",
-                    "content": "(2) Hydroxy lactone, C₆H₁₀O₃"
+                    "content": "(2) Hydroxy lactone, C₇H₁₂O₃"
                   }
                 ],
                 "c": [
                   {
                     "type": "chem",
                     "content": {
-                      "smiles": "OCCCC(O)C=O",
+                      "smiles": "OCCCCC(O)CC=O",
                       "formula": "",
                       "caption": "",
-                      "spoken": "a six carbon chain with an aldehyde at one end and one hydroxyl group",
+                      "spoken": "a seven carbon chain with an aldehyde at one end and one hydroxyl group",
                       "diagram": ""
                     }
                   },
                   {
                     "type": "text",
-                    "content": "(3) Hydroxy aldehyde, C₆H₁₂O₃"
+                    "content": "(3) Hydroxy aldehyde, C₇H₁₄O₃"
                   }
                 ],
                 "d": [
                   {
                     "type": "chem",
                     "content": {
-                      "smiles": "OCCCC(O)CCO",
+                      "smiles": "OCCCCC(O)CCO",
                       "formula": "",
                       "caption": "",
-                      "spoken": "a six carbon chain with hydroxyl groups at carbons 1, 3 and 6, hexane-1,3,6-triol",
+                      "spoken": "a seven carbon chain with hydroxyl groups at carbons 1, 3 and 7, heptane-1,3,7-triol",
                       "diagram": ""
                     }
                   },
                   {
                     "type": "text",
-                    "content": "(4) Hexane-1,3,6-triol, C₆H₁₄O₃"
+                    "content": "(4) Heptane-1,3,7-triol, C₇H₁₆O₃"
                   }
                 ]
               },
               "explanation_elements": [
                 {
                   "type": "text",
-                  "content": "LiAlH₄ reduces both carbonyls; the aqueous work-up then protonates the alkoxide intermediates. The ring ketone becomes a secondary alcohol, and the lactone ring opens: its acyl carbon becomes a primary alcohol (CH₂OH) while the ring oxygen stays on its neighbouring carbon as an OH. The product is hexane-1,3,6-triol C₆H₁₄O₃ (SMILES OCCCC(O)CCO), so the answer is option 4. Option 2 leaves the lactone closed, option 3 stops its acyl carbon at an aldehyde, and option 1 treats the lactone as an ether that stays in a ring."
+                  "content": "LiAlH₄ reduces both carbonyls; the aqueous work-up then protonates the alkoxide intermediates. The ring ketone becomes a secondary alcohol, and the lactone ring opens: its acyl carbon becomes a primary alcohol (CH₂OH) while the ring oxygen stays on its neighbouring carbon as an OH. The product is the seven-carbon triol heptane-1,3,7-triol C₇H₁₆O₃ (SMILES OCCCCC(O)CCO), so the answer is option 4. Option 2 leaves the lactone closed, option 3 stops its acyl carbon at an aldehyde, and option 1 treats the lactone as an ether that stays in a ring."
                 }
               ],
               "difficulty": "hard",

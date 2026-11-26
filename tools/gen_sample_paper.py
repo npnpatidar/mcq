@@ -907,40 +907,40 @@ CATEGORIES = [
                         "Which is the reduction product (A) of the following compound?"
                     ),
                     chem(
-                        smiles="O=C1CCCOC(=O)C1>>",
+                        smiles="O=C1OCCCCC(=O)C1>>",
                         formula="A",
                         caption="LiAlH₄ / ether",
-                        spoken="a lactone ring with six carbon atoms and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
+                        spoken="an eight membered lactone ring with seven carbons and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
                 ],
                 {
                     "a": [
                         chem(
-                            smiles="OC1CCCOCC1O",
-                            spoken="a seven membered cyclic ether ring with six carbons and two hydroxyl groups",
+                            smiles="OC1CCOCCCC1O",
+                            spoken="an eight membered cyclic ether ring with seven carbons and two hydroxyl groups",
                         ),
-                        txt("(1) Cyclic ether diol, C₆H₁₂O₃"),
+                        txt("(1) Cyclic ether diol, C₇H₁₄O₃"),
                     ],
                     "b": [
                         chem(
-                            smiles="O=C1CCCOC(O)C1",
+                            smiles="O=C1OCCCCC(O)C1",
                             spoken="a lactone ring with one hydroxyl group on a carbon next to the ring oxygen",
                         ),
-                        txt("(2) Hydroxy lactone, C₆H₁₀O₃"),
+                        txt("(2) Hydroxy lactone, C₇H₁₂O₃"),
                     ],
                     "c": [
                         chem(
-                            smiles="OCCCC(O)C=O",
-                            spoken="a six carbon chain with an aldehyde at one end and one hydroxyl group",
+                            smiles="OCCCCC(O)CC=O",
+                            spoken="a seven carbon chain with an aldehyde at one end and one hydroxyl group",
                         ),
-                        txt("(3) Hydroxy aldehyde, C₆H₁₂O₃"),
+                        txt("(3) Hydroxy aldehyde, C₇H₁₄O₃"),
                     ],
                     "d": [
                         chem(
-                            smiles="OCCCC(O)CCO",
-                            spoken="a six carbon chain with hydroxyl groups at carbons 1, 3 and 6, hexane-1,3,6-triol",
+                            smiles="OCCCCC(O)CCO",
+                            spoken="a seven carbon chain with hydroxyl groups at carbons 1, 3 and 7, heptane-1,3,7-triol",
                         ),
-                        txt("(4) Hexane-1,3,6-triol, C₆H₁₄O₃"),
+                        txt("(4) Heptane-1,3,7-triol, C₇H₁₆O₃"),
                     ],
                 },
                 ["d"],
@@ -950,8 +950,9 @@ CATEGORIES = [
                         "protonates the alkoxide intermediates. The ring ketone becomes "
                         "a secondary alcohol, and the lactone ring opens: its acyl carbon "
                         "becomes a primary alcohol (CH₂OH) while the ring oxygen stays "
-                        "on its neighbouring carbon as an OH. The product is hexane-1,3,6-triol "
-                        "C₆H₁₄O₃ (SMILES OCCCC(O)CCO), so the answer is option 4. "
+                        "on its neighbouring carbon as an OH. The product is the seven-carbon "
+                        "triol heptane-1,3,7-triol C₇H₁₆O₃ (SMILES OCCCCC(O)CCO), so the "
+                        "answer is option 4. "
                         "Option 2 leaves the lactone closed, option 3 stops its acyl "
                         "carbon at an aldehyde, and option 1 treats the lactone as an "
                         "ether that stays in a ring."

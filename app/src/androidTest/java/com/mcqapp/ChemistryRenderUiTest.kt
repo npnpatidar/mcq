@@ -91,12 +91,22 @@ class ChemistryRenderUiTest {
     )
 
     /**
-     * The reaction is an inline flex row: compact scheme + arrow + reagent
+     * The reaction is an inline flex row: scheme + arrow + reagent
      * caption + product label on ONE line. Probe the whole container's box (so
      * a stacked/multi-line layout fails), plus the arrow, reagent text and the
      * product label. The caption uses an ideographic baseline, so comparing
      * tspan and line boxes is not a reliable overlap probe across emulators —
      * a real (uncapped) container height plus an explicit nowrap check are.
+     *
+     * The same probe guards the two rendering regressions that only a
+     * computed-style read can see: the live labels and caption must keep their
+     * own small font (a document-global style from the hidden capture would
+     * inflate them), and the hidden capture — the source of the exported PNG —
+     * must have a finite positive viewBox and a real arrow, which
+     * ReactionDrawer cannot compute when its raw molecule options omit
+     * `bondLength`/`fontSizeLarge`. Its arrow must also keep the drawer's
+     * default 1 px stroke: the capture is drawn at the 1x capture scale, so
+     * sharing the live scheme's 2.2x chrome would thicken the exported arrow.
      */
     private fun reactionSvgState(): String = evaluate(
         "(function(){" +
@@ -109,6 +119,7 @@ class ChemistryRenderUiTest {
             "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
             "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
             "if(getComputedStyle(c).flexWrap!=='nowrap')return 'wrapping';" +
+            "if(getComputedStyle(c).justifyContent!=='center')return 'not-centered';" +
             "var b=c.getBoundingClientRect();" +
             "if(!(b.height>0))return 'zero-height';" +
             "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +
@@ -116,9 +127,127 @@ class ChemistryRenderUiTest {
             "var p=c.querySelector('.mcq-chem-product');" +
             "if(!p)return 'no-product-label';" +
             "if(p.textContent.trim()!=='A')return 'wrong-product-label';" +
+            // The live scheme must keep its OWN proportions: labels come from
+            // its scoped 8.1 pt `.element` rule (10.8 px, above Android's 8 px
+            // minimum font size); the hidden capture's 11 pt rule (14.6667 px)
+            // wins if scoping regresses.
+            "var at=s.querySelector('text.element');" +
+            "if(!at)return 'no-atom-label';" +
+            "var af=parseFloat(getComputedStyle(at).fontSize);" +
+            "if(!(Math.abs(af-10.8)<=0.2))return 'label-font:'+af;" +
+            // The reagent caption uses `.text` at 0.8 * 8.1 pt (8.64 px); an
+            // unscoped capture rule makes it 0.8 * 11 pt (11.73 px).
+            "var ct=s.querySelector('text.text');" +
+            "if(!ct)return 'no-caption-node';" +
+            "var cf=parseFloat(getComputedStyle(ct).fontSize);" +
+            "if(!(Math.abs(cf-8.64)<=0.2))return 'caption-font:'+cf;" +
+            // The hidden light-theme capture feeds the exported PNG.
+            // ReactionDrawer's arrow/caption geometry reads the RAW molecule
+            // options, so a capture without bondLength/fontSizeLarge used to
+            // produce viewBox="0 0 NaN <finite height>" (width NaN, height
+            // still ~95.5) and x2="NaN": the PNG lost the arrow and the
+            // product side.
+            "var cap=document.getElementById('mcq-chem-0-capture');" +
+            "if(!cap)return 'no-capture';" +
+            "var cvb=cap.viewBox.baseVal;" +
+            "var cw=cvb?cvb.width:NaN,ch=cvb?cvb.height:NaN;" +
+            "if(!isFinite(cw)||!isFinite(ch)||!(cw>0)||!(ch>0))" +
+            "return 'bad-capture:'+cw+'x'+ch;" +
+            "var ca=cap.querySelector('line[marker-end]');" +
+            "if(!ca)return 'bad-capture:no-arrow';" +
+            "if(!(ca.x2.baseVal.value>0)||!isFinite(ca.y2.baseVal.value))" +
+            "return 'bad-capture:arrow:'+ca.getAttribute('x2')+':'+ca.getAttribute('y2');" +
+            // The capture is drawn at the 1x capture scale with
+            // ReactionDrawer's DEFAULT chrome, whose arrow thickness is 1 user
+            // unit = 1 px. Sharing the live 2.2-unit chrome would make it
+            // 2.2 px here.
+            "var cas=parseFloat(getComputedStyle(ca).strokeWidth);" +
+            "if(!(Math.abs(cas-1)<=0.01))return 'bad-capture:arrow-stroke:'+cas;" +
+            // The row is a full-width block: the visible children (skip the
+            // hidden capture SVG and fallback, which have zero width) must be
+            // centred, so the left and right gaps agree within 2 px.
+            "var kids=c.children,minL=1e9,maxR=-1e9,seen=0;" +
+            "for(var i=0;i<kids.length;i++){var k=kids[i].getBoundingClientRect();" +
+            "if(!(k.width>0))continue;seen++;if(k.left<minL)minL=k.left;if(k.right>maxR)maxR=k.right;}" +
+            "if(!seen)return 'no-visible-children';" +
+            "if(Math.abs((minL-b.left)-(b.right-maxR))>2)return 'not-centered';" +
             "var n=s.querySelectorAll('line,text,tspan,circle,polygon').length;" +
             "if(!(n>0))return 'no-shapes';" +
             "return 'ok:'+n+':'+Math.round(b.height)+':'+Math.round(b.width);" +
+            "})()"
+    )
+
+    /**
+     * Each SVG carries its own `<style>` scoped to its own id. In production
+     * every answer option is a separate WebView, so the leak that matters is
+     * INSIDE one page: SmilesDrawer injects a document-global `<style>`, and a
+     * reaction draws its hidden light-theme capture AFTER the live scheme at
+     * 11 pt over 30-unit bonds, which would restyle the visible reaction
+     * (labels 14.6667 px instead of 10.8 px). Any diagram drawn later in the
+     * same WebView restyles everything before it — the reason the standalone
+     * molecule is drawn last in this test.
+     *
+     * Compare the SAME glyph in both CCO drawings (the atom label containing
+     * 'O'), so the computed font ratio is exactly 8.1/11 when scoped and 1.0
+     * when the leak is back. Also compare the rendered label height as a
+     * fraction of the longest bond, which must agree between the two.
+     * Nothing is reported until both SVGs are fully drawn: the wait in the
+     * test retries every state that is not `ok:`.
+     */
+    private fun labelProportionState(): String = evaluate(
+        "(function(){" +
+            "var rxn=document.querySelector('.mcq-chem-reaction svg[id^=\"mcq-chem-\"]');" +
+            "var mol=document.querySelector('.mcq-chem:not(.mcq-chem-reaction) " +
+            "svg[id^=\"mcq-chem-\"]');" +
+            "if(!rxn)return 'no-reaction-svg';" +
+            "if(!mol)return 'no-standalone-svg';" +
+            // Both drawers must have finished: a finite positive viewBox, a
+            // rendered width and a hidden fallback. The reaction's inline
+            // width must also differ from its viewBox width: ReactionDrawer
+            // sets the unscaled width, so only the scale pass (it SHRINKS the
+            // style by 1/2.2) can move the style away from the viewBox.
+            "function readiness(svg){" +
+            "var vb=svg.viewBox.baseVal;" +
+            "if(!vb||!isFinite(vb.width)||!isFinite(vb.height)||" +
+            "!(vb.width>0)||!(vb.height>0))return 'viewBox';" +
+            "if(!(svg.getBoundingClientRect().width>0))return 'width';" +
+            "var fb=document.getElementById(svg.id+'-fallback');" +
+            "if(!fb)return 'fallback';" +
+            "if(getComputedStyle(fb).display!=='none')return 'fallback-shown';" +
+            "return '';}" +
+            "var r=readiness(rxn);if(r)return 'reaction-'+r;" +
+            "if(!(Math.abs(parseFloat(rxn.style.width)-rxn.viewBox.baseVal.width)>0.5))" +
+            "return 'reaction-unscaled';" +
+            "r=readiness(mol);if(r)return 'standalone-'+r;" +
+            // Same glyph set: both diagrams are CCO, so the label carrying
+            // the oxygen exists in each one.
+            "function oxygenLabel(svg){" +
+            "var t=svg.querySelectorAll('text.element');" +
+            "for(var i=0;i<t.length;i++){if(t[i].textContent.indexOf('O')>=0)return t[i];}" +
+            "return null;}" +
+            "var rxnText=oxygenLabel(rxn),molText=oxygenLabel(mol);" +
+            "if(!rxnText)return 'no-reaction-label';" +
+            "if(!molText)return 'no-standalone-label';" +
+            "var rxnFont=parseFloat(getComputedStyle(rxnText).fontSize);" +
+            "var molFont=parseFloat(getComputedStyle(molText).fontSize);" +
+            "if(!(rxnFont>0)||!(molFont>0))return 'no-font';" +
+            "var fontRatio=rxnFont/molFont;" +
+            "if(Math.abs(fontRatio-8.1/11)>0.02)return 'font-leak:'+fontRatio.toFixed(3);" +
+            // Bond length excludes the arrow (line[marker-end]); nested
+            // reactant SVGs are covered because the selector reaches inside.
+            "function proportion(svg,t){" +
+            "var lines=svg.querySelectorAll('line:not([marker-end])'),max=0;" +
+            "for(var i=0;i<lines.length;i++){var q=lines[i].getBoundingClientRect();" +
+            "var d=Math.hypot(q.width,q.height);if(d>max)max=d;}" +
+            "if(!(max>0))return -1;" +
+            "return t.getBoundingClientRect().height/max;}" +
+            "var rxnRatio=proportion(rxn,rxnText);" +
+            "var molRatio=proportion(mol,molText);" +
+            "if(!(rxnRatio>0))return 'no-reaction-bonds';" +
+            "if(!(molRatio>0))return 'no-standalone-bonds';" +
+            "if(Math.abs(rxnRatio-molRatio)>0.10)" +
+            "return 'proportion-mismatch:'+rxnRatio.toFixed(3)+':'+molRatio.toFixed(3);" +
+            "return 'ok:'+fontRatio.toFixed(3)+':'+rxnRatio.toFixed(3)+':'+molRatio.toFixed(3);" +
             "})()"
     )
 
@@ -163,6 +292,27 @@ class ChemistryRenderUiTest {
         // short caption is the reagent text above the arrow and `formula`
         // becomes the product label in the inline row.
         ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent", formula = "A")
+    )
+
+    /**
+     * Reaction FIRST, standalone molecule SECOND. In production an answer
+     * option gets its own WebView, so the trigger for this ordering is not the
+     * option's style leaking into a question: it is the reaction's own hidden
+     * capture (drawn after the live scheme at the 11 pt / 30-unit defaults) and
+     * any diagram drawn later in the same WebView, which both inject a
+     * document-global style. Without per-SVG scoping the LAST rules on the page
+     * win for every drawing.
+     */
+    private fun reactionThenStandalone() = listOf(
+        ContentElement.TextElement("Reaction: "),
+        ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent", formula = "A"),
+        ContentElement.TextElement(" Structure: "),
+        ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H6O",
+            caption = "ethanol",
+            spoken = "ethanol"
+        )
     )
 
     @Test
@@ -281,7 +431,7 @@ class ChemistryRenderUiTest {
         val widthPx = parts.getOrNull(3)?.toIntOrNull()
             ?: throw AssertionError("unexpected reaction SVG state: $lastState")
         assertTrue("reaction has no height: $lastState", heightPx > 0)
-        // The inline flex row keeps the compact scheme, arrow, reagent and
+        // The inline flex row keeps the scheme, arrow, reagent and
         // product label on ONE line. With no artificial max-height the real
         // height of that row — including the reagent caption — is ~99 px at
         // 320 dp, so the bound leaves a little headroom while still rejecting
@@ -297,5 +447,37 @@ class ChemistryRenderUiTest {
         assertEquals("chem-rxn", key)
         assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))
         assertTrue("empty PNG", png.length > 100)
+    }
+
+    @Test
+    fun reactionLabelsMatchStandaloneProportions() {
+        // Owner rule: a reaction letter keeps the same proportion to its bonds
+        // as an option structure. The production triggers for the style leak
+        // are the reaction's OWN hidden capture, drawn right after the live
+        // scheme at the 11 pt / 30-unit defaults, and any diagram drawn later
+        // in the same WebView — hence the standalone molecule SECOND here:
+        // its 11 pt <style> is the last on the page and would override the
+        // reaction's labels without per-SVG scoping.
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(reactionThenStandalone())
+                }
+            }
+        }
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = labelProportionState()
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            // The probe's own state tells CI whether it was a font leak, a
+            // proportion mismatch or a WebView that never settled.
+            throw AssertionError(
+                "reaction labels do not match standalone proportions; " +
+                    "last state=$lastState; error=${t.message}", t
+            )
+        }
     }
 }

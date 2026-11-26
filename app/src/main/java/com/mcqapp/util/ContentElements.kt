@@ -513,8 +513,12 @@ private fun chemBlockHtml(
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
             // rxnOptions stays at ReactionDrawer's defaults (light arrow and
             // plus signs); only the molecule options are compacted so the
-            // scheme fits ONE line. Atom labels use a small 4 pt font: after
-            // the 1.7x scheme scale they match the 96 px answer structures.
+            // scheme fits ONE line. The label-to-bond ratio matches the
+            // standalone drawings' 11/30: fontSizeLarge 3.2 over bondLength 10,
+            // with fontSizeSmall 0.9 keeping the standalone 3/11 subscript
+            // proportion. Reaction letters therefore stay the same size
+            // relative to their bonds as a 96 px answer structure, even after
+            // the 1.7x scheme scale.
             // width/height stay only for parity with the bundled API (inert
             // for an existing <svg> target). Terminal carbons are drawn in
             // BOTH the live and the hidden light-theme capture so on-screen
@@ -522,7 +526,7 @@ private fun chemBlockHtml(
             // padding:2 drawer at full resolution.
             append("var rxnOptions={};")
             append("var molOptions={width:300,height:300,padding:1,bondThickness:0.8,")
-            append("bondLength:10,fontSizeLarge:4,overlapResolutionIterations:2,")
+            append("bondLength:10,fontSizeLarge:3.2,fontSizeSmall:0.9,overlapResolutionIterations:2,")
             append("experimentalSSSR:true,terminalCarbons:true,")
             append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
             append("var captureMolOptions={width:300,height:300,padding:2,")

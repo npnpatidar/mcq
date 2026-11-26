@@ -411,18 +411,20 @@ class ChemistryRenderTest {
     fun reactionLiveOptionsAreTunedButCaptureAndLightStayUnchanged() {
         val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
         // Very compact geometry keeps reactants + arrow + products on one
-        // line; the 4 pt atom labels match the 96 px answer structures once
-        // the 1.7x scheme scale is applied.
+        // line; the 3.2/10 label-to-bond ratio and 0.9/3.2 subscript ratio
+        // match the 96 px answer structures once the 1.7x scheme scale is
+        // applied.
         assertTrue("reaction mol options not compact: $html", html.contains(
             "var molOptions={width:300,height:300,padding:1,bondThickness:0.8," +
-                "bondLength:10,fontSizeLarge:4,overlapResolutionIterations:2," +
-                "experimentalSSSR:true,terminalCarbons:true,"
+                "bondLength:10,fontSizeLarge:3.2,fontSizeSmall:0.9," +
+                "overlapResolutionIterations:2,experimentalSSSR:true,terminalCarbons:true,"
         ))
         assertFalse("large molecule geometry leaked into the reaction",
             html.contains("bondLength:30") || html.contains("fontSizeLarge:13") ||
                 html.contains("bondLength:16") || html.contains("bondLength:12") ||
                 html.contains("fontSizeLarge:8") || html.contains("fontSizeLarge:7") ||
-                html.contains("fontSizeLarge:5.5"))
+                html.contains("fontSizeLarge:5.5") ||
+                html.contains("fontSizeLarge:4") || html.contains("fontSizeSmall:3"))
         assertTrue("custom mcq theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
         ))
@@ -438,6 +440,42 @@ class ChemistryRenderTest {
         ))
         assertFalse("capture must not use the live theme",
             html.contains(".draw(reaction,captureSvg,'mcq'"))
+    }
+
+    @Test
+    fun reactionLabelToBondRatioMatchesStandaloneStructures() {
+        val html = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        // Parse only the live molecule options: captureMolOptions must stay
+        // untouched, and the trailing themes object makes a whole-brace match
+        // awkward, so stop at the theme override.
+        val liveMatch = Regex("var molOptions=\\{(.*?),themes:").find(html)
+        assertNotNull("live molOptions not found: $html", liveMatch)
+        val liveOptions = liveMatch!!.groupValues[1]
+
+        fun number(key: String): Double {
+            val match = Regex("$key:([0-9.]+)").find(liveOptions)
+            assertNotNull("missing $key in live molOptions: $liveOptions", match)
+            return match!!.groupValues[1].toDouble()
+        }
+
+        val large = number("fontSizeLarge")
+        val small = number("fontSizeSmall")
+        val bond = number("bondLength")
+
+        // Standalone structures use SmilesDrawer's defaults: large 11 over
+        // bond 30. The reaction must not be bolder than that, but its labels
+        // must stay legible, so allow down to 75% of the standalone ratio.
+        val standalone = 11.0 / 30.0
+        val labelToBond = large / bond
+        assertTrue("reaction labels too bold: $labelToBond > $standalone",
+            labelToBond <= standalone)
+        assertTrue("reaction labels too small: $labelToBond < ${0.75 * standalone}",
+            labelToBond >= 0.75 * standalone)
+
+        // Subscripts must keep the standalone 3/11 proportion; the old 3/4
+        // (75% of the letter height) is what made CH3 look oversized.
+        assertEquals("subscript/label ratio must match standalone",
+            3.0 / 11.0, small / large, 0.05)
     }
 
     @Test

@@ -416,7 +416,7 @@ class ChemistryRenderTest {
         assertTrue("reaction mol options not compact: $html", html.contains(
             "var molOptions={width:300,height:300,padding:1,bondThickness:0.8," +
                 "bondLength:10,fontSizeLarge:4,overlapResolutionIterations:2," +
-                "experimentalSSSR:true,"
+                "experimentalSSSR:true,terminalCarbons:true,"
         ))
         assertFalse("large molecule geometry leaked into the reaction",
             html.contains("bondLength:30") || html.contains("fontSizeLarge:13") ||
@@ -426,8 +426,13 @@ class ChemistryRenderTest {
         assertTrue("custom mcq theme missing", html.contains(
             "themes:{mcq:{C:\"rgba(0,0,0,1)\",H:\"rgba(0,0,0,1)\"}}"
         ))
-        assertTrue("capture options must stay light/padding:2",
-            html.contains("var captureMolOptions={width:300,height:300,padding:2};"))
+        assertTrue("capture options must stay light/padding:2 with terminal carbons",
+            html.contains("var captureMolOptions={width:300,height:300,padding:2," +
+                "terminalCarbons:true};"))
+        // Terminal CH3 labels must agree between the on-screen scheme and the
+        // hidden light-theme drawing that becomes the exported PNG.
+        assertEquals("terminalCarbons:true must reach both live and capture drawers",
+            2, html.split("terminalCarbons:true").size - 1)
         assertTrue("capture must draw with light theme", html.contains(
             ".draw(reaction,captureSvg,'light',null,\"reagent\",\"\",false);"
         ))

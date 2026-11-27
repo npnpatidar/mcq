@@ -150,6 +150,24 @@ class DataHonestyImportTest {
     }
 
     @Test
+    fun previewHashHasNoCellDataToScale() {
+        // ContentHash.of reads textContent, which drops tables entirely, so a
+        // table cell can never move the hash. Cell pictures are compared by
+        // classifyPreviewDetailed's withDownscaledImages twin instead.
+        val plain = dto("q1").copy(elements = listOf(ContentElement.TextElement("One?")))
+        val withCell = plain.copy(
+            elements = plain.elements + ContentElement.TableElement(
+                listOf(listOf("""<img src="data:image/png;base64,AAAA">"""))
+            )
+        )
+
+        assertEquals(
+            previewHashOf(plain) { it }.second,
+            previewHashOf(withCell) { it }.second
+        )
+    }
+
+    @Test
     fun changedBadgesNameBothLossesAndKeepTheTypeFirst() {
         assertEquals(
             listOf(

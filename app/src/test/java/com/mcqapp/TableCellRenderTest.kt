@@ -11,15 +11,18 @@ import com.mcqapp.util.CELL_IMAGE_STYLE
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.accessibleContentText
 import com.mcqapp.util.cellHasPortableImage
+import com.mcqapp.util.cellImageTag
 import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mapCellImages
 import com.mcqapp.util.portableCellImageSrc
 import com.mcqapp.util.sanitizeTableCell
+import com.mcqapp.util.soleImgSrc
 import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.tableCellHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,6 +73,49 @@ class TableCellRenderTest {
             assertFalse("no marker for $cell: $html", html.contains(CELL_IMAGE_MARKER))
             assertTrue("text before for $cell: $html", html.startsWith("a <img "))
             assertTrue("text after for $cell: $html", html.endsWith("/> b"))
+        }
+    }
+
+    @Test
+    fun `the stored canonical tag still renders as a picture`() {
+        // Imports store the same tag the renderer writes (src + the fixed
+        // style and alt). It must stay portable, or every imported cell image
+        // would show the marker after the import normaliser had run.
+        val cell = "before ${cellImageTag("data:image/png;base64,AAAA")} after"
+        val html = tableCellHtml(cell) { sanitizeMathml(it) }
+        assertTrue("a stored picture draws: $html", html.contains("<img src=\""))
+        assertFalse("no marker for a stored picture: $html", html.contains(CELL_IMAGE_MARKER))
+        assertTrue("the mixed path is chosen", cellHasPortableImage(cell))
+    }
+
+    @Test
+    fun `the strict reader accepts the canonical style and alt in either order`() {
+        val src = "data:image/png;base64,AAAA"
+        val tags = listOf(
+            """<img src="$src" style="$CELL_IMAGE_STYLE" alt="$CELL_IMAGE_ALT"/>""",
+            """<img style="$CELL_IMAGE_STYLE" alt="$CELL_IMAGE_ALT" src="$src"/>""",
+            """<img alt="$CELL_IMAGE_ALT" src="$src" style="$CELL_IMAGE_STYLE"/>"""
+        )
+        tags.forEach { tag ->
+            assertEquals("the stored tag stays drawable: $tag", src, soleImgSrc(tag))
+        }
+        // cellImageTag is that same pair, in the renderer's one order.
+        assertEquals(src, soleImgSrc(cellImageTag(src)))
+    }
+
+    @Test
+    fun `the strict reader rejects a custom or duplicate style and alt`() {
+        val src = "data:image/png;base64,AAAA"
+        val tags = listOf(
+            """<img src="$src" style="width:100%"/>""",
+            """<img src="$src" alt="custom"/>""",
+            """<img src="$src" style="$CELL_IMAGE_STYLE" style="$CELL_IMAGE_STYLE"/>""",
+            """<img src="$src" alt="$CELL_IMAGE_ALT" alt="$CELL_IMAGE_ALT"/>""",
+            // A value-less attribute is not something the strict reader draws.
+            """<img hidden src="$src"/>"""
+        )
+        tags.forEach { tag ->
+            assertNull("not drawable: $tag", soleImgSrc(tag))
         }
     }
 

@@ -3,6 +3,8 @@ package com.mcqapp.data.io
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.textContent
+import com.mcqapp.util.forEachCellImageSpan
+import com.mcqapp.util.imgTagSrc
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -1241,15 +1243,54 @@ object LegacyParser {
 
     private fun countLocalImages(q: QuestionDto): Int =
         questionElementLists(q).sumOf { elements ->
-            elements.count { it is ContentElement.ImageElement && !isPortableImageSrc(it.src) }
+            elements.sumOf { element ->
+                when (element) {
+                    is ContentElement.ImageElement -> if (isPortableImageSrc(element.src)) 0 else 1
+                    is ContentElement.TableElement -> element.rows.sumOf { row ->
+                        row.sumOf { cell -> cellLocalImages(cell).size }
+                    }
+                    else -> 0
+                }
+            }
         }
 
-    private fun firstLocalImage(q: QuestionDto): String? =
-        questionElementLists(q).asSequence()
-            .flatten()
-            .filterIsInstance<ContentElement.ImageElement>()
-            .firstOrNull { !isPortableImageSrc(it.src) }
-            ?.src
+    private fun firstLocalImage(q: QuestionDto): String? {
+        for (elements in questionElementLists(q)) {
+            for (element in elements) {
+                when (element) {
+                    is ContentElement.ImageElement ->
+                        if (!isPortableImageSrc(element.src)) return element.src
+                    is ContentElement.TableElement ->
+                        for (cell in element.rows.flatten()) {
+                            firstLocalCellImage(cell)?.let { return it }
+                        }
+                    else -> Unit
+                }
+            }
+        }
+        return null
+    }
+
+    /** A cell's pictures are scanned like a top-level one: a `file:` src cannot travel. */
+    private fun cellLocalImages(cell: String): List<String> {
+        val out = mutableListOf<String>()
+        forEachCellImageSpan(cell) { tag, _, _ ->
+            val src = tag?.let { imgTagSrc(it) } ?: return@forEachCellImageSpan
+            if (!isPortableImageSrc(src)) out.add(src)
+        }
+        return out
+    }
+
+    private fun firstLocalCellImage(cell: String): String? {
+        var found: String? = null
+        forEachCellImageSpan(cell) { tag, _, _ ->
+            if (found == null) {
+                val src = tag?.let { imgTagSrc(it) }
+                if (src != null && !isPortableImageSrc(src)) found = src
+            }
+        }
+        return found
+    }
 
     /** Data URIs and retrievable links travel with the question; file paths do not. */
     private fun isPortableImageSrc(src: String): Boolean {

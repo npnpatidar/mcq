@@ -11,6 +11,7 @@ import com.mcqapp.data.io.withScaledImages
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.parseContentElements
+import com.mcqapp.util.cellImageTag
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -67,7 +68,7 @@ class ScaledRowStorageTest {
 
     @Test
     fun theStoredQuestionRowHoldsTheScaledElementSrcs() {
-        val scaled = question.withScaledImages(fakeScaler)
+        val scaled = question.withScaledImages(fakeScaler, fakeScaler)
         val row = scaled.toQuestionEntity(
             categoryId = "c1",
             sortOrder = 3,
@@ -104,7 +105,7 @@ class ScaledRowStorageTest {
 
     @Test
     fun theStoredOptionRowsHoldTheScaledElementSrcs() {
-        val scaled = question.withScaledImages(fakeScaler)
+        val scaled = question.withScaledImages(fakeScaler, fakeScaler)
         val rows = scaled.toOptionEntities(json)
 
         assertEquals(1, rows.size)
@@ -123,7 +124,7 @@ class ScaledRowStorageTest {
 
     @Test
     fun theStoredRowIsWhatTheContentHashReadsBack() {
-        val scaled = question.withScaledImages(fakeScaler)
+        val scaled = question.withScaledImages(fakeScaler, fakeScaler)
         val row = scaled.toQuestionEntity(
             categoryId = "c1",
             sortOrder = 0,
@@ -149,7 +150,7 @@ class ScaledRowStorageTest {
             ),
             image = "passage-scalar.png"
         )
-        val scaled = passage.withScaledImages(fakeScaler)
+        val scaled = passage.withScaledImages(fakeScaler, fakeScaler)
         val row = scaled.toPassageEntity(categoryId = "c1", sortOrder = 2, json = json)
 
         assertEquals(
@@ -163,5 +164,32 @@ class ScaledRowStorageTest {
         assertEquals(passageSearchText("Passage", scaled.elements), row.searchText)
         assertEquals("Passage", row.title)
         assertEquals(2, row.sortOrder)
+    }
+
+    @Test
+    fun theStoredPassageRowHoldsTheScaledTableCell() {
+        val src = "data:image/png;base64,AAAA"
+        val cellScaler: (String?) -> String? = { it?.replace("AAAA", "BBBB") }
+        val passage = PassageDto(
+            id = "p2",
+            title = "Passage",
+            elements = listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf("""<img src="$src">"""),
+                        listOf("later row", "plain")
+                    )
+                )
+            )
+        )
+        val scaled = passage.withScaledImages(fakeScaler, cellScaler)
+        val row = scaled.toPassageEntity(categoryId = "c1", sortOrder = 0, json = json)
+
+        val table = row.text.parseContentElements(json).single() as ContentElement.TableElement
+        assertEquals(cellImageTag("data:image/png;base64,BBBB"), table.rows[0][0])
+        assertEquals(listOf("later row", "plain"), table.rows[1])
+        assertTrue("the prose stays searchable: ${row.searchText}", row.searchText.contains("later row"))
+        assertFalse("no payload becomes prose: ${row.searchText}", row.searchText.contains("base64"))
+        assertFalse("the payload is not searchable text: ${row.searchText}", row.searchText.contains("BBBB"))
     }
 }

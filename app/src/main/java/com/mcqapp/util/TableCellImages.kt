@@ -14,6 +14,24 @@ internal const val CELL_IMAGE_ALT = "Image in table"
 internal const val CELL_IMAGE_STYLE =
     "max-width:100%;height:auto;max-height:240px;vertical-align:middle"
 
+/**
+ * Stored binary bytes allowed for one cell image. A cell travels inside the
+ * question row, its `CardContent` fingerprint and every backup part, so an
+ * unbounded picture costs far more than the same picture at the top level.
+ */
+internal const val MAX_CELL_IMAGE_BYTES = 512 * 1024
+
+/** Long edge a cell image is scaled to at import: a cell is at most half a phone's width. */
+internal const val CELL_IMAGE_MAX_DIMENSION = 800
+
+/**
+ * The one diagnostic an import writes when a picture could not be brought under
+ * [MAX_CELL_IMAGE_BYTES]: a stable message, so [com.mcqapp.util.Logger.warnOnce]
+ * reports it once per session instead of once per cell.
+ */
+internal const val CELL_IMAGE_TOO_LARGE_MESSAGE =
+    "A table cell image stayed above 512 KB after scaling and was replaced with [image]"
+
 private const val IMG_TAG = "<img"
 private const val IMG_TAG_LENGTH = 4
 
@@ -43,21 +61,18 @@ private val CELL_IMAGE_MIME_TYPES = arrayOf("png", "jpeg", "jpg", "gif", "webp")
  *   when no value was ever quoted, through the last `name=value` token — so a
  *   quoted attribute followed by an unquoted `src` still leaks nothing, and the
  *   prose after it survives;
+ * - a value-less attribute name (`hidden`) belongs to a torn tag only when a
+ *   `name=value` token follows it, so `alt="x" hidden src=data:…` loses the
+ *   payload while `src="x" after` stops before the prose `after`;
  * - when no value can be delimited at all (a quote is still open), the span runs
  *   to the end of [html].
- *
- * Known limitation: on a truncated `<img …` with no `>`, a value-less or
- * malformed token after a quoted attribute (`alt="x" hidden src=data:…`) stops
- * the unquoted run at that token, so a later unquoted `src` can be left in the
- * cell; real imports always write a quoted `src` and a complete tag takes the
- * strict [soleImgSrc] path, so only torn hand-authored markup is affected.
  *
  * A linear scan with no decode and no per-character allocation: a multi-
  * megabyte cell is safe here (this runs during composition).
  */
-internal inline fun forEachCellImage(
+internal inline fun forEachCellImageSpan(
     html: String,
-    onImage: (src: String?, start: Int, end: Int) -> Unit
+    onImage: (tag: String?, start: Int, end: Int) -> Unit
 ) {
     val length = html.length
     var i = 0
@@ -100,10 +115,11 @@ internal inline fun forEachCellImage(
             }
         }
         if (tagEnd >= 0 && !truncated) {
-            // A complete tag: `soleImgSrc` is the one strict reader of its
-            // attributes, so the scanner and the renderer cannot disagree.
+            // A complete tag: hand out its source text so the strict reader
+            // (`soleImgSrc`) and the import normaliser can each read it their
+            // own way without the scanner deciding what an attribute means.
             val end = tagEnd + 1
-            onImage(soleImgSrc(html.substring(i, end)), i, end)
+            onImage(html.substring(i, end), i, end)
             i = end
         } else {
             val end = when {
@@ -133,6 +149,20 @@ internal inline fun forEachCellImage(
     }
 }
 
+/**
+ * Visit every `<img …>` picture tag in [html] reporting the `src` of a complete
+ * tag, or null when the tag is truncated or is not a sole-`src` tag. Rendering
+ * uses this strict reader: an extra attribute makes a tag unsafe to draw.
+ */
+internal inline fun forEachCellImage(
+    html: String,
+    onImage: (src: String?, start: Int, end: Int) -> Unit
+) {
+    forEachCellImageSpan(html) { tag, start, end ->
+        onImage(tag?.let { soleImgSrc(it) }, start, end)
+    }
+}
+
 /** True at the `<` of an `<img` tag that a picture tag can actually start. */
 private fun isImgTagStart(html: String, index: Int): Boolean {
     if (html[index] != '<') return false
@@ -152,8 +182,11 @@ private fun isImgTagStart(html: String, index: Int): Boolean {
  * `<img/ src=…` and `<img height=100 /src=…` are the same tag); read a name
  * `[A-Za-z_:][-A-Za-z0-9_:.]*`; skip whitespace around the required `=`; then
  * an unquoted value runs to the next whitespace (or to a `<`, which already
- * truncated the tag). The scan stops at the first token that is not
- * `name=`, so prose after a torn tag — `src=data:… after` — is never eaten.
+ * truncated the tag). A value-less name is consumed and the scan continues
+ * only when a run of bare names ends in `name=value` (so
+ * `alt="x" hidden src=data:…` is one tag), and the scan stops at the first
+ * token that is not part of such a run, so prose after a torn tag —
+ * `src=data:… after` — is never eaten.
  */
 private fun unquotedTagPrefixEnd(html: String, start: Int): Int {
     val length = html.length
@@ -171,7 +204,15 @@ private fun unquotedTagPrefixEnd(html: String, start: Int): Int {
         while (nameEnd < length && isAttributeNameChar(html[nameEnd])) nameEnd++
         var equals = nameEnd
         while (equals < length && html[equals].isWhitespace()) equals++
-        if (equals >= length || html[equals] != '=') break
+        if (equals >= length || html[equals] != '=') {
+            // A value-less attribute (`hidden`) belongs to the tag only when a
+            // run of bare names ends in `name=value`; otherwise this is prose
+            // and the run stops before it (`src=data:… after` keeps `after`).
+            if (!bareNamesEndInAssignment(html, nameEnd)) break
+            end = nameEnd
+            pos = nameEnd
+            continue
+        }
         var valueStart = equals + 1
         while (valueStart < length && html[valueStart].isWhitespace()) valueStart++
         var valueEnd = valueStart
@@ -187,6 +228,32 @@ private fun unquotedTagPrefixEnd(html: String, start: Int): Int {
         pos = valueEnd
     }
     return end
+}
+
+/**
+ * True when the tokens from [start] are a run of value-less attribute names
+ * that ends in a `name=value` token. One bare name alone is prose
+ * (`src="x" after`), and a run with no assignment is prose too
+ * (`<img hidden and after`), so neither is consumed.
+ */
+private fun bareNamesEndInAssignment(html: String, start: Int): Boolean {
+    val length = html.length
+    var pos = start
+    while (true) {
+        var k = pos
+        while (k < length && html[k].isWhitespace()) k++
+        if (k < length && html[k] == '/') {
+            k++
+            while (k < length && html[k].isWhitespace()) k++
+        }
+        if (k >= length || !isAttributeNameStart(html[k])) return false
+        var nameEnd = k + 1
+        while (nameEnd < length && isAttributeNameChar(html[nameEnd])) nameEnd++
+        var equals = nameEnd
+        while (equals < length && html[equals].isWhitespace()) equals++
+        if (equals < length && html[equals] == '=') return true
+        pos = nameEnd
+    }
 }
 
 /** The first character of an HTML attribute name: `[A-Za-z_:]`. */
@@ -224,6 +291,63 @@ internal fun mapCellImages(html: String, replace: (src: String?) -> String): Str
 }
 
 /**
+ * The import normaliser: every complete picture tag is rebuilt into the stored
+ * form, every torn `<img` fragment is removed, and only a portable inline
+ * picture that fits [MAX_CELL_IMAGE_BYTES] survives.
+ *
+ * [scale] receives each portable `src` (a fake in tests, the real 800 px
+ * downscaler at import); [log] receives [CELL_IMAGE_TOO_LARGE_MESSAGE] when the
+ * result still exceeds the cap, and that one tag becomes `[image]`. The rest of
+ * the cell is untouched.
+ *
+ * A readable source that is not portable (`file:`, `http:`, SVG) is left
+ * exactly as the author wrote it: only a `file:` reference raises the parser's
+ * local-image warning, while a remote URL and an SVG data URI are silent by
+ * design. A complete tag with no readable source at all fails closed and
+ * becomes `[image]`; keeping it verbatim could leave a payload (or a tag the
+ * renderer cannot draw) in the cell as prose.
+ *
+ * Idempotent by construction: the canonical tag it emits is read back by the
+ * same lenient `src` reader, so a second import of our own export changes
+ * nothing (a re-import must not read as an edit).
+ */
+internal fun normalizeCellImages(
+    cell: String,
+    scale: (String?) -> String?,
+    log: (String) -> Unit
+): String = mapCellImageTags(cell) { tag ->
+    if (tag == null) return@mapCellImageTags ""          // torn <img: never leave its payload as prose
+    // A complete tag whose source cannot be read is not drawable: fail closed.
+    val src = imgTagSrc(tag) ?: return@mapCellImageTags CELL_IMAGE_MARKER
+    val portable = compactCellImageSrc(src) ?: return@mapCellImageTags tag
+    // The real downscaler returns a MIME-encoded (CRLF-wrapped) payload, and a
+    // fake may return anything; either way the stored form is unwrapped and
+    // must still be a portable picture.
+    val scaled = compactCellImageSrc(scale(portable) ?: portable)
+    if (scaled == null || cellImageDecodedBytes(scaled) > MAX_CELL_IMAGE_BYTES) {
+        log(CELL_IMAGE_TOO_LARGE_MESSAGE)
+        CELL_IMAGE_MARKER
+    } else {
+        cellImageTag(scaled)
+    }
+}
+
+/** [mapCellImages] for callers that need the complete tag itself, not its `src`. */
+private inline fun mapCellImageTags(html: String, replace: (tag: String?) -> String): String {
+    var out: StringBuilder? = null
+    var pos = 0
+    forEachCellImageSpan(html) { tag, start, end ->
+        val sb = out ?: StringBuilder(html.length).also { out = it }
+        sb.append(html, pos, start)
+        sb.append(replace(tag))
+        pos = end
+    }
+    val sb = out ?: return html
+    sb.append(html, pos, html.length)
+    return sb.toString()
+}
+
+/**
  * A portable cell image: an inline base64 data URI for one of the picture
  * types Android can decode. Everything else — a remote URL, `file:`,
  * `javascript:`, SVG, an empty source, a MIME-encoded (wrapped) payload or a
@@ -235,24 +359,63 @@ internal fun mapCellImages(html: String, replace: (src: String?) -> String): Str
  * and a malformed payload must never throw.
  */
 internal fun portableCellImageSrc(src: String): Boolean {
+    val bodyStart = cellImageBodyStart(src) ?: return false
+    return validBase64Body(src, bodyStart)
+}
+
+/**
+ * The index just past `data:image/<type>;base64,` for one of the accepted
+ * picture types, or null. Only the header is inspected; the payload is the
+ * caller's business.
+ */
+private fun cellImageBodyStart(src: String): Int? {
     if (!src.regionMatches(0, CELL_IMAGE_PREFIX, 0, CELL_IMAGE_PREFIX.length, ignoreCase = true)) {
-        return false
+        return null
     }
-    var mimeEnd = -1
     for (type in CELL_IMAGE_MIME_TYPES) {
         val end = CELL_IMAGE_PREFIX.length + type.length
         if (end < src.length && src[end] == ';' &&
             src.regionMatches(CELL_IMAGE_PREFIX.length, type, 0, type.length, ignoreCase = true)
         ) {
-            mimeEnd = end
-            break
+            if (!src.regionMatches(end, CELL_IMAGE_BASE64, 0, CELL_IMAGE_BASE64.length, ignoreCase = true)) {
+                return null
+            }
+            return end + CELL_IMAGE_BASE64.length
         }
     }
-    if (mimeEnd < 0) return false
-    if (!src.regionMatches(mimeEnd, CELL_IMAGE_BASE64, 0, CELL_IMAGE_BASE64.length, ignoreCase = true)) {
-        return false
+    return null
+}
+
+/**
+ * [src] in the one stored form: whitespace inside the payload removed (a MIME
+ * encoder writes CRLF every 76 characters; wrapping made the same picture hash
+ * differently from its unwrapped twin). Anything that is not a `data:image`
+ * URI for an accepted type, or that is not base64 after the whitespace is
+ * removed, returns null and the tag is left alone.
+ */
+private fun compactCellImageSrc(src: String): String? {
+    val bodyStart = cellImageBodyStart(src) ?: return null
+    if (validBase64Body(src, bodyStart)) return src
+    val compact = StringBuilder(src.length)
+    for (i in bodyStart until src.length) {
+        val c = src[i]
+        if (!c.isWhitespace()) compact.append(c)
     }
-    return validBase64Body(src, mimeEnd + CELL_IMAGE_BASE64.length)
+    if (compact.length == src.length - bodyStart) return null   // unwrapped: genuinely not base64
+    if (!validBase64Body(compact, 0)) return null
+    return src.substring(0, bodyStart) + compact
+}
+
+/**
+ * Decoded payload size, by base64 shape only: no decode, no allocation. The
+ * payload has already passed [validBase64Body], so the number of non-padding
+ * characters alone decides the byte count.
+ */
+private fun cellImageDecodedBytes(src: String): Long {
+    val bodyStart = cellImageBodyStart(src) ?: return Long.MAX_VALUE
+    var end = bodyStart
+    while (end < src.length && src[end] != '=') end++
+    return (end - bodyStart).toLong() * 3 / 4
 }
 
 /**
@@ -261,7 +424,7 @@ internal fun portableCellImageSrc(src: String): Boolean {
  * two of them, and only for the remainder a standard encoder produces.
  * Unpadded input is accepted too (a remainder of 1 is still impossible).
  */
-private fun validBase64Body(src: String, start: Int): Boolean {
+private fun validBase64Body(src: CharSequence, start: Int): Boolean {
     var i = start
     var core = 0
     while (i < src.length) {
@@ -290,13 +453,15 @@ private fun isBase64Char(c: Char): Boolean =
     c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/'
 
 /**
- * The rebuilt image tag: only the source, the canonical sizing style and an
- * escaped [alt] are kept. Any attribute the stored tag carried (an `onerror`,
- * a `style`, a width) is dropped — the tag is emitted whole, never copied.
+ * The rebuilt image tag: only the source, the canonical sizing style and the
+ * canonical [CELL_IMAGE_ALT] are kept. Any attribute the stored tag carried (an
+ * `onerror`, a `style`, a width) is dropped — the tag is emitted whole, never
+ * copied. The alt is not a parameter: a stored tag must always be drawable by
+ * [soleImgSrc], whose only accepted alt is the canonical one.
  */
-internal fun cellImageTag(src: String, alt: String = CELL_IMAGE_ALT): String =
+internal fun cellImageTag(src: String): String =
     "<img src=\"" + escapeHtmlText(src) + "\" style=\"" + CELL_IMAGE_STYLE +
-        "\" alt=\"" + escapeHtmlText(alt) + "\"/>"
+        "\" alt=\"" + escapeHtmlText(CELL_IMAGE_ALT) + "\"/>"
 
 /**
  * True when any cell carries a portable picture; such a table needs the WebView.
@@ -312,10 +477,17 @@ internal fun cellHasPortableImage(cell: String): Boolean {
 }
 
 /**
- * The `src` of a tag that carries exactly one attribute, `src`, and nothing
- * else. A second attribute, an unquoted value, a missing `src` or a truncated
- * tag returns null: such a tag is not portable by definition (see
+ * The `src` of a tag that carries only attributes this app itself writes: one
+ * `src`, optionally the canonical [CELL_IMAGE_STYLE] and [CELL_IMAGE_ALT]. A
+ * second `src`, a different value for either trusted attribute, an unknown
+ * attribute, an unquoted value, a missing `src` or a truncated tag returns
+ * null: such a tag is not portable by definition (see
  * [portableCellImageSrc]).
+ *
+ * The two trusted attributes are exactly what [cellImageTag] emits, so the tag
+ * the import normaliser stores reads back as a drawable picture on every
+ * surface. Their values are never copied into the rendered tag — the renderer
+ * rebuilds it — so accepting them cannot carry styling or markup from a file.
  */
 internal fun soleImgSrc(tag: String): String? {
     if (tag.length < 4 || !tag.regionMatches(0, "<img", 0, 4, ignoreCase = true)) return null
@@ -326,18 +498,98 @@ internal fun soleImgSrc(tag: String): String? {
     }
     var pos = 0
     var src: String? = null
+    var style: String? = null
+    var alt: String? = null
     while (pos < body.length) {
-        if (body.substring(pos).isBlank()) break
+        var k = pos
+        while (k < body.length && body[k].isWhitespace()) k++
+        if (k >= body.length) break
         val match = IMG_ATTRIBUTE.find(body, pos) ?: return null
         if (match.range.first != pos) return null   // text between attributes
-        if (src != null) return null                // more than one attribute
-        if (!match.groupValues[1].equals("src", ignoreCase = true)) return null
-        src = match.groups[2]?.value ?: match.groups[3]?.value ?: return null
+        val name = match.groupValues[1]
+        val value = match.groups[2]?.value ?: match.groups[3]?.value ?: return null
+        when {
+            name.equals("src", ignoreCase = true) -> {
+                if (src != null) return null        // more than one source
+                src = value
+            }
+            name.equals("style", ignoreCase = true) -> {
+                if (style != null) return null
+                style = value
+            }
+            name.equals("alt", ignoreCase = true) -> {
+                if (alt != null) return null
+                alt = value
+            }
+            else -> return null                     // unknown or hostile attribute
+        }
         pos = match.range.last + 1
     }
+    if (style != null && style != CELL_IMAGE_STYLE) return null
+    if (alt != null && alt != CELL_IMAGE_ALT) return null
     return src
 }
 
 /** `name="value"` or `name='value'`, with any leading whitespace. */
 private val IMG_ATTRIBUTE =
     Regex("\\s+([A-Za-z_:][-A-Za-z0-9_:.]*)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
+
+/**
+ * The `src` of a complete tag, whatever else the tag carries: attribute order
+ * does not matter, extra attributes do not defeat it, a value-less attribute
+ * (`hidden`) is accepted, an optional `/` may precede a name, and a quoted or
+ * unquoted value is read. This is the import normaliser's reader — it must
+ * recognise the canonical tag it wrote (which carries `style` and `alt`) as
+ * well as a foreign tag, so the second import of the same bytes normalises to
+ * the same string. Rendering stays strict on [soleImgSrc]: this reader never
+ * decides what may be drawn.
+ *
+ * Null means "no readable source": a tag truncated before its `>`, an
+ * attribute without a value in an unexpected place, or a `src` with no value.
+ * The importer fails closed on null rather than keeping such a tag verbatim.
+ */
+internal fun imgTagSrc(tag: String): String? {
+    if (tag.length < 4 || !tag.regionMatches(0, "<img", 0, 4, ignoreCase = true)) return null
+    val body = when {
+        tag.endsWith("/>") -> tag.substring(4, tag.length - 2)
+        tag.endsWith(">") -> tag.substring(4, tag.length - 1)
+        else -> return null
+    }
+    var pos = 0
+    while (pos < body.length) {
+        while (pos < body.length && body[pos].isWhitespace()) pos++
+        if (pos < body.length && body[pos] == '/') pos++             // `<img/src=…`
+        while (pos < body.length && body[pos].isWhitespace()) pos++
+        if (pos >= body.length) break
+        if (!isAttributeNameStart(body[pos])) return null
+        val nameStart = pos
+        pos++
+        while (pos < body.length && isAttributeNameChar(body[pos])) pos++
+        val name = body.substring(nameStart, pos)
+        var equals = pos
+        while (equals < body.length && body[equals].isWhitespace()) equals++
+        if (equals >= body.length || body[equals] != '=') {
+            // A value-less attribute (`hidden`) is legal in the grammar; it
+            // simply carries no source. Keep scanning for a later `src`.
+            pos = equals
+            continue
+        }
+        var valueStart = equals + 1
+        while (valueStart < body.length && body[valueStart].isWhitespace()) valueStart++
+        val quote = body.getOrNull(valueStart)
+        val value: String
+        if (quote == '"' || quote == '\'') {
+            val close = body.indexOf(quote, valueStart + 1)
+            if (close < 0) return null                         // an unclosed quote cannot be read
+            value = body.substring(valueStart + 1, close)
+            pos = close + 1
+        } else {
+            var valueEnd = valueStart
+            while (valueEnd < body.length && !body[valueEnd].isWhitespace()) valueEnd++
+            value = body.substring(valueStart, valueEnd)
+            pos = valueEnd
+        }
+        if (name.equals("src", ignoreCase = true) && value.isNotEmpty()) return value
+    }
+    return null
+}

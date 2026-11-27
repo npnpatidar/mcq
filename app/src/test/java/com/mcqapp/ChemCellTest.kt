@@ -277,14 +277,16 @@ class ChemCellTest {
         // took ~30 s here and would freeze the UI thread. The linear pattern
         // finishes in ~10 ms. One assertion, no repeat/average: the budget is
         // deliberately far above the real cost, so a loaded runner cannot make
-        // it flaky while a quadratic regression still blows it.
+        // it flaky while a quadratic regression still blows it. The budget is
+        // 2000 ms: ~15x headroom against the ~30 s quadratic regression while
+        // surviving a loaded CI machine (a 500 ms budget flaked at 527 ms).
         val cell = "<span".repeat(60 * 1024) + CELL_CHEM_CLASS
         val started = System.nanoTime()
         assertEquals(listOf<CellSegment>(CellSegment.Text(cell)), cellSegments(cell))
         assertFalse(hasChemCell(cell))
         assertEquals(cell, sanitizeCellChem(cell))
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 500)
+        assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 2000)
     }
 
     @Test

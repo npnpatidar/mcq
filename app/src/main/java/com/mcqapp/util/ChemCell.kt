@@ -3,7 +3,6 @@ package com.mcqapp.util
 import com.mcqapp.data.decodeHtmlEntities
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
-import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.domain.CELL_MATH_PATTERN
 import com.mcqapp.domain.ContentElement
 
@@ -345,14 +344,13 @@ private fun isAttributeNameChar(c: Char): Boolean =
 
 /**
  * The marker's `data-png` value as a full PNG data URI, or empty. The length is
- * checked before `decodeHtmlEntities` and again before [isPngDataUri], which is
- * the only place that base64-decodes.
+ * checked before `decodeHtmlEntities` and again before the bounded validator.
  */
 private fun cellPngDiagram(raw: String): String {
     if (raw.isEmpty() || raw.length > MAX_CELL_PNG_PAYLOAD_CHARS) return ""
     val payload = decodeHtmlEntities(raw)
     if (payload.length > MAX_CELL_PNG_PAYLOAD_CHARS) return ""
-    return if (isPngDataUri(PNG_DATA_URI_PREFIX + payload)) {
+    return if (isBoundedPngPayload(payload)) {
         PNG_DATA_URI_PREFIX + payload
     } else {
         ""
@@ -362,8 +360,8 @@ private fun cellPngDiagram(raw: String): String {
 /**
  * The bare payload to store in `data-png`, or null. The element's [diagram] is
  * normally a full data URI; a bare payload is accepted too so the emitter and
- * the reader agree on one validator. A stored PNG that fails [isPngDataUri] is
- * simply not written — the handles text is the fallback.
+ * the reader agree on one validator. A stored PNG that fails the bounded check
+ * is simply not written — the handles text is the fallback.
  */
 private fun cellPngPayload(diagram: String): String? {
     if (diagram.isEmpty()) return null
@@ -373,5 +371,60 @@ private fun cellPngPayload(diagram: String): String? {
         diagram
     }
     if (payload.isEmpty() || payload.length > MAX_CELL_PNG_PAYLOAD_CHARS) return null
-    return payload.takeIf { isPngDataUri(PNG_DATA_URI_PREFIX + it) }
+    return payload.takeIf { isBoundedPngPayload(it) }
 }
+
+/**
+ * Bounded PNG validation for the cell raster cache.
+ *
+ * The editor's cell field re-reads the stored cell on every keystroke, so this
+ * runs per keystroke for a structure cell. A full
+ * [com.mcqapp.data.export.isPngDataUri] decode of a 100 KB–4 MB export-only
+ * payload would allocate the whole raster just to look at its 8-byte
+ * signature. Instead the whole payload is scanned for base64/padding shape
+ * (no allocation) and only its first 12 data characters are decoded (enough
+ * for the signature), so validation allocates at most one 9-byte array.
+ * Exporters still run the full validator before they embed the payload.
+ */
+private fun isBoundedPngPayload(payload: String): Boolean {
+    if (payload.isEmpty() || payload.length > MAX_CELL_PNG_PAYLOAD_CHARS) return false
+    // Validate the WHOLE payload's shape, not just the characters after the
+    // 12-character head: padding inside the head (e.g. the 11th character is
+    // '=') must be rejected exactly as the strict exporter validator rejects
+    // it. Data is [0, dataEnd); [dataEnd, length) is at most two '='.
+    val firstPad = payload.indexOf('=')
+    val dataEnd = if (firstPad < 0) payload.length else firstPad
+    if (dataEnd == 0) return false
+    for (i in 0 until dataEnd) {
+        if (!isPngBase64Char(payload[i])) return false
+    }
+    var padding = 0
+    for (i in dataEnd until payload.length) {
+        if (payload[i] != '=') return false
+        padding++
+        if (padding > 2) return false
+    }
+    // A decoder rejects a 1-mod-4 unpadded payload, and padding only completes
+    // a 4-character unit. Payloads shorter than the head were fully decoded.
+    val validLength = if (padding == 0) payload.length % 4 != 1 else payload.length % 4 == 0
+    if (!validLength) return false
+    // Only data characters are decoded, so the head can never contain '='.
+    val headLength = minOf(dataEnd, PNG_SIGNATURE_BASE64_CHARS)
+    val head = try {
+        java.util.Base64.getDecoder().decode(payload.substring(0, headLength))
+    } catch (e: IllegalArgumentException) {
+        return false
+    }
+    if (head.size < PNG_SIGNATURE.size) return false
+    return PNG_SIGNATURE.indices.all { head[it] == PNG_SIGNATURE[it] }
+}
+
+/** 12 base64 characters decode the 8-byte PNG signature (9 bytes when unpadded). */
+private const val PNG_SIGNATURE_BASE64_CHARS = 12
+
+private val PNG_SIGNATURE = byteArrayOf(
+    0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+)
+
+private fun isPngBase64Char(c: Char): Boolean =
+    c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/'

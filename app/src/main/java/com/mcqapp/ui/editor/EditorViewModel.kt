@@ -16,6 +16,13 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
+import com.mcqapp.util.CellEditPart
+import com.mcqapp.util.canonicalCellImageSrc
+import com.mcqapp.util.cellTokenKey
+import com.mcqapp.util.cellWithPartInserted
+import com.mcqapp.util.cellWithPartRemoved
+import com.mcqapp.util.cellWithPartReplaced
+import com.mcqapp.util.withCellEditorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -119,6 +126,20 @@ sealed interface ImageTarget {
     data class Body(override val blockId: String) : ImageTarget
     data class Explanation(override val blockId: String) : ImageTarget
     data class Option(val optionId: String, override val blockId: String) : ImageTarget
+
+    /**
+     * One cell of the table block named by [blockId]. The block is resolved
+     * among the body, explanation and option lists by its stable id, so a
+     * reordered or deleted table can never receive a picture meant for
+     * another one. [replacePart] names the cell part to replace; null appends
+     * a new picture.
+     */
+    data class TableCell(
+        override val blockId: String,
+        val row: Int,
+        val col: Int,
+        val replacePart: Int? = null
+    ) : ImageTarget
 }
 
 /**
@@ -330,6 +351,53 @@ internal fun ContentElement.TableElement.withCell(
     })
 }
 
+/**
+ * Applies one edit of the cell's visible text field. Only the cell's text
+ * parts change: every formula, picture and structure keeps its identity and
+ * its position around the edited text (see [withCellEditorText]).
+ */
+internal fun ContentElement.TableElement.withCellEditorText(
+    row: Int,
+    col: Int,
+    editorText: String,
+    tokenKey: String = ""
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = withCellEditorText(cell, editorText, tokenKey)
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
+/**
+ * Inserts ([partIndex] null) or replaces one rich part of a cell. A replace
+ * whose index no longer exists, or now names another kind of part, is a
+ * no-op: a stale dialog or gallery callback must never rewrite a neighbour.
+ */
+internal fun ContentElement.TableElement.withCellPart(
+    row: Int,
+    col: Int,
+    partIndex: Int?,
+    part: CellEditPart
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = if (partIndex == null) {
+        cellWithPartInserted(cell, part)
+    } else {
+        cellWithPartReplaced(cell, partIndex, part)
+    }
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
+/** Removes one rich part of a cell; an out-of-range index is a no-op. */
+internal fun ContentElement.TableElement.withCellPartRemoved(
+    row: Int,
+    col: Int,
+    partIndex: Int
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = cellWithPartRemoved(cell, partIndex)
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
 internal fun ContentElement.TableElement.withRowAdded(): ContentElement.TableElement {
     val width = rows.firstOrNull()?.size ?: 1
     return copy(rows = rows + listOf(List(width) { "" }))
@@ -361,6 +429,42 @@ internal fun ContentElement.TableElement.withColumnRemoved(col: Int): ContentEle
 }
 
 /**
+ * Applies [transform] to the table block named by [blockId], searching the
+ * question body, the explanation and every option. Block ids are unique
+ * inside one editor instance, so a callback installed before a reorder finds
+ * the same table afterwards instead of writing into whatever now occupies
+ * the old position.
+ */
+internal fun updateTableBlockById(
+    s: EditorUiState,
+    blockId: String,
+    transform: (ContentElement.TableElement) -> ContentElement.TableElement
+): EditorUiState {
+    fun replace(elements: List<ContentElement>, ids: List<String>): List<ContentElement> {
+        val i = ids.indexOf(blockId)
+        if (i !in elements.indices) return elements
+        val table = elements[i] as? ContentElement.TableElement ?: return elements
+        val updated = transform(table)
+        if (updated === table) return elements
+        return elements.toMutableList().also { it[i] = updated }
+    }
+
+    val body = replace(s.elements, s.blockIds)
+    if (body !== s.elements) return s.copy(elements = body)
+    val explanation = replace(s.explanationElements, s.explanationBlockIds)
+    if (explanation !== s.explanationElements) return s.copy(explanationElements = explanation)
+    val options = s.options.map { o ->
+        val updated = replace(o.elements, o.blockIds)
+        if (updated === o.elements) o else o.copy(elements = updated)
+    }
+    return if (options.indices.any { options[it] !== s.options[it] }) {
+        s.copy(options = options)
+    } else {
+        s
+    }
+}
+
+/**
  * Writes [src] into the block the target names, resolving the id against the
  * *current* lists. A target whose block or option is gone (deleted while the
  * picker was open) writes nothing rather than a neighbouring block.
@@ -388,6 +492,18 @@ internal fun applyImageTarget(s: EditorUiState, target: ImageTarget, src: String
                 if (o.id != option.id) o
                 else o.copy(elements = o.elements.toMutableList().also { it[i] = image })
             })
+        }
+        is ImageTarget.TableCell -> {
+            val canonical = com.mcqapp.util.canonicalCellImageSrc(src) ?: return s
+            if (!com.mcqapp.util.cellImageAllowed(canonical)) return s
+            updateTableBlockById(s, target.blockId) { table ->
+                table.withCellPart(
+                    target.row,
+                    target.col,
+                    target.replacePart,
+                    CellEditPart.Image(com.mcqapp.util.cellImageTag(canonical))
+                )
+            }
         }
     }
 }
@@ -1097,6 +1213,39 @@ class EditorViewModel(
 
     fun removeTableColumn(index: Int, col: Int) =
         updateTable(index) { it.withColumnRemoved(col) }
+
+    // ---- rich cell parts, addressed by stable block id ----
+    //
+    // The cell menu, its dialogs and the picture picker all outlive a
+    // composition (a picker result, a rotation), so they name the table by
+    // its stable id, never by a positional index. The same three methods serve
+    // the body, explanation and option tables because a block id is unique
+    // inside one editor instance.
+
+    fun updateTableCellEditor(blockId: String, row: Int, col: Int, editorText: String) =
+        updateState { updateTableBlockById(it, blockId) { table ->
+            table.withCellEditorText(
+                row,
+                col,
+                editorText,
+                cellTokenKey(blockId, row, col)
+            )
+        } }
+
+    fun setTableCellPart(
+        blockId: String,
+        row: Int,
+        col: Int,
+        partIndex: Int?,
+        part: CellEditPart
+    ) = updateState { updateTableBlockById(it, blockId) { table ->
+        table.withCellPart(row, col, partIndex, part)
+    } }
+
+    fun removeTableCellPart(blockId: String, row: Int, col: Int, partIndex: Int) =
+        updateState { updateTableBlockById(it, blockId) { table ->
+            table.withCellPartRemoved(row, col, partIndex)
+        } }
 
     // ---- table cells (option and explanation lists) ----
 
@@ -1824,7 +1973,34 @@ class EditorViewModel(
                 }
                 return@launch
             }
-            applyPickedImage(target, encoded)
+            // A cell travels inside the question row, its fingerprints and
+            // every backup part, so its picture is capped at the import
+            // contract (800 px long edge, 512 KB) before it can be written.
+            // The picker encodes at the top-level 1024 px; one downscale here
+            // keeps the stored cell identical to what an import would store.
+            val src = if (target is ImageTarget.TableCell) {
+                val scaled = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.mcqapp.data.io.ImageDownscale.downscaleDataUri(
+                        encoded,
+                        com.mcqapp.util.CELL_IMAGE_MAX_DIMENSION
+                    )
+                }
+                // The scaler emits MIME-wrapped base64; store the canonical
+                // unwrapped form so the cell contract, hashes and round trips
+                // agree with an imported picture.
+                val canonical = scaled?.let { canonicalCellImageSrc(it) }
+                if (canonical == null || !com.mcqapp.util.cellImageAllowed(canonical)) {
+                    Logger.w("EDITORVM", "Picked cell image is invalid or over the cell cap; nothing written")
+                    _state.update {
+                        it.copy(imageError = friendly(R.string.editor_cell_image_too_large))
+                    }
+                    return@launch
+                }
+                canonical
+            } else {
+                encoded
+            }
+            applyPickedImage(target, src)
         }
     }
 

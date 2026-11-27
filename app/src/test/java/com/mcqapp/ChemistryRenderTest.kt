@@ -4,6 +4,7 @@ import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.CHEM_DIAGRAM_BRIDGE
 import com.mcqapp.util.CHEM_DISPLAY_MAX_PX
+import com.mcqapp.util.CHEM_STANDALONE_MIN_SCALE
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.SMILES_DRAWER_ASSET_URL
@@ -236,6 +237,54 @@ class ChemistryRenderTest {
         assertTrue("capture svg missing", html.contains("<svg id=\"mcq-chem-0-capture\""))
         // The width/height drawer options are inert for an <svg> target; the
         // cap lives only in the live element's CSS, never in the capture clone.
+    }
+
+    @Test
+    fun standaloneDrawingIsCroppedAndSizedByAMinimumScale() {
+        val html = htmlOf(ContentElement.ChemElement("CCO"))
+        // 0.8 * SmilesDrawer's 30-unit default bond is a ~23.4 px bond (24 px
+        // before the drawer's own geometry): the scale a ring is drawn at,
+        // which a wide chain keeps too.
+        assertEquals(0.8, CHEM_STANDALONE_MIN_SCALE, 0.0)
+        assertTrue("fit helper not defined: $html", html.contains("function fitStandalone(s){"))
+        // getBBox() crops the drawer's square viewBox to the drawing's real
+        // bounds (plus the 2 px padding), instead of measuring a mostly empty
+        // 254×254 square.
+        assertTrue("drawing bounds not measured",
+            html.contains("var bb=s.getBBox();if(!(bb.width>0)||!(bb.height>0))return;"))
+        assertTrue("viewBox not cropped to the drawing's bounds",
+            html.contains("s.setAttribute('viewBox',(bb.x-p)+' '+(bb.y-p)+' '+w+' '+h);"))
+        assertTrue("minimum scale not applied: $html", html.contains(
+            "var sc=Math.max(${CHEM_DISPLAY_MAX_PX}/Math.max(w,h),$CHEM_STANDALONE_MIN_SCALE);"
+        ))
+        assertTrue("fitted width/height not applied",
+            html.contains("s.style.width=(w*sc)+'px';s.style.height='auto';s.style.maxWidth='100%';"))
+        // The marker is set only AFTER the crop and sizing, so a UI probe can
+        // tell a completed fit from the drawer's pre-fit square viewBox.
+        val fitMarker = "s.setAttribute('data-fitted','1');"
+        assertTrue("fit marker missing: $html", html.contains(fitMarker))
+        assertTrue("fit marker must be set after the sizing",
+            html.indexOf(fitMarker) > html.indexOf("s.style.width=(w*sc)+'px';"))
+        // The fit belongs to the standalone live draw: after its draw and its
+        // scoped styles, before the hidden capture is drawn.
+        val drawAt = html.indexOf(".draw(tree,svg,'mcq')")
+        val scopeAt = html.indexOf("scopeChemStyles(svg);")
+        val fitAt = html.indexOf("fitStandalone(svg);")
+        val captureDrawAt = html.indexOf(".draw(tree,captureSvg,'light')")
+        assertTrue("standalone live draw missing", drawAt >= 0)
+        assertTrue("fit must run after the live draw and its scoping",
+            scopeAt > drawAt && fitAt > scopeAt)
+        assertTrue("fit must run before the hidden capture", captureDrawAt > fitAt)
+        assertEquals("fit called more than once for the live svg",
+            1, html.split("fitStandalone(svg);").size - 1)
+        // display:none makes getBBox() 0, and the capture's own viewBox sizes
+        // the exported PNG: the fit must never touch it.
+        assertFalse("capture must not be fitted", html.contains("fitStandalone(captureSvg)"))
+        // A reaction is an inline scheme whose width the reaction scale pass
+        // already owns: the helper must not be called there.
+        val reaction = htmlOf(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        assertFalse("reaction must not be fitted: $reaction",
+            reaction.contains("fitStandalone(svg);"))
     }
 
     @Test

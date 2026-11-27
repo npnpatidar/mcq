@@ -276,6 +276,54 @@ class ChemistryRenderUiTest {
             "})()"
     )
 
+    /**
+     * A standalone ring and a standalone chain on the same page, measured from
+     * the LIVE drawings only: the median rendered bond length (`line` boxes,
+     * `hypot(width,height)`, zero-length lines ignored) and the chain SVG's
+     * rendered width. Every SVG must be fully drawn first: a rendered width,
+     * real shapes and a hidden fallback. A positive viewBox proves nothing —
+     * the drawer sets its own square viewBox before the fit runs — so the
+     * `data-fitted='1'` marker, which `fitStandalone` sets only after the crop
+     * and sizing, is what proves the crop actually happened.
+     */
+    private fun bondScaleState(): String = evaluate(
+        "(function(){" +
+            "var ring=document.getElementById('mcq-chem-0');" +
+            "var chain=document.getElementById('mcq-chem-1');" +
+            "if(!ring)return 'no-ring-svg';" +
+            "if(!chain)return 'no-chain-svg';" +
+            "function readiness(svg){" +
+            "var vb=svg.viewBox.baseVal;" +
+            "if(!vb||!isFinite(vb.width)||!isFinite(vb.height)||" +
+            "!(vb.width>0)||!(vb.height>0))return 'viewBox';" +
+            "if(svg.getAttribute('data-fitted')!=='1')return 'unfitted';" +
+            "if(!(svg.getBoundingClientRect().width>0))return 'width';" +
+            "var fb=document.getElementById(svg.id+'-fallback');" +
+            "if(!fb)return 'fallback';" +
+            "if(getComputedStyle(fb).display!=='none')return 'fallback-shown';" +
+            "if(getComputedStyle(svg).display==='none')return 'svg-hidden';" +
+            "var n=svg.querySelectorAll('line,text,circle,polygon').length;" +
+            "if(!(n>0))return 'no-shapes';" +
+            "return '';}" +
+            "var r=readiness(ring);if(r)return 'ring-'+r;" +
+            "r=readiness(chain);if(r)return 'chain-'+r;" +
+            "function medianBond(svg){" +
+            "var lines=svg.querySelectorAll('line'),d=[];" +
+            "for(var i=0;i<lines.length;i++){var q=lines[i].getBoundingClientRect();" +
+            "var v=Math.hypot(q.width,q.height);if(v>0)d.push(v);}" +
+            "if(!d.length)return -1;" +
+            "d.sort(function(a,b){return a-b;});var m=d.length>>1;" +
+            "return d.length%2?d[m]:(d[m-1]+d[m])/2;}" +
+            "var rb=medianBond(ring),cb=medianBond(chain);" +
+            "if(!(rb>0))return 'ring-no-bonds';" +
+            "if(!(cb>0))return 'chain-no-bonds';" +
+            "var cw=chain.getBoundingClientRect().width;" +
+            "var pw=document.documentElement.clientWidth;" +
+            "return 'ok:'+rb.toFixed(2)+':'+cb.toFixed(2)+':'+(cb/rb).toFixed(3)+':'+" +
+            "Math.round(cw)+':'+Math.round(pw);" +
+            "})()"
+    )
+
     private fun structure() = listOf(
         ContentElement.TextElement("Compound: "),
         ContentElement.ChemElement(
@@ -479,5 +527,65 @@ class ChemistryRenderUiTest {
                     "last state=$lastState; error=${t.message}", t
             )
         }
+    }
+
+    @Test
+    fun linearAndRingStructuresShareABondScale() {
+        // Owner report: rings looked properly sized while linear structures
+        // looked smaller. The cause was the square viewBox: the old 96 px cap
+        // measured an empty 254×254 box, so a chain's ~245×78 drawing got
+        // ~11 px bonds while a ring's ~131×123 got ~20.7 px. The fit crops
+        // the real bounds and floors the scale at the ring's, so both drawings
+        // render the same bond length (~23.4 px) and the chain is no longer
+        // pinned at 96 px. With the old behaviour the ratio is ~0.55 and the
+        // chain width is exactly 96, so both assertions below fail on it.
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(listOf(
+                        ContentElement.ChemElement(smiles = "OC1CCOCCCC1O", formula = "C10H20O2"),
+                        ContentElement.ChemElement(smiles = "OCCCCC(O)CCO", formula = "C8H18O3")
+                    ))
+                }
+            }
+        }
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = bondScaleState()
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            // The probe's own state says whether a drawing never settled, lost
+            // its shapes or showed its fallback — not just "timed out".
+            throw AssertionError(
+                "linear and ring structures do not share a bond scale; " +
+                    "last state=$lastState; error=${t.message}", t
+            )
+        }
+        val parts = lastState.split(':')
+        val ringBond = parts.getOrNull(1)?.toDoubleOrNull()
+            ?: throw AssertionError("unexpected bond-scale state: $lastState")
+        val chainBond = parts.getOrNull(2)?.toDoubleOrNull()
+            ?: throw AssertionError("unexpected bond-scale state: $lastState")
+        val ratio = parts.getOrNull(3)?.toDoubleOrNull()
+            ?: throw AssertionError("unexpected bond-scale state: $lastState")
+        val chainWidthPx = parts.getOrNull(4)?.toIntOrNull()
+            ?: throw AssertionError("unexpected bond-scale state: $lastState")
+        val pageWidthPx = parts.getOrNull(5)?.toIntOrNull()
+            ?: throw AssertionError("unexpected bond-scale state: $lastState")
+
+        assertTrue(
+            "chain bonds $chainBond px vs ring $ringBond px (ratio $ratio) " +
+                "are not on the same scale: $lastState",
+            ratio >= 0.75 && ratio <= 1.35
+        )
+        // The chain used to be clamped to the 96 px cap; it must now grow.
+        assertTrue("chain svg is still capped at 96 px ($chainWidthPx px): $lastState",
+            chainWidthPx > 100)
+        assertTrue(
+            "chain svg overflows the 320 dp page ($chainWidthPx > $pageWidthPx): $lastState",
+            chainWidthPx <= pageWidthPx
+        )
     }
 }

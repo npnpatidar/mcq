@@ -291,13 +291,70 @@ internal const val SMILES_DRAWER_ASSET_URL =
  * an inline row, not a scaled-up molecule. The hidden capture SVG carries
  * neither style — only its clone's `display:none` style is removed before
  * serialisation, so the PNG keeps the drawer's full viewBox-derived size.
+ *
+ * [CHEM_STANDALONE_FIT_JS] replaces the fixed `width` with one derived from a
+ * standalone drawing's real bounds, which lifts this cap for WIDE drawings
+ * only: the element keeps `max-height:96px`, so a tall or square drawing is
+ * still bounded here (see that constant for the effective scale).
  */
 internal const val CHEM_DISPLAY_MAX_PX = 96
+
+/**
+ * Smallest drawing scale a STANDALONE structure may shrink to, relative to
+ * SmilesDrawer's default bond length (30 user units → ~24 px bonds).
+ *
+ * [CHEM_DISPLAY_MAX_PX] on its own measured the drawer's SQUARE viewBox, not
+ * the drawing: a ring's tight ~131×123 content got 20.7 px bonds, while a long
+ * chain's tight ~245×78 content — the same square box — was squeezed to 11 px
+ * bonds. [CHEM_STANDALONE_FIT_JS] crops that square padding with `getBBox()`,
+ * and this floor stops a wide chain from shrinking below the scale a ring is
+ * drawn at: the reference ring now renders at the 0.8 floor, a bond of about
+ * 23.4 px — slightly larger than the old 20.7 px.
+ *
+ * It is a floor on the FIT, not a guarantee against the page: a very wide
+ * chain still hits `max-width:100%`, so on a narrow page it is clamped below
+ * 0.8 (a 36-carbon chain does exactly that).
+ */
+internal const val CHEM_STANDALONE_MIN_SCALE = 0.8
 
 /** Compact standalone display style: one small, self-contained molecule. */
 private const val CHEM_DISPLAY_STYLE =
     "width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;" +
         "height:auto;vertical-align:middle;"
+
+/**
+ * After a standalone molecule is drawn, crop the drawer's square viewBox to
+ * the drawing's real bounds and size the element from that.
+ *
+ * Only the WIDTH cap is lifted, and only for wide drawings. The scale computed
+ * here is `max(96 / max(w,h), 0.8)`, but the element keeps the display style's
+ * `max-height:96px`, so the scale that actually reaches the screen is:
+ *
+ *   `min(max(96 / max(w,h), 0.8), 96 / h)`
+ *
+ * A tall, narrow structure is still bounded by the 96 px cap. A compact
+ * drawing takes the `96/max(w,h)` branch and keeps its old scaled-up size
+ * (CCO ≈ 1.32×, benzene ≈ 1.5×). A wide chain keeps the bond size a ring gets
+ * instead of shrinking to fit a mostly empty square. The floor is not absolute
+ * either: `max-width:100%` still applies, so a very wide chain on a narrow
+ * page is clamped below 0.8.
+ *
+ * `data-fitted='1'` is set only once the crop and sizing ran, so a UI probe
+ * cannot mistake the drawer's pre-fit square viewBox for a completed fit.
+ *
+ * Only for the LIVE standalone SVG: the hidden capture is `display:none`,
+ * where `getBBox()` is 0, and a reaction is an inline scheme whose width the
+ * reaction scale pass already owns.
+ */
+private const val CHEM_STANDALONE_FIT_JS =
+    "function fitStandalone(s){try{" +
+        "var bb=s.getBBox();if(!(bb.width>0)||!(bb.height>0))return;" +
+        "var p=2,w=bb.width+2*p,h=bb.height+2*p;" +
+        "var sc=Math.max(${CHEM_DISPLAY_MAX_PX}/Math.max(w,h),$CHEM_STANDALONE_MIN_SCALE);" +
+        "s.setAttribute('viewBox',(bb.x-p)+' '+(bb.y-p)+' '+w+' '+h);" +
+        "s.style.width=(w*sc)+'px';s.style.height='auto';s.style.maxWidth='100%';" +
+        "s.setAttribute('data-fitted','1');" +
+        "}catch(e){}}"
 
 /**
  * Reaction SVG style: no fixed width and no molecule cap. ReactionDrawer
@@ -515,6 +572,7 @@ private fun chemBlockHtml(
         append("if(e.textContent.indexOf('#'+id+' .')>=0)continue;")
         append("e.textContent=e.textContent.replace(/(^|[\\s,{}])\\.(element|sub|text)\\b/g,")
         append("'\$1#'+id+' .\$2');}}")
+        append(CHEM_STANDALONE_FIT_JS)
         // Rasterise the hidden light-theme drawing so a structure authored in
         // the editor can be stored in ChemElement.diagram and travel through
         // every export with dark strokes on white surfaces. Serialise a CLONE
@@ -638,6 +696,11 @@ private fun chemBlockHtml(
             append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
             append("}}}).draw(tree,svg,'mcq');")
             append("scopeChemStyles(svg);")
+            // Crop the square viewBox to the drawing's real bounds and size it
+            // from a minimum scale (CHEM_STANDALONE_FIT_JS), so a long chain
+            // keeps the bond size a ring gets. The hidden capture is drawn into
+            // its own display:none SVG, where getBBox() is 0: never fit it.
+            append("fitStandalone(svg);")
             // The capture copy uses the built-in light theme: its conventional
             // dark C/H and heteroatom colours survive white export surfaces.
             append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")

@@ -373,7 +373,11 @@ private fun drawNode(canvas: Canvas, node: TexNode, x: Float, baselineY: Float, 
  * An inline formula inside a PDF paragraph: measures like text so
  * [android.text.StaticLayout] flows sentences around it.
  */
-internal class MathSpan(private val nodes: List<TexNode>, private val sizePx: Float) : ReplacementSpan() {
+internal class MathSpan(
+    private val nodes: List<TexNode>,
+    /** The type size the span was built at; the cell writer shrinks it to fit. */
+    internal val sizePx: Float
+) : ReplacementSpan() {
     private fun sized(base: Paint): TextPaint =
         TextPaint(base as? TextPaint ?: TextPaint()).apply { textSize = sizePx }
 

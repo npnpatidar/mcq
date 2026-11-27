@@ -13,6 +13,9 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_IMAGE_ALT
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CELL_IMAGE_STYLE
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -442,6 +445,52 @@ class ExportWritersTest {
         val html = htmlOf(richPaper())
         assertTrue(html.contains("<td>a&lt;b</td>"))
         assertTrue(html.contains("<math><mi>x</mi></math>"))
+    }
+
+    @Test
+    fun htmlEmbedsATableCellImageAndMarkersOnlyTheRest() {
+        val src = "data:image/png;base64,AAAA"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf("before <img src=\"$src\"/> after"),
+                        listOf("<img src=\"http://example.com/x.png\"/>")
+                    )
+                )
+            ),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        // The same writer serves the plain page and quiz mode.
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue(
+                "quiz=$quiz: the real image is embedded: $html",
+                html.contains(
+                    "<img src=\"$src\" style=\"$CELL_IMAGE_STYLE\" alt=\"$CELL_IMAGE_ALT\""
+                )
+            )
+            assertTrue("quiz=$quiz: order kept", html.contains("before <img"))
+            assertTrue("quiz=$quiz: order kept", html.contains("/> after"))
+            assertTrue(
+                "quiz=$quiz: a non-portable source is the marker",
+                html.contains("<td>$CELL_IMAGE_MARKER</td>")
+            )
+            assertFalse("quiz=$quiz: no remote tag leaks", html.contains("http://example.com/x.png"))
+            assertEquals(
+                "quiz=$quiz: exactly one cell image",
+                1,
+                Regex("<img src=\"data:image/png;base64,AAAA\"").findAll(html).count()
+            )
+        }
     }
 
     @Test

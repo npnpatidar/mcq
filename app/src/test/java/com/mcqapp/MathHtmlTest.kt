@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.CELL_FORMULA_MARKER
+import com.mcqapp.util.CELL_IMAGE_STYLE
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentHeightCache
 import com.mcqapp.util.ContentRenderPath
@@ -69,6 +70,29 @@ class MathHtmlTest {
         // a device/manual follow-up and is NOT asserted here.
         assertTrue(html.contains("table{border-collapse:collapse;margin:4px 0;max-width:100%}"))
         assertTrue(html.contains("mjx-container{max-width:100%}"))
+    }
+
+    @Test
+    fun tablePicturesShareTheCanonicalCellStyleAndAreCappedByCss() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(listOf("a <img src=\"data:image/png;base64,AAAA\"/> b"))
+            )
+        )
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        // The rebuilt tag carries the same style the app and the exports use.
+        assertTrue(
+            "picture in the cell: $html",
+            html.contains("<td>a <img src=\"data:image/png;base64,AAAA\"")
+        )
+        assertTrue("canonical style: $html", html.contains("style=\"$CELL_IMAGE_STYLE\""))
+        // The page's own rule caps the image, so a tall picture cannot stretch
+        // the row to several thousand pixels. Pinned as the exact CSS rule.
+        assertTrue(
+            "td img cap: $html",
+            html.contains("td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}")
+        )
+        assertTrue("cap matches the canonical style", html.contains("td img{$CELL_IMAGE_STYLE}"))
     }
 
     /**

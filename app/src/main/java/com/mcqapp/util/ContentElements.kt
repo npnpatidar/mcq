@@ -55,17 +55,19 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
         ContentRenderPath.MIXED
     // A formula can also live inside a table cell, with no top-level
     // MathElement beside it: that page needs MathJax just as much, while the
-    // native table can only print the [formula] marker. A plain table (no
-    // formula cell) keeps the native fast path.
-    elements.any { it is ContentElement.TableElement && it.hasMathCell() } ->
+    // native table can only print the [formula] marker. A portable cell
+    // picture is the same case: only the WebView can draw it, while the
+    // native table can only print the [image] marker. A plain table (no
+    // formula and no portable picture cell) keeps the native fast path.
+    elements.any { it is ContentElement.TableElement && it.needsMixedCellRendering() } ->
         ContentRenderPath.MIXED
     elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
     else -> ContentRenderPath.NATIVE
 }
 
-/** True when any cell of this table holds a real `<math>…</math>` block. */
-private fun ContentElement.TableElement.hasMathCell(): Boolean =
-    rows.any { row -> row.any { CELL_MATH_PATTERN.containsMatchIn(it) } }
+/** True when any cell of this table needs the mixed view or its asset pipeline. */
+private fun ContentElement.TableElement.needsMixedCellRendering(): Boolean =
+    rows.any { row -> row.any { CELL_MATH_PATTERN.containsMatchIn(it) || cellHasPortableImage(it) } }
 
 /**
  * Speech-friendly linearisation of MathML, used ONLY by the accessibility
@@ -133,7 +135,7 @@ internal fun accessibleContentText(elements: List<ContentElement>): String = bui
                                 is CellPart.Math ->
                                     escapeHtmlText(accessibleMathText(mathImageMarker(part.mathml)))
                                 is CellPart.Text ->
-                                    cellImgPattern.replace(part.html, CELL_IMAGE_MARKER)
+                                    mapCellImages(part.html) { CELL_IMAGE_MARKER }
                             }
                         }).text.trim()
                     }
@@ -240,7 +242,11 @@ private fun ElementText(
     }
 }
 
-/** A native Compose table: one bordered row per [ContentElement.TableElement.rows] entry. */
+/**
+ * A native Compose table: one bordered row per [ContentElement.TableElement.rows]
+ * entry. Pictures and formulas, which a native text run cannot show, collapse
+ * to a marker; a table holding either takes the mixed view instead.
+ */
 @Composable
 private fun TableElement(element: ContentElement.TableElement) {
     Column(
@@ -261,10 +267,9 @@ private fun TableElement(element: ContentElement.TableElement) {
                     // bare Text() rendered every tag literally. Pictures and
                     // formulas, which a native text run cannot show, collapse
                     // to a marker (consolidated_bugs.md G1-G3).
-                    val annotated = remember(cell) { InlineHtml.parse(sanitizeTableCell(cell)) }
-                    Text(
-                        annotated,
-                        style = MaterialTheme.typography.bodySmall,
+                    ElementText(
+                        remember(cell) { sanitizeTableCell(cell) },
+                        MaterialTheme.typography.bodySmall,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
@@ -799,10 +804,10 @@ internal fun mixedContentHtml(
                     append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
                         append("<tr>")
-                        // Cells carry inline markup; pictures collapse to a
-                        // marker and formulas go through the same strip as a
-                        // MathElement, so MathJax typesets them
-                        // (consolidated_bugs.md G1-G3).
+                        // Cells carry inline markup; a portable picture is
+                        // drawn as a real image sized to the cell, formulas go
+                        // through the same strip as a MathElement so MathJax
+                        // typesets them (consolidated_bugs.md G1-G3).
                         for (cell in row) {
                             append("<td>").append(tableCellHtml(cell) { stripMathAttributes(it) })
                             append("</td>")
@@ -850,6 +855,7 @@ internal fun mixedContentHtml(
         table{border-collapse:collapse;margin:4px 0;max-width:100%}
         mjx-container{max-width:100%}
         img{vertical-align:middle}
+        td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}
         .mcq-chem{margin:4px 0}
         .mcq-chem-caption{font-size:0.9em}
         .mcq-chem-fallback{color:inherit}
@@ -1023,8 +1029,6 @@ internal fun stripMathAttributes(mathml: String): String {
 internal const val CELL_IMAGE_MARKER = "[image]"
 internal const val CELL_FORMULA_MARKER = "[formula]"
 
-private val cellImgPattern = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
-
 /**
  * A cell formula with every picture inside it replaced by the marker wrapped
  * in `<mtext>`: the MathML sanitizer only knows MathML tags, so a bare `<img>`
@@ -1033,7 +1037,7 @@ private val cellImgPattern = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
  * keeps `[image]` one run for both MathJax and the spoken fallback.
  */
 private fun mathImageMarker(mathml: String): String =
-    cellImgPattern.replace(mathml) { "<mtext>$CELL_IMAGE_MARKER</mtext>" }
+    mapCellImages(mathml) { "<mtext>$CELL_IMAGE_MARKER</mtext>" }
 
 /**
  * The cell on a surface that can show neither pictures nor formulas: both
@@ -1045,7 +1049,7 @@ internal fun sanitizeTableCell(cell: String): String =
     tableCellParts(cell).joinToString("") { part ->
         when (part) {
             is CellPart.Math -> CELL_FORMULA_MARKER
-            is CellPart.Text -> cellImgPattern.replace(part.html, CELL_IMAGE_MARKER)
+            is CellPart.Text -> mapCellImages(part.html) { CELL_IMAGE_MARKER }
         }
     }
 
@@ -1053,7 +1057,9 @@ internal fun sanitizeTableCell(cell: String): String =
  * The cell as HTML: the markup between formulas goes through the same inline
  * pipeline as a TextElement (newlines as breaks, G10), each formula through
  * [mathHtml] (the mixed view's MathJax strip, the HTML export's sanitizer),
- * pictures as a marker.
+ * and each portable picture as a real, rebuilt `<img>` sized to its column.
+ * A non-portable source — remote, `file:`, SVG, an extra attribute, a bad
+ * base64 payload — stays the visible marker and never becomes a tag.
  *
  * A picture INSIDE a formula is marked before [mathHtml] runs, exactly as
  * [mathImageMarker] describes: otherwise the MathML sanitizer escapes the
@@ -1064,12 +1070,39 @@ internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String =
         when (part) {
             is CellPart.Math ->
                 mathHtml(mathImageMarker(part.mathml))
-            is CellPart.Text ->
-                com.mcqapp.data.renderInlineHtml(
-                    cellImgPattern.replace(part.html, CELL_IMAGE_MARKER).replace("\n", "<br/>")
-                )
+            is CellPart.Text -> renderCellText(part.html)
         }
     }
+
+/**
+ * One prose run as HTML: the inline pipeline for the text around each picture,
+ * and the rebuilt tag (or the marker) for the tag itself. Splitting is safe
+ * for HTML because every chunk is escaped independently and the surrounding
+ * inline tags are re-emitted verbatim, so `<b>a <img> b</b>` keeps its pair.
+ */
+private fun renderCellText(html: String): String {
+    var out: StringBuilder? = null
+    var pos = 0
+    forEachCellImage(html) { src, start, end ->
+        val sb = out ?: StringBuilder(html.length).also { out = it }
+        sb.append(renderCellHtml(html.substring(pos, start)))
+        sb.append(
+            if (src != null && portableCellImageSrc(src)) {
+                cellImageTag(src)
+            } else {
+                CELL_IMAGE_MARKER
+            }
+        )
+        pos = end
+    }
+    val sb = out ?: return renderCellHtml(html)
+    sb.append(renderCellHtml(html.substring(pos)))
+    return sb.toString()
+}
+
+/** The inline pipeline for one prose chunk, with newlines as breaks (G10). */
+private fun renderCellHtml(text: String): String =
+    com.mcqapp.data.renderInlineHtml(text.replace("\n", "<br/>"))
 
 /** Same escaping as the exporters: one escaper, not four copies. */
 private fun escapeHtmlData(s: String): String = com.mcqapp.data.escapeHtmlText(s)

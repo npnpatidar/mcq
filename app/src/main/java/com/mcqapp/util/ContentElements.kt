@@ -1042,11 +1042,15 @@ private fun mathImageMarker(mathml: String): String =
 /**
  * The cell on a surface that can show neither pictures nor formulas: both
  * collapse to a visible marker, the rest of the markup stays for the inline
- * pipeline. Built from the shared [tableCellParts] grammar so the formula
- * pattern exists once.
+ * pipeline. A chemical structure collapses to its readable handles first
+ * ([sanitizeCellChem]). Built from the shared [tableCellParts] grammar so the
+ * formula pattern exists once.
  */
 internal fun sanitizeTableCell(cell: String): String =
-    tableCellParts(cell).joinToString("") { part ->
+    // Chem markers go first: their body is the handles text, and leaving the
+    // raw span would let the inline/picture scanners mistake its markup for a
+    // formula or a picture (and print `[image]` for a structure that has none).
+    tableCellParts(sanitizeCellChem(cell)).joinToString("") { part ->
         when (part) {
             is CellPart.Math -> CELL_FORMULA_MARKER
             is CellPart.Text -> mapCellImages(part.html) { CELL_IMAGE_MARKER }
@@ -1061,12 +1065,20 @@ internal fun sanitizeTableCell(cell: String): String =
  * A non-portable source — remote, `file:`, SVG, an extra attribute, a bad
  * base64 payload — stays the visible marker and never becomes a tag.
  *
+ * A chemical structure also stays its handles text for now: drawing it is the
+ * mixed page's job (PR 2), and a raw marker span here would be printed
+ * literally by [renderInlineHtml]. The degradation runs before the formula and
+ * picture scanners, so an in-marker `data-png` can never become `[image]`.
+ *
  * A picture INSIDE a formula is marked before [mathHtml] runs, exactly as
  * [mathImageMarker] describes: otherwise the MathML sanitizer escapes the
  * `<img>` as text and prints its raw base64 data URI as visible math.
  */
 internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String =
-    tableCellParts(cell).joinToString("") { part ->
+    // A chem marker currently degrades to its readable handles here. PR 2
+    // replaces this with a chem-cell renderer passed in from the mixed page;
+    // until then the marker must never reach renderInlineHtml as raw markup.
+    tableCellParts(sanitizeCellChem(cell)).joinToString("") { part ->
         when (part) {
             is CellPart.Math ->
                 mathHtml(mathImageMarker(part.mathml))

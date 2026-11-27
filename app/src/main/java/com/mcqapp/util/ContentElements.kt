@@ -1240,11 +1240,17 @@ internal fun sanitizeTableCell(cell: String): String =
  * base64 payload — stays the visible marker and never becomes a tag.
  *
  * [chemHtml] is the optional chemical-structure renderer: only the mixed page
- * passes one, and each structure then becomes the drawing it names, in
- * storage order among the surrounding prose. With the default null every other
- * surface keeps its existing behaviour — the marker degrades to its readable
- * handles ([sanitizeCellChem]) and never reaches [renderInlineHtml] as raw
- * markup, so an in-marker `data-png` can also never become `[image]`.
+ * and the HTML export pass one, and each structure then becomes the drawing it
+ * names, in storage order among the surrounding prose. With the default null
+ * every other surface keeps its existing behaviour — the marker degrades to its
+ * readable handles ([sanitizeCellChem]) and never reaches [renderInlineHtml] as
+ * raw markup, so an in-marker `data-png` can also never become `[image]`.
+ *
+ * [withPng] hands the renderer the marker's validated diagram. It defaults to
+ * false because an in-app page always draws live, so decoding a stored PNG
+ * there would cost work nobody shows; the HTML export sets it so the embedded
+ * picture can carry the same image a standalone [ContentElement.ChemElement]
+ * does. Only a payload [isPngDataUri] accepts ever reaches the element.
  *
  * A picture INSIDE a formula is marked before [mathHtml] runs, exactly as
  * [mathImageMarker] describes: otherwise the MathML sanitizer escapes the
@@ -1253,14 +1259,13 @@ internal fun sanitizeTableCell(cell: String): String =
 internal fun tableCellHtml(
     cell: String,
     chemHtml: ((ContentElement.ChemElement) -> String)? = null,
+    withPng: Boolean = false,
     mathHtml: (String) -> String
 ): String {
     if (chemHtml == null) {
         return tableCellTextHtml(sanitizeCellChem(cell), mathHtml)
     }
-    // The payload is skipped: an in-app page always draws live, so validating
-    // a stored PNG here would only decode base64 nobody shows.
-    return cellSegments(cell, withPng = false).joinToString("") { segment ->
+    return cellSegments(cell, withPng = withPng).joinToString("") { segment ->
         when (segment) {
             is CellSegment.Chem -> chemHtml(segment.element)
             is CellSegment.Text -> tableCellTextHtml(segment.html, mathHtml)

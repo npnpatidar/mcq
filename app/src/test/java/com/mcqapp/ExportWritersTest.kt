@@ -525,6 +525,179 @@ class ExportWritersTest {
         }
     }
 
+    // ---- chemistry inside a table cell ---------------------------------
+
+    /** A 2x2 PNG header: the strict validator accepts its signature. */
+    private val cellPngBytes = ByteArray(24).also { b ->
+        byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(b, 0)
+        b[19] = 2 // width = 2
+        b[23] = 2 // height = 2
+    }
+    private val cellPng: String =
+        "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(cellPngBytes)
+
+    private fun cellChemPaper(cell: String): PaperDto {
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        return PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+    }
+
+    @Test
+    fun htmlRendersAChemTableCellInBothPageVariants() {
+        // A cell structure must render like a standalone ChemElement: its
+        // readable handles plus the stored PNG. It used to degrade to the
+        // handles text alone, so the exported table lost every drawing.
+        val element = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "Benzene <ring> & co",
+            spoken = "aromatic ring",
+            diagram = cellPng
+        )
+        val tableImage = "data:image/png;base64,AAAA"
+        val cell = "Prose before " + com.mcqapp.util.chemCellHtml(element) +
+            " <math><mi>x</mi></math> <img src=\"$tableImage\"/> prose after"
+        val handles = com.mcqapp.data.escapeHtmlText(com.mcqapp.data.export.chemElementText(element))
+        val paper = cellChemPaper(cell)
+
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            val label = "quiz=$quiz"
+            val handlesAt = html.indexOf(handles)
+            val structureAt = html.indexOf("<img src=\"$cellPng\" alt=\"aromatic ring C6H6\">")
+            val mathAt = html.indexOf("<math><mi>x</mi></math>")
+            val imageAt = html.indexOf(
+                "<img src=\"$tableImage\" style=\"$CELL_IMAGE_STYLE\" alt=\"$CELL_IMAGE_ALT\""
+            )
+            val afterAt = html.indexOf("prose after")
+            assertTrue("$label: prose first: $html", html.contains("Prose before"))
+            assertTrue("$label: handles text: $html", handlesAt >= 0)
+            assertTrue("$label: the structure picture: $html", structureAt > handlesAt)
+            assertTrue("$label: the formula is typeset: $html", mathAt > structureAt)
+            assertTrue("$label: the cell picture keeps its style/alt: $html", imageAt > mathAt)
+            assertTrue("$label: order kept: $html", afterAt > imageAt)
+            assertFalse("$label: no raw marker: $html", html.contains("mcq-chem-cell"))
+            assertFalse("$label: no attribute leaks: $html", html.contains("data-smiles"))
+            assertFalse("$label: no data-png: $html", html.contains("data-png"))
+        }
+    }
+
+    @Test
+    fun htmlKeepsAChemCellWithoutAValidPngAsHandlesOnly() {
+        // The payload is well-formed base64 but not a PNG: the marker stays a
+        // structure (so no [image] marker) and prints only its handles. No raw
+        // data-png attribute and no base64 text may reach the page.
+        val payload = java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3, 4))
+        val marker = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+            "data-formula=\"C2H5OH\" data-caption=\"ethanol\" data-png=\"$payload\">" +
+            "ethanol C2H5OH CCO</span>"
+        val html = htmlOf(cellChemPaper("Look " + marker + " done"))
+
+        assertTrue("handles kept: $html", html.contains("ethanol C2H5OH CCO"))
+        assertTrue("surrounding prose kept: $html", html.contains("Look "))
+        assertFalse("no structure picture: $html", html.contains("<img src=\"data:image/png"))
+        assertFalse("no base64 text: $html", html.contains(payload))
+        assertFalse("no opaque marker: $html", html.contains(CELL_IMAGE_MARKER))
+        assertFalse("no data-png text: $html", html.contains("data-png"))
+        assertFalse("no raw marker: $html", html.contains("mcq-chem-cell"))
+    }
+
+    @Test
+    fun htmlNeverRebuildsAHostileChemCellMarker() {
+        // Neither a stray attribute nor an unquoted value may be promoted to
+        // markup: both spans stay inert prose, so no tag, handler or picture
+        // can come out of them.
+        val extraAttribute = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+            "onclick=\"alert(1)\">ethanol CCO</span>"
+        val unquoted = "<span class=mcq-chem-cell data-smiles=CCO>ethanol CCO</span>"
+        val html = htmlOf(cellChemPaper("$extraAttribute | $unquoted"))
+
+        assertTrue("the hostile span stays readable prose: $html", html.contains("ethanol CCO"))
+        assertTrue("it is escaped, not markup: $html",
+            html.contains("onclick=&quot;alert(1)&quot;"))
+        assertFalse("no attribute was emitted: $html", html.contains("onclick=\"alert(1)\""))
+        assertFalse("no span element: $html", html.contains("<span"))
+        assertFalse("no picture from a hostile marker: $html", html.contains("<img"))
+        assertFalse("no base64: $html", html.contains("base64,"))
+    }
+
+    @Test
+    fun htmlGivesAChemTableFixedColumnsAndItsCss() {
+        val element = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            diagram = cellPng
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+
+        assertTrue(
+            "the chem table is marked: $html",
+            html.contains("<table class=\"mcq-chem-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        // The rules the class relies on travel in the page's own stylesheet.
+        assertTrue(html.contains("table.mcq-chem-table{table-layout:fixed;width:100%}"))
+        assertTrue(html.contains("table.mcq-chem-table td{overflow-wrap:break-word}"))
+        assertTrue(
+            html.contains("table.mcq-chem-table td img{max-width:100%;height:auto;max-height:240px}")
+        )
+    }
+
+    @Test
+    fun htmlLeavesAPlainTableOnItsOldMarkup() {
+        // No chem cell: the markup and therefore the auto layout stay exactly
+        // as they were, so an ordinary table's columns are unchanged.
+        val html = htmlOf(richPaper())
+
+        assertTrue(
+            "plain table markup: $html",
+            html.contains("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        assertFalse("no chem-table class: $html", html.contains("<table class="))
+    }
+
+    @Test
+    fun htmlKeepsAWideStructureImageInsideAFixedLayoutTable() {
+        // A wide PNG would widen an auto-layout grid past the page cap; the
+        // chem table's fixed columns and image cap are what hold it inside.
+        val wideBytes = ByteArray(24).also { b ->
+            byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(b, 0)
+            b[16] = 0; b[17] = 0; b[18] = 0x06.toByte(); b[19] = 0x40 // width = 1600
+            b[20] = 0; b[21] = 0; b[22] = 0x03.toByte(); b[23] = 0x84.toByte() // height = 900
+        }
+        val wide = "data:image/png;base64," +
+            java.util.Base64.getEncoder().encodeToString(wideBytes)
+        val element = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "Benzene",
+            diagram = wide
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+
+        val tableAt = html.indexOf("<table class=\"mcq-chem-table\"")
+        val imageAt = html.indexOf("<img src=\"$wide\"")
+        val closeAt = html.indexOf("</table>")
+        assertTrue("the chem table is fixed-layout: $html", tableAt >= 0)
+        assertTrue(
+            "the wide structure image sits inside that table: $html",
+            imageAt > tableAt && imageAt < closeAt
+        )
+        assertTrue(
+            "its size is capped by the cell rule: $html",
+            html.contains("table.mcq-chem-table td img{max-width:100%;height:auto;max-height:240px}")
+        )
+    }
+
     @Test
     fun htmlAnswerNamesTheOptionLabelNotItsContent() {
         val q = QuestionDto(

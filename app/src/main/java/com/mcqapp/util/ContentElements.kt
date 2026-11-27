@@ -284,23 +284,128 @@ internal const val SMILES_DRAWER_ASSET_URL =
     "file:///android_asset/smiles-drawer/smiles-drawer.min.js"
 
 /**
- * Display cap for the live structure, in CSS px. SmilesDrawer's `width` and
- * `height` options are inert when it draws into an existing `<svg>` target,
- * so the cap is applied as CSS on the live element instead. The hidden capture
- * SVG carries no such cap: only its clone's `display:none` style is removed
- * before serialisation, so the PNG keeps the drawer's viewBox-derived size.
+ * Display cap for a STANDALONE structure, in CSS px. SmilesDrawer's `width`
+ * and `height` options are inert when it draws into an existing `<svg>` target,
+ * so the cap is applied as CSS on the live element instead. A reaction uses
+ * [CHEM_REACTION_STYLE] inside [CHEM_REACTION_CONTAINER_STYLE] instead: it is
+ * an inline row, not a scaled-up molecule. The hidden capture SVG carries
+ * neither style — only its clone's `display:none` style is removed before
+ * serialisation, so the PNG keeps the drawer's full viewBox-derived size.
+ *
+ * [CHEM_STANDALONE_FIT_JS] replaces the fixed `width` with one derived from a
+ * standalone drawing's real bounds, which lifts this cap for WIDE drawings
+ * only: the element keeps `max-height:96px`, so a tall or square drawing is
+ * still bounded here (see that constant for the effective scale).
  */
-internal const val CHEM_DISPLAY_MAX_PX = 140
+internal const val CHEM_DISPLAY_MAX_PX = 96
+
+/**
+ * Smallest drawing scale a STANDALONE structure may shrink to, relative to
+ * SmilesDrawer's default bond length (30 user units → ~24 px bonds).
+ *
+ * [CHEM_DISPLAY_MAX_PX] on its own measured the drawer's SQUARE viewBox, not
+ * the drawing: a ring's tight ~131×123 content got 20.7 px bonds, while a long
+ * chain's tight ~245×78 content — the same square box — was squeezed to 11 px
+ * bonds. [CHEM_STANDALONE_FIT_JS] crops that square padding with `getBBox()`,
+ * and this floor stops a wide chain from shrinking below the scale a ring is
+ * drawn at: the reference ring now renders at the 0.8 floor, a bond of about
+ * 23.4 px — slightly larger than the old 20.7 px.
+ *
+ * It is a floor on the FIT, not a guarantee against the page: a very wide
+ * chain still hits `max-width:100%`, so on a narrow page it is clamped below
+ * 0.8 (a 36-carbon chain does exactly that).
+ */
+internal const val CHEM_STANDALONE_MIN_SCALE = 0.8
+
+/** Compact standalone display style: one small, self-contained molecule. */
+private const val CHEM_DISPLAY_STYLE =
+    "width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;" +
+        "height:auto;vertical-align:middle;"
+
+/**
+ * After a standalone molecule is drawn, crop the drawer's square viewBox to
+ * the drawing's real bounds and size the element from that.
+ *
+ * Only the WIDTH cap is lifted, and only for wide drawings. The scale computed
+ * here is `max(96 / max(w,h), 0.8)`, but the element keeps the display style's
+ * `max-height:96px`, so the scale that actually reaches the screen is:
+ *
+ *   `min(max(96 / max(w,h), 0.8), 96 / h)`
+ *
+ * A tall, narrow structure is still bounded by the 96 px cap. A compact
+ * drawing takes the `96/max(w,h)` branch and keeps its old scaled-up size
+ * (CCO ≈ 1.32×, benzene ≈ 1.5×). A wide chain keeps the bond size a ring gets
+ * instead of shrinking to fit a mostly empty square. The floor is not absolute
+ * either: `max-width:100%` still applies, so a very wide chain on a narrow
+ * page is clamped below 0.8.
+ *
+ * `data-fitted='1'` is set only once the crop and sizing ran, so a UI probe
+ * cannot mistake the drawer's pre-fit square viewBox for a completed fit.
+ *
+ * Only for the LIVE standalone SVG: the hidden capture is `display:none`,
+ * where `getBBox()` is 0, and a reaction is an inline scheme whose width the
+ * reaction scale pass already owns.
+ */
+private const val CHEM_STANDALONE_FIT_JS =
+    "function fitStandalone(s){try{" +
+        "var bb=s.getBBox();if(!(bb.width>0)||!(bb.height>0))return;" +
+        "var p=2,w=bb.width+2*p,h=bb.height+2*p;" +
+        "var sc=Math.max(${CHEM_DISPLAY_MAX_PX}/Math.max(w,h),$CHEM_STANDALONE_MIN_SCALE);" +
+        "s.setAttribute('viewBox',(bb.x-p)+' '+(bb.y-p)+' '+w+' '+h);" +
+        "s.style.width=(w*sc)+'px';s.style.height='auto';s.style.maxWidth='100%';" +
+        "s.setAttribute('data-fitted','1');" +
+        "}catch(e){}}"
+
+/**
+ * Reaction SVG style: no fixed width and no molecule cap. ReactionDrawer
+ * writes the scheme's natural pixel width/height onto the target; the inline
+ * draw script then rescales that width (see [CHEM_REACTION_CONSTRAINT_JS])
+ * and adds constraints. Replacing the whole `cssText` would drop the width
+ * and let the SVG fall back to 300 px, ignoring the scale pass entirely.
+ */
+private const val CHEM_REACTION_STYLE =
+    "max-width:100%;height:auto;flex:0 1 auto;"
+
+/**
+ * After-draw scale for the drawer's computed width. The live reaction options
+ * scale the whole scheme's user units by 2.2 so each label clears Android's
+ * 8 px minimum font size (see the reaction options in [chemBlockHtml]); this
+ * 1/2.2 pass then brings the rendered SVG back to the width the row used to
+ * occupy. Labels end up the same on-screen size as before, while their
+ * proportion to the bonds stays the standalone 11/30. `height:auto` preserves
+ * the viewBox aspect ratio.
+ */
+private const val CHEM_REACTION_SCALE = 0.773
+
+/** Scale the drawer's width, then constrain it — never overwrite `cssText`. */
+private const val CHEM_REACTION_CONSTRAINT_JS =
+    "var rw=parseFloat(svg.style.width);if(rw>0){svg.style.width=(rw*$CHEM_REACTION_SCALE)+'px';}" +
+        "svg.style.maxWidth='100%';svg.style.height='auto';svg.style.flex='0 1 auto';"
+
+/**
+ * Inline row for a whole reaction: the scheme and its product label
+ * sit on one line. `white-space:nowrap` keeps a short reagent caption from
+ * wrapping, and `justify-content:center` centres the scheme + label in the
+ * full-width block instead of leaving it flush left. Deliberately NO
+ * max-height: the row's measured height must reflect its real content so the
+ * UI bound can actually fail on a stacked layout.
+ */
+private const val CHEM_REACTION_CONTAINER_STYLE =
+    "display:flex;align-items:center;gap:4px;max-width:100%;white-space:nowrap;" +
+        "justify-content:center;"
 
 /**
  * Characters a SMILES string may contain before it is handed to JavaScript.
- * Anything else (a quote, a semicolon, an angle bracket, whitespace, …) is
- * dropped: the SMILES is wrapped in a JS string literal and an HTML fallback
- * line, so a hostile value must never be able to close either one.
+ * `>` is included so a three-part reaction SMILES (`reactants>reagents>products`)
+ * reaches ReactionParser; it is safe because [jsStringLiteral] escapes every
+ * `>` as `\u003e` inside the JS string literal. Anything else (a quote, a
+ * semicolon, `<`, whitespace, …) is dropped: the SMILES is wrapped in a JS
+ * string literal and an HTML fallback line, so a hostile value must never be
+ * able to close either one.
  */
 private val SMILES_ALLOWED_CHARS =
     ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
-        "@.+-?!()[]{}#\\=\$:*%" + "/").toSet()
+        "@.+-?!()[]{}#\\=\$:*%" + "/>").toSet()
 
 /**
  * Any Kotlin string as a JSON string literal (quotes included) for inline JS.
@@ -342,6 +447,11 @@ internal fun smilesJsLiteral(smiles: String): String =
  * JavaScript drawer is missing or rejects the SMILES. The fallback never
  * carries SVG or base64 data — only the formula and the SMILES characters.
  */
+/** The product label that sits beside the scheme in the inline row. */
+private fun reactionProductLabel(formula: String): String =
+    "<span class=\"mcq-chem-product\" style=\"font-size:0.85em\">" +
+        escapeHtmlData(formula) + "</span>"
+
 private fun chemBlockHtml(
     element: ContentElement.ChemElement,
     index: Int,
@@ -352,11 +462,25 @@ private fun chemBlockHtml(
     val svgId = "mcq-chem-$index"
     val captureId = "$svgId-capture"
     val fallbackId = "mcq-chem-$index-fallback"
-    val visibleText = element.formula.takeIf { it.isNotBlank() } ?: element.smiles
+    // ReactionParser splits on '>' and requires exactly three parts, so a
+    // reaction needs exactly two '>' (empty reagents/products are allowed:
+    // "reactants>>" is the common case). A lone '>' is malformed: leave it on
+    // the molecule path rather than letting ReactionParser throw.
+    val isReaction = element.smiles.count { it == '>' } == 2
+    val displayStyle = if (isReaction) CHEM_REACTION_STYLE else CHEM_DISPLAY_STYLE
+    // The caption becomes the text above the arrow, so there is no separate
+    // caption line. Keep it in the fallback too: a broken drawer must not
+    // hide the reagent from a sighted reader.
+    val visibleText = buildString {
+        append(element.formula.takeIf { it.isNotBlank() } ?: element.smiles)
+        if (isReaction && element.caption.isNotBlank()) append(' ').append(element.caption)
+    }
     val caption = listOf(element.caption, element.formula)
         .filter { it.isNotBlank() }
         .joinToString(" ") { escapeHtmlData(it) }
-    val captionLine = if (caption.isBlank()) "" else
+    // In reaction mode the caption is the reagent text drawn above the arrow,
+    // so there is no separate caption line under the diagram.
+    val captionLine = if (isReaction || caption.isBlank()) "" else
         "<div class=\"mcq-chem-caption\">$caption</div>"
     val fallbackLine = buildString {
         if (structureUnavailable.isNotBlank()) append(escapeHtmlData(structureUnavailable)).append(": ")
@@ -367,20 +491,51 @@ private fun chemBlockHtml(
     // CSP already allows img-src data:, so no script is needed for this block.
     if (isPngDataUri(element.diagram)) {
         return buildString {
-            append("<div class=\"mcq-chem\">")
+            if (isReaction) {
+                append("<div class=\"mcq-chem mcq-chem-reaction\" style=\"")
+                    .append(CHEM_REACTION_CONTAINER_STYLE).append("\">")
+            } else {
+                append("<div class=\"mcq-chem\">")
+            }
             append("<img src=\"").append(escapeHtmlData(element.diagram))
                 .append("\" alt=\"").append(escapeHtmlData(visibleText))
-                .append("\" style=\"max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
-                .append("height:auto;vertical-align:middle;\"/>")
+                .append("\" style=\"")
+            if (isReaction) {
+                append(CHEM_REACTION_STYLE)
+            } else {
+                append("max-width:100%;max-height:${CHEM_DISPLAY_MAX_PX}px;width:auto;")
+                    .append("height:auto;vertical-align:middle;")
+            }
+            append("\"/>")
+            if (isReaction && element.formula.isNotBlank()) append(reactionProductLabel(element.formula))
             append(captionLine)
             append("</div>")
         }
     }
 
+    // textColorCss comes from the WebView's `color` (onSurface, always
+    // rgba(...,1)), which SVG accepts as a paint value. It still goes through
+    // the JSON escaper so no caller-supplied text can break out.
+    // SmilesDrawer deep-merges options, so the built-in light/dark/custom
+    // themes stay intact; 'mcq' only overrides C and H and falls back to C
+    // for every other atom via ThemeManager.getColor.
+    val atomColor = jsStringLiteral(chemColorCss)
+    // In reaction mode the caption is textAbove in JS source, not HTML, so it
+    // goes through the JSON escaper (which also neutralises '<', '>' and '&'
+    // inside the inline <script>).
+    val reagentText = jsStringLiteral(element.caption)
+
     return buildString {
-        append("<div class=\"mcq-chem\">")
-        append("<svg id=\"$svgId\" style=\"width:${CHEM_DISPLAY_MAX_PX}px;max-width:100%;")
-        append("max-height:${CHEM_DISPLAY_MAX_PX}px;height:auto;vertical-align:middle;\"></svg>")
+        if (isReaction) {
+            append("<div class=\"mcq-chem mcq-chem-reaction\" style=\"")
+                .append(CHEM_REACTION_CONTAINER_STYLE).append("\">")
+        } else {
+            append("<div class=\"mcq-chem\">")
+        }
+        append("<svg id=\"$svgId\" style=\"$displayStyle\"></svg>")
+        // The sample supplies the product as `formula`; it sits beside the
+        // scheme so the whole equation reads on one line.
+        if (isReaction && element.formula.isNotBlank()) append(reactionProductLabel(element.formula))
         // A second, hidden SVG is drawn with the bundled light theme so a
         // stored diagram has dark strokes on white export surfaces, whatever
         // theme the learner was using when the editor captured it.
@@ -394,11 +549,35 @@ private fun chemBlockHtml(
         append("var captureSvg=document.getElementById('").append(captureId).append("');")
         append("var fallback=document.getElementById('").append(fallbackId).append("');")
         append("function showFallback(){svg.style.display='none';if(fallback)fallback.style.display='';}")
+        // SmilesDrawer injects a <style> element into every SVG it draws
+        // (`.element`/`.sub` from SvgWrapper, `.text` for a reaction caption).
+        // A <style> inside an SVG is a DOCUMENT-global stylesheet, so without
+        // this every drawing on the page follows the LAST style injected. In
+        // production each answer option gets its own WebView, so the leak that
+        // matters happens INSIDE one page: a reaction draws its own hidden
+        // light-theme capture after the live scheme, at 11 pt over 30-unit
+        // bonds (the standalone defaults, now passed explicitly), so that
+        // capture's rule would restyle the visible scheme — and any diagram
+        // drawn later in the same WebView restyles everything before it.
+        // Prefixing each selector with this SVG's id keeps the rules inside
+        // their own drawing; querySelectorAll('style') also reaches the nested
+        // reactant SVGs a reaction contains, and `#id .element` still matches
+        // them as descendants. The capture clone keeps its id, so the scoped
+        // selectors keep working inside the serialised PNG source. The guard
+        // makes a second pass a no-op: without it `#id .element` would be
+        // rewritten to `#id #id .element`.
+        append("function scopeChemStyles(s){var id=s.id;if(!id)return;")
+        append("var st=s.querySelectorAll('style');")
+        append("for(var i=0;i<st.length;i++){var e=st[i];")
+        append("if(e.textContent.indexOf('#'+id+' .')>=0)continue;")
+        append("e.textContent=e.textContent.replace(/(^|[\\s,{}])\\.(element|sub|text)\\b/g,")
+        append("'\$1#'+id+' .\$2');}}")
+        append(CHEM_STANDALONE_FIT_JS)
         // Rasterise the hidden light-theme drawing so a structure authored in
         // the editor can be stored in ChemElement.diagram and travel through
         // every export with dark strokes on white surfaces. Serialise a CLONE
         // with the display style removed: the live SVG carries the theme's
-        // text colour and the 140px cap, neither of which belongs in a PNG.
+        // text colour and its display cap, neither of which belongs in a PNG.
         append("function capture(){try{")
         append("var c=captureSvg.cloneNode(true);")
         append("c.removeAttribute('style');")
@@ -416,28 +595,120 @@ private fun chemBlockHtml(
         append("img.onerror=function(){};")
         append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
         append("}catch(e){}}")
-        // textColorCss comes from the WebView's `color` (onSurface, always
-        // rgba(...,1)), which SVG accepts as a paint value. It still goes
-        // through the JSON escaper so no caller-supplied text can break out.
-        // SmilesDrawer deep-merges options, so the built-in light/dark/custom
-        // themes stay intact; 'mcq' only overrides C and H and falls back to C
-        // for every other atom via ThemeManager.getColor.
-        val atomColor = jsStringLiteral(chemColorCss)
         append("try{")
-        append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
-        append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
-        append(",tree=>{try{")
-        // width/height are inert for an existing <svg> target (they size a
-        // canvas target); they stay only for parity with the bundled API.
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
-        append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
-        append("}}}).draw(tree,svg,'mcq');")
-        // The capture copy uses the built-in light theme: its conventional
-        // dark C/H and heteroatom colours survive white export surfaces.
-        append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
-        append(".draw(tree,captureSvg,'light');")
-        append("capture();")
-        append("}catch(e){showFallback();}},err=>showFallback());")
+        if (isReaction) {
+            append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
+            // The whole scheme is drawn in user units 2.2x larger than the
+            // size it finally renders at: the molecule options AND
+            // ReactionDrawer's fixed chrome (spacing, plus signs, arrow),
+            // which is spelled out below at the same k.
+            // CHEM_REACTION_CONSTRAINT_JS then scales the SVG down by 1/k, so
+            // the row keeps the size it used to have.
+            //
+            // Why the drawing is bigger rather than the text smaller:
+            // Android WebView clamps any computed font size below its
+            // minimum-font setting, and that setting defaults to 8 px
+            // (https://developer.android.com/reference/android/webkit/WebSettings#setMinimumFontSize(int)).
+            // The old live label was 3.7 pt = 4.93 px, so the device silently
+            // drew it at 8 px: 8 px over a 10-unit bond against the
+            // standalone's 14.67 px over 30 units, 1.6x too large — exactly
+            // the "reaction letters look oversized" report. At k = 2.2 the
+            // label is 8.1 pt = 10.8 px and the 0.8 * 8.1 pt caption is
+            // 6.48 pt = 8.64 px, both clear of the floor; the SVG scale then
+            // restores the old physical size.
+            //
+            // The proportions still match the standalone drawings: 8.1/22 =
+            // 0.36818 against 11/30 = 0.36667 (0.4%), and fontSizeSmall 2.2
+            // gives 2.2/8.1 ≈ 0.2716 against SvgWrapper's `.sub` rule at
+            // 3/11 ≈ 0.2727. (2.1.1 defines `createSubSuperScripts` but never
+            // calls it, so CH3 hydrogens are Unicode subscript characters and
+            // the `.sub` rule is only a proportion guard.)
+            // Every injected style is scoped to its own SVG (see
+            // scopeChemStyles above), so this drawing's own hidden capture —
+            // drawn next at 11 pt over 30-unit bonds — cannot restyle it.
+            // width/height stay only for parity with the bundled API (inert
+            // for an existing <svg> target). Terminal carbons are drawn in
+            // BOTH the live and the hidden light-theme capture so on-screen
+            // and exported schemes agree; the capture keeps its original
+            // padding:2 drawer at full resolution.
+            //
+            // Every USER-SPACE length scales with the same k, not just the
+            // fonts and the bond length: bondThickness 0.8 -> 1.76 and
+            // padding 1 -> 2.2, and bondSpacing is supplied explicitly because
+            // DrawerBase's default is a fixed 30 * 0.17 = 5.1 that does NOT
+            // follow bondLength — at bondLength 22 it would draw double bonds
+            // 2.2x tighter than before. The 1/k CSS scale then restores the
+            // old physical size: a bond stroke of 0.8 * 2.2 = 1.76 user units
+            // renders at 1.36 px (0.8 * 1.7), a double-bond gap of
+            // 5.1 * 2.2 = 11.22 renders at 8.67 px (5.1 * 1.7), and the
+            // padding of 1 * 2.2 = 2.2 renders at 1.7 px.
+            //
+            // Options.extend deep-merges `rxnOptions` into ReactionDrawer's
+            // defaults, so `arrow.length` (4 * bondLength = 88) and the caption
+            // fontSize (0.8 * 8.1) stay derived; only the fixed geometry is
+            // given here, at the same k as the molecule options.
+            //
+            // The capture keeps ReactionDrawer's DEFAULT chrome
+            // (`captureRxnOptions = {}`), because its molecules are drawn at
+            // the 1x capture scale: the live 2.2-unit arrow at 1x would be a
+            // 2.2 px arrow in the exported PNG.
+            //
+            // The capture options spell the molecule defaults out on purpose.
+            // ReactionDrawer's constructor reads `moleculeOptions.bondLength`
+            // and `moleculeOptions.fontSizeLarge` RAW, before SvgDrawer merges
+            // its defaults, to build `arrow.length = 4 * bondLength` and the
+            // caption `fontSize = 0.8 * fontSizeLarge`. Omit them and the
+            // capture gets `viewBox="0 0 NaN …"`, a `NaN` arrow and no
+            // product side — a PNG with no arrow. fontSizeSmall keeps the
+            // capture's `.sub` rule at the default 3.
+            append("var rxnOptions={spacing:22,plus:{size:19.8,thickness:2.2},")
+            append("arrow:{headSize:13.2,thickness:2.2,margin:6.6}};")
+            append("var captureRxnOptions={};")
+            append("var molOptions={width:300,height:300,padding:2.2,bondThickness:1.76,bondSpacing:11.22,")
+            append("bondLength:22,fontSizeLarge:8.1,fontSizeSmall:2.2,overlapResolutionIterations:2,")
+            append("experimentalSSSR:true,terminalCarbons:true,")
+            append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor).append("}}};")
+            append("var captureMolOptions={width:300,height:300,padding:2,")
+            append("bondLength:30,fontSizeLarge:11,fontSizeSmall:3,terminalCarbons:true};")
+            append("window.SmilesDrawer.parseReaction(").append(smilesJsLiteral(element.smiles))
+            append(",reaction=>{try{")
+            append("new window.SmilesDrawer.ReactionDrawer(rxnOptions,molOptions)")
+            append(".draw(reaction,svg,'mcq',null,").append(reagentText).append(",\"\",false);")
+            append("scopeChemStyles(svg);")
+            // ReactionDrawer sets the scheme's natural pixel width/height.
+            // Rescale that width by 1/k, then add only the inline constraints
+            // — never cssText, which would erase the width and fall back to
+            // 300 px — and never touch the hidden capture SVG's style. The
+            // scale shrinks the style width below the viewBox width.
+            append(CHEM_REACTION_CONSTRAINT_JS)
+            append("new window.SmilesDrawer.ReactionDrawer(captureRxnOptions,captureMolOptions)")
+            append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")
+            append("scopeChemStyles(captureSvg);")
+            append("capture();")
+            append("}catch(e){showFallback();}},err=>showFallback());")
+        } else {
+            append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
+            append("window.SmilesDrawer.parse(").append(smilesJsLiteral(element.smiles))
+            append(",tree=>{try{")
+            // width/height are inert for an existing <svg> target (they size a
+            // canvas target); they stay only for parity with the bundled API.
+            append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2,")
+            append("themes:{mcq:{C:").append(atomColor).append(",H:").append(atomColor)
+            append("}}}).draw(tree,svg,'mcq');")
+            append("scopeChemStyles(svg);")
+            // Crop the square viewBox to the drawing's real bounds and size it
+            // from a minimum scale (CHEM_STANDALONE_FIT_JS), so a long chain
+            // keeps the bond size a ring gets. The hidden capture is drawn into
+            // its own display:none SVG, where getBBox() is 0: never fit it.
+            append("fitStandalone(svg);")
+            // The capture copy uses the built-in light theme: its conventional
+            // dark C/H and heteroatom colours survive white export surfaces.
+            append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
+            append(".draw(tree,captureSvg,'light');")
+            append("scopeChemStyles(captureSvg);")
+            append("capture();")
+            append("}catch(e){showFallback();}},err=>showFallback());")
+        }
         append("}catch(e){showFallback();}")
         append("})();</script>")
         append("</div>")
@@ -553,6 +824,7 @@ internal fun mixedContentHtml(
         $chemScript
         <style>
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
+        body{padding:0 0 0.25em}
         table{border-collapse:collapse;margin:4px 0}
         img{vertical-align:middle}
         .mcq-chem{margin:4px 0}
@@ -574,15 +846,51 @@ internal fun mixedContentHtml(
           // raw MathML is much taller than its SVG, and an early report would
           // pin that height, reveal the block, and then move it again.
           var settled = false;
+          // The true content bottom, not just the body's border box: on Android
+          // WebView an inline MathJax SVG can leave its descent outside the
+          // text line box, so body.getBoundingClientRect().height misses a few
+          // px and the pinned WebView clips the bottom of a subscript. Union
+          // every rendered descendant box instead. Deliberately not
+          // scrollHeight: that is at least the viewport height, and the
+          // viewport is the height Compose pins us to — a block that was ever
+          // pinned too tall could then never shrink, leaving blank space after
+          // the question.
+          //
+          // A box only counts when it is painted in the normal flow: MathJax's
+          // <mjx-assistive-mml> is position:absolute, clipped to 1 px and
+          // invisible, yet its MathML content can be far TALLER than the
+          // visible SVG (a matrix especially), so an unfiltered union pins
+          // several px of blank space. Its descendants are position:static, so
+          // the whole ancestry has to be checked, not just the element itself.
+          function outOfFlow(el, body) {
+            for (var n = el; n && n !== body; n = n.parentElement) {
+              if (n.tagName && n.tagName.toUpperCase() === 'MJX-ASSISTIVE-MML') return true;
+              var st = getComputedStyle(n);
+              if (st.position === 'absolute' || st.position === 'fixed' ||
+                  st.visibility === 'hidden' || st.display === 'none') return true;
+            }
+            return false;
+          }
+          function contentHeight() {
+            var body = document.body, b = body.getBoundingClientRect(), bottom = b.height;
+            var els = body.getElementsByTagName('*');
+            for (var i = 0; i < els.length; i++) {
+              var el = els[i], r = el.getBoundingClientRect();
+              if (!(r.width > 0 && r.height > 0)) continue;
+              var d = r.bottom - b.top;
+              // Computed style is the expensive read on this page, so only a
+              // box that would actually raise the max is inspected at all:
+              // most pages then do no style reads whatsoever.
+              if (d <= bottom) continue;
+              if (outOfFlow(el, body)) continue;
+              bottom = d;
+            }
+            return Math.ceil(bottom);
+          }
           function report() {
             if (!settled) return;
             try {
-              // The body's border box is the content height. Deliberately not
-              // scrollHeight: that is at least the viewport height, and the
-              // viewport is the height Compose pins us to — a block that was
-              // ever pinned too tall could then never shrink, leaving blank
-              // space after the question.
-              var h = Math.ceil(document.body.getBoundingClientRect().height);
+              var h = contentHeight();
               if (h > 0 && h !== reported && window.$CONTENT_HEIGHT_BRIDGE) {
                 reported = h;
                 window.$CONTENT_HEIGHT_BRIDGE.onHeight(h);

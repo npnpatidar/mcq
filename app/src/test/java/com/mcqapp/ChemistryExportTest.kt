@@ -73,6 +73,12 @@ class ChemistryExportTest {
         // Accessibility label and base64 are not printed text.
         assertEquals("c1ccccc1", chemElementText(chem().copy(caption = "", formula = "")))
         assertEquals("", chemElementText(chem().copy(smiles = "", caption = "", formula = "")))
+        // A reaction SMILES keeps its arrow in every readable export field:
+        // caption plus SMILES when the formula is blank.
+        assertEquals(
+            "reagent CCO>>",
+            chemElementText(ContentElement.ChemElement(smiles = "CCO>>", caption = "reagent"))
+        )
     }
 
     @Test

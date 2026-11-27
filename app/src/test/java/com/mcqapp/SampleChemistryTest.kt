@@ -2,7 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.sanitizeMathml
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.searchableText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -46,13 +48,22 @@ class SampleChemistryTest {
     private fun structureOf(elements: List<ContentElement>): ContentElement.ChemElement =
         elements.filterIsInstance<ContentElement.ChemElement>().single()
 
+    /** An upright element symbol, as the generator writes it. */
+    private fun symbol(name: String) = "<mtext>$name</mtext>"
+
+    /** An element with a count of two or more; a count of one is omitted. */
+    private fun subscripted(name: String, count: Int) =
+        "<msub><mtext>$name</mtext><mn>$count</mn></msub>"
+
+    private fun formulaBlock(vararg parts: String) = "<math>${parts.joinToString("")}</math>"
+
     @Test
     fun theChemistrySampleParsesIntoACompleteChemElement() {
         val elements = chemistry.elements.filterIsInstance<ContentElement.ChemElement>()
         assertEquals("q-chem-5 must carry exactly one structure", 1, elements.size)
         val element = elements.single()
         assertEquals("c1ccccc1", element.smiles)
-        assertEquals("C6H6", element.formula)
+        assertEquals("C₆H₆", element.formula)
         assertEquals("benzene", element.caption)
         assertEquals(
             "a ring of six carbon atoms with alternating double bonds, benzene",
@@ -79,7 +90,7 @@ class SampleChemistryTest {
             content.keys
         )
         assertEquals("c1ccccc1", content["smiles"]?.jsonPrimitive?.content)
-        assertEquals("C6H6", content["formula"]?.jsonPrimitive?.content)
+        assertEquals("C₆H₆", content["formula"]?.jsonPrimitive?.content)
         assertEquals("benzene", content["caption"]?.jsonPrimitive?.content)
     }
 
@@ -96,17 +107,64 @@ class SampleChemistryTest {
         assertTrue("the explanation must teach the SMILES", chemistry.explanation.contains("c1ccccc1"))
     }
 
+    /**
+     * The owner's rule: a formula in an option is a formula block, not plain
+     * text, so MathJax typesets it instead of the reader seeing `C6H6`.
+     */
+    @Test
+    fun theBenzeneOptionsCarryTheirFormulasAsFormulaBlocks() {
+        val labels = mapOf(
+            "a" to "Benzene, ",
+            "b" to "Cyclohexane, ",
+            "c" to "Toluene, ",
+            "d" to "Phenol, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 6), subscripted("H", 6)),
+            "b" to formulaBlock(subscripted("C", 6), subscripted("H", 12)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 8)),
+            "d" to formulaBlock(subscripted("C", 6), subscripted("H", 6), symbol("O"))
+        )
+        assertEquals(labels.keys, chemistry.options.map { it.id }.toSet())
+        chemistry.options.forEach { option ->
+            assertEquals("$option.id must be the name text plus one formula block",
+                2, option.elements.size)
+            val name = option.elements.first()
+            assertTrue("$option.id must start with its name text", name is ContentElement.TextElement)
+            assertEquals(labels[option.id], (name as ContentElement.TextElement).text)
+            val formula = option.elements.last()
+            assertTrue("$option.id must end with a formula block",
+                formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$option.id formula block", formulas[option.id], mathElement.mathml)
+            // The name is the only flattened text: the formula is not written twice.
+            assertEquals(labels[option.id], option.text)
+            // Nothing in the block is outside the sanitizer allowlist; an
+            // escaped tag would come back altered.
+            assertEquals("$option.id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
+            // Search still finds the formula: tags strip, symbols stay.
+            val formulaText = formulas.getValue(option.id).replace(Regex("<[^>]*>"), "")
+            assertTrue("$option.id formula must flatten into searchable text",
+                option.elements.searchableText.contains(formulaText))
+        }
+    }
+
     @Test
     fun theLactoneReductionQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-1")
-        val start = structureOf(question.elements)
-        assertEquals("O=C1OCCCCC(=O)C1", start.smiles)
-        assertEquals("C7H10O3", start.formula)
-        assertEquals("keto lactone", start.caption)
-        assertTrue(start.spoken.contains("lactone"))
-        assertEquals("", start.diagram)
-        assertTrue(question.text.contains("LiAlH₄ in ether"))
-        assertTrue(question.text.contains("→ A"))
+        val scheme = structureOf(question.elements)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "O=C1OCCCCC(=O)C1>>", scheme.smiles)
+        assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
+        assertEquals("LiAlH₄ / ether", scheme.caption)
+        assertTrue(scheme.spoken.contains("lactone"))
+        assertTrue(scheme.spoken.contains("LiAlH₄"))
+        assertEquals("", scheme.diagram)
+        assertEquals(1, question.elements.count { it is ContentElement.ChemElement })
+        assertTrue("the reagent must not be duplicated in the stem text", "LiAlH₄" !in question.text)
+        assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
+        assertEquals("Which is the reduction product (A) of the following compound?", question.text)
+        assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
             "a" to "OC1CCOCCCC1O",
@@ -114,64 +172,151 @@ class SampleChemistryTest {
             "c" to "OCCCCC(O)CC=O",
             "d" to "OCCCCC(O)CCO"
         )
+        val labels = mapOf(
+            "a" to "(1) Cyclic ether diol, ",
+            "b" to "(2) Hydroxy lactone, ",
+            "c" to "(3) Hydroxy aldehyde, ",
+            "d" to "(4) Heptane-1,3,7-triol, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 7), subscripted("H", 14), subscripted("O", 3)),
+            "b" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 3)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 14), subscripted("O", 3)),
+            "d" to formulaBlock(subscripted("C", 7), subscripted("H", 16), subscripted("O", 3))
+        )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
             val option = question.options.single { it.id == id }
             assertEquals("$id must carry exactly one structure", 1,
                 option.elements.count { it is ContentElement.ChemElement })
-            assertEquals(smiles, structureOf(option.elements).smiles)
+            val chem = structureOf(option.elements)
+            assertEquals(smiles, chem.smiles)
+            assertEquals("$id must not repeat its name in the chemistry caption", "", chem.caption)
+            assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
+            assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
+            assertEquals("", chem.diagram)
+            // structure, then the "(n) Name, " text, then the formula block.
+            assertTrue("$id must start with its structure",
+                option.elements.first() is ContentElement.ChemElement)
+            assertEquals("$id must end with a formula block", 3, option.elements.size)
+            val label = option.elements[1]
+            assertTrue("$id must keep a readable text label",
+                label is ContentElement.TextElement)
+            assertEquals("$id text label must hold only the name", labels[id],
+                (label as ContentElement.TextElement).text)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+            assertEquals("$id formula must be a formula block, not text", labels[id], option.text)
+            val formula = option.elements.last()
+            assertTrue("$id must end with a MathML formula", formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$id formula block", formulas[id], mathElement.mathml)
+            assertEquals("$id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
         }
         assertEquals(
-            "option 3 has an aldehyde and two hydroxyls, not three hydroxyls",
-            "a chain with an aldehyde and two hydroxyl groups",
+            "option 3 has an aldehyde and one hydroxyl on a seven carbon chain",
+            "a seven carbon chain with an aldehyde at one end and one hydroxyl group",
             structureOf(question.options.single { it.id == "c" }.elements).spoken
+        )
+        assertTrue(
+            "option 4 must be named heptane-1,3,7-triol",
+            structureOf(question.options.single { it.id == "d" }.elements).spoken
+                .contains("heptane-1,3,7-triol")
         )
         assertEquals("LAH opens the lactone to a triol, option 4", listOf("d"), question.correctOptionIds)
         assertTrue(question.explanation.contains("OCCCCC(O)CCO"))
+        assertTrue(question.explanation.contains("seven-carbon"))
+        assertTrue(question.explanation.contains("heptane-1,3,7-triol"))
+        assertTrue(question.explanation.contains("C₇H₁₆O₃"))
         assertTrue(question.explanation.contains("option 4"))
     }
 
     @Test
     fun theRuO4OxidationQuestionParsesEveryStructureWithItsAnswer() {
         val question = organic("q-org-2")
-        val start = structureOf(question.elements)
-        assertEquals("CC1=CCCCC1O", start.smiles)
-        assertEquals("C7H12O", start.formula)
-        assertEquals("methyl cyclohexenol", start.caption)
-        assertTrue(start.spoken.contains("methyl"))
-        assertEquals("", start.diagram)
-        assertTrue(question.text.contains("RuO₄"))
-        assertTrue(question.text.contains("NaIO₄"))
-        assertTrue(question.text.contains("→ [A]"))
+        val scheme = structureOf(question.elements)
+        assertEquals("the scheme is a reaction SMILES with an empty product", "CC1=CCC(O)CC1>>", scheme.smiles)
+        assertEquals("the inline product label replaces the old A = ? line", "A", scheme.formula)
+        assertEquals("RuO₄ / NaIO₄", scheme.caption)
+        assertTrue(scheme.spoken.contains("methyl"))
+        assertTrue(scheme.spoken.contains("RuO₄ and NaIO₄"))
+        assertEquals("", scheme.diagram)
+        assertEquals(1, question.elements.count { it is ContentElement.ChemElement })
+        assertTrue("the reagent must not be duplicated in the stem text", "RuO₄" !in question.text)
+        assertTrue("the reagent must not be duplicated in the stem text", "NaIO₄" !in question.text)
+        assertTrue("no raw arrow line may remain in the stem", "→" !in question.text)
+        assertEquals("Which structure is product A of the reaction below?", question.text)
+        assertTrue("no trailing A = ? text line", "A = ?" !in question.text)
 
         val options = mapOf(
-            "a" to "CC1=CC(=O)CCC1",
-            "b" to "CC12OC1CCCC2O",
-            "c" to "CC(=O)C(=O)CCCC(=O)O",
-            "d" to "CC(=O)C(O)CCCC(=O)O"
+            "a" to "CC1=CCC(=O)CC1",
+            "b" to "CC12OC1CCC(O)C2",
+            "c" to "CC(=O)CCC(=O)CC(=O)O",
+            "d" to "CC(=O)CCC(O)CC(=O)O"
+        )
+        val labels = mapOf(
+            "a" to "(1) Methyl cyclohexenone, ",
+            "b" to "(2) Epoxide with OH, ",
+            "c" to "(3) Keto acid, ",
+            "d" to "(4) Hydroxy keto acid, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 7), subscripted("H", 10), symbol("O")),
+            "b" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 2)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 10), subscripted("O", 4)),
+            "d" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 4))
         )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
             val option = question.options.single { it.id == id }
             assertEquals("$id must carry exactly one structure", 1,
                 option.elements.count { it is ContentElement.ChemElement })
-            assertEquals(smiles, structureOf(option.elements).smiles)
+            val chem = structureOf(option.elements)
+            assertEquals(smiles, chem.smiles)
+            assertEquals("$id must not repeat its name in the chemistry caption", "", chem.caption)
+            assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
+            assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
+            assertEquals("", chem.diagram)
+            assertTrue("$id must start with its structure",
+                option.elements.first() is ContentElement.ChemElement)
+            assertEquals("$id must end with a formula block", 3, option.elements.size)
+            val label = option.elements[1]
+            assertTrue("$id must keep a readable text label",
+                label is ContentElement.TextElement)
+            assertEquals("$id text label must hold only the name", labels[id],
+                (label as ContentElement.TextElement).text)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
+            assertEquals("$id formula must be a formula block, not text", labels[id], option.text)
+            val formula = option.elements.last()
+            assertTrue("$id must end with a MathML formula", formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$id formula block", formulas[id], mathElement.mathml)
+            assertEquals("$id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
         }
         assertEquals(
             "option 4 has one methyl ketone, one hydroxyl and one acid",
             "a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
             structureOf(question.options.single { it.id == "d" }.elements).spoken
         )
+        assertEquals(
+            "option 3 product spacing must match the reference chain",
+            "a carboxylic acid chain with two ketones separated by two CH₂ groups, one of them a methyl ketone",
+            structureOf(question.options.single { it.id == "c" }.elements).spoken
+        )
         assertEquals("RuO4 also oxidises the alcohol, so option 3", listOf("c"), question.correctOptionIds)
-        assertTrue(question.explanation.contains("CC(=O)C(=O)CCCC(=O)O"))
+        assertTrue(question.explanation.contains("CH₃CO–CH₂–CH₂–CO–CH₂–COOH"))
+        assertTrue(question.explanation.contains("CC(=O)CCC(=O)CC(=O)O"))
         assertTrue(question.explanation.contains("option 3"))
     }
 
     @Test
-    fun theOrganicQuestionsUseStructuresNotPastedPictures() {
-        listOf("q-org-1", "q-org-2").forEach { id ->
+    fun theOrganicQuestionsUseReactionSchemesNotPastedPictures() {
+        val reagents = mapOf(
+            "q-org-1" to "LiAlH₄ / ether",
+            "q-org-2" to "RuO₄ / NaIO₄"
+        )
+        reagents.forEach { (id, reagent) ->
             val question = organic(id)
             val all = buildList {
                 addAll(question.elements)
@@ -180,13 +325,25 @@ class SampleChemistryTest {
             }
             assertEquals("$id must draw every structure from SMILES", 0,
                 all.count { it is ContentElement.ImageElement })
-            assertEquals("$id must have a structure in its stem", 1,
+            assertEquals("$id must have one reaction scheme in its stem", 1,
                 question.elements.count { it is ContentElement.ChemElement })
+            val scheme = structureOf(question.elements)
+            assertEquals("$id reagent must ride in the caption", reagent, scheme.caption)
+            assertEquals("$id must label the inline product with A", "A", scheme.formula)
+            assertTrue("$id must have no standalone A = ? text", "A = ?" !in question.text)
+            assertEquals("$id must leave the SMILES product blank", 2, scheme.smiles.count { it == '>' })
+            assertTrue("$id must keep the reactant before the arrow", scheme.smiles.indexOf('>') > 0)
             all.filterIsInstance<ContentElement.ChemElement>().forEach { chem ->
-                assertTrue("$id has a raw markup handle: ${chem.caption}",
+                assertTrue("$id has a raw markup caption: ${chem.caption}",
                     "<" !in chem.caption && ">" !in chem.caption)
                 assertTrue("$id has a long SMILES: ${chem.smiles}", chem.smiles.length <= 32)
                 assertTrue("$id has no spoken description", chem.spoken.isNotBlank())
+                assertTrue("$id has an unlabelled diagram", chem.diagram.isEmpty())
+            }
+            question.options.forEach { option ->
+                val chem = structureOf(option.elements)
+                assertTrue("$id ${option.id} must label its drawing with text only", chem.caption.isEmpty())
+                assertTrue("$id ${option.id} must not print a formula on the drawing", chem.formula.isEmpty())
             }
         }
     }
@@ -242,7 +399,7 @@ class SampleChemistryTest {
             elements.any { it is ContentElement.MathElement }
         )
         assertEquals(
-            "benzene's stem plus a structure in every organic stem and option",
+            "benzene, one reaction scheme in each organic stem and a structure in every option",
             11,
             elements.count { it is ContentElement.ChemElement }
         )

@@ -66,12 +66,39 @@ class MathHtmlTest {
         // the raw MathML and the typeset SVG do not have the same height.
         assertTrue(html.contains("startup.promise"))
         assertTrue(html.contains("typesetPromise"))
-        // The body's border box, not scrollHeight: scrollHeight is at least
-        // the viewport height, and the viewport is the pinned height, so a
-        // block pinned too tall could never shrink and would leave blank
-        // space below the question.
-        assertTrue(html.contains("body.getBoundingClientRect().height"))
+        // The content bottom is the union of every rendered box, not just the
+        // body's border box: on Android WebView an inline MathJax SVG leaves
+        // its descent outside the text line box, and the body rect alone is a
+        // couple of px short — the pinned WebView then clipped subscript
+        // bottoms (e.g. C₇H₁₄O₃ in an option label).
+        assertTrue(html.contains("function contentHeight()"))
+        assertTrue(html.contains("getElementsByTagName('*')"))
+        assertTrue(html.contains("r.bottom - b.top"))
+        assertTrue(html.contains("var h = contentHeight()"))
+        // Out-of-flow and invisible boxes are not part of the painted extent.
+        // MathJax's clipped <mjx-assistive-mml> is absolute and can be much
+        // taller than the visible SVG for a matrix, so counting it (or its
+        // static descendants) pinned blank space below the formula.
+        assertTrue(html.contains("MJX-ASSISTIVE-MML"))
+        assertTrue(html.contains("position === 'absolute'"))
+        assertTrue(html.contains("position === 'fixed'"))
+        assertTrue(html.contains("visibility === 'hidden'"))
+        assertTrue(html.contains("display === 'none'"))
+        // The tag/style test must run only for a box that would raise the max:
+        // a style read per descendant is the cost this guard removes.
+        assertTrue(html.contains("if (d <= bottom) continue"))
+        assertTrue(
+            html.indexOf("if (d <= bottom) continue") <
+                html.indexOf("if (outOfFlow(el, body)) continue")
+        )
+        // Still not scrollHeight: scrollHeight is at least the viewport height,
+        // and the viewport is the pinned height, so a block pinned too tall
+        // could never shrink and would leave blank space below the question.
+        assertTrue(!html.contains("document.body.getBoundingClientRect().height"))
         assertTrue(!html.contains("body.scrollHeight"))
+        // The body keeps a descender allowance below its last baseline;
+        // getBoundingClientRect includes padding, so the reported height grows.
+        assertTrue(html.contains("body{padding:0 0 0.25em}"))
         // Nothing may be reported before the typeset pass settles.
         assertTrue(html.contains("if (!settled) return"))
         // A width change (rotation, font scale) reflows the page.

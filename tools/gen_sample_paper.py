@@ -530,6 +530,34 @@ def math(s):
     return {"type": "math", "content": "<math>%s</math>" % s}
 
 
+def formula_math(formula):
+    """A chemical formula as an upright MathML block.
+
+    Element symbols are `<mtext>`, not `<mi>`: a formula is a label, not
+    algebra, and MathJax would italicise it as a product of symbols. A count
+    of one is written without a subscript, exactly as the formula is written,
+    and any larger count becomes an `<msub>`. Cheminformatics-style formulas
+    (`C6H6`, `C7H14O3`) are the input; a character that is not an
+    element+count pair raises instead of silently dropping text.
+    """
+    parts = []
+    pos = 0
+    for match in re.finditer(r"([A-Z][a-z]?)(\d*)", formula):
+        if match.start() != pos:
+            raise ValueError("unparsed chemical formula: %r" % formula)
+        pos = match.end()
+        symbol, count = match.group(1), match.group(2)
+        if not count or int(count) <= 1:
+            parts.append("<mtext>%s</mtext>" % symbol)
+        else:
+            parts.append(
+                "<msub><mtext>%s</mtext><mn>%d</mn></msub>" % (symbol, int(count))
+            )
+    if not parts or pos != len(formula):
+        raise ValueError("unparsed chemical formula: %r" % formula)
+    return math("".join(parts))
+
+
 def table(rows):
     return {"type": "table", "content": rows}
 
@@ -869,16 +897,16 @@ CATEGORIES = [
                     txt("Which structure is benzene?"),
                     chem(
                         smiles="c1ccccc1",
-                        formula="C6H6",
+                        formula="C₆H₆",
                         caption="benzene",
                         spoken="a ring of six carbon atoms with alternating double bonds, benzene",
                     ),
                 ],
                 {
-                    "a": [txt("Benzene, C6H6")],
-                    "b": [txt("Cyclohexane, C6H12")],
-                    "c": [txt("Toluene, C7H8")],
-                    "d": [txt("Phenol, C6H6O")],
+                    "a": [txt("Benzene, "), formula_math("C6H6")],
+                    "b": [txt("Cyclohexane, "), formula_math("C6H12")],
+                    "c": [txt("Toluene, "), formula_math("C7H8")],
+                    "d": [txt("Phenol, "), formula_math("C6H6O")],
                 },
                 ["a"],
                 [
@@ -894,10 +922,14 @@ CATEGORIES = [
             ),
             # Two textbook organic problems. Every structure is a Chemistry
             # element drawn by SmilesDrawer from SMILES — no pasted pictures —
-            # and the reagent lines stay plain text so they read like the page
-            # in the book. Each option carries a short text label beside its
-            # structure: ChemElements contribute nothing to an option's
-            # flattened `text`, which is what Browse and search show.
+            # and the reagent wording rides in the reaction ChemElement's
+            # caption: a SMILES with two `>` separators draws the arrow and
+            # leaves the product blank. Each option's structure has no caption
+            # or formula of its own; its label is a "(n) Name, " text element
+            # followed by the molecular formula as a MathML formula block, so
+            # the formula renders the way a formula should instead of as
+            # Unicode subscripts. ChemElements contribute nothing to an
+            # option's flattened `text`, which is what Browse and search show.
             q(
                 "q-org-1",
                 [
@@ -905,59 +937,56 @@ CATEGORIES = [
                         "Which is the reduction product (A) of the following compound?"
                     ),
                     chem(
-                        smiles="O=C1OCCCCC(=O)C1",
-                        formula="C7H10O3",
-                        caption="keto lactone",
-                        spoken="an eight membered ring lactone with a ketone group in the ring",
+                        smiles="O=C1OCCCCC(=O)C1>>",
+                        formula="A",
+                        caption="LiAlH₄ / ether",
+                        spoken="an eight membered lactone ring with seven carbons and a ketone group in the ring, treated with LiAlH₄ in ether and then aqueous work-up",
                     ),
-                    txt("LiAlH₄ in ether, then aqueous work-up → A"),
                 ],
                 {
                     "a": [
                         chem(
                             smiles="OC1CCOCCCC1O",
-                            formula="C7H14O3",
-                            caption="cyclic ether diol",
-                            spoken="an eight membered cyclic ether with two hydroxyl groups",
+                            spoken="an eight membered cyclic ether ring with seven carbons and two hydroxyl groups",
                         ),
-                        txt("(1) Cyclic ether diol"),
+                        txt("(1) Cyclic ether diol, "),
+                        formula_math("C7H14O3"),
                     ],
                     "b": [
                         chem(
                             smiles="O=C1OCCCCC(O)C1",
-                            formula="C7H12O3",
-                            caption="hydroxy lactone",
-                            spoken="a lactone ring with one hydroxyl group",
+                            spoken="a lactone ring with one hydroxyl group on a carbon next to the ring oxygen",
                         ),
-                        txt("(2) Hydroxy lactone"),
+                        txt("(2) Hydroxy lactone, "),
+                        formula_math("C7H12O3"),
                     ],
                     "c": [
                         chem(
                             smiles="OCCCCC(O)CC=O",
-                            formula="C7H14O3",
-                            caption="hydroxy aldehyde",
-                            spoken="a chain with an aldehyde and two hydroxyl groups",
+                            spoken="a seven carbon chain with an aldehyde at one end and one hydroxyl group",
                         ),
-                        txt("(3) Hydroxy aldehyde"),
+                        txt("(3) Hydroxy aldehyde, "),
+                        formula_math("C7H14O3"),
                     ],
                     "d": [
                         chem(
                             smiles="OCCCCC(O)CCO",
-                            formula="C7H16O3",
-                            caption="triol",
-                            spoken="a seven carbon chain with three hydroxyl groups",
+                            spoken="a seven carbon chain with hydroxyl groups at carbons 1, 3 and 7, heptane-1,3,7-triol",
                         ),
-                        txt("(4) Triol"),
+                        txt("(4) Heptane-1,3,7-triol, "),
+                        formula_math("C7H16O3"),
                     ],
                 },
                 ["d"],
                 [
                     txt(
-                        "LiAlH₄ reduces both carbonyls. The ring ketone becomes a "
-                        "secondary alcohol, and the lactone ring opens: its acyl carbon "
+                        "LiAlH₄ reduces both carbonyls; the aqueous work-up then "
+                        "protonates the alkoxide intermediates. The ring ketone becomes "
+                        "a secondary alcohol, and the lactone ring opens: its acyl carbon "
                         "becomes a primary alcohol (CH₂OH) while the ring oxygen stays "
-                        "on its neighbouring carbon as an OH. The product is the "
-                        "seven-carbon triol OCCCCC(O)CCO, so the answer is option 4. "
+                        "on its neighbouring carbon as an OH. The product is the seven-carbon "
+                        "triol heptane-1,3,7-triol C₇H₁₆O₃ (SMILES OCCCCC(O)CCO), so the "
+                        "answer is option 4. "
                         "Option 2 leaves the lactone closed, option 3 stops its acyl "
                         "carbon at an aldehyde, and option 1 treats the lactone as an "
                         "ether that stays in a ring."
@@ -970,51 +999,46 @@ CATEGORIES = [
             q(
                 "q-org-2",
                 [
-                    txt("The compound below is treated with RuO₄ and NaIO₄."),
+                    txt("Which structure is product A of the reaction below?"),
                     chem(
-                        smiles="CC1=CCCCC1O",
-                        formula="C7H12O",
-                        caption="methyl cyclohexenol",
-                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group beside it",
+                        smiles="CC1=CCC(O)CC1>>",
+                        formula="A",
+                        caption="RuO₄ / NaIO₄",
+                        spoken="a cyclohexene ring with a methyl group on one alkene carbon and a hydroxyl group on another ring carbon, treated with RuO₄ and NaIO₄",
                     ),
-                    txt("Compound → [A]. Which structure is [A]?"),
                 ],
                 {
                     "a": [
                         chem(
-                            smiles="CC1=CC(=O)CCC1",
-                            formula="C7H10O",
-                            caption="methyl cyclohexenone",
-                            spoken="a methyl substituted cyclohexenone ring",
+                            smiles="CC1=CCC(=O)CC1",
+                            spoken="a methyl substituted cyclohexenone ring with the ketone away from the methyl group",
                         ),
-                        txt("(1) Methyl cyclohexenone"),
+                        txt("(1) Methyl cyclohexenone, "),
+                        formula_math("C7H10O"),
                     ],
                     "b": [
                         chem(
-                            smiles="CC12OC1CCCC2O",
-                            formula="C7H12O2",
-                            caption="epoxide",
+                            smiles="CC12OC1CCC(O)C2",
                             spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                         ),
-                        txt("(2) Epoxide with OH"),
+                        txt("(2) Epoxide with OH, "),
+                        formula_math("C7H12O2"),
                     ],
                     "c": [
                         chem(
-                            smiles="CC(=O)C(=O)CCCC(=O)O",
-                            formula="C7H10O4",
-                            caption="keto acid",
-                            spoken="a carboxylic acid chain with two ketones, one of them a methyl ketone",
+                            smiles="CC(=O)CCC(=O)CC(=O)O",
+                            spoken="a carboxylic acid chain with two ketones separated by two CH₂ groups, one of them a methyl ketone",
                         ),
-                        txt("(3) Keto acid"),
+                        txt("(3) Keto acid, "),
+                        formula_math("C7H10O4"),
                     ],
                     "d": [
                         chem(
-                            smiles="CC(=O)C(O)CCCC(=O)O",
-                            formula="C7H12O4",
-                            caption="hydroxy keto acid",
+                            smiles="CC(=O)CCC(O)CC(=O)O",
                             spoken="a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                         ),
-                        txt("(4) Hydroxy keto acid"),
+                        txt("(4) Hydroxy keto acid, "),
+                        formula_math("C7H12O4"),
                     ],
                 },
                 ["c"],
@@ -1025,8 +1049,8 @@ CATEGORIES = [
                         "methyl ketone (–C(=O)CH₃); the other alkene carbon has a "
                         "hydrogen and is oxidised all the way to –COOH. The same "
                         "reagent also oxidises the secondary alcohol to a ketone, "
-                        "giving HOOC–CH₂–CH₂–CH₂–C(=O)–C(=O)–CH₃ (SMILES "
-                        "CC(=O)C(=O)CCCC(=O)O), which is option 3. Option 4 leaves "
+                        "giving CH₃CO–CH₂–CH₂–CO–CH₂–COOH (SMILES "
+                        "CC(=O)CCC(=O)CC(=O)O), which is option 3. Option 4 leaves "
                         "that alcohol unoxidised; options 1 and 2 never cleave the "
                         "double bond."
                     )
@@ -2575,12 +2599,73 @@ def check_mathml(doc):
     return bad
 
 
+# A small syntax gate, not a chemistry parser: it catches the typos that leave
+# SmilesDrawer with nothing to draw without rejecting any SMILES the bank uses.
+# Reaction strings carry two `>` separators, so `>` is checked here rather than
+# in the raw-markup guard applied to the other handles.
+SMILES_CHARS = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()[]=#-+/\\%@."
+)
+
+
+def valid_smiles_part(part):
+    """One molecule: known characters, balanced branches, paired ring bonds."""
+    if not part:
+        return True  # reagents and products may be left blank in a scheme
+    if any(ch not in SMILES_CHARS for ch in part):
+        return False
+    stack, rings = [], set()
+    i = 0
+    while i < len(part):
+        # OpenSMILES writes ring numbers 10+ as `%nn`; treat them as one bond
+        # instead of counting their two digits separately.
+        if part[i] == "%":
+            token = part[i + 1 : i + 3]
+            if len(token) != 2 or not token.isdigit():
+                return False
+            i += 3
+        else:
+            token = part[i]
+            i += 1
+        if token == "(":
+            stack.append(")")
+        elif token == "[":
+            stack.append("]")
+        elif token in ")]":
+            if not stack or stack.pop() != token:
+                return False
+        elif token.isdigit():
+            if token in rings:
+                rings.remove(token)
+            else:
+                rings.add(token)
+    return not stack and not rings
+
+
+def valid_smiles(value):
+    """A plain molecule or a `reactants>reagents>products` reaction SMILES."""
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if not value or "<" in value:
+        return False
+    parts = value.split(">")
+    if len(parts) == 1:
+        parts = [parts[0], "", ""]
+    elif len(parts) != 3 or not parts[0].strip():
+        return False
+    return all(valid_smiles_part(part.strip()) for part in parts)
+
+
 def check_chem(doc):
     """Every chemistry block must carry the handles the renderer and a11y need.
 
-    SMILES is the one field LegacyParser insists on; an empty formula, caption
-    or spoken line still parses but leaves exports, labels and TalkBack with
-    nothing useful, so the generator rejects those before writing the asset.
+    SMILES is the one field LegacyParser insists on, so it must parse as a
+    structure or as a reaction scheme. Spoken copy stays mandatory for TalkBack.
+    A structure the reader has to identify needs a caption, but an option's
+    drawing is labelled by the retained "(n) Name" text instead: a caption
+    there would duplicate the label in Browse, exports and search. A reaction
+    has no single formula, so formula may be blank there too.
     """
     bad = []
 
@@ -2594,12 +2679,20 @@ def check_chem(doc):
                     for key in ("smiles", "formula", "caption", "spoken", "diagram"):
                         if key not in content:
                             bad.append(f"{where}: chem block is missing {key}")
-                    for key in ("smiles", "formula", "caption", "spoken"):
+                    smiles = content.get("smiles", "")
+                    if not valid_smiles(smiles):
+                        bad.append(f"{where}: invalid chem SMILES: {smiles!r}")
+                    for key in ("formula", "caption", "spoken"):
                         value = content.get(key, "")
-                        if not isinstance(value, str) or not value.strip():
-                            bad.append(f"{where}: chem block has no {key}")
-                        elif "<" in value or ">" in value:
+                        if not isinstance(value, str) or "<" in value or ">" in value:
                             bad.append(f"{where}: raw markup in chem {key}")
+                    spoken = content.get("spoken", "")
+                    if not isinstance(spoken, str) or not spoken.strip():
+                        bad.append(f"{where}: chem block has no spoken")
+                    if "/options_elements/" not in where:
+                        caption = content.get("caption", "")
+                        if not isinstance(caption, str) or not caption.strip():
+                            bad.append(f"{where}: chem block has no caption")
             for key, value in node.items():
                 walk(value, f"{where}/{key}")
         elif isinstance(node, list):

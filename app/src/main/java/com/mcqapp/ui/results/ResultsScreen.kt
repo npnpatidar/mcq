@@ -88,6 +88,7 @@ import com.mcqapp.ui.theme.containerColor
 import com.mcqapp.ui.theme.onContainerColor
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.util.accessibleContentText
 import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.math.abs
@@ -1664,11 +1665,20 @@ private fun ResultCard(
                 val wasSelected = option.id in result.selectedOptionIds
                 val ungraded = verdict == Verdict.UNGRADED
                 val state = optionStateOf(isCorrect, wasSelected, ungraded)
-                // One merged node reads the option text and its state together,
-                // so TalkBack cannot just see a bare tick or a coloured bullet.
+                // One merged node reads the option's full accessible content —
+                // text, tables and formula blocks — together with its state, so
+                // TalkBack cannot just see a bare tick or a coloured bullet, and
+                // a formula-only option is still announced. option.text would
+                // drop the formula: a MathElement contributes no text.
+                // Cache the spoken content per option: the Results list
+                // recomposes on every scroll, and linearising the elements on
+                // each pass would repeat the MathML parse for no new result.
+                val spokenContent = remember(option.elements) {
+                    accessibleContentText(option.elements)
+                }
                 val spoken = stringResource(
                     R.string.option_spoken,
-                    option.text,
+                    spokenContent,
                     optionStateLabel(state)
                 )
                 Row(

@@ -30,10 +30,31 @@ class ChemistrySchemaAssetTest {
             text.contains("SmilesDrawer.SvgDrawer")
         )
         assertTrue(
+            "parseReaction export missing — reactions use it instead of parse",
+            text.contains("SmilesDrawer.parseReaction=function")
+        )
+        assertTrue(
+            "ReactionDrawer export missing — this is the class reactions call",
+            text.contains("SmilesDrawer.ReactionDrawer=ReactionDrawer")
+        )
+        assertTrue(
             "chroma-js notice missing from the bundle",
             text.contains("@preserve") &&
                 text.contains("chroma.js - JavaScript library for color conversions")
         )
+    }
+
+    @Test
+    fun liveReactionOptionsAreRealBundledOptions() {
+        // Every tuned live option must exist in the pinned 2.1.1 defaults —
+        // a typo would be silently swallowed by the deep option merge.
+        val text = File(dir, "smiles-drawer.min.js").readText()
+        listOf(
+            "padding:10", "bondThickness:1", "bondLength:30", "fontSizeLarge:11",
+            "overlapResolutionIterations:1", "experimentalSSSR:!1"
+        ).forEach { option ->
+            assertTrue("option not found in the bundled drawer: $option", text.contains(option))
+        }
     }
 
     @Test

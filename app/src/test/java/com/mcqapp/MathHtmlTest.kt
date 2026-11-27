@@ -9,6 +9,7 @@ import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentHeightCache
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.MATHJAX_ASSET_URL
+import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mixedContentHtml
 import com.mcqapp.util.stripMathAttributes
@@ -93,6 +94,56 @@ class MathHtmlTest {
             html.contains("td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}")
         )
         assertTrue("cap matches the canonical style", html.contains("td img{$CELL_IMAGE_STYLE}"))
+    }
+
+    /**
+     * A chem table's columns are fixed, so one unbreakable word wider than its
+     * column used to paint straight over the next one (owner report: a
+     * "Hexatriacontane" label at 16 px in a ~99 px three-column cell). Only a
+     * chem table's cells may break inside a word; a plain table keeps the
+     * browser's automatic layout and its ordinary wrapping.
+     */
+    @Test
+    fun chemTableCellsBreakLongWordsAndPlainTablesKeepTheirWrap() {
+        val chem = mixedContentHtml(
+            listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf("Name", "Formula", "Structure"),
+                        listOf(
+                            "Hexatriacontane",
+                            "C36H74",
+                            chemCellHtml(ContentElement.ChemElement("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
+                        )
+                    )
+                )
+            ),
+            16f,
+            "rgba(0,0,0,1)"
+        )
+        assertTrue("chem table class missing: $chem",
+            chem.contains("<table class=\"mcq-chem-table\""))
+        // The exact rule, scoped to a chem table's cells.
+        assertTrue("cell word break rule missing: $chem",
+            chem.contains("table.mcq-chem-table td{overflow-wrap:break-word;word-break:break-word}"))
+        // And nowhere else: an unscoped td rule would change every table.
+        assertEquals("word break must be chem-scoped only", 1,
+            chem.split("overflow-wrap").size - 1)
+        assertTrue("generic cell rule changed: $chem", chem.contains("td{vertical-align:middle}"))
+
+        val plain = mixedContentHtml(
+            listOf(ContentElement.TableElement(listOf(listOf("Hexatriacontane", "C36H74")))),
+            16f,
+            "rgba(0,0,0,1)"
+        )
+        // No chem class anywhere on a plain page, so the scoped rule cannot
+        // reach its cells; the markup and the fixed-layout rule stay off.
+        assertTrue("plain table markup: $plain",
+            plain.contains("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"))
+        assertEquals("plain table cell: $plain", 1,
+            plain.split("<td>Hexatriacontane</td>").size - 1)
+        assertFalse("plain table gained the chem class: $plain",
+            plain.contains("mcq-chem-table\""))
     }
 
     /**

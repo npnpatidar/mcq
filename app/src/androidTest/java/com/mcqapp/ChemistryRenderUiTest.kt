@@ -659,6 +659,336 @@ class ChemistryRenderUiTest {
         }
     }
 
+    /**
+     * A structure carried by a table cell must draw at the same scale as a
+     * standalone structure, inside its own row, without widening the page.
+     * The marker is the storage grammar a cell actually holds, so this goes
+     * through the real mixed renderer rather than a hand-built element.
+     */
+    private fun chemCellTable() = listOf(
+        ContentElement.TableElement(
+            listOf(
+                listOf("Compound", "Structure"),
+                listOf(
+                    "Ethanol",
+                    "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+                        "data-formula=\"C2H6O\" data-caption=\"ethanol\" data-spoken=\"ethanol\">" +
+                        "ethanol C2H6O CCO</span>"
+                )
+            )
+        )
+    )
+
+    /**
+     * Three columns and a 36-carbon chain: the narrowest useful real case. A
+     * fixed-layout chem table must clamp the wide drawing to its own column,
+     * so the page never gains a horizontal scrollbar and the SVG never
+     * overflows its `<td>`.
+     */
+    private fun wideChemCellTable(): List<ContentElement> {
+        val chain = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        return listOf(
+            ContentElement.TableElement(
+                listOf(
+                    listOf("Name", "Formula", "Structure"),
+                    listOf(
+                        "Hexatriacontane",
+                        "C36H74",
+                        "<span class=\"mcq-chem-cell\" data-smiles=\"$chain\" " +
+                            "data-formula=\"C36H74\" data-caption=\"hexatriacontane\" " +
+                            "data-spoken=\"hexatriacontane\">" +
+                            "hexatriacontane C36H74 $chain</span>"
+                    )
+                )
+            )
+        )
+    }
+
+    /**
+     * A reaction carried by a table cell in the narrowest real case: two
+     * columns on a 320 dp screen. The chem table is `table-layout:fixed`, so
+     * the cell's row must wrap (a nowrapped scheme + label would overflow its
+     * column) while the scheme, arrow, reagent caption and product label still
+     * draw. The `>` of the reaction SMILES is entity-escaped exactly as
+     * [com.mcqapp.util.chemCellHtml] writes it: a raw `>` would end the
+     * marker's attribute region.
+     */
+    private fun reactionCellTable() = listOf(
+        ContentElement.TableElement(
+            listOf(
+                listOf("Reaction", "Structure"),
+                listOf(
+                    "Oxidation of ethanol",
+                    "<span class=\"mcq-chem-cell\" data-smiles=\"CCO&gt;&gt;CC=O\" " +
+                        "data-formula=\"CC=O\" data-caption=\"oxidation\" " +
+                        "data-spoken=\"oxidation of ethanol to ethanal\">" +
+                        "oxidation of ethanol to ethanal</span>"
+                )
+            )
+        )
+    )
+
+    /**
+     * A cell structure is ready when its SVG is fitted, visible, has real
+     * shapes and sits inside its `<td>`; the page must not gain a horizontal
+     * scrollbar. The cell wrapper must be the block the page CSS gives it
+     * (`.mcq-chem-cell{display:block}`), so the drawing never joins the prose
+     * line, and the SVG's box must stay inside the cell's box.
+     *
+     * Every cell of the fixed-layout table must also contain its own content:
+     * a label wider than its column used to paint over the next column while
+     * the `<td>` itself kept its width, so each cell's scroll width and the
+     * right edge of every painted text box and descendant element are checked
+     * too. The failing cell's index and rect travel back in the state.
+     */
+    private fun chemCellState(id: String = "mcq-chem-0"): String = evaluate(
+        "(function(){" +
+            "var s=document.getElementById('$id');" +
+            "var f=document.getElementById('$id-fallback');" +
+            "if(!s)return 'no-svg';" +
+            "if(!f)return 'no-fallback';" +
+            "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
+            "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
+            "var vb=s.viewBox.baseVal;" +
+            "if(!vb||!isFinite(vb.width)||!isFinite(vb.height)||" +
+            "!(vb.width>0)||!(vb.height>0))return 'bad-viewBox';" +
+            "if(s.getAttribute('data-fitted')!=='1')return 'unfitted';" +
+            "var b=s.getBoundingClientRect();" +
+            "if(!(b.width>0)||!(b.height>0))return 'zero-size';" +
+            "var cell=s.parentElement;" +
+            "if(!cell||cell.className.indexOf('mcq-chem-cell')<0)return 'no-cell';" +
+            "if(getComputedStyle(cell).display!=='block')" +
+            "return 'cell-display:'+getComputedStyle(cell).display;" +
+            "var td=s.closest('td');" +
+            "if(!td)return 'no-td';" +
+            "var t=td.getBoundingClientRect();" +
+            "if(!(t.height+0.5>=b.height)||!(t.bottom+0.5>=b.bottom))" +
+            "return 'row-clips:'+t.height+':'+b.height;" +
+            "if(!(b.width<=t.width+0.5)||!(b.right<=t.right+0.5))" +
+            "return 'svg-wider-than-td:'+b.width+':'+t.width;" +
+            // A fixed-layout cell can be narrower than one unbreakable word.
+            // The cell's own scroll width catches the overflow, and the
+            // painted boxes catch a text run that overflows without widening
+            // the cell: zero-width boxes (hidden captures, fallbacks) are
+            // skipped, so only what actually paints is measured.
+            "var cells=document.querySelectorAll('table.mcq-chem-table td');" +
+            "for(var ci=0;ci<cells.length;ci++){" +
+            "var c=cells[ci],cr=c.getBoundingClientRect();" +
+            "var where=ci+':'+Math.round(cr.left)+','+Math.round(cr.right);" +
+            "if(c.scrollWidth>c.clientWidth)" +
+            "return 'td-overflow:'+where+':'+c.scrollWidth+':'+c.clientWidth;" +
+            "var els=c.querySelectorAll('*');" +
+            "for(var ei=0;ei<els.length;ei++){" +
+            "var er=els[ei].getBoundingClientRect();" +
+            "if(!(er.width>0))continue;" +
+            "if(er.right>cr.right+0.5)" +
+            "return 'child-overflow:'+where+':'+els[ei].tagName+':'+Math.round(er.right);}" +
+            "var tw=document.createTreeWalker(c,4,null,false),tn;" +
+            "while((tn=tw.nextNode())){" +
+            "if(!tn.textContent||!tn.textContent.replace(/\\s+/g,''))continue;" +
+            "var rg=document.createRange();rg.selectNodeContents(tn);" +
+            "var tr=rg.getBoundingClientRect();" +
+            "if(!(tr.width>0))continue;" +
+            "if(tr.right>cr.right+0.5)" +
+            "return 'text-overflow:'+where+':'+Math.round(tr.right)+':'+" +
+            "tn.textContent.replace(/\\s+/g,' ').slice(0,20);}}" +
+            "var de=document.documentElement;" +
+            "if(de.scrollWidth>de.clientWidth+1)return 'page-scroll:'+de.scrollWidth+':'+de.clientWidth;" +
+            "var n=s.querySelectorAll('line,text,circle,polygon').length;" +
+            "if(!(n>0))return 'no-shapes';" +
+            "return 'ok:'+n+':'+Math.round(b.width)+':'+Math.round(b.height)+':'+" +
+            "Math.round(vb.width)+':'+Math.round(vb.height)+':'+de.clientWidth;" +
+            "})()"
+    )
+
+    private fun assertChemCellState(lastState: String) {
+        val parts = lastState.split(':')
+        val shapes = parts.getOrNull(1)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+        val widthPx = parts.getOrNull(2)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+        val heightPx = parts.getOrNull(3)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+        val viewBoxWidth = parts.getOrNull(4)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+        val viewBoxHeight = parts.getOrNull(5)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+        val pageWidth = parts.getOrNull(6)?.toIntOrNull()
+            ?: throw AssertionError("unexpected chem-cell state: $lastState")
+
+        assertTrue("no drawn geometry: $lastState", shapes > 0)
+        assertTrue("cell structure has no width: $lastState", widthPx > 0)
+        assertTrue("cell structure has no height: $lastState", heightPx > 0)
+        assertTrue("cell viewBox is not positive: $lastState", viewBoxWidth > 0 && viewBoxHeight > 0)
+        assertTrue(
+            "cell structure overflows the page ($widthPx > $pageWidth): $lastState",
+            widthPx <= pageWidth
+        )
+    }
+
+    private fun awaitChemCellState(id: String = "mcq-chem-0"): String {
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = chemCellState(id)
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            // The probe's own state says what failed: a WebView that never
+            // settled, a failed draw, a clipped row or a page widened by the
+            // structure.
+            throw AssertionError(
+                "a chem cell did not draw inside its own row; " +
+                    "last state=$lastState; error=${t.message}", t
+            )
+        }
+        return lastState
+    }
+
+    /**
+     * A reaction cell is ready when the scheme, arrow, reagent caption and
+     * product label are visible, the wrapper uses the WRAPPING row (normal
+     * white space, `flex-wrap:wrap`), every box stays inside its `<td>`, and
+     * the page has no horizontal scroll. The old non-wrapping row fails the
+     * `whiteSpace`/`flexWrap` checks; with `table-layout:fixed` it also let a
+     * long label push the row past the column.
+     */
+    private fun reactionCellState(): String = evaluate(
+        "(function(){" +
+            "var c=document.querySelector('.mcq-chem-reaction.mcq-chem-cell');" +
+            "var s=document.getElementById('mcq-chem-0');" +
+            "var f=document.getElementById('mcq-chem-0-fallback');" +
+            "if(!c)return 'no-container';" +
+            "if(!s)return 'no-svg';" +
+            "if(!f)return 'no-fallback';" +
+            "var display=getComputedStyle(c).display;" +
+            "if(display!=='flex')return 'display:'+display;" +
+            "var ws=getComputedStyle(c).whiteSpace;" +
+            "if(ws!=='normal')return 'white-space:'+ws;" +
+            "var fw=getComputedStyle(c).flexWrap;" +
+            "if(fw!=='wrap')return 'flex-wrap:'+fw;" +
+            "if(getComputedStyle(s).display==='none')return 'svg-hidden';" +
+            "if(getComputedStyle(f).display!=='none')return 'fallback-shown';" +
+            "if(!s.querySelector('line[marker-end]'))return 'no-arrow';" +
+            "if(s.textContent.indexOf('oxidation')<0)return 'no-reagent-text';" +
+            "var p=c.querySelector('.mcq-chem-product');" +
+            "if(!p||p.textContent.trim()!=='CC=O')return 'no-product-label';" +
+            "var b=s.getBoundingClientRect();" +
+            "if(!(b.width>0)||!(b.height>0))return 'zero-size';" +
+            "var cb=c.getBoundingClientRect();" +
+            "var td=s.closest('td');" +
+            "if(!td)return 'no-td';" +
+            "var t=td.getBoundingClientRect();" +
+            "if(!(b.width<=t.width+0.5)||!(b.right<=t.right+0.5))" +
+            "return 'svg-wider-than-td:'+Math.round(b.width)+':'+Math.round(t.width);" +
+            "if(!(cb.width<=t.width+0.5)||!(cb.right<=t.right+0.5))" +
+            "return 'row-wider-than-td:'+Math.round(cb.width)+':'+Math.round(t.width);" +
+            "if(!(t.height+0.5>=cb.height)||!(t.bottom+0.5>=cb.bottom))" +
+            "return 'row-clips:'+Math.round(t.height)+':'+Math.round(cb.height);" +
+            "var de=document.documentElement;" +
+            "if(de.scrollWidth>de.clientWidth+1)return 'page-scroll:'+de.scrollWidth+':'+de.clientWidth;" +
+            "return 'ok:'+Math.round(cb.width)+':'+Math.round(cb.height)+':'+" +
+            "Math.round(t.width)+':'+de.clientWidth;" +
+            "})()"
+    )
+
+    @Test
+    fun chemCellInATwoColumnTableFits320DpAndDrawsInsideItsRow() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(chemCellTable())
+                }
+            }
+        }
+        val node = compose.onNodeWithContentDescription("ethanol", substring = true)
+        node.assertIsDisplayed()
+        val bounds = node.getBoundsInRoot()
+        assertTrue(
+            "table overflows 320dp: $bounds",
+            bounds.right.value - bounds.left.value <= 320f
+        )
+        assertChemCellState(awaitChemCellState())
+    }
+
+    @Test
+    fun aWideChainInAThreeColumnTableFits320DpWithoutHorizontalOverflow() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(wideChemCellTable())
+                }
+            }
+        }
+        val node = compose.onNodeWithContentDescription("hexatriacontane", substring = true)
+        node.assertIsDisplayed()
+        // The probe returns only when the page has no horizontal scroll, the
+        // SVG fits its <td>, and its fitted geometry is real.
+        assertChemCellState(awaitChemCellState())
+        val pageState = evaluate(
+            "(function(){" +
+                "var de=document.documentElement;" +
+                "return 'page:'+de.scrollWidth+':'+de.clientWidth;" +
+                "})()"
+        )
+        val parts = pageState.removePrefix("page:").split(':')
+        val scrollWidth = parts.getOrNull(0)?.toIntOrNull()
+            ?: throw AssertionError("unexpected page state: $pageState")
+        val clientWidth = parts.getOrNull(1)?.toIntOrNull()
+            ?: throw AssertionError("unexpected page state: $pageState")
+        assertTrue(
+            "wide chain widened the page ($scrollWidth > $clientWidth): $pageState",
+            scrollWidth <= clientWidth
+        )
+    }
+
+    @Test
+    fun aReactionInATwoColumnTableWrapsInsideItsCellOn320Dp() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(reactionCellTable())
+                }
+            }
+        }
+        val node = compose.onNodeWithContentDescription("oxidation", substring = true)
+        node.assertIsDisplayed()
+        val bounds = node.getBoundsInRoot()
+        assertTrue(
+            "table overflows 320dp: $bounds",
+            bounds.right.value - bounds.left.value <= 320f
+        )
+        // The probe only returns "ok" when the wrapper wraps, the scheme and
+        // product label are visible, and every box stays inside its <td>.
+        var lastState = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = reactionCellState()
+                lastState.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            throw AssertionError(
+                "a reaction cell did not wrap inside its column; " +
+                    "last state=$lastState; error=${t.message}", t
+            )
+        }
+        val pageState = evaluate(
+            "(function(){" +
+                "var de=document.documentElement;" +
+                "return 'page:'+de.scrollWidth+':'+de.clientWidth;" +
+                "})()"
+        )
+        val parts = pageState.removePrefix("page:").split(':')
+        val scrollWidth = parts.getOrNull(0)?.toIntOrNull()
+            ?: throw AssertionError("unexpected page state: $pageState")
+        val clientWidth = parts.getOrNull(1)?.toIntOrNull()
+            ?: throw AssertionError("unexpected page state: $pageState")
+        assertTrue(
+            "reaction cell widened the page ($scrollWidth > $clientWidth): $pageState",
+            scrollWidth <= clientWidth
+        )
+    }
+
     @Test
     fun linearAndRingStructuresShareABondScale() {
         // Owner report: rings looked properly sized while linear structures

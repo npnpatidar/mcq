@@ -4,6 +4,7 @@ import com.mcqapp.data.decodeHtmlEntities
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.isPngDataUri
+import com.mcqapp.domain.CELL_MATH_PATTERN
 import com.mcqapp.domain.ContentElement
 
 /**
@@ -28,8 +29,10 @@ import com.mcqapp.domain.ContentElement
  * so an imported bank cannot smuggle `onclick`, `style` or a stray attribute
  * into a JS-enabled WebView. A malformed, unclosed or nested span stays text.
  *
- * Pure JVM: no Compose, no Android. This PR adds the grammar only; rendering,
- * imports and exports still degrade every marker to its handles text.
+ * Pure JVM: no Compose, no Android. The grammar is shared by every surface:
+ * the mixed in-app page rebuilds a marker into a live drawing
+ * ([ContentElements]), while imports, exports and the native/text surfaces
+ * degrade it to its handles text.
  */
 internal const val CELL_CHEM_CLASS = "mcq-chem-cell"
 
@@ -118,51 +121,145 @@ internal fun cellSegments(cell: String): List<CellSegment> = cellSegments(cell, 
 /**
  * [withPng] false skips the base64 validation for callers that only need the
  * handles text: decoding a multi-kilobyte payload to print "ethanol CCO" would
- * run on every composition of a text-only surface.
+ * run on every composition of a text-only surface, and the in-app page always
+ * draws live (a stored PNG is an export cache, never the screen).
+ *
+ * A marker is promoted to a [CellSegment.Chem] only when it stands on its own.
+ * One that starts inside a [protectedRanges] region — MathML content or a
+ * complete tag such as `<img alt='…'>` — is replaced IN PLACE by its escaped
+ * handles text, so the surrounding markup stays whole. Splitting the cell at
+ * such a marker would cut an attribute value or a `<math>` block in half and
+ * hand the fragments to two different HTML pipelines.
  */
-private fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
+internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
     if (cell.isEmpty()) return emptyList()
     if (!cell.contains(CELL_CHEM_CLASS)) return listOf(CellSegment.Text(cell))
+    val protected = protectedRanges(cell)
     val parts = mutableListOf<CellSegment>()
-    var start = 0
+    val text = StringBuilder()
+    var pos = 0
+    var protectedIndex = 0
     for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
         val element = parseChemSpan(match.groupValues[1], withPng) ?: continue
-        if (match.range.first > start) parts += CellSegment.Text(cell.substring(start, match.range.first))
+        val start = match.range.first
+        while (protectedIndex < protected.size && protected[protectedIndex].last < start) {
+            protectedIndex++
+        }
+        val insideProtected = protectedIndex < protected.size &&
+            start > protected[protectedIndex].first &&
+            start <= protected[protectedIndex].last
+        if (insideProtected) {
+            text.append(cell, pos, start)
+                .append(escapeHtmlText(chemElementText(element)))
+            pos = match.range.last + 1
+            continue
+        }
+        if (start > pos) text.append(cell, pos, start)
+        if (text.isNotEmpty()) {
+            parts += CellSegment.Text(text.toString())
+            text.clear()
+        }
         parts += CellSegment.Chem(element)
-        start = match.range.last + 1
+        pos = match.range.last + 1
     }
+    if (pos < cell.length) text.append(cell, pos, cell.length)
+    if (text.isNotEmpty()) parts += CellSegment.Text(text.toString())
     if (parts.isEmpty()) return listOf(CellSegment.Text(cell))
-    if (start < cell.length) parts += CellSegment.Text(cell.substring(start))
     return parts
 }
 
 /**
- * True when [cell] carries at least one valid marker. Cheap by design: the PNG
- * payload is not decoded here, so a path decision can call this often.
+ * Regions a marker scan must not split: every complete `<math>…</math>` block
+ * and every complete tag, `<`…`>` with quote awareness. A marker whose start
+ * lies strictly inside one sits in MathML content or in an attribute value, so
+ * promoting it to a drawing would tear the surrounding markup apart. A
+ * marker's own opening `<span …>` starts exactly at its region's first
+ * character and is therefore not "inside" it.
+ *
+ * Ranges merge only when they overlap or contain each other. Adjacent tags
+ * are separate regions: `<b>` followed immediately by a marker is two regions,
+ * not one, so the marker start stays outside the leading tag. Merging on
+ * `next.first == current.last + 1` made every marker after a tag look
+ * protected, which degraded a valid marker to text and left a table whose only
+ * structure followed a tag on the native path.
+ *
+ * Only a `<` that begins something tag-shaped (`<tag`, `</`, `<!`, `<?`) starts
+ * a region: a stray comparison sign in prose (`2 < 3`) must not swallow the
+ * marker that follows it.
+ */
+private fun protectedRanges(cell: String): List<IntRange> {
+    val ranges = mutableListOf<IntRange>()
+    for (match in CELL_MATH_PATTERN.findAll(cell)) ranges += match.range
+    var pos = 0
+    while (pos < cell.length) {
+        val open = cell.indexOf('<', pos)
+        if (open < 0) break
+        pos = open + 1
+        if (pos >= cell.length || !isTagOpeningChar(cell[pos])) continue
+        var i = pos
+        var quote = '\u0000'
+        var close = -1
+        while (i < cell.length) {
+            val c = cell[i]
+            if (quote != '\u0000') {
+                if (c == quote) quote = '\u0000'
+            } else if (c == '"' || c == '\'') {
+                quote = c
+            } else if (c == '>') {
+                close = i
+                break
+            }
+            i++
+        }
+        if (close < 0) break
+        ranges += open..close
+        pos = close + 1
+    }
+    if (ranges.size < 2) return ranges
+    ranges.sortBy { it.first }
+    val merged = ArrayList<IntRange>(ranges.size)
+    var current = ranges[0]
+    for (index in 1 until ranges.size) {
+        val next = ranges[index]
+        current = if (next.first <= current.last) {
+            current.first..maxOf(current.last, next.last)
+        } else {
+            merged += current
+            next
+        }
+    }
+    merged += current
+    return merged
+}
+
+/** A `<` only opens a tag when the next character can begin one. */
+private fun isTagOpeningChar(c: Char): Boolean =
+    c.isLetter() || c == '/' || c == '!' || c == '?'
+
+/**
+ * True when [cell] carries at least one top-level valid marker — one that may
+ * become a drawing. A marker protected inside MathML or a tag attribute is
+ * text, so a table holding only that stays on the native path.
  */
 internal fun hasChemCell(cell: String): Boolean {
     if (!cell.contains(CELL_CHEM_CLASS)) return false
-    for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
-        if (parseChemSpan(match.groupValues[1], withPng = false) != null) return true
-    }
-    return false
+    return cellSegments(cell, withPng = false).any { it is CellSegment.Chem }
 }
 
 /**
  * [cell] with every valid marker replaced by its escaped handles text — the
  * degradation every text-only surface uses. A hostile or malformed span is not
  * a marker and stays exactly as it was (prose, handled by the caller's inline
- * pipeline).
+ * pipeline); a protected marker is degraded by [cellSegments] in place and
+ * keeps its surrounding markup intact.
  */
-internal fun sanitizeCellChem(cell: String): String {
-    if (!hasChemCell(cell)) return cell
-    return cellSegments(cell, withPng = false).joinToString("") { segment ->
+internal fun sanitizeCellChem(cell: String): String =
+    cellSegments(cell, withPng = false).joinToString("") { segment ->
         when (segment) {
             is CellSegment.Text -> segment.html
             is CellSegment.Chem -> escapeHtmlText(chemElementText(segment.element))
         }
     }
-}
 
 /**
  * Parses one `<span …>` attribute region into an element, or null when the

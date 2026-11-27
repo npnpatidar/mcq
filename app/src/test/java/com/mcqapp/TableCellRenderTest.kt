@@ -11,6 +11,7 @@ import com.mcqapp.util.CELL_IMAGE_STYLE
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.accessibleContentText
 import com.mcqapp.util.cellHasPortableImage
+import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mapCellImages
 import com.mcqapp.util.portableCellImageSrc
@@ -372,6 +373,31 @@ class TableCellRenderTest {
             "<b>a</b> SRC(data:image/png;base64,AAAA) <i>b</i>",
             mapped
         )
+    }
+
+    @Test
+    fun `a chem cell renders through the hook and degrades to handles without one`() {
+        val element = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            diagram = "data:image/png;base64,iVBORw0KGgo="
+        )
+        val cell = "see " + chemCellHtml(element) + " here"
+
+        // The mixed page passes a renderer: each structure becomes its drawing
+        // in storage order among the surrounding prose.
+        val hooked = tableCellHtml(cell, chemHtml = { "DRAW(${it.smiles})" }) { sanitizeMathml(it) }
+        assertEquals("see DRAW(CCO) here", hooked)
+
+        // Every other surface keeps the readable handles — and an in-marker
+        // PNG never becomes the [image] marker (the structure is not a loose
+        // picture; the payload is an export cache).
+        val degraded = tableCellHtml(cell) { sanitizeMathml(it) }
+        assertEquals("see ethanol C2H5OH CCO here", degraded)
+        assertFalse("no picture marker: $degraded", degraded.contains(CELL_IMAGE_MARKER))
+        assertFalse("no payload: $degraded", degraded.contains("data-png"))
+        assertFalse("no base64: $degraded", degraded.contains("base64,"))
     }
 
     @Test

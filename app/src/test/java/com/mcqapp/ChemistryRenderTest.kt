@@ -2,6 +2,7 @@ package com.mcqapp
 
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.searchableText
 import com.mcqapp.util.CHEM_DIAGRAM_BRIDGE
 import com.mcqapp.util.CHEM_DISPLAY_MAX_PX
 import com.mcqapp.util.CHEM_STANDALONE_MIN_SCALE
@@ -10,6 +11,7 @@ import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.SMILES_DRAWER_ASSET_URL
 import com.mcqapp.util.accessibleContentLabelFor
 import com.mcqapp.util.accessibleContentText
+import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.jsStringLiteral
 import com.mcqapp.util.mixedContentHtml
@@ -663,6 +665,333 @@ class ChemistryRenderTest {
         val captureAt = html.indexOf("capture();")
         assertTrue("capture draw missing", captureDrawAt >= 0)
         assertTrue("bridge must run after the capture draw", captureAt > captureDrawAt)
+    }
+
+    // ---- chemical structures in table cells -------------------------------
+
+    private val cellPng = "data:image/png;base64,iVBORw0KGgo="
+    private val cellPngPayload = "iVBORw0KGgo="
+
+    private fun cell(
+        smiles: String = "CCO",
+        formula: String = "C2H5OH",
+        caption: String = "ethanol",
+        spoken: String = "",
+        diagram: String = cellPng
+    ): String = chemCellHtml(
+        ContentElement.ChemElement(smiles, formula, caption, spoken, diagram)
+    )
+
+    private fun tableOf(vararg rows: List<String>): ContentElement =
+        ContentElement.TableElement(rows.toList())
+
+    @Test
+    fun aChemCellTableSelectsTheMixedPathAndAPlainTableStaysNative() {
+        assertEquals(
+            ContentRenderPath.MIXED,
+            contentRenderPath(listOf(tableOf(listOf(cell()))))
+        )
+        // A plain table (and a table carrying only a hostile/incomplete span)
+        // must not be dragged onto the WebView path.
+        assertEquals(
+            ContentRenderPath.NATIVE,
+            contentRenderPath(listOf(tableOf(listOf("a", "b"))))
+        )
+        assertEquals(
+            ContentRenderPath.NATIVE,
+            contentRenderPath(
+                listOf(tableOf(listOf("<span class=\"mcq-chem-cell\">no smiles</span>")))
+            )
+        )
+        // A math cell already forced MIXED before chemistry could live in a
+        // cell; that must not regress.
+        assertEquals(
+            ContentRenderPath.MIXED,
+            contentRenderPath(listOf(tableOf(listOf("x <math><mi>y</mi></math>"))))
+        )
+        // A chem cell anywhere in the table is enough.
+        assertEquals(
+            ContentRenderPath.MIXED,
+            contentRenderPath(listOf(tableOf(listOf("plain"), listOf(cell()))))
+        )
+    }
+
+    @Test
+    fun aCellOnlyPageLoadsTheDrawerAssetOnce() {
+        // No top-level ChemElement: the table alone is the trigger. This is
+        // the page shape a real cell actually produces, so it proves the
+        // asset wiring for cells rather than piggy-backing on a block.
+        val html = htmlOf(tableOf(listOf(cell())))
+        assertEquals(1, html.split(SMILES_DRAWER_ASSET_URL).size - 1)
+        assertTrue("cell drawing missing: $html", html.contains("<svg id=\"mcq-chem-0\""))
+        // A cell page must not capture either: no call reaches the bridge.
+        assertFalse("unexpected capture call: $html", html.contains("capture();"))
+        assertFalse("unexpected diagram bridge: $html", html.contains(CHEM_DIAGRAM_BRIDGE))
+        // A block page still captures — this is the behaviour cells opt out of.
+        val blockHtml = htmlOf(ContentElement.ChemElement("CCO"))
+        assertTrue("a block must still capture: $blockHtml", blockHtml.contains("capture();"))
+        assertTrue("a block still names the bridge: $blockHtml",
+            blockHtml.contains(CHEM_DIAGRAM_BRIDGE))
+    }
+
+    @Test
+    fun onePageUsesOneDrawerAssetAndUniqueIdsForBlocksAndCells() {
+        val html = htmlOf(
+            ContentElement.ChemElement("CCO"),
+            tableOf(listOf(cell(), cell("c1ccccc1", "C6H6", "benzene"))),
+            ContentElement.ChemElement("CCC")
+        )
+        // One asset per page, however many structures a table holds.
+        assertEquals(1, html.split(SMILES_DRAWER_ASSET_URL).size - 1)
+        // One page-level counter: the blocks and both cells share it, so a
+        // page mixing them can never collide on ids.
+        (0..3).forEach { index ->
+            assertTrue("missing structure $index: $html", html.contains("<svg id=\"mcq-chem-$index\""))
+            assertTrue("missing capture $index", html.contains("id=\"mcq-chem-$index-capture\""))
+            assertTrue("missing fallback $index", html.contains("id=\"mcq-chem-$index-fallback\""))
+        }
+        val ids = Regex("id=\"(mcq-chem-[^\"]+)\"").findAll(html)
+            .map { it.groupValues[1] }.toList()
+        // Three ids per structure, all distinct.
+        assertEquals(12, ids.size)
+        assertEquals("duplicate ids: $ids", ids.size, ids.toSet().size)
+    }
+
+    @Test
+    fun aChemCellIsDrawnAtTheStandaloneScaleWithScopedStylesAndAFallback() {
+        val html = htmlOf(tableOf(listOf("Ethanol", cell())))
+        // A block wrapper: the fallback <div> must not live inside a <span>,
+        // and the cell structure takes its own line in the <td>.
+        assertTrue("cell wrapper missing: $html",
+            html.contains("<div class=\"mcq-chem mcq-chem-cell\">"))
+        assertTrue("chem table class missing: $html",
+            html.contains("<table class=\"mcq-chem-table\""))
+        assertTrue("fixed table layout missing: $html",
+            html.contains("table.mcq-chem-table{table-layout:fixed;width:100%}"))
+        assertTrue("cell block display missing: $html",
+            html.contains(".mcq-chem-cell{display:block;max-width:100%}"))
+        assertTrue("cell svg cap missing: $html",
+            html.contains(".mcq-chem-cell svg{max-width:100%;height:auto}"))
+        assertTrue("live svg missing: $html", html.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue("hidden light capture missing: $html", html.contains(
+            "<svg id=\"mcq-chem-0-capture\" style=\"display:none;\"></svg>"
+        ))
+        assertTrue("live draw must use the theme: $html", html.contains(".draw(tree,svg,'mcq')"))
+        assertTrue("capture must use the light theme: $html",
+            html.contains(".draw(tree,captureSvg,'light')"))
+        // The same scoped-style helper and the same standalone fit as a block.
+        assertTrue("style scoping missing: $html", html.contains("function scopeChemStyles(s){"))
+        assertTrue("live style not scoped: $html", html.contains("scopeChemStyles(svg);"))
+        assertTrue("capture style not scoped: $html", html.contains("scopeChemStyles(captureSvg);"))
+        assertTrue("standalone fit missing: $html", html.contains(
+            "var sc=Math.max(${CHEM_DISPLAY_MAX_PX}/Math.max(w,h),$CHEM_STANDALONE_MIN_SCALE);"
+        ))
+        assertTrue("fit marker missing: $html", html.contains("s.setAttribute('data-fitted','1');"))
+        assertEquals("fit called more than once for one cell structure",
+            1, html.split("fitStandalone(svg);").size - 1)
+        // The fallback is the readable text, never an SVG or the payload. A
+        // cell skips the caption line: the fallback already carries the
+        // handles, and repeating the formula only crowds the column.
+        assertTrue("fallback missing: $html", html.contains("<div id=\"mcq-chem-0-fallback\""))
+        assertTrue("fallback text missing: $html",
+            html.contains("Unavailable: ethanol C2H5OH CCO"))
+        assertFalse("cell caption line emitted: $html",
+            html.contains("<div class=\"mcq-chem-caption\">"))
+        // In-app pages always draw live: a stored PNG is an export cache and
+        // is never embedded, decoded or shown in the page.
+        assertFalse("stored payload leaked: $html", html.contains(cellPngPayload))
+        assertFalse("data-png leaked: $html", html.contains("data-png"))
+        assertFalse("stored picture rendered: $html", html.contains("<img "))
+        assertTrue("height bridge missing: $html", html.contains(CONTENT_HEIGHT_BRIDGE))
+        // A cell never captures, so no cell script can call the diagram
+        // bridge; the light-theme capture draw is still emitted.
+        assertTrue("light capture draw missing: $html",
+            html.contains(".draw(tree,captureSvg,'light');"))
+        assertFalse("cell called capture(): $html", html.contains("capture();"))
+        assertFalse("cell referenced the diagram bridge: $html",
+            html.contains(CHEM_DIAGRAM_BRIDGE))
+    }
+
+    @Test
+    fun aReactionCellUsesTheReactionScaleAndIsNeverFitted() {
+        val html = htmlOf(tableOf(listOf(cell("CCO>>", "A", "reagent"))))
+        // A cell reaction takes the WRAPPING row: the chem table is
+        // table-layout:fixed, so a nowrapped scheme + long label would overflow
+        // its column instead of shrinking.
+        assertTrue("reaction cell container missing: $html", html.contains(
+            "<div class=\"mcq-chem mcq-chem-reaction mcq-chem-cell\" style=\"display:flex;" +
+                "align-items:center;gap:4px;max-width:100%;white-space:normal;" +
+                "flex-wrap:wrap;justify-content:center;\">"
+        ))
+        assertFalse("a reaction cell must not nowrap: $html",
+            html.contains("white-space:nowrap"))
+        assertTrue("parseReaction missing: $html", html.contains("SmilesDrawer.parseReaction("))
+        assertTrue("reaction scale pass missing: $html", html.contains(
+            "var rw=parseFloat(svg.style.width);if(rw>0){svg.style.width=(rw*0.773)+'px';}"
+        ))
+        assertFalse("a reaction must never be fitted: $html", html.contains("fitStandalone(svg);"))
+        assertTrue("product label missing: $html", html.contains(
+            "<span class=\"mcq-chem-product\" style=\"font-size:0.85em\">A</span>"
+        ))
+        assertFalse("reaction must not emit the caption line: $html",
+            html.contains("<div class=\"mcq-chem-caption\">"))
+    }
+
+    @Test
+    fun aBlockReactionKeepsTheNonWrappingRow() {
+        val html = htmlOf(ContentElement.ChemElement(
+            smiles = "CCO>>", caption = "reagent", formula = "A"
+        ))
+        // The block reaction must stay byte-identical: no wrap, no flex-wrap.
+        assertTrue("block reaction row changed: $html", html.contains(
+            "<div class=\"mcq-chem mcq-chem-reaction\" style=\"display:flex;" +
+                "align-items:center;gap:4px;max-width:100%;white-space:nowrap;" +
+                "justify-content:center;\">"
+        ))
+        assertFalse("a block reaction must not wrap: $html",
+            html.contains("white-space:normal"))
+        assertFalse("a block reaction must not gain flex-wrap: $html",
+            html.contains("flex-wrap:wrap"))
+    }
+
+    @Test
+    fun aReactionCellAndAMoleculeCellFitOnlyTheMolecule() {
+        val html = htmlOf(tableOf(
+            listOf(cell("CCO>>", "A", "reagent")),
+            listOf(cell())
+        ))
+        // ReactionDrawer owns its own width; only the standalone molecule is
+        // fitted, and it is fitted exactly once.
+        assertEquals(1, html.split("fitStandalone(svg);").size - 1)
+        assertTrue("reaction container missing: $html",
+            html.contains("class=\"mcq-chem mcq-chem-reaction mcq-chem-cell\""))
+        assertTrue("reaction scale pass missing: $html",
+            html.contains("var rw=parseFloat(svg.style.width)"))
+        // Both structures still get their own drawing and id.
+        assertTrue("reaction svg missing: $html", html.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue("molecule svg missing: $html", html.contains("<svg id=\"mcq-chem-1\""))
+    }
+
+    @Test
+    fun twoCellsWithTheSameSmilesGetDistinctIds() {
+        val html = htmlOf(tableOf(listOf(cell(), cell())))
+        assertTrue("first cell missing: $html", html.contains("<svg id=\"mcq-chem-0\""))
+        assertTrue("second cell missing: $html", html.contains("<svg id=\"mcq-chem-1\""))
+        // Two structures use two independent scripts: each id appears once.
+        assertEquals(1, html.split("id=\"mcq-chem-0\"").size - 1)
+        assertEquals(1, html.split("id=\"mcq-chem-1\"").size - 1)
+        assertEquals(2, html.split("SmilesDrawer.parse(\"CCO\"").size - 1)
+    }
+
+    @Test
+    fun aChemCellBesideFormulaAndPictureInTheSameCellRendersAll() {
+        val mixedCell = cell() +
+            " <math><mi>x</mi></math> " +
+            "<img src=\"data:image/png;base64,AAAA\"/>"
+        val html = htmlOf(tableOf(listOf(mixedCell)))
+        val drawingAt = html.indexOf("<svg id=\"mcq-chem-0\"")
+        val mathAt = html.indexOf("<math><mrow><mi>x</mi></mrow></math>")
+        val pictureAt = html.indexOf("<img src=\"data:image/png;base64,AAAA\"")
+        assertTrue("cell drawing missing: $html", drawingAt >= 0)
+        assertTrue("formula missing: $html", mathAt >= 0)
+        assertTrue("picture missing: $html", pictureAt >= 0)
+        assertTrue("stored order changed: $html", drawingAt < mathAt && mathAt < pictureAt)
+        // The stored marker was rebuilt: its data-* attribute names never
+        // reach the page (the wrapper's class token legitimately remains).
+        assertFalse("stored marker leaked: $html", html.contains("data-smiles"))
+    }
+
+    @Test
+    fun emptyCellsAndRowsGoThroughTheHookWithoutDrawings() {
+        val html = htmlOf(
+            ContentElement.TableElement(listOf(
+                listOf("", " ", cell("")),
+                emptyList()
+            )),
+            chemKey = "empty"
+        )
+        assertTrue("table missing: $html", html.contains("<table"))
+        // An empty or blank cell never becomes a structure, and an empty row
+        // does not break the page.
+        assertFalse("blank cell drew something: $html", html.contains("<svg id=\"mcq-chem-"))
+        assertFalse("drawer asset for an empty structure: $html",
+            html.contains(SMILES_DRAWER_ASSET_URL))
+        assertTrue("empty row missing: $html", html.contains("<tr></tr>"))
+    }
+
+    @Test
+    fun hostileChemCellFieldsCannotEscapeTheAttributeOrTheJsLiteral() {
+        val hostileCaption = "<img src=x onerror=alert(1)>"
+        val hostileKey = "a\"</script><b>&"
+        // chemCellHtml is the storage emitter and escapes attributes; the page
+        // then re-escapes them for HTML and JS from the parsed fields only.
+        val html = htmlOf(
+            tableOf(listOf(cell("\";alert(1)//", "C2H6O", hostileCaption))),
+            chemKey = hostileKey
+        )
+        assertFalse("caption emitted live markup: $html",
+            html.contains("<img src=x onerror=alert(1)>"))
+        assertTrue("caption not HTML-escaped: $html",
+            html.contains("&lt;img src=x onerror=alert(1)&gt;"))
+        // The quote and semicolon never reach the JS string literal.
+        assertFalse("SMILES broke the JS literal: $html", html.contains("\"\";alert(1)//"))
+        assertTrue("allowlist-filtered SMILES missing: $html",
+            html.contains("SmilesDrawer.parse(\"alert(1)//\""))
+        // A cell never captures, so the per-page key never enters a cell's
+        // script at all. (The block path's key escaping is pinned by
+        // theChemKeyIsJsEscapedAndCannotBreakOutOfTheScript.)
+        assertFalse("key closed the script tag: $html", html.contains("\"</script><b>&\""))
+        assertFalse("key reached a cell page: $html",
+            html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
+        assertFalse("script injected: $html", html.contains("<script>alert(1)</script>"))
+    }
+
+    @Test
+    fun talkbackSpeaksAChemCellInRowOrderWithTheAuthoredPrecedence() {
+        val elements = listOf(
+            ContentElement.TableElement(listOf(
+                listOf(
+                    "name",
+                    cell("CCO", "C2H5OH", "ethanol", spoken = "ethyl alcohol")
+                ),
+                listOf("second", cell("c1ccccc1", "C6H6", "benzene"))
+            ))
+        )
+        // Spoken wins, the formula is appended, and a formula-only cell speaks
+        // the formula (not the less readable SMILES). Grid order is preserved.
+        assertEquals(
+            "name ethyl alcohol C2H5OH second benzene C6H6",
+            accessibleContentText(elements)
+        )
+        assertEquals(
+            "C2H5OH",
+            accessibleContentText(
+                listOf(ContentElement.TableElement(listOf(listOf(cell("CCO", "C2H5OH", "")))))
+            )
+        )
+        val spoken = accessibleContentText(elements)
+        assertFalse("picture marker spoken: $spoken", spoken.contains("[image]"))
+        assertFalse("base64 spoken: $spoken", spoken.contains("base64"))
+        assertFalse("data uri spoken: $spoken", spoken.contains("data:"))
+        assertFalse("payload spoken: $spoken", spoken.contains(cellPngPayload))
+    }
+
+    @Test
+    fun aChemCellIsSearchableBySmilesFormulaAndCaptionAndNeverByItsPayload() {
+        val elements = listOf(
+            ContentElement.TableElement(listOf(listOf(
+                cell("CCO", "C2H5OH", "ethanol", spoken = "ethyl alcohol")
+            )))
+        )
+        val text = elements.searchableText
+        // The marker's body is the readable handles, so all three authored
+        // handles are searchable without the util grammar in `domain`.
+        assertTrue("SMILES not searchable: $text", text.contains("CCO"))
+        assertTrue("formula not searchable: $text", text.contains("C2H5OH"))
+        assertTrue("caption not searchable: $text", text.contains("ethanol"))
+        assertFalse("payload indexed: $text", text.contains(cellPngPayload))
+        assertFalse("attribute indexed: $text", text.contains("data-png"))
+        assertFalse("marker indexed: $text", text.contains("mcq-chem-cell"))
     }
 
     // ---- injection boundaries ---------------------------------------------

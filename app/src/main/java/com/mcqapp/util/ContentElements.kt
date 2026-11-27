@@ -30,6 +30,7 @@ import com.mcqapp.R
 import com.mcqapp.data.docx.MathNode
 import com.mcqapp.data.docx.decodeXmlEntities
 import com.mcqapp.data.docx.parseMathTree
+import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.normalizeMathText
@@ -44,8 +45,9 @@ internal enum class ContentRenderPath { PLAIN_TEXT, NATIVE, MIXED }
 
 /**
  * The branch decision as a pure function so it can be asserted without
- * Compose: a formula always goes to the mixed (WebView) view, a lone text run
- * keeps the legacy plain path, anything else uses the native column.
+ * Compose: a formula or a chemical structure always goes to the mixed
+ * (WebView) view, a lone text run keeps the legacy plain path, anything else
+ * uses the native column.
  */
 internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPath = when {
     // Chemistry is drawn by the bundled SmilesDrawer JavaScript, so it shares
@@ -57,8 +59,11 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
     // MathElement beside it: that page needs MathJax just as much, while the
     // native table can only print the [formula] marker. A portable cell
     // picture is the same case: only the WebView can draw it, while the
-    // native table can only print the [image] marker. A plain table (no
-    // formula and no portable picture cell) keeps the native fast path.
+    // native table can only print the [image] marker. A cell carrying a
+    // chemical structure is the third: SmilesDrawer draws it on the mixed
+    // page, and the native table has no way to turn its SMILES into a
+    // picture. A plain table (no formula, portable picture or structure)
+    // keeps the native fast path.
     elements.any { it is ContentElement.TableElement && it.needsMixedCellRendering() } ->
         ContentRenderPath.MIXED
     elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
@@ -67,7 +72,15 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
 
 /** True when any cell of this table needs the mixed view or its asset pipeline. */
 private fun ContentElement.TableElement.needsMixedCellRendering(): Boolean =
-    rows.any { row -> row.any { CELL_MATH_PATTERN.containsMatchIn(it) || cellHasPortableImage(it) } }
+    rows.any { row ->
+        row.any {
+            CELL_MATH_PATTERN.containsMatchIn(it) || cellHasPortableImage(it) || hasChemCell(it)
+        }
+    }
+
+/** True when any cell carries a valid chemical-structure marker. */
+private fun ContentElement.TableElement.carriesChemCell(): Boolean =
+    rows.any { row -> row.any { hasChemCell(it) } }
 
 /**
  * Speech-friendly linearisation of MathML, used ONLY by the accessibility
@@ -119,26 +132,7 @@ internal fun accessibleContentText(elements: List<ContentElement>): String = bui
                 append(accessibleMathText(element.mathml))
             is ContentElement.TableElement ->
                 append(element.rows.joinToString(" ") { row ->
-                    row.joinToString(" ") { cell ->
-                        // A cell may hold a formula or a picture; turn both
-                        // into readable text before the inline parser strips
-                        // the tags it does not know. Escape the spoken math
-                        // first: a decoded "<b>" is data, not a bold tag.
-                        // A picture INSIDE the formula becomes the marker too,
-                        // exactly as the visual path does it: an <img> is not
-                        // MathML, so the speech walker would drop it and the
-                        // base64 would go unspoken anyway.
-                        // The cell grammar lives in one pure helper, so the
-                        // spoken and the visual paths cannot drift apart.
-                        InlineHtml.parse(tableCellParts(cell).joinToString("") { part ->
-                            when (part) {
-                                is CellPart.Math ->
-                                    escapeHtmlText(accessibleMathText(mathImageMarker(part.mathml)))
-                                is CellPart.Text ->
-                                    mapCellImages(part.html) { CELL_IMAGE_MARKER }
-                            }
-                        }).text.trim()
-                    }
+                    row.joinToString(" ") { cell -> accessibleTableCellText(cell) }
                 })
             is ContentElement.ImageElement -> append(CELL_IMAGE_MARKER)
             is ContentElement.ChemElement -> {
@@ -156,6 +150,66 @@ internal fun accessibleContentText(elements: List<ContentElement>): String = bui
         }
     }
 }.replace(Regex("\\s+"), " ").trim()
+
+/**
+ * One table cell's spoken text. A chemical structure is announced with the
+ * precedence its fields were authored in — spoken, caption, formula, then the
+ * SMILES as the last resort — and never with its marker attributes, its
+ * `data-png` payload or an `[image]` placeholder: a structure has readable
+ * handles, so a picture marker would only add noise. A formula or a picture
+ * beside it keeps exactly the treatment it had before chemistry could live in
+ * a cell.
+ */
+private fun accessibleTableCellText(cell: String): String =
+    InlineHtml.parse(
+        cellSegments(cell, withPng = false).joinToString("") { segment ->
+            when (segment) {
+                is CellSegment.Chem -> escapeHtmlText(chemCellSpokenText(segment.element))
+                // A cell may hold a formula or a picture; turn both into
+                // readable text before the inline parser strips the tags it
+                // does not know. Escape the spoken math first: a decoded
+                // "<b>" is data, not a bold tag. A picture INSIDE the formula
+                // becomes the marker too, exactly as the visual path does it:
+                // an <img> is not MathML, so the speech walker would drop it
+                // and the base64 would go unspoken anyway. The cell grammar
+                // lives in one pure helper, so the spoken and the visual paths
+                // cannot drift apart.
+                is CellSegment.Text -> tableCellParts(segment.html).joinToString("") { part ->
+                    when (part) {
+                        is CellPart.Math ->
+                            escapeHtmlText(accessibleMathText(mathImageMarker(part.mathml)))
+                        is CellPart.Text ->
+                            mapCellImages(part.html) { CELL_IMAGE_MARKER }
+                    }
+                }
+            }
+        }
+    ).text.trim()
+
+/**
+ * A cell structure's spoken label. Unlike a top-level block — whose SMILES is
+ * a last-resort label because the spoken field is the only one that describes
+ * it — a cell's formula is a better handle than its SMILES, so it is tried
+ * first. The formula is not repeated when it already is the label.
+ *
+ * NOTE: this and the `ContentElement.ChemElement` branch of
+ * [accessibleContentText] (the block's spoken label) should be unified when
+ * the exports reach these paths: they differ only in the formula/SMILES
+ * precedence a cell deliberately chooses. Keep the two in step by hand until
+ * then.
+ */
+private fun chemCellSpokenText(element: ContentElement.ChemElement): String {
+    val label = element.spoken.takeIf { it.isNotBlank() }
+        ?: element.caption.takeIf { it.isNotBlank() }
+        ?: element.formula.takeIf { it.isNotBlank() }
+        ?: element.smiles
+    return buildString {
+        append(label)
+        if (element.formula.isNotBlank() && element.formula != label) {
+            append(' ').append(element.formula)
+        }
+    }
+}
 
 /**
  * The description to put on the mixed view, or null on the plain/native
@@ -181,8 +235,9 @@ internal fun mixedContentDescription(label: String, fallback: String): String = 
  * formulas. A lone [ContentElement.TextElement] renders as plain text, which
  * is how every pre-rich-content question is stored, so legacy questions look
  * exactly as they did before rich content existed. Content holding a
- * formula renders as one flowing HTML block instead: a stacked native
- * layout would force every inline equation onto a line of its own.
+ * formula, or a structure in a table cell, renders as one flowing HTML block
+ * instead: a stacked native layout would force every inline equation onto a
+ * line of its own and cannot draw a structure at all.
  */
 @Composable
 fun ContentElements(
@@ -244,8 +299,9 @@ private fun ElementText(
 
 /**
  * A native Compose table: one bordered row per [ContentElement.TableElement.rows]
- * entry. Pictures and formulas, which a native text run cannot show, collapse
- * to a marker; a table holding either takes the mixed view instead.
+ * entry. Pictures, formulas and chemical structures, which a native text run
+ * cannot show, collapse to a marker; a table holding any of them takes the
+ * mixed view instead.
  */
 @Composable
 private fun TableElement(element: ContentElement.TableElement) {
@@ -422,6 +478,20 @@ private const val CHEM_REACTION_CONTAINER_STYLE =
         "justify-content:center;"
 
 /**
+ * The same inline row inside a table CELL, where `white-space:nowrap` does not
+ * hold: a chem table is `table-layout:fixed`, so a long reagent caption or
+ * product label kept on one line would widen the scheme past its column (the
+ * SVG has `max-width:100%`, but nowrap text still overflows). Allowing wrap
+ * lets the row break between its pieces at the cell width instead. Only a
+ * reaction cell takes this style; a block reaction keeps
+ * [CHEM_REACTION_CONTAINER_STYLE] byte-identically, and a molecule cell keeps
+ * the page's `.mcq-chem-cell` block display.
+ */
+private const val CHEM_REACTION_CELL_CONTAINER_STYLE =
+    "display:flex;align-items:center;gap:4px;max-width:100%;white-space:normal;" +
+        "flex-wrap:wrap;justify-content:center;"
+
+/**
  * Characters a SMILES string may contain before it is handed to JavaScript.
  * `>` is included so a three-part reaction SMILES (`reactants>reagents>products`)
  * reaches ReactionParser; it is safe because [jsStringLiteral] escapes every
@@ -468,23 +538,53 @@ internal fun smilesJsLiteral(smiles: String): String =
 // PNG validation lives with the exporters (com.mcqapp.data.export.isPngDataUri):
 // one strict check for the signature, shared by every renderer and writer.
 
-/**
- * One chemistry block: the drawing (or a validated PNG when one is supplied),
- * its caption/formula line, and an inert text fallback shown only if the
- * JavaScript drawer is missing or rejects the SMILES. The fallback never
- * carries SVG or base64 data — only the formula and the SMILES characters.
- */
 /** The product label that sits beside the scheme in the inline row. */
 private fun reactionProductLabel(formula: String): String =
     "<span class=\"mcq-chem-product\" style=\"font-size:0.85em\">" +
         escapeHtmlData(formula) + "</span>"
 
+/**
+ * One chemistry block: the drawing (or a validated PNG when one is supplied),
+ * its caption/formula line, and an inert text fallback shown only if the
+ * JavaScript drawer is missing or rejects the SMILES. The fallback never
+ * carries SVG or base64 data — only readable text from the element's fields.
+ */
 private fun chemBlockHtml(
     element: ContentElement.ChemElement,
     index: Int,
     structureUnavailable: String,
     chemKey: String,
     chemColorCss: String
+): String = chemStructureHtml(
+    element, index, structureUnavailable, chemKey, chemColorCss, isCell = false
+)
+
+/**
+ * One table cell's structure: the same drawing, options, scoped styles, fit,
+ * light-theme capture draw and fallback as a block, rendered as a block inside
+ * the `<td>` (never a capture call — see [chemStructureHtml]). It is ALWAYS
+ * drawn live: a stored `data-png` is an export cache with dark strokes on a
+ * transparent canvas, so on screen it would be a low-contrast tile in dark
+ * mode. The page therefore never carries or shows the stored PNG, and the
+ * cell's spec is read with the payload skipped.
+ */
+private fun chemCellBlockHtml(
+    element: ContentElement.ChemElement,
+    index: Int,
+    structureUnavailable: String,
+    chemKey: String,
+    chemColorCss: String
+): String = chemStructureHtml(
+    element, index, structureUnavailable, chemKey, chemColorCss, isCell = true
+)
+
+private fun chemStructureHtml(
+    element: ContentElement.ChemElement,
+    index: Int,
+    structureUnavailable: String,
+    chemKey: String,
+    chemColorCss: String,
+    isCell: Boolean
 ): String {
     val svgId = "mcq-chem-$index"
     val captureId = "$svgId-capture"
@@ -497,33 +597,60 @@ private fun chemBlockHtml(
     val displayStyle = if (isReaction) CHEM_REACTION_STYLE else CHEM_DISPLAY_STYLE
     // The caption becomes the text above the arrow, so there is no separate
     // caption line. Keep it in the fallback too: a broken drawer must not
-    // hide the reagent from a sighted reader.
-    val visibleText = buildString {
-        append(element.formula.takeIf { it.isNotBlank() } ?: element.smiles)
-        if (isReaction && element.caption.isNotBlank()) append(' ').append(element.caption)
+    // hide the reagent from a sighted reader. A CELL falls back to its full
+    // readable handles instead: inside a table the caption is the only name a
+    // reader has for the drawing, so it must survive a failed draw.
+    val visibleText = if (isCell) {
+        chemElementText(element)
+    } else {
+        buildString {
+            append(element.formula.takeIf { it.isNotBlank() } ?: element.smiles)
+            if (isReaction && element.caption.isNotBlank()) append(' ').append(element.caption)
+        }
     }
     val caption = listOf(element.caption, element.formula)
         .filter { it.isNotBlank() }
         .joinToString(" ") { escapeHtmlData(it) }
     // In reaction mode the caption is the reagent text drawn above the arrow,
-    // so there is no separate caption line under the diagram.
-    val captionLine = if (isReaction || caption.isBlank()) "" else
+    // so there is no separate caption line under the diagram. A CELL skips the
+    // line too: its fallback already carries the full readable handles, and a
+    // caption line would repeat the formula inside an already narrow column.
+    val captionLine = if (isReaction || isCell || caption.isBlank()) "" else
         "<div class=\"mcq-chem-caption\">$caption</div>"
     val fallbackLine = buildString {
         if (structureUnavailable.isNotBlank()) append(escapeHtmlData(structureUnavailable)).append(": ")
         append(escapeHtmlData(visibleText))
     }
 
+    // A block is a <div>. A cell structure is also a <div>: it is a block in
+    // its own <td> (the page's .mcq-chem-cell rule keeps it block and capped
+    // at the column width), and the fallback/caption elements it may contain
+    // stay valid — a <div> inside a <span> was invalid markup, and a block
+    // wrapper never widens the row. A reaction keeps the shared inline row in
+    // both cases, so the scheme and its product label stay on one line — but a
+    // reaction CELL uses the wrapping variant: a fixed-layout column cannot
+    // hold a nowrapped scheme plus a long label.
+    val wrapperTag = "div"
+    val wrapperClasses = buildString {
+        append("mcq-chem")
+        if (isReaction) append(" mcq-chem-reaction")
+        if (isCell) append(" mcq-chem-cell")
+    }
+    val reactionContainerStyle =
+        if (isCell) CHEM_REACTION_CELL_CONTAINER_STYLE else CHEM_REACTION_CONTAINER_STYLE
+    val openWrapper = if (isReaction) {
+        "<$wrapperTag class=\"$wrapperClasses\" style=\"$reactionContainerStyle\">"
+    } else {
+        "<$wrapperTag class=\"$wrapperClasses\">"
+    }
+
     // A validated PNG is safer and sharper than a redraw: emit it directly.
     // CSP already allows img-src data:, so no script is needed for this block.
-    if (isPngDataUri(element.diagram)) {
+    // A CELL never takes this path: its PNG is an export cache only, and the
+    // on-screen drawing is always live (see chemCellBlockHtml).
+    if (!isCell && isPngDataUri(element.diagram)) {
         return buildString {
-            if (isReaction) {
-                append("<div class=\"mcq-chem mcq-chem-reaction\" style=\"")
-                    .append(CHEM_REACTION_CONTAINER_STYLE).append("\">")
-            } else {
-                append("<div class=\"mcq-chem\">")
-            }
+            append(openWrapper)
             append("<img src=\"").append(escapeHtmlData(element.diagram))
                 .append("\" alt=\"").append(escapeHtmlData(visibleText))
                 .append("\" style=\"")
@@ -536,7 +663,7 @@ private fun chemBlockHtml(
             append("\"/>")
             if (isReaction && element.formula.isNotBlank()) append(reactionProductLabel(element.formula))
             append(captionLine)
-            append("</div>")
+            append("</$wrapperTag>")
         }
     }
 
@@ -553,12 +680,7 @@ private fun chemBlockHtml(
     val reagentText = jsStringLiteral(element.caption)
 
     return buildString {
-        if (isReaction) {
-            append("<div class=\"mcq-chem mcq-chem-reaction\" style=\"")
-                .append(CHEM_REACTION_CONTAINER_STYLE).append("\">")
-        } else {
-            append("<div class=\"mcq-chem\">")
-        }
+        append(openWrapper)
         append("<svg id=\"$svgId\" style=\"$displayStyle\"></svg>")
         // The sample supplies the product as `formula`; it sits beside the
         // scheme so the whole equation reads on one line.
@@ -605,23 +727,33 @@ private fun chemBlockHtml(
         // every export with dark strokes on white surfaces. Serialise a CLONE
         // with the display style removed: the live SVG carries the theme's
         // text colour and its display cap, neither of which belongs in a PNG.
-        append("function capture(){try{")
-        append("var c=captureSvg.cloneNode(true);")
-        append("c.removeAttribute('style');")
-        append("var xml=new XMLSerializer().serializeToString(c);")
-        append("var img=new Image();")
-        append("img.onload=function(){try{")
-        append("var canvas=document.createElement('canvas');")
-        append("canvas.width=img.naturalWidth||300;canvas.height=img.naturalHeight||300;")
-        append("canvas.getContext('2d').drawImage(img,0,0);")
-        append("var png=canvas.toDataURL('image/png');")
-        append("if(png.indexOf('data:image/png;base64,')===0 && window.").append(CHEM_DIAGRAM_BRIDGE).append("){")
-        append("window.").append(CHEM_DIAGRAM_BRIDGE).append(".onDiagram(")
-        append(jsStringLiteral(chemKey)).append(",png);}")
-        append("}catch(e){}};")
-        append("img.onerror=function(){};")
-        append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
-        append("}catch(e){}}")
+        //
+        // A CELL never captures. Its page reports a per-page chemKey, the same
+        // one a block uses, and nothing consumes a cell capture yet; allowing
+        // it would let a cell write a block's diagram on a keyed page. The
+        // light-theme draw is still emitted (it costs one hidden draw, no
+        // bridge call), so a future editor PR can opt in without changing the
+        // cell's grammar.
+        if (!isCell) {
+            append("function capture(){try{")
+            append("var c=captureSvg.cloneNode(true);")
+            append("c.removeAttribute('style');")
+            append("var xml=new XMLSerializer().serializeToString(c);")
+            append("var img=new Image();")
+            append("img.onload=function(){try{")
+            append("var canvas=document.createElement('canvas');")
+            append("canvas.width=img.naturalWidth||300;canvas.height=img.naturalHeight||300;")
+            append("canvas.getContext('2d').drawImage(img,0,0);")
+            append("var png=canvas.toDataURL('image/png');")
+            append("if(png.indexOf('data:image/png;base64,')===0 && window.")
+                .append(CHEM_DIAGRAM_BRIDGE).append("){")
+            append("window.").append(CHEM_DIAGRAM_BRIDGE).append(".onDiagram(")
+            append(jsStringLiteral(chemKey)).append(",png);}")
+            append("}catch(e){}};")
+            append("img.onerror=function(){};")
+            append("img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(xml)));")
+            append("}catch(e){}}")
+        }
         append("try{")
         if (isReaction) {
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parseReaction)throw new Error('drawer');")
@@ -711,7 +843,7 @@ private fun chemBlockHtml(
             append("new window.SmilesDrawer.ReactionDrawer(captureRxnOptions,captureMolOptions)")
             append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")
             append("scopeChemStyles(captureSvg);")
-            append("capture();")
+            if (!isCell) append("capture();")
             append("}catch(e){showFallback();}},err=>showFallback());")
         } else {
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
@@ -733,12 +865,12 @@ private fun chemBlockHtml(
             append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
             append(".draw(tree,captureSvg,'light');")
             append("scopeChemStyles(captureSvg);")
-            append("capture();")
+            if (!isCell) append("capture();")
             append("}catch(e){showFallback();}},err=>showFallback());")
         }
         append("}catch(e){showFallback();}")
         append("})();</script>")
-        append("</div>")
+        append("</$wrapperTag>")
     }
 }
 
@@ -773,12 +905,13 @@ internal object ContentHeightCache {
 }
 
 /**
- * One flowing HTML block for content holding formulas: text and equations
- * share the browser's inline layout, so `हल करें: [x²..] x का मान?` reads
- * as one sentence. Tables stay block-level; images scale to the width.
- * The page is transparent and inherits the theme's text color and size,
- * so the block never shows as a white box in dark mode. Pure so tests
- * can assert its shape.
+ * One flowing HTML block for content holding formulas or chemical structures:
+ * text and equations share the browser's inline layout, so
+ * `हल करें: [x²..] x का मान?` reads as one sentence. Tables stay block-level
+ * and a structure in one of their cells is drawn inside the cell; images scale
+ * to the width. The page is transparent and inherits the theme's text color
+ * and size, so the block never shows as a white box in dark mode. Pure so
+ * tests can assert its shape.
  */
 internal fun mixedContentHtml(
     elements: List<ContentElement>,
@@ -788,7 +921,14 @@ internal fun mixedContentHtml(
     chemKey: String = ""
 ): String {
     var chemIndex = 0
-    val hasChem = elements.any { it is ContentElement.ChemElement }
+    // One drawer asset per page, and one id counter for blocks AND cell
+    // structures: a structure in a cell gets the same mcq-chem-N ids a block
+    // does, so a page mixing both can never collide. The tables carrying a
+    // structure are collected once, so the page-level flag and the per-table
+    // class do not scan every cell twice.
+    val chemTables = elements.filterIsInstance<ContentElement.TableElement>()
+        .filter { it.carriesChemCell() }
+    val hasChem = chemTables.isNotEmpty() || elements.any { it is ContentElement.ChemElement }
     val body = buildString {
         for (element in elements) {
             when (element) {
@@ -801,15 +941,35 @@ internal fun mixedContentHtml(
                     append(com.mcqapp.data.renderInlineHtml(element.text).replace("\n", "<br/>"))
                 is ContentElement.MathElement -> append(stripMathAttributes(element.mathml))
                 is ContentElement.TableElement -> {
-                    append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+                    // Only a table that actually draws a structure switches to
+                    // fixed columns; a plain table keeps its existing layout.
+                    append("<table")
+                    if (chemTables.any { it === element }) append(" class=\"mcq-chem-table\"")
+                    append(" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
                         append("<tr>")
                         // Cells carry inline markup; a portable picture is
                         // drawn as a real image sized to the cell, formulas go
                         // through the same strip as a MathElement so MathJax
-                        // typesets them (consolidated_bugs.md G1-G3).
+                        // typesets them (consolidated_bugs.md G1-G3), and a
+                        // chemical structure is drawn live by SmilesDrawer at
+                        // the standalone scale, taking its id from the same
+                        // page-level counter the blocks use.
                         for (cell in row) {
-                            append("<td>").append(tableCellHtml(cell) { stripMathAttributes(it) })
+                            append("<td>").append(
+                                tableCellHtml(
+                                    cell,
+                                    chemHtml = { spec ->
+                                        chemCellBlockHtml(
+                                            spec,
+                                            chemIndex++,
+                                            structureUnavailable,
+                                            chemKey,
+                                            textColorCss
+                                        )
+                                    }
+                                ) { stripMathAttributes(it) }
+                            )
                             append("</td>")
                         }
                         append("</tr>")
@@ -855,8 +1015,22 @@ internal fun mixedContentHtml(
         table{border-collapse:collapse;margin:4px 0;max-width:100%}
         mjx-container{max-width:100%}
         img{vertical-align:middle}
+        td{vertical-align:middle}
         td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}
         .mcq-chem{margin:4px 0}
+        /* A table that draws a structure gets fixed columns, so a wide drawing
+           scales down to its own column instead of widening the page. A plain
+           table keeps the browser's automatic layout above. */
+        table.mcq-chem-table{table-layout:fixed;width:100%}
+        /* A fixed column can be narrower than one unbreakable word: a long
+           label ("Hexatriacontane") painted straight over the next column
+           because nothing let the browser break it. Only a chem table's cells
+           get a break rule; a plain table keeps the browser's own wrapping. */
+        table.mcq-chem-table td{overflow-wrap:break-word;word-break:break-word}
+        /* A structure inside a cell is a block in its own row; its SVG must
+           never widen the column past the table's width cap. */
+        .mcq-chem-cell{display:block;max-width:100%}
+        .mcq-chem-cell svg{max-width:100%;height:auto}
         .mcq-chem-caption{font-size:0.9em}
         .mcq-chem-fallback{color:inherit}
         </style>
@@ -1065,20 +1239,38 @@ internal fun sanitizeTableCell(cell: String): String =
  * A non-portable source — remote, `file:`, SVG, an extra attribute, a bad
  * base64 payload — stays the visible marker and never becomes a tag.
  *
- * A chemical structure also stays its handles text for now: drawing it is the
- * mixed page's job (PR 2), and a raw marker span here would be printed
- * literally by [renderInlineHtml]. The degradation runs before the formula and
- * picture scanners, so an in-marker `data-png` can never become `[image]`.
+ * [chemHtml] is the optional chemical-structure renderer: only the mixed page
+ * passes one, and each structure then becomes the drawing it names, in
+ * storage order among the surrounding prose. With the default null every other
+ * surface keeps its existing behaviour — the marker degrades to its readable
+ * handles ([sanitizeCellChem]) and never reaches [renderInlineHtml] as raw
+ * markup, so an in-marker `data-png` can also never become `[image]`.
  *
  * A picture INSIDE a formula is marked before [mathHtml] runs, exactly as
  * [mathImageMarker] describes: otherwise the MathML sanitizer escapes the
  * `<img>` as text and prints its raw base64 data URI as visible math.
  */
-internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String =
-    // A chem marker currently degrades to its readable handles here. PR 2
-    // replaces this with a chem-cell renderer passed in from the mixed page;
-    // until then the marker must never reach renderInlineHtml as raw markup.
-    tableCellParts(sanitizeCellChem(cell)).joinToString("") { part ->
+internal fun tableCellHtml(
+    cell: String,
+    chemHtml: ((ContentElement.ChemElement) -> String)? = null,
+    mathHtml: (String) -> String
+): String {
+    if (chemHtml == null) {
+        return tableCellTextHtml(sanitizeCellChem(cell), mathHtml)
+    }
+    // The payload is skipped: an in-app page always draws live, so validating
+    // a stored PNG here would only decode base64 nobody shows.
+    return cellSegments(cell, withPng = false).joinToString("") { segment ->
+        when (segment) {
+            is CellSegment.Chem -> chemHtml(segment.element)
+            is CellSegment.Text -> tableCellTextHtml(segment.html, mathHtml)
+        }
+    }
+}
+
+/** The prose/formula/picture pipeline for one run of a cell. */
+private fun tableCellTextHtml(cell: String, mathHtml: (String) -> String): String =
+    tableCellParts(cell).joinToString("") { part ->
         when (part) {
             is CellPart.Math ->
                 mathHtml(mathImageMarker(part.mathml))
@@ -1183,7 +1375,7 @@ private fun MixedContentView(
     // per content change, not on every recomposition (scrolling, theme toggles).
     val fallback = remember(elements) {
         checkNotNull(accessibleContentLabelFor(elements)) {
-            "MixedContentView requires formula-bearing content"
+            "MixedContentView requires formula- or chemistry-bearing content"
         }
     }
     val contentLabel = mixedContentDescription(stringResource(R.string.a11y_rich_content), fallback)

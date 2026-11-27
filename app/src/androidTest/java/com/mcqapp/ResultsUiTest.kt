@@ -3,6 +3,7 @@ package com.mcqapp
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasContentDescriptionExactly
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -17,6 +18,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mcqapp.domain.AttemptMetadata
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Question
 import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.ReviewFilters
@@ -25,10 +27,12 @@ import com.mcqapp.ui.Verdict
 import com.mcqapp.ui.common.LocalUiMessageSender
 import com.mcqapp.ui.common.UiMessage
 import com.mcqapp.ui.results.ResultsScreen
+import com.mcqapp.util.accessibleContentText
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -51,6 +55,22 @@ class ResultsUiTest {
     private val paperId = "uitest-results-paper"
     private val categoryId = "uitest-results-cat"
     private var attemptId = 0L
+
+    /** A separate attempt for the formula-option regression (see [seed]). */
+    private var chemAttemptId = 0L
+
+    /**
+     * The elements a formula-carrying answer stores: a text run and a MathML
+     * block. `QuestionOption.text` flattens this to `"Benzene, "` — the block
+     * contributes no text — which is exactly the regression this fixture pins.
+     */
+    private val benzeneOptionElements = listOf(
+        ContentElement.TextElement("Benzene, "),
+        ContentElement.MathElement(
+            "<math><msub><mtext>C</mtext><mn>6</mn></msub>" +
+                "<msub><mtext>H</mtext><mn>6</mn></msub></math>"
+        )
+    )
 
     private fun question(index: Int, hasAnswerKey: Boolean) = Question(
         id = "uitest-results-q$index",
@@ -91,6 +111,34 @@ class ResultsUiTest {
                 dwellSeconds = questions.associate { it.id to 10L },
                 metadata = AttemptMetadata()
             )
+            // The formula option gets its OWN attempt. A fifth correct question
+            // in the attempt above would duplicate the "Correct ✓" verdict
+            // description those tests match exactly, making every such
+            // assertion ambiguous; a separate attempt keeps both fixtures
+            // precise. Its one question is answered correctly on purpose, so
+            // the rendered row carries the formula option and a state label.
+            chemAttemptId = repository.saveAttempt(
+                paperId = paperId,
+                paperTitle = "Results Paper",
+                questions = listOf(
+                    Question(
+                        id = "uitest-results-chem",
+                        categoryId = categoryId,
+                        elements = listOf(ContentElement.TextElement("Which formula is benzene?")),
+                        options = listOf(
+                            QuestionOption("uitest-results-chem-a", benzeneOptionElements),
+                            QuestionOption("uitest-results-chem-b", "C2H6O")
+                        ),
+                        correctOptionIds = setOf("uitest-results-chem-a")
+                    )
+                ),
+                selections = mapOf("uitest-results-chem" to setOf("uitest-results-chem-a")),
+                negativeMarking = 0.0,
+                durationSeconds = 60,
+                finishedAt = System.currentTimeMillis(),
+                dwellSeconds = mapOf("uitest-results-chem" to 10L),
+                metadata = AttemptMetadata()
+            )
             // A clean slate for the export-failure injection.
             File(app.cacheDir, "reports").deleteRecursively()
         }
@@ -129,12 +177,15 @@ class ResultsUiTest {
         }
     }
 
-    private fun setContentCapturingMessages(sink: (UiMessage) -> Unit) {
+    private fun setContentCapturingMessages(
+        attempt: Long = attemptId,
+        sink: (UiMessage) -> Unit
+    ) {
         compose.setContent {
             CompositionLocalProvider(LocalUiMessageSender provides sink) {
                 ResultsScreen(
                     repository = repository,
-                    attemptId = attemptId,
+                    attemptId = attempt,
                     navController = rememberNavController(),
                     reviewMode = true
                 )
@@ -246,5 +297,35 @@ class ResultsUiTest {
         compose.waitUntil(30_000) { delivered.get() != null }
         val message = delivered.get()!!
         assertEquals(app.getString(R.string.report_export_failed), message.text)
+    }
+
+    @Test
+    fun formulaOptionIsAnnouncedWithItsFullAccessibleText() {
+        // Regression: moving a formula into MathElements left option.text as
+        // the plain-text runs only, so TalkBack announced "Benzene,  — correct
+        // answer, you chose this" and never the formula. The state label must
+        // stay merged with the formula, not replace it.
+        val expected = accessibleContentText(benzeneOptionElements)
+        // The two msub siblings are adjacent MathML children, so the spoken
+        // form joins them with no separator: "C subscripted 6H subscripted 6".
+        assertTrue(
+            "fixture no longer starts with the option text: $expected",
+            expected.startsWith("Benzene,")
+        )
+        assertTrue(
+            "fixture no longer carries the spoken formula: $expected",
+            expected.contains("subscripted 6H subscripted 6")
+        )
+
+        setContentCapturingMessages(chemAttemptId) {}
+        compose.waitUntil(30_000) {
+            compose.onAllNodesWithTag("results-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        // The old description (option.text) does not contain the spoken
+        // formula, so this scroll finds no node and the test fails on it.
+        compose.onNodeWithTag("results-list")
+            .performScrollToNode(hasContentDescription(expected, substring = true))
+        compose.onNodeWithContentDescription(expected, substring = true)
+            .assertIsDisplayed()
     }
 }

@@ -18,8 +18,21 @@ import android.text.style.SubscriptSpan
 import android.text.style.SuperscriptSpan
 import android.text.style.UnderlineSpan
 import android.text.TextPaint
+import androidx.core.graphics.scale
+import androidx.core.graphics.withSave
+import androidx.core.graphics.withTranslation
+import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
+import com.mcqapp.util.CELL_FORMULA_MARKER
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CellSegment
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.forEachCellImage
+import com.mcqapp.util.mapCellImages
+import com.mcqapp.util.portableCellImageSrc
 import java.io.OutputStream
 
 /**
@@ -510,33 +523,35 @@ object PdfPaperWriter {
         /**
          * A real bordered table grid sized to its content: columns take
          * their natural width (capped to the page), rows paginate one by
-         * one. Cells render inline formatting like body text.
+         * one. Cells render inline formatting like body text, plus the rich
+         * content a cell can carry: portable pictures are drawn in the grid,
+         * MathML is typeset through [MathSpan], and a captured chemistry PNG
+         * is drawn while a structure without one falls back to its readable
+         * handles. A non-portable or hostile source keeps the text marker, so
+         * a broken picture can never dump base64 onto the page.
          */
         fun table(rows: List<List<String>>, indent: Float = 0f) {
             val cols = rows.maxOfOrNull { it.size } ?: 0
             if (rows.isEmpty() || cols == 0) return
-            val pad = 4f
+            val pad = TABLE_CELL_PAD
             val textPaint = paint(10f, Typeface.NORMAL, Color.BLACK)
             val natural = FloatArray(cols) { 2 * pad }
             for (row in rows) {
                 for (c in 0 until cols) {
-                    // Measured on the DECODED text: cells render decoded
-                    // (entities decoded by the span pipeline), and measuring
-                    // the encoded form over-wide the entity-heavy columns
-                    // (consolidated_bugs.md G12).
-                    val w = textPaint.measureText(
-                        decodeEntities(stripInlineHtml(com.mcqapp.util.sanitizeTableCell(row.getOrElse(c) { "" })))
-                    ) + 2 * pad
+                    // Segment-aware measurement: a formula measures with its
+                    // ReplacementSpan (a wide fraction must not collapse to
+                    // the `[formula]` marker's width) and a picture reserves a
+                    // nominal column so it is never squeezed to `[image]`.
+                    val w = cellNaturalWidth(row.getOrElse(c) { "" }, textPaint) + 2 * pad
                     if (w > natural[c]) natural[c] = w
                 }
             }
-            val total = natural.sum()
             val avail = geometry.contentWidth() - indent
-            val scale = if (total > avail && total > 0) avail / total else 1f
             // X edges depend on the current column: recompute after
             // every advance, or rows after a column/page break draw at
             // the old column's x — on top of earlier rows.
-            val scaled = FloatArray(cols) { natural[it] * scale }
+            val scaled = fitColumns(natural, avail)
+            val contentWidths = FloatArray(cols) { (scaled[it] - 2 * pad).coerceAtLeast(1f) }
             fun computeEdges() = columnEdges(geometry.originX(col) + indent, scaled)
             var edges = computeEdges()
             val linePaint = android.graphics.Paint().apply {
@@ -545,91 +560,678 @@ object PdfPaperWriter {
                 strokeWidth = 1f
                 isAntiAlias = true
             }
-            fun cellLayout(text: Spanned, width: Float) =
-                StaticLayout.Builder.obtain(
-                    text, 0, text.length, textPaint,
-                    width.toInt().coerceAtLeast(1)
-                )
-                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                    .setLineSpacing(2f, 1f)
-                    .setIncludePad(true)
-                    .build()
             fun lineHeight(): Int {
                 val fm = textPaint.fontMetricsInt
                 return fm.descent - fm.ascent + fm.leading
             }
             for (row in rows) {
-                // Cells carry inline markup like body text; a picture or a
-                // formula collapses to a marker the span pipeline can show
-                // (consolidated_bugs.md G1-G3).
-                val spans = List(cols) { c ->
-                    spannedFromInlineHtml(com.mcqapp.util.sanitizeTableCell(row.getOrElse(c) { "" }))
+                // Each cell is ordered blocks — prose and formulas flow in one
+                // StaticLayout, pictures and structures sit between the runs —
+                // so all of a rich cell is drawn in document order. Blocks are
+                // built before the page check because their total height is
+                // what decides the break.
+                val contents = List(cols) { c ->
+                    buildCellBlocks(
+                        row.getOrElse(c) { "" },
+                        contentWidths[c],
+                        textPaint
+                    )
                 }
-                val layouts = spans.mapIndexed { c, span ->
-                    if (span.isBlank()) null
-                    else cellLayout(span, edges[c + 1] - edges[c] - 2 * pad)
-                }
-                val h = ((layouts.maxOfOrNull { it?.height ?: 0 } ?: 0)
-                    .coerceAtLeast(lineHeight())) + (2 * pad).toInt()
-                if (y + h > BOTTOM && y > MARGIN) {
-                    advance()
-                    edges = computeEdges()
-                }
-                val top = y
-                if (top + h <= BOTTOM) {
-                    for (c in 0 until cols) {
-                        page.canvas.drawRect(edges[c], top, edges[c + 1], top + h, linePaint)
-                        val layout = layouts[c] ?: continue
-                        page.canvas.save()
-                        page.canvas.translate(edges[c] + pad, top + pad)
-                        layout.draw(page.canvas)
-                        page.canvas.restore()
+                try {
+                    val contentH = contents.maxOfOrNull { cellBlocksHeight(it) } ?: 0f
+                    val h = contentH.coerceAtLeast(lineHeight().toFloat()) + 2 * pad
+                    if (y + h > BOTTOM && y > MARGIN) {
+                        advance()
+                        edges = computeEdges()
                     }
-                    y = top + h
-                } else {
-                    // A row taller than one printable page: band it over ROW
-                    // space so the ruling stays aligned across columns —
-                    // every page draws one band of all cells. The old code
-                    // drew the whole row once below the page bottom and lost
-                    // the tail of the giant cell.
-                    val contentH = h - (2 * pad).toInt()
-                    var rowTop = 0
-                    var bandNo = 0
-                    while (true) {
-                        if (bandNo > 0) {
-                            advance()
-                            edges = computeEdges()
-                        }
-                        val bandH = minOf(
-                            (BOTTOM - y - 2 * pad).toInt(),
-                            contentH - rowTop
-                        ).coerceAtLeast(1)
+                    val top = y
+                    if (top + h <= BOTTOM) {
                         for (c in 0 until cols) {
-                            page.canvas.drawRect(
-                                edges[c], y, edges[c + 1],
-                                y + pad + bandH + pad, linePaint
+                            page.canvas.drawRect(edges[c], top, edges[c + 1], top + h, linePaint)
+                            drawCellBlocks(
+                                page.canvas, contents[c], edges[c] + pad,
+                                top + pad, top + pad, top + pad + contentH,
+                                edges[c + 1] - 1f
                             )
-                            val layout = layouts[c] ?: continue
-                            page.canvas.save()
-                            page.canvas.translate(edges[c] + pad, y + pad - rowTop)
-                            page.canvas.clipRect(
-                                0f, rowTop.toFloat(),
-                                (layout.width).toFloat(), (rowTop + bandH).toFloat()
-                            )
-                            layout.draw(page.canvas)
-                            page.canvas.restore()
                         }
-                        y += pad + bandH + pad
-                        rowTop += bandH
-                        if (rowTop >= contentH) break
-                        bandNo++
-                        check(bandNo < 100_000) { "oversized row banding did not advance" }
+                        y = top + h
+                    } else {
+                        // A row taller than one printable page: band it over ROW
+                        // space so the ruling stays aligned across columns —
+                        // every page draws one band of all cells. The old code
+                        // drew the whole row once below the page bottom and lost
+                        // the tail of the giant cell.
+                        val bands = rowBands(
+                            contentH, y, PdfPaperWriter.MARGIN.toFloat(), BOTTOM, pad
+                        )
+                        for ((bandNo, band) in bands.withIndex()) {
+                            if (bandNo > 0) {
+                                advance()
+                                edges = computeEdges()
+                            }
+                            val rowTop = band.start
+                            val bandH = band.endInclusive - rowTop
+                            for (c in 0 until cols) {
+                                page.canvas.drawRect(
+                                    edges[c], y, edges[c + 1],
+                                    y + pad + bandH + pad, linePaint
+                                )
+                                drawCellBlocks(
+                                    page.canvas, contents[c], edges[c] + pad,
+                                    y + pad - rowTop, y + pad, y + pad + bandH,
+                                    edges[c + 1] - 1f
+                                )
+                            }
+                            y += pad + bandH + pad
+                        }
                     }
+                } finally {
+                    // A picture that straddles a band boundary is drawn in both
+                    // bands, so it may only be recycled once the whole row is
+                    // finished.
+                    contents.forEach { releaseCellBlocks(it) }
                 }
             }
             y += 6f
         }
+
+        /**
+         * Draws one cell's blocks from content-space top [top], clipped to the
+         * current band and to one pixel inside the cell's outer border. The
+         * right clip is the backstop for anything that cannot wrap — a
+         * `ReplacementSpan` (formula) is fitted first, but an over-wide
+         * unbreakable word is clipped here rather than painted over the
+         * border/neighbour or off the page. Clipping inside the border, not at
+         * the content edge, leaves the cell padding available to a glyph's
+         * overhang and antialias fringe.
+         *
+         * A block entirely outside the band is skipped rather than drawn into
+         * a clip that would discard it (the banding path calls this for every
+         * band); a partially visible block is drawn whole and sliced by the
+         * canvas clip so no content is lost at a boundary.
+         */
+        private fun drawCellBlocks(
+            canvas: Canvas,
+            blocks: List<CellBlock>,
+            x: Float,
+            top: Float,
+            clipTop: Float,
+            clipBottom: Float,
+            right: Float
+        ) {
+            val contentTop = clipTop - top
+            val contentBottom = clipBottom - top
+            canvas.withSave {
+                // The left edge stays at the page so a glyph's left overhang is
+                // not cut; the right edge is one pixel inside the cell border,
+                // the only place that could overlap a neighbour or the page.
+                clipRect(0f, clipTop, right, clipBottom)
+                var cy = top
+                for (block in blocks) {
+                    val offset = cy - top
+                    when (block) {
+                        is CellBlock.Text -> if (
+                            visibleLineRange(block.layout, offset, contentTop, contentBottom) != null
+                        ) {
+                            withTranslation(x, cy) { block.layout.draw(this) }
+                        }
+                        is CellBlock.Picture -> if (
+                            intersectsBand(offset, block.height, contentTop, contentBottom)
+                        ) {
+                            drawBitmap(block.bitmap, x, cy, null)
+                        }
+                    }
+                    cy += block.height + CELL_BLOCK_GAP
+                }
+            }
+        }
     }
+}
+
+/** Vertical gap between two blocks of one cell (text vs picture). */
+private const val CELL_BLOCK_GAP = 2f
+
+/**
+ * Horizontal padding inside every table cell. Shared with the picture height
+ * budget so a maximum-height picture plus the row's padding fits one band
+ * instead of being sliced by one padding's worth.
+ */
+internal const val TABLE_CELL_PAD = 4f
+
+/**
+ * Width reserved in the column measurement for one drawable picture. The
+ * picture itself is scaled to the final column anyway; the nominal width only
+ * stops an image cell from being squeezed to the `[image]` marker's two
+ * characters.
+ */
+internal const val TABLE_CELL_IMAGE_NOMINAL_PX = 120f
+
+/**
+ * The shortest a cell picture is shrunk to when the cell's own prose/formulas
+ * leave no room. If even this cannot fit, the row bands (the documented slice)
+ * rather than losing the rest of the cell to an invisible sliver.
+ */
+internal const val MIN_CELL_PICTURE_HEIGHT = 48f
+
+/**
+ * One drawable piece of a rich table cell. A cell's prose and formulas flow in
+ * one [Text] layout (so an equation stays inside its sentence), while pictures
+ * — a portable cell image or a captured chemistry PNG — are decoded, scaled to
+ * the column, and placed in document order.
+ */
+internal sealed interface CellBlock {
+    val height: Float
+
+    class Text(internal val layout: StaticLayout) : CellBlock {
+        override val height: Float get() = layout.height.toFloat()
+    }
+
+    class Picture(internal val bitmap: Bitmap) : CellBlock {
+        override val height: Float get() = bitmap.height.toFloat()
+        internal val width: Float get() = bitmap.width.toFloat()
+    }
+}
+
+/** Height of one cell's blocks, including the gaps between them. */
+internal fun cellBlocksHeight(blocks: List<CellBlock>): Float {
+    if (blocks.isEmpty()) return 0f
+    var height = 0f
+    for (block in blocks) height += block.height
+    return height + CELL_BLOCK_GAP * (blocks.size - 1)
+}
+
+/** Releases the decoded pictures of a finished row (banding re-draws them). */
+internal fun releaseCellBlocks(blocks: List<CellBlock>) {
+    for (block in blocks) {
+        if (block is CellBlock.Picture && !block.bitmap.isRecycled) block.bitmap.recycle()
+    }
+}
+
+/** One ordered piece of a cell, before layout: prose, formula, picture or structure. */
+private sealed interface CellPiece {
+    /**
+     * A run of prose. [openAtStart] and [openAtEnd] are the inline style tags
+     * that cross the run's boundaries, so a `<b>` opened before an image or a
+     * formula still covers the text on both sides of it.
+     */
+    class Html(
+        val html: String,
+        val openAtStart: List<String> = emptyList(),
+        val openAtEnd: List<String> = emptyList()
+    ) : CellPiece
+    class Math(val mathml: String) : CellPiece
+    class Image(val src: String?) : CellPiece
+    class Chem(val element: ContentElement.ChemElement) : CellPiece
+}
+
+/**
+ * Splits a cell into its ordered pieces with the three grammars the rest of the
+ * app already shares: chemistry markers first ([cellSegments], so a marker
+ * inside MathML or a tag stays text), then formulas ([tableCellParts]), then
+ * pictures ([forEachCellImage]). A truncated `<img` is an [CellPiece.Image]
+ * with a null source, never an unterminated tag swallowing the rest.
+ *
+ * Inline style tags are tracked across every boundary. The old splitter handed
+ * each chunk to `spannedFromInlineHtml` alone, which only applies a span when
+ * it sees the closing tag, so `<b>see <img> here</b>` printed both sides
+ * unbolded. Each [CellPiece.Html] now records the tags open at its start and
+ * end, and [appendCellHtml] re-opens/closes them around the chunk.
+ *
+ * [withPng] false skips validating a stored chemistry PNG: the text-only
+ * surfaces only need the handles, and decoding base64 to print them would be
+ * waste on every answer key.
+ */
+private fun cellPieces(cell: String, withPng: Boolean): List<CellPiece> {
+    val out = mutableListOf<CellPiece>()
+    val open = mutableListOf<String>()
+
+    fun addHtml(html: String) {
+        if (html.isEmpty()) return
+        val start = open.toList()
+        updateOpenTags(html, open)
+        out += CellPiece.Html(html, start, open.toList())
+    }
+
+    for (segment in cellSegments(cell, withPng)) {
+        when (segment) {
+            is CellSegment.Chem -> {
+                val element = segment.element
+                if (element.diagram.isEmpty()) {
+                    // Handles are prose for layout purposes: emit them as an
+                    // Html chunk so an enclosing <b>/<i> wrapped around a
+                    // preceding picture still styles them.
+                    addHtml(escapeHtmlText(chemElementText(element)))
+                } else {
+                    out += CellPiece.Chem(element)
+                }
+            }
+            is CellSegment.Text -> for (part in tableCellParts(segment.html)) {
+                when (part) {
+                    is CellPart.Math -> out += CellPiece.Math(part.mathml)
+                    is CellPart.Text -> {
+                        var pos = 0
+                        forEachCellImage(part.html) { src, start, end ->
+                            if (start > pos) addHtml(part.html.substring(pos, start))
+                            out += CellPiece.Image(src)
+                            pos = end
+                        }
+                        if (pos < part.html.length) addHtml(part.html.substring(pos))
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+
+/**
+ * Advances [open] over the inline style tags in [html] with the same
+ * pop-until-found rule [spannedFromInlineHtml] uses, so the two agree on a
+ * mis-nested close. Block breaks and unknown tags carry no style and are
+ * ignored here; they are layout or literal text, not span state.
+ */
+private fun updateOpenTags(html: String, open: MutableList<String>) {
+    for (match in tagLikePattern.findAll(html)) {
+        val closing = match.groupValues[1] == "/"
+        val tag = match.groupValues[2].lowercase()
+        if (styleSpans(tag).isEmpty()) continue
+        if (closing) {
+            val idx = open.lastIndexOf(tag)
+            if (idx >= 0) {
+                while (open.size > idx) open.removeAt(open.lastIndex)
+            }
+        } else {
+            open += tag
+        }
+    }
+}
+
+/**
+ * Appends one prose chunk with the style tags that cross its boundaries
+ * re-opened before it and closed after it. The synthetic tags add no text (the
+ * text pipeline ignores an unclosed open tag until a close arrives), so the
+ * chunk keeps its exact text while its spans reach both ends of the picture or
+ * formula that split it.
+ */
+private fun appendCellHtml(out: SpannableStringBuilder, piece: CellPiece.Html) {
+    if (piece.openAtStart.isEmpty() && piece.openAtEnd.isEmpty()) {
+        out.append(spannedFromInlineHtml(piece.html))
+        return
+    }
+    val wrapped = StringBuilder(piece.html.length + 16)
+    for (tag in piece.openAtStart) wrapped.append('<').append(tag).append('>')
+    wrapped.append(piece.html)
+    for (tag in piece.openAtEnd.asReversed()) wrapped.append("</").append(tag).append('>')
+    out.append(spannedFromInlineHtml(wrapped.toString()))
+}
+
+/**
+ * Builds the drawable blocks of one cell at [width] px. Prose and formulas
+ * accumulate into one spanned run; a portable picture, or a chemistry PNG,
+ * breaks the run and is decoded and scaled to fit the cell. Anything that
+ * cannot be drawn keeps readable text instead of a payload:
+ *
+ * - a non-portable or hostile source (`http:`, `file:`, SVG, an extra
+ *   attribute, a malformed tag) becomes [CELL_IMAGE_MARKER];
+ * - a portable source that still fails to decode becomes
+ *   [unreadableImageLabel] — never its literal data URI;
+ * - a structure without a valid PNG becomes its handles text.
+ *
+ * The decoded bitmaps are owned by the returned blocks: call
+ * [releaseCellBlocks] once the row is fully drawn.
+ *
+ * Accepted limitations, recorded so they are not mistaken for bugs:
+ * - A picture-only cell prints no caption or alt text: PDF has no alt text,
+ *   and unlike the body path (handles then picture) a cell draws only the
+ *   image, so a cell picture carries no spoken copy.
+ * - The same data URI in N cells is decoded and embedded N times; there is no
+ *   cross-cell cache, so a repeated picture grows the file by N copies.
+ * - A chemistry PNG scales down with its column, so atom labels can end up
+ *   smaller than the body text.
+ * - A picture shares the printable page with the cell's prose/formulas: it is
+ *   capped to what they leave (down to [MIN_CELL_PICTURE_HEIGHT]). If even that
+ *   cannot fit, the row bands and the picture is sliced at the band edge; no
+ *   other content is dropped.
+ */
+internal fun buildCellBlocks(cell: String, width: Float, paint: TextPaint): List<CellBlock> {
+    val pending = mutableListOf<PendingBlock>()
+    val run = SpannableStringBuilder()
+    fun flush() {
+        if (run.isEmpty()) return
+        val text = SpannableStringBuilder(run)
+        run.clear()
+        run.clearSpans()
+        pending += PendingBlock.Text(CellBlock.Text(cellLayout(text, width, paint)))
+    }
+    // cellSegments(withPng = true) already validated the diagram, so the
+    // element's diagram is non-empty only when it is a drawable PNG.
+    for (piece in cellPieces(cell, withPng = true)) {
+        when (piece) {
+            is CellPiece.Html -> appendCellHtml(run, piece)
+            is CellPiece.Math -> appendCellMath(run, piece.mathml, paint, width)
+            is CellPiece.Image -> {
+                val src = piece.src
+                if (src == null || !portableCellImageSrc(src)) {
+                    run.append(CELL_IMAGE_MARKER)
+                } else {
+                    flush()
+                    pending += PendingBlock.Picture(src)
+                }
+            }
+            is CellPiece.Chem -> {
+                val diagram = piece.element.diagram
+                if (diagram.isEmpty()) {
+                    run.append(chemElementText(piece.element))
+                } else {
+                    flush()
+                    pending += PendingBlock.Picture(diagram)
+                }
+            }
+        }
+    }
+    flush()
+    return layoutPendingBlocks(pending, width, paint)
+}
+
+/** A laid-out text block, or a picture still waiting for its page-height share. */
+private sealed interface PendingBlock {
+    class Text(val block: CellBlock.Text) : PendingBlock
+    class Picture(val src: String) : PendingBlock
+}
+
+/**
+ * Decodes the cell's pictures into the height the text/formula/handles blocks
+ * leave inside one printable band, and returns the blocks in document order.
+ *
+ * Before this pass each picture was capped only to the page, so a cell holding
+ * prose and a maximum-height picture still made the row taller than a band and
+ * its bottom sliver was orphaned into the next one. The other blocks are
+ * measured first; pictures then share `printable - otherHeight - gaps`, split
+ * evenly between them, never below [MIN_CELL_PICTURE_HEIGHT]. When even that
+ * floor cannot fit, the cap is the floor and the row bands (documented slice).
+ */
+private fun layoutPendingBlocks(
+    pending: List<PendingBlock>,
+    width: Float,
+    paint: TextPaint
+): List<CellBlock> {
+    if (pending.none { it is PendingBlock.Picture }) {
+        return pending.map { (it as PendingBlock.Text).block }
+    }
+    val printable = PdfPaperWriter.BOTTOM - PdfPaperWriter.MARGIN - 2 * TABLE_CELL_PAD
+    var textHeight = 0f
+    for (block in pending) {
+        if (block is PendingBlock.Text) textHeight += block.block.height
+    }
+    val gaps = CELL_BLOCK_GAP * (pending.size - 1).coerceAtLeast(0)
+    var remaining = printable - textHeight - gaps
+    var picturesLeft = pending.count { it is PendingBlock.Picture }
+    return pending.map { block ->
+        when (block) {
+            is PendingBlock.Text -> block.block
+            is PendingBlock.Picture -> {
+                val share = if (picturesLeft > 0) remaining / picturesLeft else remaining
+                val budget = maxOf(share, MIN_CELL_PICTURE_HEIGHT)
+                val picture = decodedCellPicture(block.src, width, minOf(printable, budget))
+                picturesLeft--
+                if (picture == null) {
+                    // Passed the portable-shape check but cannot be decoded: a
+                    // readable label, never the data URI.
+                    CellBlock.Text(
+                        cellLayout(
+                            SpannableStringBuilder(unreadableImageLabel(block.src)),
+                            width, paint
+                        )
+                    )
+                } else {
+                    remaining -= picture.height
+                    CellBlock.Picture(picture)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The natural width of one cell: the widest spanned line (formulas measured
+ * through their [MathSpan]) or the nominal picture width, whichever is wider.
+ * This replaces `measureText(sanitizeTableCell(cell))`, which flattened a
+ * formula to `[formula]` and a picture to `[image]` and so collapsed their
+ * columns.
+ *
+ * The grammar is walked twice per cell (measure, then build): MathML parses
+ * twice and a chemistry PNG is signature-checked twice. That is deliberately
+ * cheap next to decoding a bitmap; caching the pieces across the two passes
+ * would have to outlive the per-row release/recycle contract.
+ */
+internal fun cellNaturalWidth(cell: String, paint: TextPaint): Float {
+    var widest = 0f
+    val run = SpannableStringBuilder()
+    fun flush() {
+        if (run.isEmpty()) return
+        widest = maxOf(widest, Layout.getDesiredWidth(run, paint))
+        run.clear()
+        run.clearSpans()
+    }
+    for (piece in cellPieces(cell, withPng = true)) {
+        when (piece) {
+            is CellPiece.Html -> appendCellHtml(run, piece)
+            is CellPiece.Math -> appendCellMath(run, piece.mathml, paint)
+            is CellPiece.Image -> {
+                val src = piece.src
+                if (src != null && portableCellImageSrc(src)) {
+                    flush()
+                    widest = maxOf(widest, TABLE_CELL_IMAGE_NOMINAL_PX)
+                } else {
+                    run.append(CELL_IMAGE_MARKER)
+                }
+            }
+            is CellPiece.Chem -> {
+                if (piece.element.diagram.isNotEmpty()) {
+                    flush()
+                    widest = maxOf(widest, TABLE_CELL_IMAGE_NOMINAL_PX)
+                } else {
+                    run.append(chemElementText(piece.element))
+                }
+            }
+        }
+    }
+    flush()
+    return widest
+}
+
+/**
+ * Appends one cell formula to [out]: a real [MathSpan] when MathML parses, the
+ * same linear/`[formula]` fallback the body uses otherwise. A picture inside
+ * the formula becomes `<mtext>[image]</mtext>` BEFORE parsing, because the
+ * MathML parser would otherwise see a foreign tag and fall back to text that
+ * prints the whole base64 URI.
+ *
+ * [maxWidth] is the cell's usable width. A `ReplacementSpan` cannot wrap, and
+ * column scaling can make a formula measured at the base size wider than the
+ * column it lands in, so the span is built at a size that fits [maxWidth].
+ * [Float.MAX_VALUE] keeps the natural size for the measurement pass.
+ */
+private fun appendCellMath(
+    out: SpannableStringBuilder,
+    mathml: String,
+    paint: TextPaint,
+    maxWidth: Float = Float.MAX_VALUE
+) {
+    val marked = mapCellImages(mathml) { "<mtext>$CELL_IMAGE_MARKER</mtext>" }
+    val nodes = mathMlToNodes(marked)
+    if (nodes != null) {
+        val size = fittedMathSize(nodes, paint, maxWidth)
+        val start = out.length
+        out.append('\uFFFC')
+        out.setSpan(
+            MathSpan(nodes, size),
+            start, out.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    } else {
+        val linear = mathToLinear(mathml)
+        out.append(if (linear.isNotBlank()) "[formula: $linear]" else CELL_FORMULA_MARKER)
+    }
+}
+
+/**
+ * The formula's type size, shrunk until its measured ink fits [maxWidth].
+ * Glyph metrics are not perfectly linear in the type size (hinting and
+ * rounding), so the proportional guess is re-measured and corrected; the
+ * baseline needs no other adjustment because [MathSpan] derives its
+ * ascent/descent from the same measurement at the final size.
+ *
+ * A minimum size keeps a pathologically wide formula legible instead of
+ * collapsing to nothing; if it still cannot fit, the cell's right clip is the
+ * backstop that stops it painting over the neighbour.
+ */
+private fun fittedMathSize(nodes: List<TexNode>, paint: TextPaint, maxWidth: Float): Float {
+    val base = paint.textSize
+    if (maxWidth == Float.MAX_VALUE || maxWidth <= 0f) return base
+    val probe = TextPaint(paint)
+    var size = base
+    repeat(3) {
+        probe.textSize = size
+        val measured = measureNodes(nodes, probe).width
+        if (measured <= maxWidth || measured <= 0f) return size
+        size = maxOf(MIN_FORMULA_SIZE, size * (maxWidth / measured))
+    }
+    return size
+}
+
+/** The smallest type size a fitted cell formula is allowed to reach. */
+private const val MIN_FORMULA_SIZE = 4f
+
+/** One cell flattened to readable single-line text (answer key), never base64. */
+internal fun cellFlatText(cell: String): String {
+    val sb = StringBuilder(cell.length)
+    for (piece in cellPieces(cell, withPng = false)) {
+        when (piece) {
+            is CellPiece.Html -> sb.append(piece.html)
+            // Mark a picture inside the formula first, like the cell surface:
+            // the lineariser must not carry the data URI or skip the marker.
+            is CellPiece.Math -> sb.append(
+                mathToLinear(mapCellImages(piece.mathml) { CELL_IMAGE_MARKER })
+            )
+            is CellPiece.Image -> sb.append(CELL_IMAGE_MARKER)
+            is CellPiece.Chem -> sb.append(chemElementText(piece.element))
+        }
+    }
+    return sb.toString()
+}
+
+/** A cell layout for [spanned] at [width] px, with the writer's line spacing. */
+private fun cellLayout(spanned: Spanned, width: Float, paint: TextPaint): StaticLayout =
+    StaticLayout.Builder.obtain(
+        spanned, 0, spanned.length, paint,
+        width.toInt().coerceAtLeast(1)
+    )
+        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+        .setLineSpacing(2f, 1f)
+        .setIncludePad(true)
+        .build()
+
+/**
+ * Decodes [src] subsampled, then scales it down to fit [maxWidth] ×
+ * [maxHeight], keeping its aspect ratio. Never upscales: a small picture keeps
+ * its own size rather than turning into a blurry column-wide block. The
+ * original bitmap is recycled when a scaled copy replaces it.
+ */
+private fun decodedCellPicture(src: String, maxWidth: Float, maxHeight: Float): Bitmap? {
+    val embedded = parseDataUri(src) ?: return null
+    val decoded = com.mcqapp.util.decodeBounded(
+        embedded.bytes,
+        com.mcqapp.util.MAX_EXPORT_DIMENSION
+    ) ?: return null
+    val widthLimit = maxWidth.coerceAtLeast(1f)
+    val heightLimit = maxHeight.coerceAtLeast(1f)
+    val scale = minOf(1f, minOf(widthLimit / decoded.width, heightLimit / decoded.height))
+    if (scale >= 1f) return decoded
+    val scaled = try {
+        decoded.scale(
+            (decoded.width * scale).toInt().coerceAtLeast(1),
+            (decoded.height * scale).toInt().coerceAtLeast(1),
+            true
+        )
+    } catch (e: Throwable) {
+        // A hostile payload raises OutOfMemoryError, an Error, not an Exception.
+        null
+    }
+    if (scaled == null) {
+        decoded.recycle()
+        return null
+    }
+    if (scaled !== decoded) decoded.recycle()
+    return scaled
+}
+
+/**
+ * The content-space vertical bands of one table row. The first band gets the
+ * space left on the current page/column ([firstStartY] to [bottom]); every
+ * later band starts at [pageStartY] on a fresh page/column. Extracted so the
+ * pagination arithmetic is the writer's own when a test asserts that each band
+ * shows its own lines and none is lost.
+ */
+internal fun rowBands(
+    contentH: Float,
+    firstStartY: Float,
+    pageStartY: Float,
+    bottom: Float,
+    pad: Float
+): List<ClosedFloatingPointRange<Float>> {
+    val bands = mutableListOf<ClosedFloatingPointRange<Float>>()
+    var y = firstStartY
+    var rowTop = 0f
+    while (true) {
+        val bandH = minOf(bottom - y - 2 * pad, contentH - rowTop).coerceAtLeast(1f)
+        bands += rowTop..(rowTop + bandH)
+        y += 2 * pad + bandH
+        rowTop += bandH
+        if (rowTop >= contentH) break
+        check(bands.size < 100_000) { "oversized row banding did not advance" }
+        y = pageStartY
+    }
+    return bands
+}
+
+/**
+ * The layout lines visible in a content-space band [clipTop]..[clipBottom] for
+ * a block starting at [blockTop], or null when the block is entirely outside
+ * the band. A text block is measured rather than assumed: a line whose glyphs
+ * have no vertical overlap with the band is not "drawn" as content.
+ */
+internal fun visibleLineRange(
+    layout: StaticLayout,
+    blockTop: Float,
+    clipTop: Float,
+    clipBottom: Float
+): IntRange? {
+    val top = (clipTop - blockTop).coerceAtLeast(0f)
+    val bottom = (clipBottom - blockTop).coerceAtMost(layout.height.toFloat())
+    if (bottom <= top) return null
+    val first = layout.getLineForVertical(top.toInt())
+    val last = layout.getLineForVertical((bottom.toInt() - 1).coerceAtLeast(top.toInt()))
+    return first..last
+}
+
+/** True when a block at [blockTop] with [height] overlaps the band. */
+private fun intersectsBand(
+    blockTop: Float,
+    height: Float,
+    clipTop: Float,
+    clipBottom: Float
+): Boolean = blockTop < clipBottom && blockTop + height > clipTop
+
+/**
+ * Column widths after fitting [natural] widths into [avail]: scale every column
+ * by the same factor, or keep natural widths when they already fit. Shared with
+ * the tests so the formula-fit assertion uses the writer's own arithmetic.
+ */
+internal fun fitColumns(natural: FloatArray, avail: Float): FloatArray {
+    val total = natural.sum()
+    val scale = if (total > avail && total > 0) avail / total else 1f
+    return FloatArray(natural.size) { natural[it] * scale }
 }
 
 /** X edges for table columns: chained from the origin, so a recompute after a column/page break moves the whole grid. */
@@ -816,7 +1418,9 @@ private fun cardBackText(question: QuestionDto): String {
                 is ContentElement.TextElement -> element.text
                 is ContentElement.MathElement -> mathToLinear(element.mathml)
                 is ContentElement.TableElement ->
-                    element.rows.joinToString(" ") { row -> row.joinToString(" ") }
+                    element.rows.joinToString(" ") { row ->
+                        row.joinToString(" ") { cellFlatText(it) }
+                    }
                 is ContentElement.ImageElement -> ""
                 is ContentElement.ChemElement -> chemElementText(element)
             }

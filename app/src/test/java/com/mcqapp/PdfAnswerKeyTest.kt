@@ -121,4 +121,52 @@ class PdfAnswerKeyTest {
     fun aCardWithNoBackIsNotListed() {
         assertNull(answerKeyEntry(QuestionDto(id = "q1", options = emptyList()), 3))
     }
+
+    /**
+     * A table in a card's back flattens to readable cell text: a picture inside
+     * a cell is the `[image]` marker, never the raw base64 payload.
+     *
+     * The tag carries a `>` inside a quoted attribute on purpose. The old
+     * flattening stripped tags with `<[^>]*>`, which stopped inside `alt` and
+     * left `src="data:…` as visible text (the bug this pins); the shared
+     * quote-aware scanner consumes the whole tag.
+     */
+    @Test
+    fun aTableBackNeverPrintsACellImagePayload() {
+        val card = QuestionDto(
+            id = "q1",
+            options = emptyList(),
+            explanationElements = listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf(
+                            "see <img alt=\"a>b\" src=\"data:image/png;base64,AAAA\"> here",
+                            "H<sub>2</sub>O"
+                        )
+                    )
+                )
+            )
+        )
+        assertEquals("Q1. see [image] here H2O", answerKeyEntry(card, 1))
+    }
+
+    /** A supported formula keeps its linear text in the key, not `[formula]`. */
+    @Test
+    fun aTableBackFlattensAFormulaToItsLinearText() {
+        val card = QuestionDto(
+            id = "q1",
+            options = emptyList(),
+            explanationElements = listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf(
+                            "<math><mrow><msup><mi>a</mi><mn>2</mn></msup></mrow></math>",
+                            "ok"
+                        )
+                    )
+                )
+            )
+        )
+        assertEquals("Q1. a2 ok", answerKeyEntry(card, 1))
+    }
 }

@@ -824,6 +824,7 @@ internal fun mixedContentHtml(
         $chemScript
         <style>
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
+        body{padding:0 0 0.25em}
         table{border-collapse:collapse;margin:4px 0}
         img{vertical-align:middle}
         .mcq-chem{margin:4px 0}
@@ -845,15 +846,51 @@ internal fun mixedContentHtml(
           // raw MathML is much taller than its SVG, and an early report would
           // pin that height, reveal the block, and then move it again.
           var settled = false;
+          // The true content bottom, not just the body's border box: on Android
+          // WebView an inline MathJax SVG can leave its descent outside the
+          // text line box, so body.getBoundingClientRect().height misses a few
+          // px and the pinned WebView clips the bottom of a subscript. Union
+          // every rendered descendant box instead. Deliberately not
+          // scrollHeight: that is at least the viewport height, and the
+          // viewport is the height Compose pins us to — a block that was ever
+          // pinned too tall could then never shrink, leaving blank space after
+          // the question.
+          //
+          // A box only counts when it is painted in the normal flow: MathJax's
+          // <mjx-assistive-mml> is position:absolute, clipped to 1 px and
+          // invisible, yet its MathML content can be far TALLER than the
+          // visible SVG (a matrix especially), so an unfiltered union pins
+          // several px of blank space. Its descendants are position:static, so
+          // the whole ancestry has to be checked, not just the element itself.
+          function outOfFlow(el, body) {
+            for (var n = el; n && n !== body; n = n.parentElement) {
+              if (n.tagName && n.tagName.toUpperCase() === 'MJX-ASSISTIVE-MML') return true;
+              var st = getComputedStyle(n);
+              if (st.position === 'absolute' || st.position === 'fixed' ||
+                  st.visibility === 'hidden' || st.display === 'none') return true;
+            }
+            return false;
+          }
+          function contentHeight() {
+            var body = document.body, b = body.getBoundingClientRect(), bottom = b.height;
+            var els = body.getElementsByTagName('*');
+            for (var i = 0; i < els.length; i++) {
+              var el = els[i], r = el.getBoundingClientRect();
+              if (!(r.width > 0 && r.height > 0)) continue;
+              var d = r.bottom - b.top;
+              // Computed style is the expensive read on this page, so only a
+              // box that would actually raise the max is inspected at all:
+              // most pages then do no style reads whatsoever.
+              if (d <= bottom) continue;
+              if (outOfFlow(el, body)) continue;
+              bottom = d;
+            }
+            return Math.ceil(bottom);
+          }
           function report() {
             if (!settled) return;
             try {
-              // The body's border box is the content height. Deliberately not
-              // scrollHeight: that is at least the viewport height, and the
-              // viewport is the height Compose pins us to — a block that was
-              // ever pinned too tall could then never shrink, leaving blank
-              // space after the question.
-              var h = Math.ceil(document.body.getBoundingClientRect().height);
+              var h = contentHeight();
               if (h > 0 && h !== reported && window.$CONTENT_HEIGHT_BRIDGE) {
                 reported = h;
                 window.$CONTENT_HEIGHT_BRIDGE.onHeight(h);

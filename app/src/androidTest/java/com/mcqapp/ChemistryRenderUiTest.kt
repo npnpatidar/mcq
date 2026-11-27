@@ -324,6 +324,82 @@ class ChemistryRenderUiTest {
             "})()"
     )
 
+    /**
+     * Owner report: an inline molecular formula (e.g. C₇H₁₄O₃ in an option
+     * label) had the bottoms of its subscripts cut off. On Android WebView an
+     * inline MathJax SVG can leave its descent outside the text line box, so
+     * the page's old body-rect-only measurement was a couple of px short and
+     * the pinned WebView clipped the glyphs. Desktop Chromium keeps the SVG
+     * inside the line box, so the exact device clip cannot be reproduced on the
+     * CI renderer.
+     *
+     * This is the old-vs-new control instead of a probe that recomputes the
+     * same union (which could not fail on the old body-rect code). Once the
+     * formula is typeset and Compose has pinned the view, an IN-FLOW block that
+     * overflows the body without growing it (`height:12px;margin-bottom:-12px`)
+     * is injected. The union of in-flow descendant bottoms reports that
+     * overflow, so the pinned `window.innerHeight` must grow by 12 px minus the
+     * body's own 0.25em bottom allowance the baseline already included: 0.25em
+     * is 4 px at the default 16 px text size, so the net growth is 8 px. The
+     * old body-rect measurement sees the same body height before and after,
+     * never reports a new value, and this wait times out — which is exactly the
+     * regression this test guards.
+     */
+    private fun inlineFormulaPinnedState(): String = evaluate(
+        "(function(){" +
+            "var s=document.querySelector('mjx-container svg');" +
+            "if(!s)return 'not-typeset';" +
+            "var sh=Math.ceil(s.getBoundingClientRect().height);" +
+            "if(!(sh>0))return 'zero-formula';" +
+            // Until the height bridge reports, Compose pins the WebView to
+            // 1 dp, so window.innerHeight starts tiny and this wait retries.
+            // The shipped body-rect bridge measures the body's own rect, which
+            // proves the body is content-based; only then does a viewport at
+            // least as tall as the typeset formula prove the settled
+            // report-and-pin cycle has landed.
+            "var h=window.innerHeight;" +
+            "if(!(h>=sh))return 'unpinned:'+h+':'+sh;" +
+            "return 'ok:'+h;" +
+            "})()"
+    )
+
+    /**
+     * Append the overflow control and return the pinned height it started
+     * from. The block is in the normal flow (the union counts it) but its
+     * negative bottom margin cancels its 12 px height in the body's own
+     * border box, so only a descendant union can see the overflow.
+     */
+    private fun injectBodyOverflow(): Int {
+        val base = evaluate(
+            "(function(){" +
+                "var base=window.innerHeight;" +
+                "var d=document.createElement('div');" +
+                "d.id='mcq-overflow-probe';" +
+                "d.style.cssText='height:12px;margin-bottom:-12px;';" +
+                "document.body.appendChild(d);" +
+                "window.dispatchEvent(new Event('resize'));" +
+                "return String(base);" +
+                "})()"
+        )
+        return base.toIntOrNull() ?: error("unexpected pinned height: $base")
+    }
+
+    /**
+     * Growth the 12 px overflow must produce: 12 px minus the body's 0.25em
+     * bottom allowance (already inside the baseline body rect). Two px of slack
+     * absorb dp -> px rounding of the pinned view; the old body-rect code grows
+     * by exactly 0 px, so it still cannot pass.
+     */
+    private fun overflowGrowthState(base: Int): String = evaluate(
+        "(function(){" +
+            "var h=window.innerHeight;" +
+            "var pad=parseFloat(getComputedStyle(document.body).paddingBottom)||0;" +
+            "var need=Math.max(1,Math.ceil(12-pad)-2);" +
+            "if(h>=$base+need)return 'ok:'+h+':'+$base+':'+pad+':'+need;" +
+            "return 'growth:'+h+':'+$base+':'+pad+':'+need;" +
+            "})()"
+    )
+
     private fun structure() = listOf(
         ContentElement.TextElement("Compound: "),
         ContentElement.ChemElement(
@@ -410,6 +486,56 @@ class ChemistryRenderUiTest {
         } catch (t: Throwable) {
             throw AssertionError(
                 "drawn structure colour does not match dark-theme text; last state=$lastColor", t
+            )
+        }
+    }
+
+    @Test
+    fun inlineFormulaHeightFollowsAnInFlowOverflowTheBodyRectMisses() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(listOf(
+                        ContentElement.TextElement("Benzene, "),
+                        ContentElement.MathElement(
+                            "<math><msub><mtext>C</mtext><mn>6</mn></msub>" +
+                                "<msub><mtext>H</mtext><mn>6</mn></msub></math>"
+                        )
+                    ))
+                }
+            }
+        }
+        var lastState = "not evaluated"
+        var base = -1
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastState = inlineFormulaPinnedState()
+                lastState.startsWith("ok:")
+            }
+            base = lastState.removePrefix("ok:").toInt()
+            lastState = "injected at ${injectBodyOverflow()}"
+        } catch (t: Throwable) {
+            // Carry the probe's own state through to CI: an un-typeset formula,
+            // an unpinned WebView and a failed injection look identical from a
+            // bare timeout.
+            throw AssertionError(
+                "inline formula never typeset and pinned the WebView, or the overflow " +
+                    "control could not be injected; last state=$lastState; error=${t.message}", t
+            )
+        }
+        var lastGrowth = "not evaluated"
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                lastGrowth = overflowGrowthState(base)
+                lastGrowth.startsWith("ok:")
+            }
+        } catch (t: Throwable) {
+            // The old body-rect measurement lands here: the body does not grow,
+            // so it never reports a second height and window.innerHeight stays
+            // at base forever.
+            throw AssertionError(
+                "the reported height did not follow an in-flow overflow below the body " +
+                    "(base=$base px; last state=$lastGrowth; error=${t.message})", t
             )
         }
     }

@@ -499,8 +499,11 @@ private const val CHEM_REACTION_CELL_CONTAINER_STYLE =
  * semicolon, `<`, whitespace, …) is dropped: the SMILES is wrapped in a JS
  * string literal and an HTML fallback line, so a hostile value must never be
  * able to close either one.
+ *
+ * Internal so the editor's SMILES dialog validates against exactly the
+ * alphabet the renderer can draw; a second copy would drift.
  */
-private val SMILES_ALLOWED_CHARS =
+internal val SMILES_ALLOWED_CHARS =
     ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
         "@.+-?!()[]{}#\\=\$:*%" + "/>").toSet()
 

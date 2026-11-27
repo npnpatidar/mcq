@@ -1,6 +1,7 @@
 package com.mcqapp.ui.editor
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,10 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -21,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.getValue
@@ -29,15 +36,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CellEditPart
+import com.mcqapp.util.CellEditPartKind
 import com.mcqapp.util.ContentElements
 import com.mcqapp.util.QuestionImage
+import com.mcqapp.util.cellEditParts
+import com.mcqapp.util.cellEditorText
+import com.mcqapp.util.cellTokenKey
+import com.mcqapp.util.isValidCellSmiles
+import com.mcqapp.util.kind
 import com.mcqapp.R
 
 /**
@@ -73,6 +89,25 @@ fun BlockListEditor(
     onRemoveRow: ((index: Int, row: Int) -> Unit)? = null,
     onAddColumn: ((index: Int) -> Unit)? = null,
     onRemoveColumn: ((index: Int, col: Int) -> Unit)? = null,
+    /**
+     * Rich-cell editing, additive to [onUpdateCell]. The cell field edits a
+     * value in which every formula, picture and structure is one opaque
+     * token, so the host writes it back through [onUpdateCellText] (which
+     * preserves those parts) rather than as raw storage markup. All four
+     * callbacks are addressed by the block's stable id, so a picker result or
+     * dialog that outlives a recomposition cannot target a neighbour.
+     */
+    onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)? = null,
+    onSetCellPart: ((
+        blockId: String,
+        row: Int,
+        col: Int,
+        partIndex: Int?,
+        part: CellEditPart
+    ) -> Unit)? = null,
+    onRemoveCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int) -> Unit)? = null,
+    /** Starts a gallery pick for one cell; a non-null index replaces that part. */
+    onPickCellImage: ((blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit)? = null,
     /** Starts a gallery pick for the block with this stable id. */
     onPickImage: (blockId: String) -> Unit,
     /**
@@ -187,9 +222,14 @@ fun BlockListEditor(
                         if (tablesEditable) {
                             TableBlockEditor(
                                 table = element,
+                                blockId = blockIds.getOrNull(index) ?: "index$index",
                                 onUpdateCell = { row, col, value ->
                                     onUpdateCell?.invoke(index, row, col, value)
                                 },
+                                onUpdateCellText = onUpdateCellText,
+                                onSetCellPart = onSetCellPart,
+                                onRemoveCellPart = onRemoveCellPart,
+                                onPickCellImage = onPickCellImage,
                                 onAddRow = { onAddRow?.invoke(index) },
                                 onRemoveRow = { row -> onRemoveRow?.invoke(index, row) },
                                 onAddColumn = { onAddColumn?.invoke(index) },
@@ -224,61 +264,11 @@ private fun ChemBlockEditor(
     onUpdate: (ContentElement.ChemElement) -> Unit,
     onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit
 ) {
-    val selected = ChemTemplates.templateFor(element)
-    var expanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().testTag("chem-block-$blockId")) {
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            OutlinedTextField(
-                value = selected?.label ?: stringResource(R.string.chem_editor_custom),
-                onValueChange = {},
-                readOnly = true,
-                singleLine = true,
-                label = { Text(stringResource(R.string.chem_editor_template)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor()
-                    .testTag("chem-template-$blockId")
-            )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ChemTemplates.ALL.forEach { template ->
-                    DropdownMenuItem(
-                        text = { Text(template.label) },
-                        onClick = {
-                            onUpdate(template.toElement())
-                            expanded = false
-                        },
-                        modifier = Modifier.testTag("chem-template-item-${template.id}-$blockId")
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        OutlinedTextField(
-            value = element.smiles,
-            onValueChange = { onUpdate(withChemSmiles(element, it)) },
-            label = { Text(stringResource(R.string.chem_editor_smiles)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("chem-smiles-$blockId")
-        )
-        OutlinedTextField(
-            value = element.formula,
-            onValueChange = { onUpdate(element.copy(formula = it)) },
-            label = { Text(stringResource(R.string.chem_editor_formula)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("chem-formula-$blockId")
-        )
-        OutlinedTextField(
-            value = element.caption,
-            onValueChange = { onUpdate(element.copy(caption = it)) },
-            label = { Text(stringResource(R.string.chem_editor_caption)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("chem-caption-$blockId")
-        )
-        OutlinedTextField(
-            value = element.spoken,
-            onValueChange = { onUpdate(element.copy(spoken = it)) },
-            label = { Text(stringResource(R.string.chem_editor_spoken)) },
-            modifier = Modifier.fillMaxWidth().testTag("chem-spoken-$blockId")
+        ChemSpecFields(
+            element = element,
+            onUpdate = onUpdate,
+            tag = { name -> "chem-$name-$blockId" }
         )
         Text(
             stringResource(R.string.chem_editor_preview),
@@ -309,6 +299,78 @@ private fun ChemBlockEditor(
 }
 
 /**
+ * The template picker and the four source fields shared by a chem block and
+ * the in-cell structure dialog. [tag] builds a test tag from a short field
+ * name, so the block keeps its existing `chem-smiles-<blockId>` tags and the
+ * dialog gets its own namespaced ones.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChemSpecFields(
+    element: ContentElement.ChemElement,
+    onUpdate: (ContentElement.ChemElement) -> Unit,
+    tag: (String) -> String
+) {
+    val selected = ChemTemplates.templateFor(element)
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = selected?.label ?: stringResource(R.string.chem_editor_custom),
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                label = { Text(stringResource(R.string.chem_editor_template)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor()
+                    .testTag(tag("template"))
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ChemTemplates.ALL.forEach { template ->
+                    DropdownMenuItem(
+                        text = { Text(template.label) },
+                        onClick = {
+                            onUpdate(template.toElement())
+                            expanded = false
+                        },
+                        modifier = Modifier.testTag(tag("template-item-${template.id}"))
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = element.smiles,
+            onValueChange = { onUpdate(withChemSmiles(element, it)) },
+            label = { Text(stringResource(R.string.chem_editor_smiles)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag(tag("smiles"))
+        )
+        OutlinedTextField(
+            value = element.formula,
+            onValueChange = { onUpdate(element.copy(formula = it)) },
+            label = { Text(stringResource(R.string.chem_editor_formula)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag(tag("formula"))
+        )
+        OutlinedTextField(
+            value = element.caption,
+            onValueChange = { onUpdate(element.copy(caption = it)) },
+            label = { Text(stringResource(R.string.chem_editor_caption)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag(tag("caption"))
+        )
+        OutlinedTextField(
+            value = element.spoken,
+            onValueChange = { onUpdate(element.copy(spoken = it)) },
+            label = { Text(stringResource(R.string.chem_editor_spoken)) },
+            modifier = Modifier.fillMaxWidth().testTag(tag("spoken"))
+        )
+    }
+}
+
+/**
  * Stable identity for a content block: owner, block id, kind.
  *
  * Deliberately **not** derived from the content or the position. A
@@ -333,15 +395,40 @@ private fun blockLabelRes(element: ContentElement): Int = when (element) {
     is ContentElement.ChemElement -> R.string.chem_editor_block_label
 }
 
+/** One open formula dialog; [partIndex] null means "insert a new formula". */
+private data class CellFormulaTarget(
+    val row: Int,
+    val col: Int,
+    val partIndex: Int?,
+    val mathml: String
+)
+
+/** One open structure dialog; [element] null starts a new structure. */
+private data class CellStructureTarget(
+    val row: Int,
+    val col: Int,
+    val partIndex: Int?,
+    val element: ContentElement.ChemElement?
+)
+
 @Composable
 private fun TableBlockEditor(
     table: ContentElement.TableElement,
+    blockId: String,
     onUpdateCell: (row: Int, col: Int, value: String) -> Unit,
+    onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)?,
+    onSetCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int?, part: CellEditPart) -> Unit)?,
+    onRemoveCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int) -> Unit)?,
+    onPickCellImage: ((blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit)?,
     onAddRow: () -> Unit,
     onRemoveRow: (row: Int) -> Unit,
     onAddColumn: () -> Unit,
     onRemoveColumn: (col: Int) -> Unit
 ) {
+    val rich = onUpdateCellText != null && onSetCellPart != null &&
+        onRemoveCellPart != null && onPickCellImage != null
+    var formulaTarget by remember { mutableStateOf<CellFormulaTarget?>(null) }
+    var structureTarget by remember { mutableStateOf<CellStructureTarget?>(null) }
     val colCount = table.rows.maxOfOrNull { it.size } ?: 0
     Column(modifier = Modifier.fillMaxWidth()) {
         // Per-column delete buttons.
@@ -378,27 +465,28 @@ private fun TableBlockEditor(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 cells.forEachIndexed { col, cell ->
-                    val tableCellLabel = stringResource(
-                        R.string.table_cell_label,
-                        row + 1,
-                        col + 1
-                    )
-                    OutlinedTextField(
-                        value = cell,
-                        onValueChange = { onUpdateCell(row, col, it) },
-                        singleLine = true,
-                        label = { Text(tableCellLabel) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 4.dp)
-                            .semantics {
-                                // A contentDescription would replace the field's
-                                // value for screen readers. A stateDescription
-                                // adds the target-specific cell label while the
-                                // typed value stays accessible.
-                                stateDescription = tableCellLabel
+                    // Keyed by position so a row/column insertion cannot hand
+                    // one cell's dialog or focus state to another cell.
+                    androidx.compose.runtime.key(row, col) {
+                        TableCellField(
+                            blockId = blockId,
+                            row = row,
+                            col = col,
+                            cell = cell,
+                            rich = rich,
+                            modifier = Modifier.weight(1f).padding(end = 4.dp),
+                            onUpdateCell = onUpdateCell,
+                            onUpdateCellText = onUpdateCellText,
+                            onPickCellImage = onPickCellImage,
+                            onRemoveCellPart = onRemoveCellPart,
+                            onEditFormula = { partIndex, mathml ->
+                                formulaTarget = CellFormulaTarget(row, col, partIndex, mathml)
+                            },
+                            onEditStructure = { partIndex, element ->
+                                structureTarget = CellStructureTarget(row, col, partIndex, element)
                             }
-                    )
+                        )
+                    }
                 }
                 // Pad short rows so the delete button stays aligned.
                 repeat((colCount - cells.size).coerceAtLeast(0)) {
@@ -420,7 +508,374 @@ private fun TableBlockEditor(
             OutlinedButton(onClick = onAddRow) { Text(stringResource(R.string.add_row)) }
             OutlinedButton(onClick = onAddColumn) { Text(stringResource(R.string.add_column)) }
         }
+
+        // A rich cell is drawn live under the grid. The native table can only
+        // print markers, so this preview is what makes an inserted formula or
+        // structure visible while editing. A plain table needs no duplicate:
+        // the grid above already shows it.
+        val hasRichCell = remember(table) {
+            table.rows.any { cells ->
+                cells.any { cell ->
+                    cellEditParts(cell).any { it.kind() != CellEditPartKind.TEXT }
+                }
+            }
+        }
+        if (rich && hasRichCell) {
+            Text(
+                stringResource(R.string.chem_editor_preview),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            ContentElements(
+                elements = listOf(table),
+                // No capture callback yet: a cell structure is drawn live and
+                // no raster is stored, so an unrelated edit cannot disturb the
+                // editor's dirty snapshot.
+                modifier = Modifier.fillMaxWidth().testTag("table-preview-$blockId")
+            )
+        }
     }
+
+    formulaTarget?.let { target ->
+        CellFormulaDialog(
+            target = target,
+            blockId = blockId,
+            onDismiss = { formulaTarget = null },
+            onCommit = { mathml ->
+                onSetCellPart?.invoke(
+                    blockId, target.row, target.col, target.partIndex,
+                    CellEditPart.Formula(mathml)
+                )
+                formulaTarget = null
+            }
+        )
+    }
+    structureTarget?.let { target ->
+        CellStructureDialog(
+            target = target,
+            blockId = blockId,
+            onDismiss = { structureTarget = null },
+            onCommit = { element ->
+                onSetCellPart?.invoke(
+                    blockId, target.row, target.col, target.partIndex,
+                    CellEditPart.Structure(element)
+                )
+                structureTarget = null
+            }
+        )
+    }
+}
+
+/**
+ * One cell's text field plus its insert/edit menu. The field edits a value in
+ * which every rich part is one opaque token ([cellEditorText]); the
+ * transformation only changes how that token is displayed, so the value stays
+ * a single character per part and deleting a label deletes exactly that part.
+ */
+@Composable
+private fun TableCellField(
+    blockId: String,
+    row: Int,
+    col: Int,
+    cell: String,
+    rich: Boolean,
+    modifier: Modifier,
+    onUpdateCell: (row: Int, col: Int, value: String) -> Unit,
+    onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)?,
+    onPickCellImage: ((blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit)?,
+    onRemoveCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int) -> Unit)?,
+    onEditFormula: (partIndex: Int?, mathml: String) -> Unit,
+    onEditStructure: (partIndex: Int?, element: ContentElement.ChemElement?) -> Unit
+) {
+    val tableCellLabel = stringResource(R.string.table_cell_label, row + 1, col + 1)
+    val formulaToken = stringResource(R.string.chem_editor_cell_token_formula)
+    val imageToken = stringResource(R.string.chem_editor_cell_token_image)
+    val structureToken = stringResource(R.string.chem_editor_cell_token_structure)
+    val parts = remember(cell, rich) { if (rich) cellEditParts(cell) else emptyList() }
+    val tokenKey = remember(blockId, row, col) { cellTokenKey(blockId, row, col) }
+    val value = remember(cell, rich, tokenKey) {
+        if (rich) cellEditorText(cell, tokenKey) else cell
+    }
+    val labels = remember(parts, formulaToken, imageToken, structureToken) {
+        parts.map { part ->
+            when (part.kind()) {
+                CellEditPartKind.FORMULA -> formulaToken
+                CellEditPartKind.IMAGE -> imageToken
+                CellEditPartKind.STRUCTURE -> structureToken
+                CellEditPartKind.TEXT -> ""
+            }
+        }
+    }
+    val transformation = remember(labels, parts, tokenKey) {
+        CellTokenVisualTransformation(labels, parts, tokenKey)
+    }
+    val focus = remember { FocusRequester() }
+    OutlinedTextField(
+        value = value,
+        onValueChange = {
+            if (rich) onUpdateCellText?.invoke(blockId, row, col, it)
+            else onUpdateCell(row, col, it)
+        },
+        visualTransformation = if (rich) transformation else VisualTransformation.None,
+        trailingIcon = if (rich) {
+            {
+                CellEditMenu(
+                    blockId = blockId,
+                    row = row,
+                    col = col,
+                    parts = parts,
+                    onFocusText = { focus.requestFocus() },
+                    onFormula = { partIndex ->
+                        val existing = parts.getOrNull(partIndex ?: -1) as? CellEditPart.Formula
+                        onEditFormula(partIndex, existing?.mathml.orEmpty())
+                    },
+                    onImage = { partIndex ->
+                        onPickCellImage?.invoke(blockId, row, col, partIndex)
+                    },
+                    onStructure = { partIndex ->
+                        val existing = parts.getOrNull(partIndex ?: -1) as? CellEditPart.Structure
+                        onEditStructure(partIndex, existing?.element)
+                    },
+                    onRemove = { partIndex ->
+                        onRemoveCellPart?.invoke(blockId, row, col, partIndex)
+                    }
+                )
+            }
+        } else null,
+        singleLine = true,
+        label = { Text(tableCellLabel) },
+        modifier = modifier
+            .testTag("cell-field-$blockId-$row-$col")
+            .focusRequester(focus)
+            .semantics {
+                // A contentDescription would replace the field's value for
+                // screen readers. A stateDescription adds the target-specific
+                // cell label while the typed value stays accessible.
+                stateDescription = tableCellLabel
+            }
+    )
+}
+
+/**
+ * The single per-cell menu: text, formula, picture and structure. Insert and
+ * edit share one entry per kind — tapping it edits the first part of that kind
+ * when one exists and inserts a new one otherwise. Every present part also
+ * gets a remove entry, so a cell can be cleaned without deleting its text.
+ */
+@Composable
+private fun CellEditMenu(
+    blockId: String,
+    row: Int,
+    col: Int,
+    parts: List<CellEditPart>,
+    onFocusText: () -> Unit,
+    onFormula: (partIndex: Int?) -> Unit,
+    onImage: (partIndex: Int?) -> Unit,
+    onStructure: (partIndex: Int?) -> Unit,
+    onRemove: (partIndex: Int) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val formulaIndexes = remember(parts) { parts.allIndexOfKind(CellEditPartKind.FORMULA) }
+    val imageIndexes = remember(parts) { parts.allIndexOfKind(CellEditPartKind.IMAGE) }
+    val structureIndexes = remember(parts) { parts.allIndexOfKind(CellEditPartKind.STRUCTURE) }
+    val firstFormula = formulaIndexes.firstOrNull()
+    val firstStructure = structureIndexes.firstOrNull()
+
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.testTag("cell-menu-$blockId-$row-$col")
+        ) {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = stringResource(R.string.chem_editor_cell_menu, row + 1, col + 1)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chem_editor_cell_text)) },
+                onClick = {
+                    onFocusText()
+                    expanded = false
+                },
+                modifier = Modifier.testTag("cell-menu-text-$blockId-$row-$col")
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chem_editor_cell_formula)) },
+                onClick = {
+                    onFormula(firstFormula)
+                    expanded = false
+                },
+                modifier = Modifier.testTag(
+                    "cell-menu-formula-$blockId-$row-$col-${firstFormula ?: "new"}"
+                )
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chem_editor_cell_image)) },
+                onClick = {
+                    onImage(imageIndexes.firstOrNull())
+                    expanded = false
+                },
+                modifier = Modifier.testTag(
+                    "cell-menu-image-$blockId-$row-$col-${imageIndexes.firstOrNull() ?: "new"}"
+                )
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chem_editor_cell_structure)) },
+                onClick = {
+                    onStructure(firstStructure)
+                    expanded = false
+                },
+                modifier = Modifier.testTag(
+                    "cell-menu-structure-$blockId-$row-$col-${firstStructure ?: "new"}"
+                )
+            )
+            formulaIndexes.forEach { index ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chem_editor_cell_remove_formula)) },
+                    onClick = {
+                        onRemove(index)
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("cell-menu-remove-$blockId-$row-$col-$index")
+                )
+            }
+            imageIndexes.forEach { index ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chem_editor_cell_remove_image)) },
+                    onClick = {
+                        onRemove(index)
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("cell-menu-remove-$blockId-$row-$col-$index")
+                )
+            }
+            structureIndexes.forEach { index ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chem_editor_cell_remove_structure)) },
+                    onClick = {
+                        onRemove(index)
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("cell-menu-remove-$blockId-$row-$col-$index")
+                )
+            }
+        }
+    }
+}
+
+private fun List<CellEditPart>.allIndexOfKind(kind: CellEditPartKind): List<Int> =
+    indices.filter { this[it].kind() == kind }
+
+/** MathLive in a dialog; the cell only changes when the user confirms. */
+@Composable
+private fun CellFormulaDialog(
+    target: CellFormulaTarget,
+    blockId: String,
+    onDismiss: () -> Unit,
+    onCommit: (String) -> Unit
+) {
+    var mathml by remember(target) { mutableStateOf(target.mathml) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                stringResource(
+                    R.string.chem_editor_cell_formula_title,
+                    target.row + 1,
+                    target.col + 1
+                )
+            )
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                MathLiveEditor(
+                    initialLatex = mathMlToLatex(target.mathml),
+                    blockId = "cell-formula-$blockId-${target.row}-${target.col}",
+                    onMathMl = { _, value -> mathml = value }
+                )
+                Text(
+                    stringResource(R.string.tap_formula_to_edit),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCommit(mathml) },
+                enabled = mathml.isNotBlank()
+            ) {
+                Text(
+                    stringResource(
+                        if (target.partIndex == null) R.string.chem_editor_cell_insert
+                        else R.string.chem_editor_cell_replace
+                    )
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
+
+/** SMILES + optional handles for one cell; confirm stays disabled until valid. */
+@Composable
+private fun CellStructureDialog(
+    target: CellStructureTarget,
+    blockId: String,
+    onDismiss: () -> Unit,
+    onCommit: (ContentElement.ChemElement) -> Unit
+) {
+    val initial = target.element ?: ChemTemplates.BENZENE.toElement()
+    var draft by remember(target) { mutableStateOf(initial) }
+    val smilesValid = isValidCellSmiles(draft.smiles)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                stringResource(
+                    R.string.chem_editor_cell_structure_title,
+                    target.row + 1,
+                    target.col + 1
+                )
+            )
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                ChemSpecFields(
+                    element = draft,
+                    onUpdate = { draft = it },
+                    tag = { name -> "cell-chem-$name-$blockId-${target.row}-${target.col}" }
+                )
+                if (!smilesValid) {
+                    Text(
+                        stringResource(R.string.chem_editor_smiles_invalid),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCommit(draft) },
+                enabled = smilesValid
+            ) {
+                Text(
+                    stringResource(
+                        if (target.partIndex == null) R.string.chem_editor_cell_insert
+                        else R.string.chem_editor_cell_replace
+                    )
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

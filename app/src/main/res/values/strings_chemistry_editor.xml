@@ -12,4 +12,22 @@
     <string name="chem_editor_spoken">Spoken description (optional)</string>
     <string name="chem_editor_preview">Preview</string>
     <string name="chem_editor_structure_cd">Chemical structure: %1$s</string>
+    <!-- Per-cell authoring: one menu inserts or edits a formula, picture or
+         structure without exposing storage markup in the cell field. -->
+    <string name="chem_editor_cell_menu">Cell options: row %1$d, column %2$d</string>
+    <string name="chem_editor_cell_text">Text</string>
+    <string name="chem_editor_cell_formula">Formula</string>
+    <string name="chem_editor_cell_image">Image</string>
+    <string name="chem_editor_cell_structure">Structure</string>
+    <string name="chem_editor_cell_formula_title">Formula in row %1$d, column %2$d</string>
+    <string name="chem_editor_cell_structure_title">Structure in row %1$d, column %2$d</string>
+    <string name="chem_editor_cell_remove_formula">Remove formula</string>
+    <string name="chem_editor_cell_remove_image">Remove image</string>
+    <string name="chem_editor_cell_remove_structure">Remove structure</string>
+    <string name="chem_editor_cell_insert">Insert</string>
+    <string name="chem_editor_cell_replace">Replace</string>
+    <string name="chem_editor_cell_token_formula">[Formula]</string>
+    <string name="chem_editor_cell_token_image">[Image]</string>
+    <string name="chem_editor_cell_token_structure">[Structure]</string>
+    <string name="chem_editor_smiles_invalid">That SMILES text contains characters the drawing engine cannot use.</string>
 </resources>

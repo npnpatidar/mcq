@@ -167,6 +167,11 @@ fun QuestionEditorScreen(
         viewModel.beginImagePick(target)
         pickBlockImageLauncher.launch("image/*")
     }
+    // A cell picture shares the one gallery launcher; the target names the
+    // table by stable block id plus the cell/part it is for.
+    val pickCellImage: (String, Int, Int, Int?) -> Unit = { blockId, row, col, replacePart ->
+        pickBlockImage(ImageTarget.TableCell(blockId, row, col, replacePart))
+    }
 
     // Derived from the COLLECTED state: this read is what makes the outer
     // composable re-run when the form changes. Reading it via the ViewModel
@@ -346,6 +351,10 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeTableRow,
                 onAddColumn = viewModel::addTableColumn,
                 onRemoveColumn = viewModel::removeTableColumn,
+                onUpdateCellText = viewModel::updateTableCellEditor,
+                onSetCellPart = viewModel::setTableCellPart,
+                onRemoveCellPart = viewModel::removeTableCellPart,
+                onPickCellImage = pickCellImage,
                 onPickImage = { blockId -> pickBlockImage(ImageTarget.Body(blockId)) },
                 onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
             )
@@ -465,7 +474,11 @@ fun QuestionEditorScreen(
                         onAddColumn = { viewModel.addOptionTableColumn(option.id, it) },
                         onRemoveColumn = { index, col ->
                             viewModel.removeOptionTableColumn(option.id, index, col)
-                        }
+                        },
+                        onUpdateCellText = viewModel::updateTableCellEditor,
+                        onSetCellPart = viewModel::setTableCellPart,
+                        onRemoveCellPart = viewModel::removeTableCellPart,
+                        onPickCellImage = pickCellImage
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -526,6 +539,10 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeExplanationTableRow,
                 onAddColumn = viewModel::addExplanationTableColumn,
                 onRemoveColumn = viewModel::removeExplanationTableColumn,
+                onUpdateCellText = viewModel::updateTableCellEditor,
+                onSetCellPart = viewModel::setTableCellPart,
+                onRemoveCellPart = viewModel::removeTableCellPart,
+                onPickCellImage = pickCellImage,
                 onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) },
                 onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
             )
@@ -827,7 +844,17 @@ private fun OptionEditorRow(
     onAddRow: (index: Int) -> Unit,
     onRemoveRow: (index: Int, row: Int) -> Unit,
     onAddColumn: (index: Int) -> Unit,
-    onRemoveColumn: (index: Int, col: Int) -> Unit
+    onRemoveColumn: (index: Int, col: Int) -> Unit,
+    onUpdateCellText: (blockId: String, row: Int, col: Int, text: String) -> Unit,
+    onSetCellPart: (
+        blockId: String,
+        row: Int,
+        col: Int,
+        partIndex: Int?,
+        part: com.mcqapp.util.CellEditPart
+    ) -> Unit,
+    onRemoveCellPart: (blockId: String, row: Int, col: Int, partIndex: Int) -> Unit,
+    onPickCellImage: (blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit
 ) {
     // Imported option ids can be arbitrary strings, so the label is the
     // position (A, B, C…); the id stays internal for answer-key references
@@ -889,6 +916,10 @@ private fun OptionEditorRow(
             onRemoveRow = onRemoveRow,
             onAddColumn = onAddColumn,
             onRemoveColumn = onRemoveColumn,
+            onUpdateCellText = onUpdateCellText,
+            onSetCellPart = onSetCellPart,
+            onRemoveCellPart = onRemoveCellPart,
+            onPickCellImage = onPickCellImage,
             onPickImage = onPickBlockImage,
             onChemDiagram = onChemDiagram
         )

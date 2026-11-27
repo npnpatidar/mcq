@@ -335,15 +335,18 @@ class ChemistryRenderUiTest {
      *
      * This is the old-vs-new control instead of a probe that recomputes the
      * same union (which could not fail on the old body-rect code). Once the
-     * formula is typeset and Compose has pinned the view, an IN-FLOW block that
-     * overflows the body without growing it (`height:12px;margin-bottom:-12px`)
-     * is injected. The union of in-flow descendant bottoms reports that
-     * overflow, so the pinned `window.innerHeight` must grow by 12 px minus the
-     * body's own 0.25em bottom allowance the baseline already included: 0.25em
-     * is 4 px at the default 16 px text size, so the net growth is 8 px. The
-     * old body-rect measurement sees the same body height before and after,
-     * never reports a new value, and this wait times out — which is exactly the
-     * regression this test guards.
+     * formula is typeset and Compose has pinned the view, a RELATIVELY
+     * POSITIONED box is injected (`position:relative;top:200px;height:1px`).
+     * Relative positioning keeps the box in the normal flow, so the page's
+     * `contentHeight` union still counts it — that filter drops only
+     * absolute/fixed/invisible boxes — and the union follows its visual box
+     * 200 px lower. Its layout box is unchanged, so the body's own border box
+     * only gains the 1 px height, and the old body-rect measurement moves by
+     * at most that 1 px. The pinned `window.innerHeight` must therefore reach
+     * base + 150; the measured growth is ~197 px (200 offset + 1 height - the
+     * body's 0.25em bottom allowance). The offset reads as growth only while
+     * the viewport is pinned to the content, which is this WebView's steady
+     * state — Chromium's quirks-mode body can instead fill a taller viewport.
      */
     private fun inlineFormulaPinnedState(): String = evaluate(
         "(function(){" +
@@ -364,18 +367,19 @@ class ChemistryRenderUiTest {
     )
 
     /**
-     * Append the overflow control and return the pinned height it started
-     * from. The block is in the normal flow (the union counts it) but its
-     * negative bottom margin cancels its 12 px height in the body's own
-     * border box, so only a descendant union can see the overflow.
+     * Append the relative-offset control and return the pinned height it
+     * started from. `position:relative` keeps the box in the normal flow, so
+     * the descendant union counts its visual box 200 px lower; the body's own
+     * border box only gains the box's 1 px height, which the old body-rect
+     * measurement cannot turn into the required growth.
      */
-    private fun injectBodyOverflow(): Int {
+    private fun injectRelativeOffset(): Int {
         val base = evaluate(
             "(function(){" +
                 "var base=window.innerHeight;" +
                 "var d=document.createElement('div');" +
-                "d.id='mcq-overflow-probe';" +
-                "d.style.cssText='height:12px;margin-bottom:-12px;';" +
+                "d.id='mcq-offset-probe';" +
+                "d.style.cssText='position:relative;top:200px;height:1px;';" +
                 "document.body.appendChild(d);" +
                 "window.dispatchEvent(new Event('resize'));" +
                 "return String(base);" +
@@ -385,18 +389,17 @@ class ChemistryRenderUiTest {
     }
 
     /**
-     * Growth the 12 px overflow must produce: 12 px minus the body's 0.25em
-     * bottom allowance (already inside the baseline body rect). Two px of slack
-     * absorb dp -> px rounding of the pinned view; the old body-rect code grows
-     * by exactly 0 px, so it still cannot pass.
+     * Growth the relative offset must produce. The threshold is well below the
+     * measured ~197 px (200 offset + 1 height - the body's 0.25em bottom
+     * allowance), so viewport and dp rounding leave ample slack, while the old
+     * body-rect measurement moves by at most 1 px and cannot reach it.
      */
-    private fun overflowGrowthState(base: Int): String = evaluate(
+    private fun offsetGrowthState(base: Int): String = evaluate(
         "(function(){" +
             "var h=window.innerHeight;" +
-            "var pad=parseFloat(getComputedStyle(document.body).paddingBottom)||0;" +
-            "var need=Math.max(1,Math.ceil(12-pad)-2);" +
-            "if(h>=$base+need)return 'ok:'+h+':'+$base+':'+pad+':'+need;" +
-            "return 'growth:'+h+':'+$base+':'+pad+':'+need;" +
+            "var need=150;" +
+            "if(h>=$base+need)return 'ok:'+h+':'+$base;" +
+            "return 'growth:'+h+':'+$base+':'+need;" +
             "})()"
     )
 
@@ -513,29 +516,30 @@ class ChemistryRenderUiTest {
                 lastState.startsWith("ok:")
             }
             base = lastState.removePrefix("ok:").toInt()
-            lastState = "injected at ${injectBodyOverflow()}"
+            lastState = "injected at ${injectRelativeOffset()}"
         } catch (t: Throwable) {
             // Carry the probe's own state through to CI: an un-typeset formula,
             // an unpinned WebView and a failed injection look identical from a
             // bare timeout.
             throw AssertionError(
-                "inline formula never typeset and pinned the WebView, or the overflow " +
+                "inline formula never typeset and pinned the WebView, or the offset " +
                     "control could not be injected; last state=$lastState; error=${t.message}", t
             )
         }
         var lastGrowth = "not evaluated"
         try {
             compose.waitUntil(timeoutMillis = 30_000) {
-                lastGrowth = overflowGrowthState(base)
+                lastGrowth = offsetGrowthState(base)
                 lastGrowth.startsWith("ok:")
             }
         } catch (t: Throwable) {
-            // The old body-rect measurement lands here: the body does not grow,
-            // so it never reports a second height and window.innerHeight stays
-            // at base forever.
+            // The old body-rect measurement lands here: the body border box
+            // gains at most 1 px, so it never reports a second height 150 px
+            // larger and window.innerHeight stays near base forever.
             throw AssertionError(
-                "the reported height did not follow an in-flow overflow below the body " +
-                    "(base=$base px; last state=$lastGrowth; error=${t.message})", t
+                "the reported height did not follow the relatively positioned probe " +
+                    "200 px below the body (base=$base px; last state=$lastGrowth; " +
+                    "error=${t.message})", t
             )
         }
     }

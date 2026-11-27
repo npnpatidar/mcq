@@ -3,13 +3,17 @@ package com.mcqapp
 import androidx.compose.ui.graphics.Color
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_FORMULA_MARKER
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentHeightCache
+import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.MATHJAX_ASSET_URL
+import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mixedContentHtml
 import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.toCssRgba
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +47,45 @@ class MathHtmlTest {
         assertTrue(html.contains("<td>a&lt;b</td>"))
         assertTrue(html.contains("<td>c&amp;d</td>"))
         assertTrue(html.contains("<img src=\"https://example.com/f.png\""))
+    }
+
+    @Test
+    fun tableCellsWithMathReachMathJaxAndTheTableBoxIsCapped() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(listOf("case", "<math><mi>y</mi></math> + <math><mn>2</mn></math>"))
+            )
+        )
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        assertTrue("prose cell: $html", html.contains("<td>case</td>"))
+        // Both formulas in the one cell survive the strip, wrapped for MathJax.
+        assertTrue("first formula: $html",
+            html.contains("<td><math><mrow><mi>y</mi></mrow></math> + <math><mrow><mn>2</mn></mrow></math></td>"))
+        assertEquals("two formulas typeset, not one", 2, Regex("<math>").findAll(html).count())
+        assertTrue(html.contains(MATHJAX_ASSET_URL))
+        // These rules cap the TABLE box only. `max-width` does not apply to
+        // MathJax's non-replaced inline container, so a very wide formula can
+        // still overflow the pinned WebView; that horizontal-overflow case is
+        // a device/manual follow-up and is NOT asserted here.
+        assertTrue(html.contains("table{border-collapse:collapse;margin:4px 0;max-width:100%}"))
+        assertTrue(html.contains("mjx-container{max-width:100%}"))
+    }
+
+    /**
+     * The regression this PR fixes: a question whose only content is a table
+     * with a formula cell used to take the native path, which can only print
+     * the literal [formula] marker. The path must be chosen by cell content.
+     */
+    @Test
+    fun aTableOnlyFormulaQuestionRendersThroughTheMixedPath() {
+        val elements = listOf(
+            ContentElement.TableElement(listOf(listOf("speed", "<math><mi>v</mi></math> m/s")))
+        )
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(elements))
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        assertTrue("cell math is live markup: $html", html.contains("<td><math>"))
+        assertFalse("never the native marker: $html", html.contains(CELL_FORMULA_MARKER))
+        assertTrue("MATHJAX", html.contains(MATHJAX_ASSET_URL))
     }
 
     @Test

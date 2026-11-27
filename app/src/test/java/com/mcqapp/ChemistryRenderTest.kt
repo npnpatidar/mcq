@@ -78,6 +78,12 @@ class ChemistryRenderTest {
             ContentRenderPath.NATIVE,
             contentRenderPath(listOf(ContentElement.TextElement("a"), ContentElement.TextElement("b")))
         )
+        // A plain table has no formula to typeset, so it keeps the native
+        // fast path: the cell grammar must never send every table to a WebView.
+        assertEquals(
+            ContentRenderPath.NATIVE,
+            contentRenderPath(listOf(ContentElement.TableElement(listOf(listOf("a", "b")))))
+        )
         assertEquals(
             ContentRenderPath.MIXED,
             contentRenderPath(listOf(ContentElement.MathElement("<math><mi>x</mi></math>")))

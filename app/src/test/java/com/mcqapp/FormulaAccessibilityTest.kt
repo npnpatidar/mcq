@@ -1,6 +1,7 @@
 package com.mcqapp
 
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_IMAGE_MARKER
 import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.accessibleContentLabelFor
 import com.mcqapp.util.accessibleContentText
@@ -8,6 +9,7 @@ import com.mcqapp.util.accessibleMathText
 import com.mcqapp.util.contentRenderPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +39,37 @@ class FormulaAccessibilityTest {
         // The old code supplied only a fixed generic description here.
         assertEquals(spoken, accessibleContentLabelFor(elements))
         assertFalse("generic description alone", spoken.contains("Rendered question content"))
+    }
+
+    @Test
+    fun tableOnlyFormulaQuestionTakesTheMixedPathAndIsSpoken() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(
+                    // The formula sits in the SECOND row on purpose: a decision
+                    // that only inspected rows.first() (or the first cell)
+                    // would send this question down the native path.
+                    listOf("speed", "rate"),
+                    listOf("-", "<math><mi>v</mi></math> + 1")
+                )
+            )
+        )
+        // No top-level formula beside the table: the old decision sent this to
+        // the native column, which can only print the literal [formula] marker.
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(elements))
+
+        val label = accessibleContentLabelFor(elements)
+        assertNotNull("the mixed view must carry its table cells: $label", label)
+        val spoken = label.orEmpty()
+        assertTrue("cell prose: $spoken", spoken.contains("speed"))
+        assertTrue("formula inside the cell: $spoken", spoken.contains("v + 1"))
+
+        // An option/explanation list mixing text with the same table takes the
+        // same path; nothing about the decision depends on list position.
+        val withText = listOf(ContentElement.TextElement("Table: ")) + elements
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(withText))
+        val textLabel = accessibleContentLabelFor(withText).orEmpty()
+        assertTrue("text and table are spoken: $textLabel", textLabel.contains("Table: speed"))
     }
 
     @Test
@@ -102,5 +135,25 @@ class FormulaAccessibilityTest {
         )
         val spoken = accessibleContentText(elements)
         assertTrue("spoken math must stay text, not a <b> tag: $spoken", spoken.contains("<b>"))
+    }
+
+    @Test
+    fun pictureInsideACellFormulaIsSpokenAsTheImageMarker() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(
+                    listOf(
+                        "before",
+                        "<math><mi>x</mi><img src=\"data:image/png;base64,AAAA\"/></math>"
+                    )
+                )
+            )
+        )
+        val spoken = accessibleContentText(elements)
+        // The visual path marks it; the spoken one must match instead of
+        // dropping the unknown <img> silently (or reading its data URI).
+        assertTrue("picture is announced: $spoken", spoken.contains(CELL_IMAGE_MARKER))
+        assertTrue("the formula is still spoken: $spoken", spoken.contains("x"))
+        assertFalse("never the raw data URI: $spoken", spoken.contains("base64,"))
     }
 }

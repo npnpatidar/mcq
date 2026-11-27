@@ -33,7 +33,10 @@ import com.mcqapp.data.docx.parseMathTree
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.normalizeMathText
+import com.mcqapp.domain.CELL_MATH_PATTERN
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
 import kotlinx.coroutines.delay
 
 /** Which renderer [ContentElements] picks, exposed for pure-JVM tests. */
@@ -50,9 +53,19 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
     // that path has no way to turn a SMILES string into a picture.
     elements.any { it is ContentElement.MathElement || it is ContentElement.ChemElement } ->
         ContentRenderPath.MIXED
+    // A formula can also live inside a table cell, with no top-level
+    // MathElement beside it: that page needs MathJax just as much, while the
+    // native table can only print the [formula] marker. A plain table (no
+    // formula cell) keeps the native fast path.
+    elements.any { it is ContentElement.TableElement && it.hasMathCell() } ->
+        ContentRenderPath.MIXED
     elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
     else -> ContentRenderPath.NATIVE
 }
+
+/** True when any cell of this table holds a real `<math>…</math>` block. */
+private fun ContentElement.TableElement.hasMathCell(): Boolean =
+    rows.any { row -> row.any { CELL_MATH_PATTERN.containsMatchIn(it) } }
 
 /**
  * Speech-friendly linearisation of MathML, used ONLY by the accessibility
@@ -109,11 +122,20 @@ internal fun accessibleContentText(elements: List<ContentElement>): String = bui
                         // into readable text before the inline parser strips
                         // the tags it does not know. Escape the spoken math
                         // first: a decoded "<b>" is data, not a bold tag.
-                        val withMath = cellMathPattern.replace(cell) { match ->
-                            escapeHtmlText(accessibleMathText(match.value))
-                        }
-                        InlineHtml.parse(cellImgPattern.replace(withMath, CELL_IMAGE_MARKER))
-                            .text.trim()
+                        // A picture INSIDE the formula becomes the marker too,
+                        // exactly as the visual path does it: an <img> is not
+                        // MathML, so the speech walker would drop it and the
+                        // base64 would go unspoken anyway.
+                        // The cell grammar lives in one pure helper, so the
+                        // spoken and the visual paths cannot drift apart.
+                        InlineHtml.parse(tableCellParts(cell).joinToString("") { part ->
+                            when (part) {
+                                is CellPart.Math ->
+                                    escapeHtmlText(accessibleMathText(mathImageMarker(part.mathml)))
+                                is CellPart.Text ->
+                                    cellImgPattern.replace(part.html, CELL_IMAGE_MARKER)
+                            }
+                        }).text.trim()
                     }
                 })
             is ContentElement.ImageElement -> append(CELL_IMAGE_MARKER)
@@ -825,7 +847,8 @@ internal fun mixedContentHtml(
         <style>
         html,body{margin:0;padding:0;background:transparent;color:$textColorCss;font-size:${fontSizePx}px}
         body{padding:0 0 0.25em}
-        table{border-collapse:collapse;margin:4px 0}
+        table{border-collapse:collapse;margin:4px 0;max-width:100%}
+        mjx-container{max-width:100%}
         img{vertical-align:middle}
         .mcq-chem{margin:4px 0}
         .mcq-chem-caption{font-size:0.9em}
@@ -943,8 +966,9 @@ internal fun stripMathAttributes(mathml: String): String {
     // Surrounding prose is kept, escaped as text (as splitTextRuns does), not
     // dropped: the function used to keep only the first <math> block and
     // silently discard everything around it (consolidated_bugs.md G7).
-    val firstMatch = Regex("<math[\\s>].*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        .find(trimmed)
+    // One cell/formula grammar (com.mcqapp.domain.CELL_MATH_PATTERN), so the
+    // mixer and the cell splitter can never disagree on what a formula is.
+    val firstMatch = CELL_MATH_PATTERN.find(trimmed)
     val prefix = firstMatch?.let { trimmed.substring(0, it.range.first) }.orEmpty()
     val suffix = firstMatch?.let { trimmed.substring(it.range.last + 1) }.orEmpty()
     val block = firstMatch?.value
@@ -1000,39 +1024,52 @@ internal const val CELL_IMAGE_MARKER = "[image]"
 internal const val CELL_FORMULA_MARKER = "[formula]"
 
 private val cellImgPattern = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
-private val cellMathPattern =
-    Regex("<math\\b.*?</math\\s*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
+/**
+ * A cell formula with every picture inside it replaced by the marker wrapped
+ * in `<mtext>`: the MathML sanitizer only knows MathML tags, so a bare `<img>`
+ * would be escaped as text (visible base64), and bare text at a container
+ * level is re-tokenized into separate operator/identifier elements. `<mtext>`
+ * keeps `[image]` one run for both MathJax and the spoken fallback.
+ */
+private fun mathImageMarker(mathml: String): String =
+    cellImgPattern.replace(mathml) { "<mtext>$CELL_IMAGE_MARKER</mtext>" }
 
 /**
  * The cell on a surface that can show neither pictures nor formulas: both
  * collapse to a visible marker, the rest of the markup stays for the inline
- * pipeline.
+ * pipeline. Built from the shared [tableCellParts] grammar so the formula
+ * pattern exists once.
  */
 internal fun sanitizeTableCell(cell: String): String =
-    cellImgPattern.replace(cellMathPattern.replace(cell, CELL_FORMULA_MARKER), CELL_IMAGE_MARKER)
+    tableCellParts(cell).joinToString("") { part ->
+        when (part) {
+            is CellPart.Math -> CELL_FORMULA_MARKER
+            is CellPart.Text -> cellImgPattern.replace(part.html, CELL_IMAGE_MARKER)
+        }
+    }
 
 /**
  * The cell as HTML: the markup between formulas goes through the same inline
  * pipeline as a TextElement (newlines as breaks, G10), each formula through
  * [mathHtml] (the mixed view's MathJax strip, the HTML export's sanitizer),
  * pictures as a marker.
+ *
+ * A picture INSIDE a formula is marked before [mathHtml] runs, exactly as
+ * [mathImageMarker] describes: otherwise the MathML sanitizer escapes the
+ * `<img>` as text and prints its raw base64 data URI as visible math.
  */
-internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String {
-    val marked = cellImgPattern.replace(cell, CELL_IMAGE_MARKER)
-    val out = StringBuilder()
-    var pos = 0
-    for (match in cellMathPattern.findAll(marked)) {
-        out.append(com.mcqapp.data.renderInlineHtml(
-            marked.substring(pos, match.range.first).replace("\n", "<br/>")
-        ))
-        out.append(mathHtml(match.value))
-        pos = match.range.last + 1
+internal fun tableCellHtml(cell: String, mathHtml: (String) -> String): String =
+    tableCellParts(cell).joinToString("") { part ->
+        when (part) {
+            is CellPart.Math ->
+                mathHtml(mathImageMarker(part.mathml))
+            is CellPart.Text ->
+                com.mcqapp.data.renderInlineHtml(
+                    cellImgPattern.replace(part.html, CELL_IMAGE_MARKER).replace("\n", "<br/>")
+                )
+        }
     }
-    out.append(com.mcqapp.data.renderInlineHtml(
-        marked.substring(pos).replace("\n", "<br/>")
-    ))
-    return out.toString()
-}
 
 /** Same escaping as the exporters: one escaper, not four copies. */
 private fun escapeHtmlData(s: String): String = com.mcqapp.data.escapeHtmlText(s)

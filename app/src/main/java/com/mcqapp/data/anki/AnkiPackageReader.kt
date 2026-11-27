@@ -1195,13 +1195,13 @@ object AnkiPackageReader {
         return html.length
     }
 
-    /** `<table>` rows and cells; inline formatting inside cells survives. */
+    /** `<table>` rows and cells; inline formatting, pictures and math survive. */
     private fun parseTable(tableHtml: String): ContentElement.TableElement? {
         val rowPattern = Regex("(?is)<tr\\b[^>]*>(.*?)</tr>")
         val cellPattern = Regex("(?is)<t[dh]\\b[^>]*>(.*?)</t[dh]>")
         val rows = rowPattern.findAll(tableHtml).map { rowMatch ->
             cellPattern.findAll(rowMatch.groupValues[1]).map { cellMatch ->
-                AnkiHtml.toRichText(cellMatch.groupValues[1])
+                AnkiHtml.toCellRichText(cellMatch.groupValues[1])
             }.toList()
         }.toList()
         return if (rows.isEmpty()) null else ContentElement.TableElement(rows)

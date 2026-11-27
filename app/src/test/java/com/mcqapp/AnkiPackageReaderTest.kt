@@ -263,6 +263,103 @@ class AnkiPackageReaderTest {
         assertTrue(images.all { it.src.startsWith("data:image/png;base64,") })
     }
 
+    /** The same table, but the picture sits inside a cell instead of beside it. */
+    private fun foreignCellQuestion(front: String, media: Map<String, String> = emptyMap()) =
+        AnkiPackageReader.read(
+            legacyPackage(
+                notes = listOf("$front${us}Both are light sensors.${us}" to 1L),
+                media = media,
+                mediaBytes = media.keys.associateWith { pngBytes }
+            )
+        )
+
+    private fun cellOf(front: String, media: Map<String, String> = emptyMap()): String {
+        val question = foreignCellQuestion(front, media).file.papers.single().let(::allQuestions).single()
+        return question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.TableElement>()
+            .single().rows.single().single()
+    }
+
+    @Test
+    fun aForeignTableCellPictureBecomesTheCanonicalInlineDataUri() {
+        val cell = cellOf(
+            "Which cells?<table><tr><td>See <img src=\"0\"></td></tr></table>",
+            media = mapOf("0" to "a.png")
+        )
+        assertTrue(cell, cell.contains("<img src=\"data:image/png;base64,"))
+        assertFalse("the package-local name must be resolved away", cell.contains("src=\"0\""))
+        assertTrue(cell, cell.startsWith("See <img"))
+    }
+
+    @Test
+    fun aForeignTableCellPictureWithMissingMediaKeepsItsReferenceAndIsCounted() {
+        val result = foreignCellQuestion(
+            "Which cells?<table><tr><td>See <img src=\"missing.png\"></td></tr></table>"
+        )
+        val question = result.file.papers.single().let(::allQuestions).single()
+        val cell = question.elements
+            .filterIsInstance<com.mcqapp.domain.ContentElement.TableElement>()
+            .single().rows.single().single()
+        assertEquals(1, result.missingMedia)
+        assertEquals("<img src=\"missing.png\">", cell.substringAfter("See ").trim())
+    }
+
+    @Test
+    fun aForeignTableCellFormulaIsKeptAsRawMathml() {
+        val cell = cellOf("Which cells?<table><tr><td><math><mi>x</mi><mo>+</mo><mn>1</mn></math></td></tr></table>")
+        assertEquals("<math><mi>x</mi><mo>+</mo><mn>1</mn></math>", cell)
+    }
+
+    @Test
+    fun aForeignTableCellEscapedMathStaysLiteralText() {
+        val cell = cellOf("Which cells?<table><tr><td>&lt;math&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/math&gt;</td></tr></table>")
+        assertEquals("&lt;math&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/math&gt;", cell)
+        assertFalse(cell.contains("<math"))
+    }
+
+    @Test
+    fun aForeignTableCellChemStructureWithoutASmilesSpecDegradesToHandles() {
+        val cell = cellOf(
+            "Which cells?<table><tr><td>" +
+                "<span class=\"mcq-chem-cell\">Benzene ring</span></td></tr></table>"
+        )
+        assertEquals("Benzene ring", cell)
+    }
+
+    @Test
+    fun textAndInlineFormattingAroundACellPictureBothSurvive() {
+        val cell = cellOf(
+            "Which cells?<table><tr><td><b>Rod</b> <img src=\"0\"> <i>Cone</i></td></tr></table>",
+            media = mapOf("0" to "a.png")
+        )
+        assertEquals("<b>Rod</b> <img src=\"${png1x1}\"> <i>Cone</i>", cell)
+    }
+
+    @Test
+    fun aForeignTableCellMapsAPictureAndAFormulaIntoTheCanonicalGrammar() {
+        val cell = cellOf(
+            "Which cells?<table><tr><td>See <img src=\"0\"> <math>x+1</math></td></tr></table>",
+            media = mapOf("0" to "a.png")
+        )
+        assertEquals("See <img src=\"${png1x1}\"> <math>x+1</math>", cell)
+    }
+
+    @Test
+    fun hostileForeignTableCellPictureSourcesAreDroppedWhole() {
+        listOf(
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:image/svg+xml;base64,PHN2Zz4="
+        ).forEach { src ->
+            val cell = cellOf("Which cells?<table><tr><td>A <img src=\"$src\"> B</td></tr></table>")
+            assertEquals("A B", cell)
+            assertFalse("leaked $src", cell.contains("javascript:"))
+            assertFalse("leaked $src", cell.contains("file:"))
+            assertFalse("leaked $src", cell.contains("svg"))
+            assertFalse("leaked $src", cell.contains("base64"))
+        }
+    }
+
     @Test
     fun anEmptyBackIsDroppedAndCounted() {
         val apkg = legacyPackage(notes = listOf("A question with no answer?${us}${us}" to 1L))

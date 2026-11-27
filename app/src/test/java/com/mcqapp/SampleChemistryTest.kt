@@ -2,7 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.data.sanitizeMathml
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.searchableText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -46,13 +48,22 @@ class SampleChemistryTest {
     private fun structureOf(elements: List<ContentElement>): ContentElement.ChemElement =
         elements.filterIsInstance<ContentElement.ChemElement>().single()
 
+    /** An upright element symbol, as the generator writes it. */
+    private fun symbol(name: String) = "<mtext>$name</mtext>"
+
+    /** An element with a count of two or more; a count of one is omitted. */
+    private fun subscripted(name: String, count: Int) =
+        "<msub><mtext>$name</mtext><mn>$count</mn></msub>"
+
+    private fun formulaBlock(vararg parts: String) = "<math>${parts.joinToString("")}</math>"
+
     @Test
     fun theChemistrySampleParsesIntoACompleteChemElement() {
         val elements = chemistry.elements.filterIsInstance<ContentElement.ChemElement>()
         assertEquals("q-chem-5 must carry exactly one structure", 1, elements.size)
         val element = elements.single()
         assertEquals("c1ccccc1", element.smiles)
-        assertEquals("C6H6", element.formula)
+        assertEquals("C₆H₆", element.formula)
         assertEquals("benzene", element.caption)
         assertEquals(
             "a ring of six carbon atoms with alternating double bonds, benzene",
@@ -79,7 +90,7 @@ class SampleChemistryTest {
             content.keys
         )
         assertEquals("c1ccccc1", content["smiles"]?.jsonPrimitive?.content)
-        assertEquals("C6H6", content["formula"]?.jsonPrimitive?.content)
+        assertEquals("C₆H₆", content["formula"]?.jsonPrimitive?.content)
         assertEquals("benzene", content["caption"]?.jsonPrimitive?.content)
     }
 
@@ -94,6 +105,49 @@ class SampleChemistryTest {
         assertEquals(4, chemistry.options.size)
         assertEquals(listOf("a"), chemistry.correctOptionIds)
         assertTrue("the explanation must teach the SMILES", chemistry.explanation.contains("c1ccccc1"))
+    }
+
+    /**
+     * The owner's rule: a formula in an option is a formula block, not plain
+     * text, so MathJax typesets it instead of the reader seeing `C6H6`.
+     */
+    @Test
+    fun theBenzeneOptionsCarryTheirFormulasAsFormulaBlocks() {
+        val labels = mapOf(
+            "a" to "Benzene, ",
+            "b" to "Cyclohexane, ",
+            "c" to "Toluene, ",
+            "d" to "Phenol, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 6), subscripted("H", 6)),
+            "b" to formulaBlock(subscripted("C", 6), subscripted("H", 12)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 8)),
+            "d" to formulaBlock(subscripted("C", 6), subscripted("H", 6), symbol("O"))
+        )
+        assertEquals(labels.keys, chemistry.options.map { it.id }.toSet())
+        chemistry.options.forEach { option ->
+            assertEquals("$option.id must be the name text plus one formula block",
+                2, option.elements.size)
+            val name = option.elements.first()
+            assertTrue("$option.id must start with its name text", name is ContentElement.TextElement)
+            assertEquals(labels[option.id], (name as ContentElement.TextElement).text)
+            val formula = option.elements.last()
+            assertTrue("$option.id must end with a formula block",
+                formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$option.id formula block", formulas[option.id], mathElement.mathml)
+            // The name is the only flattened text: the formula is not written twice.
+            assertEquals(labels[option.id], option.text)
+            // Nothing in the block is outside the sanitizer allowlist; an
+            // escaped tag would come back altered.
+            assertEquals("$option.id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
+            // Search still finds the formula: tags strip, symbols stay.
+            val formulaText = formulas.getValue(option.id).replace(Regex("<[^>]*>"), "")
+            assertTrue("$option.id formula must flatten into searchable text",
+                option.elements.searchableText.contains(formulaText))
+        }
     }
 
     @Test
@@ -119,10 +173,16 @@ class SampleChemistryTest {
             "d" to "OCCCCC(O)CCO"
         )
         val labels = mapOf(
-            "a" to "(1) Cyclic ether diol, C₇H₁₄O₃",
-            "b" to "(2) Hydroxy lactone, C₇H₁₂O₃",
-            "c" to "(3) Hydroxy aldehyde, C₇H₁₄O₃",
-            "d" to "(4) Heptane-1,3,7-triol, C₇H₁₆O₃"
+            "a" to "(1) Cyclic ether diol, ",
+            "b" to "(2) Hydroxy lactone, ",
+            "c" to "(3) Hydroxy aldehyde, ",
+            "d" to "(4) Heptane-1,3,7-triol, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 7), subscripted("H", 14), subscripted("O", 3)),
+            "b" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 3)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 14), subscripted("O", 3)),
+            "d" to formulaBlock(subscripted("C", 7), subscripted("H", 16), subscripted("O", 3))
         )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
@@ -135,8 +195,23 @@ class SampleChemistryTest {
             assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
             assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
             assertEquals("", chem.diagram)
+            // structure, then the "(n) Name, " text, then the formula block.
+            assertTrue("$id must start with its structure",
+                option.elements.first() is ContentElement.ChemElement)
+            assertEquals("$id must end with a formula block", 3, option.elements.size)
+            val label = option.elements[1]
+            assertTrue("$id must keep a readable text label",
+                label is ContentElement.TextElement)
+            assertEquals("$id text label must hold only the name", labels[id],
+                (label as ContentElement.TextElement).text)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
-            assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
+            assertEquals("$id formula must be a formula block, not text", labels[id], option.text)
+            val formula = option.elements.last()
+            assertTrue("$id must end with a MathML formula", formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$id formula block", formulas[id], mathElement.mathml)
+            assertEquals("$id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
         }
         assertEquals(
             "option 3 has an aldehyde and one hydroxyl on a seven carbon chain",
@@ -180,10 +255,16 @@ class SampleChemistryTest {
             "d" to "CC(=O)CCC(O)CC(=O)O"
         )
         val labels = mapOf(
-            "a" to "(1) Methyl cyclohexenone, C₇H₁₀O",
-            "b" to "(2) Epoxide with OH, C₇H₁₂O₂",
-            "c" to "(3) Keto acid, C₇H₁₀O₄",
-            "d" to "(4) Hydroxy keto acid, C₇H₁₂O₄"
+            "a" to "(1) Methyl cyclohexenone, ",
+            "b" to "(2) Epoxide with OH, ",
+            "c" to "(3) Keto acid, ",
+            "d" to "(4) Hydroxy keto acid, "
+        )
+        val formulas = mapOf(
+            "a" to formulaBlock(subscripted("C", 7), subscripted("H", 10), symbol("O")),
+            "b" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 2)),
+            "c" to formulaBlock(subscripted("C", 7), subscripted("H", 10), subscripted("O", 4)),
+            "d" to formulaBlock(subscripted("C", 7), subscripted("H", 12), subscripted("O", 4))
         )
         assertEquals(options.keys, question.options.map { it.id }.toSet())
         options.forEach { (id, smiles) ->
@@ -196,8 +277,22 @@ class SampleChemistryTest {
             assertEquals("$id must not repeat its formula on the drawing", "", chem.formula)
             assertTrue("$id must keep a spoken description", chem.spoken.isNotBlank())
             assertEquals("", chem.diagram)
+            assertTrue("$id must start with its structure",
+                option.elements.first() is ContentElement.ChemElement)
+            assertEquals("$id must end with a formula block", 3, option.elements.size)
+            val label = option.elements[1]
+            assertTrue("$id must keep a readable text label",
+                label is ContentElement.TextElement)
+            assertEquals("$id text label must hold only the name", labels[id],
+                (label as ContentElement.TextElement).text)
             assertTrue("$id must keep a readable text label", option.text.startsWith("(${'1' + (id[0] - 'a')})"))
-            assertEquals("$id formula must be in the text label, not a duplicate caption", labels[id], option.text)
+            assertEquals("$id formula must be a formula block, not text", labels[id], option.text)
+            val formula = option.elements.last()
+            assertTrue("$id must end with a MathML formula", formula is ContentElement.MathElement)
+            val mathElement = formula as ContentElement.MathElement
+            assertEquals("$id formula block", formulas[id], mathElement.mathml)
+            assertEquals("$id formula must survive the sanitizer",
+                mathElement.mathml, sanitizeMathml(mathElement.mathml))
         }
         assertEquals(
             "option 4 has one methyl ketone, one hydroxyl and one acid",

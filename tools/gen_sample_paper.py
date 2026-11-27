@@ -530,6 +530,34 @@ def math(s):
     return {"type": "math", "content": "<math>%s</math>" % s}
 
 
+def formula_math(formula):
+    """A chemical formula as an upright MathML block.
+
+    Element symbols are `<mtext>`, not `<mi>`: a formula is a label, not
+    algebra, and MathJax would italicise it as a product of symbols. A count
+    of one is written without a subscript, exactly as the formula is written,
+    and any larger count becomes an `<msub>`. Cheminformatics-style formulas
+    (`C6H6`, `C7H14O3`) are the input; a character that is not an
+    element+count pair raises instead of silently dropping text.
+    """
+    parts = []
+    pos = 0
+    for match in re.finditer(r"([A-Z][a-z]?)(\d*)", formula):
+        if match.start() != pos:
+            raise ValueError("unparsed chemical formula: %r" % formula)
+        pos = match.end()
+        symbol, count = match.group(1), match.group(2)
+        if not count or int(count) <= 1:
+            parts.append("<mtext>%s</mtext>" % symbol)
+        else:
+            parts.append(
+                "<msub><mtext>%s</mtext><mn>%d</mn></msub>" % (symbol, int(count))
+            )
+    if not parts or pos != len(formula):
+        raise ValueError("unparsed chemical formula: %r" % formula)
+    return math("".join(parts))
+
+
 def table(rows):
     return {"type": "table", "content": rows}
 
@@ -869,16 +897,16 @@ CATEGORIES = [
                     txt("Which structure is benzene?"),
                     chem(
                         smiles="c1ccccc1",
-                        formula="C6H6",
+                        formula="C₆H₆",
                         caption="benzene",
                         spoken="a ring of six carbon atoms with alternating double bonds, benzene",
                     ),
                 ],
                 {
-                    "a": [txt("Benzene, C6H6")],
-                    "b": [txt("Cyclohexane, C6H12")],
-                    "c": [txt("Toluene, C7H8")],
-                    "d": [txt("Phenol, C6H6O")],
+                    "a": [txt("Benzene, "), formula_math("C6H6")],
+                    "b": [txt("Cyclohexane, "), formula_math("C6H12")],
+                    "c": [txt("Toluene, "), formula_math("C7H8")],
+                    "d": [txt("Phenol, "), formula_math("C6H6O")],
                 },
                 ["a"],
                 [
@@ -897,8 +925,10 @@ CATEGORIES = [
             # and the reagent wording rides in the reaction ChemElement's
             # caption: a SMILES with two `>` separators draws the arrow and
             # leaves the product blank. Each option's structure has no caption
-            # or formula of its own; the retained "(n) Name" text element is
-            # its only label, because ChemElements contribute nothing to an
+            # or formula of its own; its label is a "(n) Name, " text element
+            # followed by the molecular formula as a MathML formula block, so
+            # the formula renders the way a formula should instead of as
+            # Unicode subscripts. ChemElements contribute nothing to an
             # option's flattened `text`, which is what Browse and search show.
             q(
                 "q-org-1",
@@ -919,28 +949,32 @@ CATEGORIES = [
                             smiles="OC1CCOCCCC1O",
                             spoken="an eight membered cyclic ether ring with seven carbons and two hydroxyl groups",
                         ),
-                        txt("(1) Cyclic ether diol, C₇H₁₄O₃"),
+                        txt("(1) Cyclic ether diol, "),
+                        formula_math("C7H14O3"),
                     ],
                     "b": [
                         chem(
                             smiles="O=C1OCCCCC(O)C1",
                             spoken="a lactone ring with one hydroxyl group on a carbon next to the ring oxygen",
                         ),
-                        txt("(2) Hydroxy lactone, C₇H₁₂O₃"),
+                        txt("(2) Hydroxy lactone, "),
+                        formula_math("C7H12O3"),
                     ],
                     "c": [
                         chem(
                             smiles="OCCCCC(O)CC=O",
                             spoken="a seven carbon chain with an aldehyde at one end and one hydroxyl group",
                         ),
-                        txt("(3) Hydroxy aldehyde, C₇H₁₄O₃"),
+                        txt("(3) Hydroxy aldehyde, "),
+                        formula_math("C7H14O3"),
                     ],
                     "d": [
                         chem(
                             smiles="OCCCCC(O)CCO",
                             spoken="a seven carbon chain with hydroxyl groups at carbons 1, 3 and 7, heptane-1,3,7-triol",
                         ),
-                        txt("(4) Heptane-1,3,7-triol, C₇H₁₆O₃"),
+                        txt("(4) Heptane-1,3,7-triol, "),
+                        formula_math("C7H16O3"),
                     ],
                 },
                 ["d"],
@@ -979,28 +1013,32 @@ CATEGORIES = [
                             smiles="CC1=CCC(=O)CC1",
                             spoken="a methyl substituted cyclohexenone ring with the ketone away from the methyl group",
                         ),
-                        txt("(1) Methyl cyclohexenone, C₇H₁₀O"),
+                        txt("(1) Methyl cyclohexenone, "),
+                        formula_math("C7H10O"),
                     ],
                     "b": [
                         chem(
                             smiles="CC12OC1CCC(O)C2",
                             spoken="an epoxide fused to a cyclohexane ring with a methyl and a hydroxyl group",
                         ),
-                        txt("(2) Epoxide with OH, C₇H₁₂O₂"),
+                        txt("(2) Epoxide with OH, "),
+                        formula_math("C7H12O2"),
                     ],
                     "c": [
                         chem(
                             smiles="CC(=O)CCC(=O)CC(=O)O",
                             spoken="a carboxylic acid chain with two ketones separated by two CH₂ groups, one of them a methyl ketone",
                         ),
-                        txt("(3) Keto acid, C₇H₁₀O₄"),
+                        txt("(3) Keto acid, "),
+                        formula_math("C7H10O4"),
                     ],
                     "d": [
                         chem(
                             smiles="CC(=O)CCC(O)CC(=O)O",
                             spoken="a chain with a methyl ketone, a hydroxyl group and a carboxylic acid",
                         ),
-                        txt("(4) Hydroxy keto acid, C₇H₁₂O₄"),
+                        txt("(4) Hydroxy keto acid, "),
+                        formula_math("C7H12O4"),
                     ],
                 },
                 ["c"],

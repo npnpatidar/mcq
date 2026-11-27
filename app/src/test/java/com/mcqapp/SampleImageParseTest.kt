@@ -28,7 +28,7 @@ class SampleImageParseTest {
             .single { it.id == "q-chem-5" }
         val structure = question.elements.filterIsInstance<ContentElement.ChemElement>().single()
         assertEquals("c1ccccc1", structure.smiles)
-        assertEquals("C6H6", structure.formula)
+        assertEquals("C₆H₆", structure.formula)
         assertEquals("benzene", structure.caption)
     }
 }

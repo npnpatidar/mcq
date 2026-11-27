@@ -3,6 +3,8 @@ package com.mcqapp
 import com.mcqapp.data.anki.AnkiHtml
 import com.mcqapp.data.anki.AnkiMediaPool
 import com.mcqapp.data.anki.AnkiPackageWriter
+import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.chemCellHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -327,5 +329,112 @@ class AnkiHtmlTest {
         // plain-text blank check.
         assertEquals("<b></b>", AnkiHtml.toRichText("<b></b>"))
         assertEquals("", AnkiHtml.toRichText(null))
+    }
+
+    @Test
+    fun aCellKeepsFormattingAndRebuildsAPictureFromItsSourceOnly() {
+        assertEquals(
+            "<b>Rod</b> <img src=\"data:image/png;base64,AA==\">",
+            AnkiHtml.toCellRichText(
+                "<b>Rod</b> <img src=\"data:image/png;base64,AA==\" " +
+                    "onerror=\"alert(1)\" style=\"width:9px\">"
+            )
+        )
+    }
+
+    @Test
+    fun aCellKeepsARawMathBlockAndNeverResurrectsAnEscapedOne() {
+        assertEquals(
+            "Before <math><mi>x</mi><mo>+</mo><mn>1</mn></math> after",
+            AnkiHtml.toCellRichText("Before <math><mi>x</mi><mo>+</mo><mn>1</mn></math> after")
+        )
+        val escaped = AnkiHtml.toCellRichText("Before &lt;math&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/math&gt; after")
+        assertEquals("Before &lt;math&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/math&gt; after", escaped)
+        assertFalse("an escaped formula must stay literal text", escaped.contains("<math"))
+    }
+
+    @Test
+    fun aCellEscapesAnUnknownTagAsVisibleText() {
+        assertEquals(
+            "Pick &lt;one&gt;?",
+            AnkiHtml.toCellRichText("Pick <one>?")
+        )
+        assertEquals(
+            "&lt;span&gt;x&lt;/span&gt;",
+            AnkiHtml.toCellRichText("<span>x</span>")
+        )
+    }
+
+    @Test
+    fun aTornPictureIsRemovedWholeSoItsPayloadNeverLeaks() {
+        val cell = AnkiHtml.toCellRichText("A <img src=\"data:image/png;base64,AAAA\" B")
+        assertEquals("A B", cell)
+        assertFalse(cell.contains("base64"))
+        assertFalse(cell.contains("data:"))
+    }
+
+    @Test
+    fun aChemMarkerDegradesToItsReadableHandlesOnly() {
+        val marker = chemCellHtml(
+            ContentElement.ChemElement(
+                smiles = "c1ccccc1",
+                formula = "C6H6",
+                caption = "Benzene",
+                diagram = "data:image/png;base64,iVBORw0KGgo="
+            )
+        )
+        val cell = AnkiHtml.toCellRichText("See $marker here")
+        assertEquals("See Benzene C6H6 c1ccccc1 here", cell)
+        assertFalse(cell.contains("mcq-chem-cell"))
+        assertFalse(cell.contains("data:"))
+        assertFalse(cell.contains("base64"))
+    }
+
+    @Test
+    fun aChemSpanWithoutASmilesSpecDegradesToItsBody() {
+        assertEquals(
+            "Benzene ring",
+            AnkiHtml.toCellRichText("<span class=\"mcq-chem-cell\">Benzene ring</span>")
+        )
+    }
+
+    @Test
+    fun aDoubleQuotedGreaterThanBeforeTheSourceCannotLeakTheRemainder() {
+        val cell = AnkiHtml.toCellRichText(
+            "<img alt=\"x>y\" src=\"data:image/png;base64,AAAA\">"
+        )
+        assertEquals("<img src=\"data:image/png;base64,AAAA\">", cell)
+        assertFalse(cell, cell.contains("&quot;"))
+        assertFalse(cell, cell.contains("&gt;"))
+        assertFalse(cell.contains("alt="))
+        assertEquals(1, Regex("<img").findAll(cell).count())
+    }
+
+    @Test
+    fun aSingleQuotedGreaterThanBeforeTheSourceCannotLeakTheRemainder() {
+        val cell = AnkiHtml.toCellRichText(
+            "<img alt='x>y' src='data:image/png;base64,BBBB'>"
+        )
+        assertEquals("<img src=\"data:image/png;base64,BBBB\">", cell)
+        assertFalse(cell, cell.contains("&quot;"))
+        assertFalse(cell, cell.contains("&gt;"))
+        assertFalse(cell.contains("alt="))
+        assertEquals(1, Regex("<img").findAll(cell).count())
+    }
+
+    @Test
+    fun aCellPictureSourceTheCellGrammarCannotStoreIsDroppedWhole() {
+        listOf(
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:image/svg+xml;base64,PHN2Zz4="
+        ).forEach { src ->
+            val cell = AnkiHtml.toCellRichText("A <img src=\"$src\"> B")
+            assertEquals("A B", cell)
+            assertFalse("leaked $src", cell.contains("javascript:"))
+            assertFalse("leaked $src", cell.contains("file:"))
+            assertFalse("leaked $src", cell.contains("svg"))
+            assertFalse("leaked $src", cell.contains("base64"))
+        }
     }
 }

@@ -8,7 +8,15 @@ import com.mcqapp.data.export.mediaKey
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CellSegment
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.forEachCellImage
+import com.mcqapp.util.mapCellImages
+import com.mcqapp.util.portableCellImageSrc
 import java.io.Closeable
 import java.io.OutputStream
 
@@ -94,11 +102,87 @@ class AnkiMediaPool : Closeable {
         table.rows.forEach { row ->
             sb.append("<tr>")
             row.forEach { cell ->
-                sb.append("<td>").append(renderInlineHtml(cell)).append("</td>")
+                sb.append("<td>").append(cellToHtml(cell)).append("</td>")
             }
             sb.append("</tr>")
         }
         return sb.append("</table>").toString()
+    }
+
+    /**
+     * One cell in Anki's field HTML, built from the shared cell grammar rather
+     * than escaped as a whole:
+     *
+     * - a chemical structure becomes its readable handles plus its diagram,
+     *   which is spooled as `mcqapp-N.png` (a structure without a valid PNG
+     *   keeps the handles only, exactly as a standalone block does);
+     * - a formula is normalized with the same [normalizeMathText] a top-level
+     *   [ContentElement.MathElement] gets, so the deck shows `<math>` instead
+     *   of escaped MathML;
+     * - a portable cell picture is spooled through the media pool and
+     *   referenced by filename, never written as its data URI text;
+     * - everything else goes through [renderInlineHtml], so inline formatting
+     *   survives and unknown markup stays visible.
+     */
+    private fun cellToHtml(cell: String): String =
+        cellSegments(cell).joinToString("") { segment ->
+            when (segment) {
+                is CellSegment.Chem ->
+                    escapeHtml(chemElementText(segment.element)) +
+                        if (isPngDataUri(segment.element.diagram)) imageElement(segment.element.diagram) else ""
+                is CellSegment.Text -> cellTextToHtml(segment.html)
+            }
+        }
+
+    /** Prose and formulas of one cell, each through its own existing pipeline. */
+    private fun cellTextToHtml(html: String): String =
+        tableCellParts(html).joinToString("") { part ->
+            when (part) {
+                is CellPart.Math -> normalizeMathText(
+                    mapCellImages(part.mathml) { src -> cellImageToHtml(src) }
+                )
+                is CellPart.Text -> cellProseToHtml(part.html)
+            }
+        }
+
+    /**
+     * One prose run of a cell: the inline pipeline around each picture, with a
+     * picture spooled into the media pool. A torn `<img` tag is the shared
+     * cell scanner's `null` source and collapses to the visible marker, so a
+     * truncated payload can never survive as text.
+     */
+    private fun cellProseToHtml(html: String): String {
+        var out: StringBuilder? = null
+        var pos = 0
+        forEachCellImage(html) { src, start, end ->
+            val sb = out ?: StringBuilder(html.length).also { out = it }
+            sb.append(renderInlineHtml(html.substring(pos, start)))
+            sb.append(cellImageToHtml(src))
+            pos = end
+        }
+        val sb = out ?: return renderInlineHtml(html)
+        sb.append(renderInlineHtml(html.substring(pos)))
+        return sb.toString()
+    }
+
+    /**
+     * A picture from a cell as an Anki reference: only a portable inline
+     * picture (or a remote URL Anki can fetch itself) is emitted. Anything
+     * else — a torn tag, `file:`, `javascript:`, SVG, a code-injected
+     * attribute — is not drawable and becomes the visible marker.
+     */
+    private fun cellImageToHtml(src: String?): String = when {
+        src == null -> CELL_IMAGE_MARKER
+        portableCellImageSrc(src) || isRemoteImage(src) -> imageElement(src).trimStart()
+        else -> CELL_IMAGE_MARKER
+    }
+
+    /** A URL Anki itself fetches; unlike a data URI it needs no media entry. */
+    private fun isRemoteImage(src: String): Boolean {
+        val value = src.trim()
+        return value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("//")
     }
 
     private fun imageElement(src: String?): String {

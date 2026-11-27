@@ -324,10 +324,15 @@ gh run download <run-id> --name app-release -D /home/naresh/Download   # -> app-
   language, what changed for the learner, how the UI/behaviour will feel, and a
   concrete before/after example or scenario. The auto-generated PR list is not
   a substitute. Say "nothing user-visible changed" when that is true.
-- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.74` is the
-  published release (readable, theme-coloured chemistry diagrams with exports
-  on light surfaces, a content-sized MathLive editor with a dark flat phone
-  menu, and two organic reaction questions in the sample bank). `0.0.73`
+- A release tags the **merge commit** on `main` as `0.0.N`; `0.0.75` is the
+  published release (centred reaction schemes whose atom labels keep the
+  standalone bond proportion, terminal CH₃ labels, molecular formulas in
+  options as typeset MathML formula blocks, standalone structures sized by a
+  common bond scale, a true content-height pin for inline formulas, and
+  formula blocks in the Results TalkBack description). `0.0.74` shipped
+  readable, theme-coloured chemistry diagrams with exports on light surfaces,
+  a content-sized MathLive editor with a dark flat phone menu, and the two
+  organic reaction questions in the sample bank. `0.0.73`
   fixed the chemistry preview refresh and the one-shot leech notice.
   `0.0.72` added chemical formulas and SMILES structural diagrams
   across editor, AI schema, on-screen content, TalkBack and exports, bundled

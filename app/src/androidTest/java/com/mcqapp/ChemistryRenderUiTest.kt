@@ -704,6 +704,85 @@ class ChemistryRenderUiTest {
         )
     }
 
+    /** Four columns whose formula cell carries one long unbreakable run. */
+    private fun longFormulaTable() = listOf(
+        ContentElement.TableElement(
+            listOf(
+                listOf("Name", "Formula", "Note", "Extra"),
+                listOf(
+                    "water",
+                    // A bare MathLive fragment (no <math> root) with one long
+                    // mtext run: it must be repaired into a formula and the
+                    // fitted SVG must stay inside its column.
+                    "<mtext>averyveryverylongunbreakableformulaword</mtext>",
+                    "averyveryverylongunbreakablenoteword",
+                    "last"
+                )
+            )
+        )
+    )
+
+    /**
+     * The owner-reported layout bug: a formula cell made the column balloon,
+     * so a four-column table on a 320 dp page scrolled horizontally. A rich
+     * table is fixed-layout now, and a long token (formula or word) wraps or
+     * scales inside its cell; the page itself must never gain a horizontal
+     * scrollbar. Runs on the CI emulator.
+     */
+    @Test
+    fun aFourColumnFormulaTableFits320DpWithoutHorizontalOverflow() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(longFormulaTable())
+                }
+            }
+        }
+        var lastState = "not evaluated"
+        compose.waitUntil(timeoutMillis = 30_000) {
+            lastState = evaluate(
+                "(function(){" +
+                    "var de=document.documentElement;" +
+                    "var t=document.querySelector('table.mcq-rich-table');" +
+                    "if(!t)return 'no-table';" +
+                    "if(getComputedStyle(t).tableLayout!=='fixed')" +
+                    "return 'layout:'+getComputedStyle(t).tableLayout;" +
+                    "var tds=t.querySelectorAll('td');" +
+                    "if(tds.length<4)return 'columns';" +
+                    // Wait for the typeset SVG, not the raw MathML node.
+                    "var svg=t.querySelector('mjx-container svg');" +
+                    "if(!svg)return 'no-formula';" +
+                    "var td=svg.closest('td');" +
+                    "if(!td)return 'no-td';" +
+                    "var sr=svg.getBoundingClientRect();" +
+                    "var tr=td.getBoundingClientRect();" +
+                    "if(!(sr.width>0)||!(sr.height>0))return 'zero-size';" +
+                    "if(sr.right>tr.right+0.5)" +
+                    "return 'formula-overflow:'+Math.round(sr.right)+':'+Math.round(tr.right);" +
+                    "if(sr.width>tr.width+0.5)" +
+                    "return 'formula-wider:'+Math.round(sr.width)+':'+Math.round(tr.width);" +
+                    // Every cell must contain its own content (the chemCellState
+                    // pattern): a fixed column narrower than one unbreakable
+                    // token shows up as scrollWidth > clientWidth.
+                    "for(var i=0;i<tds.length;i++){" +
+                    "var c=tds[i];" +
+                    "if(c.scrollWidth>c.clientWidth+1)" +
+                    "return 'td-overflow:'+i+':'+c.scrollWidth+':'+c.clientWidth;" +
+                    "}" +
+                    "var r=t.getBoundingClientRect();" +
+                    "if(r.width>de.clientWidth+1)" +
+                    "return 'table-wide:'+Math.round(r.width)+':'+de.clientWidth;" +
+                    "if(de.scrollWidth>de.clientWidth+1)" +
+                    "return 'page-scroll:'+de.scrollWidth+':'+de.clientWidth;" +
+                    "return 'ok:'+Math.round(sr.width)+':'+Math.round(tr.width)+':'+" +
+                    "Math.round(r.width)+':'+de.clientWidth;" +
+                    "})()"
+            )
+            lastState.startsWith("ok:")
+        }
+        assertTrue("four-column formula table overflowed: $lastState", lastState.startsWith("ok:"))
+    }
+
     /**
      * A reaction carried by a table cell in the narrowest real case: two
      * columns on a 320 dp screen. The chem table is `table-layout:fixed`, so
@@ -771,7 +850,7 @@ class ChemistryRenderUiTest {
             // painted boxes catch a text run that overflows without widening
             // the cell: zero-width boxes (hidden captures, fallbacks) are
             // skipped, so only what actually paints is measured.
-            "var cells=document.querySelectorAll('table.mcq-chem-table td');" +
+            "var cells=document.querySelectorAll('table.mcq-rich-table td');" +
             "for(var ci=0;ci<cells.length;ci++){" +
             "var c=cells[ci],cr=c.getBoundingClientRect();" +
             "var where=ci+':'+Math.round(cr.left)+','+Math.round(cr.right);" +

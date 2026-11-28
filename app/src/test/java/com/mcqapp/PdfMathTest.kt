@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
@@ -25,6 +26,7 @@ import com.mcqapp.data.export.spannedFromInlineHtml
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -43,6 +45,67 @@ class PdfMathTest {
         textSize = size
         color = Color.BLACK
         isAntiAlias = true
+    }
+
+    /**
+     * Captures the run `Writer.elements` hands to `paragraph`. Robolectric's
+     * `StaticLayout.draw` never reaches the canvas, so a recording page cannot
+     * observe ordinary text or a `ReplacementSpan`; overriding the writer's
+     * paragraph hook is the only assertion on its real output.
+     */
+    private class CapturingWriter(
+        pages: PdfPaperWriter.PdfPageSink
+    ) : PdfPaperWriter.Writer(pages, twoColumn = false) {
+        val paragraphs = mutableListOf<CharSequence>()
+
+        override fun paragraph(
+            text: CharSequence,
+            size: Float,
+            style: Int,
+            color: Int,
+            indent: Float,
+            spaceBefore: Float,
+            spaceAfter: Float
+        ) {
+            paragraphs += SpannableStringBuilder(text)
+            super.paragraph(text, size, style, color, indent, spaceBefore, spaceAfter)
+        }
+    }
+
+    private class OnePageSink : PdfPaperWriter.PdfPageSink {
+        override fun startPage(pageNum: Int): PdfPaperWriter.PdfPageHost =
+            object : PdfPaperWriter.PdfPageHost {
+                override val canvas = Canvas()
+                override fun finish() {}
+            }
+    }
+
+    @Test
+    fun theWriterTypesetsALegacyBareTopLevelFormula() {
+        val bare = "<msup><mi>x</mi><mn>2</mn></msup>"
+        val writer = CapturingWriter(OnePageSink())
+        writer.elements(listOf(ContentElement.MathElement(bare)))
+        writer.finish()
+
+        // The run the real writer flushed: one MathSpan, no fallback text.
+        val run = writer.paragraphs.single() as Spanned
+        assertEquals(
+            "the repaired fragment is one MathSpan: $run",
+            1,
+            run.getSpans(0, run.length, MathSpan::class.java).size
+        )
+        assertFalse("no linear fallback: $run", run.toString().contains("[formula"))
+
+        // A complete block still typesets through the same writer path.
+        val blockWriter = CapturingWriter(OnePageSink())
+        blockWriter.elements(listOf(ContentElement.MathElement("<math><mi>y</mi></math>")))
+        blockWriter.finish()
+        val blockRun = blockWriter.paragraphs.single() as Spanned
+        assertEquals(
+            "a complete block still typesets: $blockRun",
+            1,
+            blockRun.getSpans(0, blockRun.length, MathSpan::class.java).size
+        )
     }
 
     @Test

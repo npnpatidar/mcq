@@ -8,6 +8,7 @@ import com.mcqapp.data.export.mediaKey
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
+import com.mcqapp.data.sanitizeMathml
 import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.tableCellParts
@@ -17,6 +18,7 @@ import com.mcqapp.util.cellSegments
 import com.mcqapp.util.forEachCellImage
 import com.mcqapp.util.mapCellImages
 import com.mcqapp.util.portableCellImageSrc
+import com.mcqapp.util.repairStoredMathml
 import java.io.Closeable
 import java.io.OutputStream
 
@@ -84,8 +86,11 @@ class AnkiMediaPool : Closeable {
         // helper escapes anything else.
         is ContentElement.TextElement -> renderInlineHtml(element.text)
         // Bare text in mrow is invalid MathML (browsers drop it); the
-        // shared normalizer tokenizes it into mi/mn/mo.
-        is ContentElement.MathElement -> normalizeMathText(element.mathml)
+        // shared normalizer tokenizes it into mi/mn/mo. A legacy bare run is
+        // repaired to a full block first, and attributes are stripped so a
+        // hostile stored fragment cannot reach the deck as live markup.
+        is ContentElement.MathElement ->
+            normalizeMathText(sanitizeMathml(repairStoredMathml(element.mathml)))
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
         // The readable field carries the structure's text handles. Only a

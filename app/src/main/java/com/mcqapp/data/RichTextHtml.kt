@@ -1,5 +1,7 @@
 package com.mcqapp.data
 
+import com.mcqapp.domain.CELL_MATH_ELEMENTS
+
 /**
  * Renders inline HTML tags (`<sub>`, `<sup>`, `<strong>`, `<em>`, …)
  * inside exported text as-is, escaping anything else — including unknown
@@ -52,17 +54,14 @@ private val inlineTags = mapOf(
  * an imported bank could otherwise smuggle `onclick` into a JS-enabled
  * WebView, and the exported quiz page runs inline script.
  */
-private val mathmlTags = mapOf(
-    "math" to "math", "mrow" to "mrow", "mi" to "mi", "mn" to "mn", "mo" to "mo",
-    "mtext" to "mtext", "ms" to "ms", "mspace" to "mspace",
-    "mfrac" to "mfrac", "msqrt" to "msqrt", "mroot" to "mroot",
-    "msup" to "msup", "msub" to "msub", "msubsup" to "msubsup",
-    "munder" to "munder", "mover" to "mover", "munderover" to "munderover",
-    "mtable" to "mtable", "mtr" to "mtr", "mtd" to "mtd",
-    "mstyle" to "mstyle", "mpadded" to "mpadded", "mphantom" to "mphantom",
-    "mfenced" to "mfenced", "menclose" to "menclose",
-    "semantics" to "semantics", "annotation" to "annotation"
-)
+private val mathmlTags: Map<String, String> =
+    (setOf("math") + CELL_MATH_ELEMENTS).associateWith { it }
+
+/** `/>`, with optional whitespace before `>` (`<mspace/ >`). */
+private val SELF_CLOSING_SUFFIX = Regex("/\\s*>$")
+
+private fun isSelfClosingTag(token: String): Boolean =
+    SELF_CLOSING_SUFFIX.containsMatchIn(token)
 
 /**
  * Re-emits a `<math>` block with every inner tag reduced to a bare,
@@ -94,7 +93,12 @@ internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
         } else if (closing) {
             sb.append("</").append(canonical).append(">")
         } else {
-            sb.append("<").append(canonical).append(">")
+            sb.append("<").append(canonical)
+            // `<mspace width="0.5em"/>` is one empty element. Re-emitting it
+            // as `<mspace>` turned it into a container that swallowed every
+            // following sibling (MathJax then drew a truncated formula).
+            if (isSelfClosingTag(match.value)) sb.append("/")
+            sb.append(">")
         }
         pos = match.range.last + 1
     }
@@ -241,7 +245,7 @@ internal fun normalizeMathText(mathml: String): String {
         val closing = match.groupValues[1] == "/"
         val tag = match.groupValues[2].lowercase()
         sb.append(match.value)
-        if (!closing && !match.value.endsWith("/>")) {
+        if (!closing && !isSelfClosingTag(match.value)) {
             stack.addLast(tag)
         } else if (closing) {
             val idx = stack.indexOfLast { it == tag }

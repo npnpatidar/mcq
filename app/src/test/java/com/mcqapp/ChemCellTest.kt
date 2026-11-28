@@ -628,9 +628,9 @@ class ChemCellTest {
         assertTrue("cell block wrapper missing: $html",
             html.contains("<div class=\"mcq-chem mcq-chem-cell\">"))
         assertTrue("chem table class missing: $html",
-            html.contains("<table class=\"mcq-chem-table\""))
+            html.contains("<table class=\"mcq-rich-table\""))
         assertTrue("fixed table layout missing: $html",
-            html.contains("table.mcq-chem-table{table-layout:fixed;width:100%}"))
+            html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
         assertTrue("live svg missing: $html", html.contains("<svg id=\"mcq-chem-0\""))
         assertTrue("drawer call missing: $html", html.contains("SmilesDrawer.parse(\"CCO\""))
         assertTrue("standalone fit missing: $html", html.contains("fitStandalone(svg);"))

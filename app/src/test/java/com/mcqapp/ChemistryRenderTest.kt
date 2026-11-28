@@ -765,9 +765,9 @@ class ChemistryRenderTest {
         assertTrue("cell wrapper missing: $html",
             html.contains("<div class=\"mcq-chem mcq-chem-cell\">"))
         assertTrue("chem table class missing: $html",
-            html.contains("<table class=\"mcq-chem-table\""))
+            html.contains("<table class=\"mcq-rich-table\""))
         assertTrue("fixed table layout missing: $html",
-            html.contains("table.mcq-chem-table{table-layout:fixed;width:100%}"))
+            html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
         assertTrue("cell block display missing: $html",
             html.contains(".mcq-chem-cell{display:block;max-width:100%}"))
         assertTrue("cell svg cap missing: $html",

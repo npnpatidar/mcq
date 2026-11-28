@@ -166,6 +166,59 @@ class DocxTableCellRichTest {
     private fun singleQuestion(parsed: com.mcqapp.data.docx.DocxParseResult): QuestionDto =
         LegacyParser.parse(parsed.json).papers.single().categories.single().questions.single()
 
+    /**
+     * The owner-reported bug: MathLive committed a bare `<mrow>…</mrow>` (or a
+     * sibling run) into a cell, so the DOCX writer treated it as prose. The
+     * shared cell grammar repairs it on read, and the writer must then emit a
+     * real inline OMML equation — never the literal markup, never the marker.
+     */
+    @Test
+    fun aBareMathLiveFragmentInACellIsWrittenAsOMML() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+        val files = entries(docxOf(paper(listOf(listOf("Find ", "x = $bare", " tail")))))
+        val xml = files.getValue("word/document.xml").toString(Charsets.UTF_8)
+        parseXml(xml.toByteArray(Charsets.UTF_8), "document")
+        assertTrue("the fragment becomes inline OMML: $xml", xml.contains("<m:oMath>"))
+        assertFalse("never literal markup: $xml", xml.contains("<mrow"))
+        assertFalse("never escaped markup: $xml", xml.contains("&lt;mrow"))
+        assertFalse("never the fallback marker: $xml", xml.contains("[formula]"))
+        assertTrue("prose before survives: $xml", xml.contains("Find "))
+        assertTrue("prose after survives: $xml", xml.contains(" tail"))
+        // The hidden payload is the original cell and is allowed to carry it;
+        // only the visible document must be free of the raw fragment.
+        assertFalse("no raw fragment in the document body", xml.contains("&lt;msup"))
+    }
+
+    @Test
+    fun aBareMathLiveFragmentRoundTripsThroughWordUnchanged() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+        val rows = listOf(listOf("Find x = $bare tail"))
+        val parsed = parseDocx(docxOf(paper(rows)))
+        // The canon types the formula as OMML and the prose as text: a cell
+        // whose formula was read as prose would come back with a different row
+        // (and a stale/duplicate warning). An untouched export must be fresh.
+        assertTrue("an untouched export must stay fresh: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val after = singleQuestion(parsed)
+        assertEquals(
+            "the cell round-trips unchanged",
+            rows,
+            after.explanationElements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+    }
+
+    @Test
+    fun aMathSpaceInACellDoesNotSwallowTheNextAtom() {
+        // MathLive writes `\,` as `<mspace width="0.5em"/>`. Re-emitting it as
+        // `<mspace>` made it a container, and every following atom vanished.
+        val cell = "<mi>a</mi><mspace width=\"0.5em\"/><mi>b</mi>"
+        val files = entries(docxOf(paper(listOf(listOf(cell)))))
+        val xml = files.getValue("word/document.xml").toString(Charsets.UTF_8)
+        parseXml(xml.toByteArray(Charsets.UTF_8), "document")
+        assertTrue("the atom before the space: $xml", xml.contains(">a<"))
+        assertTrue("the atom after the space survives: $xml", xml.contains(">b<"))
+        assertFalse("no literal markup: $xml", xml.contains("<mspace"))
+    }
+
     @Test
     fun supportedCellContentIsWrittenAsRealContent() {
         val rows = richRows()

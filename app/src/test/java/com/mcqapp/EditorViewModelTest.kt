@@ -97,6 +97,41 @@ class EditorViewModelTest {
     }
 
     @Test
+    fun mathBridgeCommitsBareMathLiveValuesAsCompleteBlocks() {
+        val vm = vmFor(richDto("q-math-commit"))
+        val bare = "<msup><mi>x</mi><mn>2</mn></msup>"
+        val canonical = "<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+
+        // Body: the MathLive callback goes through updateMathBody.
+        val s = vm.state.value
+        val bodyIndex = s.elements.indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathBody(s.blockIds[bodyIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.elements[bodyIndex]
+        )
+
+        // Option b: same bridge, addressed by the option's own block id.
+        val option = vm.state.value.options.first { it.id == "b" }
+        val optionIndex = option.elements.indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathOption(option.id, option.blockIds[optionIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.options.first { it.id == "b" }.elements[optionIndex]
+        )
+
+        // Explanation: same bridge again.
+        val before = vm.state.value
+        val explanationIndex = before.explanationElements
+            .indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathExplanation(before.explanationBlockIds[explanationIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.explanationElements[explanationIndex]
+        )
+    }
+
+    @Test
     fun loadPreservesRichElements() {
         val dto = richDto()
         val vm = vmFor(dto)

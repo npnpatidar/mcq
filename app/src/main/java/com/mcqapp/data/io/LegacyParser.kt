@@ -1,5 +1,6 @@
 package com.mcqapp.data.io
 
+import com.mcqapp.data.export.isImageSrcDescriptor
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.textContent
@@ -1292,8 +1293,12 @@ object LegacyParser {
         return found
     }
 
-    /** Data URIs and retrievable links travel with the question; file paths do not. */
+    /** Data URIs, descriptors and retrievable links travel with the question; file paths do not. */
     private fun isPortableImageSrc(src: String): Boolean {
+        // A payload descriptor is our own embedded-picture placeholder, not a
+        // local file reference; counting it would make the grafted payload's
+        // warning quote `mcqapp:img|…` and over-count real local references.
+        if (isImageSrcDescriptor(src)) return true
         if (src.startsWith("data:", ignoreCase = true)) return true
         val scheme = src.substringBefore(':')
             .takeIf { it.length < src.length && it.matches(Regex("[a-zA-Z][a-zA-Z0-9+.-]*")) }

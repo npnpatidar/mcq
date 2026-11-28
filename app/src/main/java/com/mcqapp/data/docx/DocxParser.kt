@@ -1,7 +1,13 @@
 package com.mcqapp.data.docx
 
 import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.docxCellImageSrc
+import com.mcqapp.data.export.forEachDocxCellImage
+import com.mcqapp.data.export.imageSrcHash
+import com.mcqapp.data.export.isImageSrcDescriptor
 import com.mcqapp.data.export.isPngDataUri
+import com.mcqapp.data.export.resolveImageSrcDescriptor
+import com.mcqapp.data.export.withDocxCellImageSrc
 import com.mcqapp.data.io.FALLBACK_CATEGORY_LABEL
 import com.mcqapp.data.io.FALLBACK_CATEGORY_TITLE
 import com.mcqapp.data.io.FALLBACK_PASSAGE_TITLE
@@ -10,8 +16,18 @@ import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CellSegment
 import com.mcqapp.util.Logger
+import com.mcqapp.util.cellChemSpans
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.forEachCellImage
+import com.mcqapp.util.forEachCellImageSpan
+import com.mcqapp.util.imgTagSrc
+import com.mcqapp.util.portableCellImageSrc
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -218,9 +234,11 @@ private fun preferPayload(
     val graftedPassages = payload.passages.map { passage ->
         visibleByCanon[canonPassage(passage)]?.let { graftPassage(passage, it) } ?: passage
     }
+    val graftedFile = payload.copy(papers = graftedPapers, passages = graftedPassages)
+        .sweepResidualDescriptors()
     val graftedJson = kotlinx.serialization.json.Json.encodeToString(
         McqFileDto.serializer(),
-        payload.copy(papers = graftedPapers, passages = graftedPassages)
+        graftedFile
     )
     return DocxParseResult(graftedJson, warnings, payloadTitle ?: visible.paperTitle)
 }
@@ -230,10 +248,16 @@ private fun preferPayload(
  * every element reduced to a content-only canon — text normalized like the
  * stems, math to its leaf text (the OMML round trip restructures the markup,
  * so tag shape cannot be compared), images to a bare position marker (the
- * src is grafted, never compared), tables to their flattened cells. A
- * non-null legacy scalar image counts as a trailing position marker: the
- * writer embeds it after the element images, so the visible side has one
+ * src is grafted, never compared), tables to their cells' visible text with a
+ * position marker for every picture and a formula canon that ignores tag
+ * shape. A non-null legacy scalar image counts as a trailing position marker:
+ * the writer embeds it after the element images, so the visible side has one
  * more image element than the payload's element list.
+ *
+ * Formula *structure* is intentionally not part of freshness: math is reduced
+ * to its leaf text, so a fraction and a row with the same leaves compare
+ * equal. A truncated or corrupt payload never reaches this comparison —
+ * `preferPayload` catches the parse failure and uses the visible side.
  */
 private fun canonField(elements: List<ContentElement>, scalarImage: String?): String {
     if (elements.isEmpty() && scalarImage == null) return ""
@@ -274,7 +298,7 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
             }
             is ContentElement.TableElement -> {
                 flushText()
-                parts.add("tbl:" + normalizeStem(element.rows.flatten().joinToString(" ")))
+                parts.add("tbl:" + canonTable(element.rows))
             }
             is ContentElement.ChemElement -> {
                 // The writer prints the handles as a text paragraph. Adjacent
@@ -299,12 +323,137 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
 }
 
 /**
- * Image srcs the document body can carry: embedded data URIs, and the
- * empty strings the writer strips them to. Remote URLs stay payload-only
+ * One table's freshness canon: row and cell boundaries are kept (a merge or a
+ * moved cell is an edit), each cell is reduced to its visible content, and the
+ * writer's row padding — it always emits `cols` cells per row — is ignored by
+ * dropping the trailing empty cells the payload never had. Without the
+ * per-cell walk, a picture in a cell changed the canon between a descriptor
+ * (payload) and the picture the body draws, and a formula's OMML round trip
+ * restructured its tags: every such export read as edited and lost its marks,
+ * difficulty and tags.
+ *
+ * The encoding is length-prefixed (a netstring): the row count, each row's
+ * cell count and each cell canon's length are part of the string, so prose
+ * containing any separator byte (`\u001E`, `\u001F`, `,`) can never forge a
+ * row, cell or part boundary. Text parts are typed (`t:`), so a prose `i` can
+ * never equal a picture marker. Every picture part carries its SHA-256
+ * (`i:<len>:<hash>`), so swapping a structure drawing with an adjacent picture
+ * cannot pass the canon even though both still count as one picture.
+ *
+ * A Word edit makes the payload stale by design (same as every other hidden
+ * DOCX field): the visible table then wins, so a structure degrades to its
+ * readable handles and a cell formula to its MathML, and the payload-only
+ * spec/schedule metadata is dropped. Pure markup differences are not edits —
+ * tags are stripped and whitespace is normalized, so `<b>` versus the reader's
+ * `<strong>` or a re-tokenised OMML tree still compares equal. Formula
+ * *structure* is intentionally not compared either: math is reduced to its
+ * leaf text, so a fraction and a row with the same leaves read as unedited.
+ * A truncated or corrupt payload never reaches this comparison — the payload
+ * parser catches the failure and the visible side is used.
+ *
+ * Text normalization is [normalizeStem]: lowercased and stripped of all
+ * whitespace. A spacing- or case-only edit inside a cell ("1 2" versus "12",
+ * "NaCl" versus "nacl") therefore reads as unedited and the payload is kept.
+ * This is pre-existing and intentional for stems; do not change it without the
+ * owner.
+ */
+internal fun canonTable(rows: List<List<String>>): String = buildString {
+    append(rows.size).append(':')
+    for (row in rows) {
+        val cells = row.map(::canonCell).dropLastWhile { it.isEmpty() }
+        append(cells.size).append(':')
+        for (cell in cells) {
+            append(cell.length).append(':').append(cell)
+        }
+    }
+}
+
+/**
+ * One cell's freshness canon. A chemical structure contributes its readable
+ * handles plus one picture position when it has a valid PNG; prose and math
+ * follow the body's rules (tags stripped, whitespace removed, math by leaf
+ * text), and every picture the writer embeds contributes one `i`. A
+ * non-embeddable data picture contributes the same visible `[image]` text the
+ * writer prints; a remote/file/empty source or a tag with no readable source
+ * contributes nothing on either side.
+ *
+ * Every text and math part is length-prefixed with its type (`t:<len>:…`,
+ * `m:<len>:…`) so no text can mimic a picture marker or a part boundary.
+ */
+internal fun canonCell(cell: String): String {
+    val parts = mutableListOf<String>()
+    val text = StringBuilder()
+    fun flush() {
+        if (text.isEmpty()) return
+        val normalized = normalizeStem(text.toString().replace(Regex("<[^>]*>"), ""))
+        if (normalized.isNotEmpty()) parts.add(canonPart("t", normalized))
+        text.clear()
+    }
+    for (segment in cellSegments(cell)) {
+        when (segment) {
+            is CellSegment.Chem -> {
+                text.append(chemElementText(segment.element))
+                if (isPngDataUri(segment.element.diagram)) {
+                    flush()
+                    parts.add(canonPart("i", imageSrcHash(segment.element.diagram).orEmpty()))
+                }
+            }
+            is CellSegment.Text -> for (part in tableCellParts(segment.html)) {
+                when (part) {
+                    is CellPart.Math -> {
+                        flush()
+                        parts.add(
+                            canonPart(
+                                "m",
+                                decodeXmlEntities(part.mathml)
+                                    .replace(Regex("<[^>]*>"), "")
+                                    .replace(Regex("\\s+"), "")
+                            )
+                        )
+                    }
+                    is CellPart.Text -> {
+                        var pos = 0
+                        forEachDocxCellImage(part.html) { tag, src, start, end ->
+                            if (start > pos) text.append(part.html, pos, start)
+                            when {
+                                src != null &&
+                                    (isImageSrcDescriptor(src) || portableCellImageSrc(src)) -> {
+                                    flush()
+                                    parts.add(canonPart("i", imageSrcHash(src).orEmpty()))
+                                }
+                                // A non-embeddable data picture is printed as
+                                // the marker by the writer, so the payload must
+                                // contribute the same visible text.
+                                tag != null &&
+                                    imgTagSrc(tag)?.startsWith("data:", ignoreCase = true) == true ->
+                                    text.append(CELL_IMAGE_MARKER)
+                                // Remote/file/empty/no-source: no visible picture.
+                            }
+                            pos = end
+                        }
+                        if (pos < part.html.length) {
+                            text.append(part.html, pos, part.html.length)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    flush()
+    return parts.joinToString(",")
+}
+
+/** A typed, length-prefixed canon part: the length makes the encoding injective. */
+private fun canonPart(type: String, value: String): String = "$type:${value.length}:$value"
+
+/**
+ * Image srcs the document body can carry: a descriptor for an embedded data
+ * URI, the empty string a non-portable top-level data URI was blanked to, or a
+ * legacy full data URI. Remote URLs and `file:` references stay payload-only
  * metadata and are neither compared nor overwritten.
  */
 private fun isGraftableImage(src: String): Boolean =
-    src.isEmpty() || src.startsWith("data:")
+    isImageSrcDescriptor(src) || src.isEmpty() || src.startsWith("data:", ignoreCase = true)
 
 private fun canonPassage(passage: PassageDto): String =
     normalizeStem(passage.title) + "|" + canonField(passage.elements, passage.image)
@@ -364,25 +513,217 @@ private fun canonText(
     scalarImage
 )
 
-/** Restore the image srcs the writer stripped, positionally from the body. */
-private fun graftElements(
+/** Restore the image srcs the writer replaced with descriptors, in body order. */
+internal fun graftElements(
     payloadElements: List<ContentElement>,
     visibleElements: List<ContentElement>
 ): List<ContentElement> {
     val srcs = visibleElements.filterIsInstance<ContentElement.ImageElement>()
         .map { it.src }
         .filter { isGraftableImage(it) }
+    val visibleTables = visibleElements.filterIsInstance<ContentElement.TableElement>()
     var next = 0
-    return payloadElements.map { element ->
-        if (element is ContentElement.ImageElement && isGraftableImage(element.src)) {
-            val src = srcs.getOrNull(next)
-            next++
-            if (src != null) element.copy(src = src) else element
-        } else {
-            element
+    var nextTable = 0
+    val out = mutableListOf<ContentElement>()
+    for (element in payloadElements) {
+        when {
+            // The writer draws a structure's PNG inline; it occupies one body
+            // picture even though the payload marker has no <img>. Verify the
+            // visible bytes at that slot: if the structure drawing and an
+            // adjacent picture were reordered, refuse the whole field rather
+            // than assign the wrong bytes.
+            element is ContentElement.ChemElement && isPngDataUri(element.diagram) -> {
+                val expected = imageSrcHash(element.diagram)
+                val visible = srcs.getOrNull(next)
+                if (expected == null || visible == null || imageSrcHash(visible) != expected) {
+                    return visibleElements
+                }
+                next++
+                out += element
+            }
+            element is ContentElement.ImageElement && isGraftableImage(element.src) -> {
+                val visible = srcs.getOrNull(next)
+                next++
+                if (visible == null) {
+                    out += element
+                } else {
+                    val resolved = if (isImageSrcDescriptor(element.src)) {
+                        resolveImageSrcDescriptor(element.src, visible)
+                    } else {
+                        visible
+                    }
+                    out += if (resolved != null) element.copy(src = resolved) else element
+                }
+            }
+            element is ContentElement.TableElement -> {
+                val visibleRows = visibleTables.getOrNull(nextTable)?.rows
+                nextTable++
+                val rows = if (visibleRows != null) {
+                    graftTable(element.rows, visibleRows)
+                } else {
+                    element.rows.map { row -> row.map(::dropResidualDescriptors) }
+                }
+                // Defensive degrade, never a throw: if a descriptor somehow
+                // survived, use the visible table (or drop the tag cell by
+                // cell) rather than storing it.
+                val safeRows = if (rows.any { row -> row.any(::containsImageDescriptor) }) {
+                    (visibleRows ?: rows).map { row ->
+                        row.map { cell ->
+                            if (containsImageDescriptor(cell)) "" else cell
+                        }
+                    }
+                } else {
+                    rows
+                }
+                out += element.copy(rows = safeRows)
+            }
+            else -> out += element
         }
     }
+    // Fail closed: a descriptor that could not be resolved must never reach
+    // storage; the visible field is the truth in that case.
+    return if (out.any { it is ContentElement.ImageElement && isImageSrcDescriptor(it.src) }) {
+        visibleElements
+    } else {
+        out
+    }
 }
+
+/**
+ * Restore each cell's stripped picture srcs from the visible table's same
+ * row/column, in order. Positional and defensive on purpose: a table the user
+ * restructured in Word makes the freshness canon stale and the visible body
+ * wins, so a mismatch here must never throw or move a picture into another
+ * cell — an unresolvable descriptor degrades to the visible cell.
+ */
+internal fun graftTable(
+    payloadRows: List<List<String>>,
+    visibleRows: List<List<String>>
+): List<List<String>> = payloadRows.mapIndexed { rowIndex, row ->
+    val visibleRow = visibleRows.getOrNull(rowIndex)
+    if (visibleRow == null) {
+        // Defensive: a fresh payload always has the visible row. If it does
+        // not, no descriptor may survive this path.
+        return@mapIndexed row.map { cell ->
+            val dropped = dropResidualDescriptors(cell)
+            if (containsImageDescriptor(dropped)) "" else dropped
+        }
+    }
+    row.mapIndexed { cellIndex, cell ->
+        val visibleCell = visibleRow.getOrNull(cellIndex).orEmpty()
+        val grafted = graftCell(cell, visibleCell)
+        if (containsImageDescriptor(grafted)) visibleCell else grafted
+    }
+}
+
+/**
+ * One cell's picture tags restored from the visible cell's pictures, in
+ * document order, by picture slot rather than by searching for segment text:
+ * `cellSegments` rebuilds a marker that starts inside a protected range (a
+ * complete tag or `<math>`), so its text is not a substring of the payload.
+ * Instead every chem marker with a valid PNG is counted from
+ * [cellChemSpans] and verified against the visible picture at that slot; the
+ * next `<img>` consumes the following one. A hash mismatch refuses the graft
+ * for the cell (the visible cell wins), and a descriptor that survives the
+ * walk always falls back to the visible cell — a stored cell must never keep a
+ * `mcqapp:img|` src.
+ */
+private fun graftCell(payload: String, visible: String): String {
+    if (!payload.contains("<img", ignoreCase = true)) return payload
+    val srcs = mutableListOf<String>()
+    forEachCellImage(visible) { src, _, _ ->
+        if (src != null && src.startsWith("data:", ignoreCase = true)) srcs.add(src)
+    }
+    val spans = mutableListOf<CellImageSpan>()
+    forEachCellImageSpan(payload) { tag, start, end ->
+        if (tag != null) spans.add(CellImageSpan(tag, start, end))
+    }
+    if (spans.isEmpty()) return payload
+
+    val chemSpans = cellChemSpans(payload)
+    var next = 0
+    var chemIndex = 0
+    val replacements = mutableListOf<Triple<Int, Int, String>>()
+
+    /** Consume and verify every chem picture that precedes [upTo]. */
+    fun consumeChemPictures(upTo: Int): Boolean {
+        while (chemIndex < chemSpans.size && chemSpans[chemIndex].start < upTo) {
+            val chem = chemSpans[chemIndex++]
+            if (!isPngDataUri(chem.element.diagram)) continue
+            val expected = imageSrcHash(chem.element.diagram) ?: return false
+            val visibleSrc = srcs.getOrNull(next) ?: return false
+            if (imageSrcHash(visibleSrc) != expected) return false
+            next++
+        }
+        return true
+    }
+
+    for (span in spans) {
+        if (!consumeChemPictures(span.start)) return visible
+        val src = docxCellImageSrc(span.tag) ?: continue
+        if (!isGraftableCellImage(src)) continue
+        val visibleSrc = srcs.getOrNull(next) ?: continue
+        next++
+        val rewritten = if (isImageSrcDescriptor(src)) {
+            resolveImageSrcDescriptor(src, visibleSrc)?.let {
+                withDocxCellImageSrc(span.tag, it)
+            }
+        } else {
+            withDocxCellImageSrc(span.tag, visibleSrc)
+        } ?: continue
+        replacements += Triple(span.start, span.end, rewritten)
+    }
+    if (!consumeChemPictures(payload.length)) return visible
+    if (replacements.isEmpty()) {
+        return if (containsImageDescriptor(payload)) visible else payload
+    }
+    val sb = StringBuilder(payload)
+    for ((start, end, text) in replacements.asReversed()) sb.replace(start, end, text)
+    val result = sb.toString()
+    return if (containsImageDescriptor(result)) visible else result
+}
+
+private fun containsImageDescriptor(cell: String): Boolean {
+    var found = false
+    forEachCellImageSpan(cell) { tag, _, _ ->
+        val src = tag?.let(::docxCellImageSrc)
+        if (src != null && isImageSrcDescriptor(src)) found = true
+    }
+    return found
+}
+
+/**
+ * [cell] with every descriptor `<img>` removed. The last-resort path when no
+ * visible cell can resolve it: a descriptor must never reach storage, so the
+ * picture position is dropped rather than stored as `mcqapp:img|…`.
+ */
+private fun dropResidualDescriptors(cell: String): String {
+    if (!containsImageDescriptor(cell)) return cell
+    var out: StringBuilder? = null
+    var pos = 0
+    forEachCellImageSpan(cell) { tag, start, end ->
+        val src = tag?.let(::docxCellImageSrc)
+        if (tag != null && src != null && isImageSrcDescriptor(src)) {
+            val sb = out ?: StringBuilder(cell.length).also { out = it }
+            sb.append(cell, pos, start)
+            pos = end
+        }
+    }
+    val sb = out ?: return cell
+    sb.append(cell, pos, cell.length)
+    return sb.toString()
+}
+
+private data class CellImageSpan(val tag: String, val start: Int, val end: Int)
+
+/**
+ * A cell picture position the writer actually embeds: a stored descriptor, or
+ * a legacy full/empty data URI. A non-embeddable data URI, a remote URL or a
+ * tag with no readable source is payload-only metadata: the body cannot draw
+ * it, so it must not consume a body picture during grafting.
+ */
+private fun isGraftableCellImage(src: String): Boolean =
+    isImageSrcDescriptor(src) || portableCellImageSrc(src)
 
 /**
  * The writer embeds a legacy scalar image after the element images, so the
@@ -412,12 +753,72 @@ private fun graftPassage(payload: PassageDto, visible: PassageDto): PassageDto =
     image = graftScalarImage(payload.image, visible.elements)
 )
 
-/** A stripped (or data-URI) scalar takes the body's last image; a remote URL stays. */
+/** A scalar descriptor/legacy src takes the body's last image; metadata stays. */
 private fun graftScalarImage(scalar: String?, visibleElements: List<ContentElement>): String? {
     if (scalar == null || !isGraftableImage(scalar)) return scalar
-    return visibleElements.filterIsInstance<ContentElement.ImageElement>()
-        .lastOrNull { isGraftableImage(it.src) }?.src ?: scalar
+    val visible = visibleElements.filterIsInstance<ContentElement.ImageElement>()
+        .lastOrNull { isGraftableImage(it.src) }?.src
+        ?: return if (isImageSrcDescriptor(scalar)) null else scalar
+    return if (isImageSrcDescriptor(scalar)) {
+        resolveImageSrcDescriptor(scalar, visible) ?: visible
+    } else {
+        visible
+    }
 }
+
+/**
+ * Last-resort guarantee: no `mcqapp:img|…` descriptor may survive a graft,
+ * whichever path skipped it (an option beyond the writer's ten, a payload-only
+ * question, a missing visible row/table/passage, or a scalar with no visible
+ * picture). Runs once on the whole DTO before it is serialized.
+ */
+private fun McqFileDto.sweepResidualDescriptors(): McqFileDto = copy(
+    papers = papers.map { paper ->
+        paper.copy(
+            categories = paper.categories.map { category ->
+                category.copy(questions = category.questions.map(::sweepQuestion))
+            },
+            questions = paper.questions.map(::sweepQuestion),
+            passages = paper.passages.map(::sweepPassage)
+        )
+    },
+    passages = passages.map(::sweepPassage)
+)
+
+private fun sweepPassage(passage: PassageDto): PassageDto = passage.copy(
+    elements = sweepElements(passage.elements),
+    image = sweepScalar(passage.image)
+)
+
+private fun sweepQuestion(question: QuestionDto): QuestionDto = question.copy(
+    elements = sweepElements(question.elements),
+    image = sweepScalar(question.image),
+    options = question.options.map { option ->
+        option.copy(
+            elements = sweepElements(option.elements),
+            image = sweepScalar(option.image)
+        )
+    },
+    explanationElements = sweepElements(question.explanationElements),
+    explanationImage = sweepScalar(question.explanationImage)
+)
+
+private fun sweepElements(elements: List<ContentElement>): List<ContentElement> =
+    elements.mapNotNull { element ->
+        when (element) {
+            // Drop rather than blank: an empty image src is still a picture
+            // position to `isGraftableImage`, and a future canon change must
+            // not make a swept file stale.
+            is ContentElement.ImageElement ->
+                element.takeUnless { isImageSrcDescriptor(it.src) }
+            is ContentElement.TableElement ->
+                element.copy(rows = element.rows.map { row -> row.map(::dropResidualDescriptors) })
+            else -> element
+        }
+    }
+
+private fun sweepScalar(src: String?): String? =
+    if (src != null && isImageSrcDescriptor(src)) null else src
 
 /**
  * Stem text for the payload-freshness comparison: entities decoded (the

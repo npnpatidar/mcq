@@ -317,25 +317,28 @@ object HtmlPaperWriter {
     }
 
     /**
-     * One chemical structure as HTML: its readable handles, then the
-     * pre-rendered picture when the stored diagram is a real PNG. Shared by a
+     * One chemical structure as HTML: the pre-rendered picture when the stored
+     * diagram is a real PNG, otherwise its readable handles. Shared by a
      * standalone [ContentElement.ChemElement] and one inside a table cell, so
      * both print the same thing and neither can differ on validation.
      *
      * Only the strict shared [isPngDataUri] may put a picture in the page: an
      * SVG/JPEG/broken diagram gets the text fallback alone — never a raw
      * `<svg>` or a hostile data URI, and never the marker's `data-png`/base64
-     * as prose. The alt is the same spoken-first fallback the renderer uses,
-     * so a blank caption still yields a non-empty accessible label.
+     * as prose. A pictured structure does not print its handles next to the
+     * drawing (the in-app page shows only the drawing); they travel in the alt
+     * instead, as the same spoken-first fallback the renderer uses, so a blank
+     * caption still yields a non-empty accessible label. A reaction appends its
+     * product label ("A") right after the picture.
      */
     private fun chemElementHtml(element: ContentElement.ChemElement): String {
-        val sb = StringBuilder(esc(chemElementText(element)))
         val diagram = element.diagram
-        if (isPngDataUri(diagram)) {
-            sb.append("<img src=\"").append(esc(diagram))
-                .append("\" alt=\"").append(esc(chemAccessibleText(element)))
-                .append("\">\n")
-        }
+        if (!isPngDataUri(diagram)) return esc(chemElementText(element))
+        val sb = StringBuilder("<img src=\"").append(esc(diagram))
+            .append("\" alt=\"").append(esc(chemAccessibleText(element)))
+            .append("\">\n")
+        val label = chemProductLabel(element)
+        if (label.isNotBlank()) sb.append(esc(label))
         return sb.toString()
     }
 

@@ -125,14 +125,21 @@ class ChemDiagramExportTest {
     fun htmlDrawsTheRenderedStructureInsteadOfHandlesOnly() {
         val page = html(prepared())
         assertTrue("the picture replaces the handles-only fallback", page.contains("<img src=\"$png\""))
-        assertTrue("the readable handles still print", page.contains("benzene"))
+        assertFalse(
+            "the handles are not printed next to the drawing",
+            page.contains("benzene C6H6 c1ccccc1")
+        )
+        assertTrue("the handles still reach the alt text",
+            page.contains("alt=\"benzene C6H6\""))
     }
 
     @Test
     fun docxEmbedsTheRenderedStructureAsAPicture() {
         val files = entries(docx(prepared()))
         val xml = files.getValue("word/document.xml").toString(Charsets.UTF_8)
-        assertTrue(xml.contains("benzene"))
+        assertTrue("the handles reach the picture description", xml.contains("descr=\"benzene C6H6\""))
+        assertFalse("the handles are not printed as body text",
+            xml.contains(">benzene C6H6 c1ccccc1<"))
         val media = files.filterKeys { it.startsWith("word/media/") }
         assertTrue("the structure must become a real media part", media.isNotEmpty())
         assertTrue("the embedded bytes are the rendered PNG",

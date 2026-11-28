@@ -129,7 +129,11 @@ class ChemDiagramAnkiExportTest {
                     val visible = fields.take(2).joinToString(" ")
                     assertTrue(
                         "the visible note must reference the spooled media: $visible",
-                        visible.contains("<img src=\"mcqapp-0.png\">")
+                        visible.contains("<img src=\"mcqapp-0.png\" alt=\"benzene C6H6\">")
+                    )
+                    assertFalse(
+                        "the handles are not printed beside the picture: $visible",
+                        visible.contains("c1ccccc1")
                     )
                     assertFalse(
                         "the visible note must not print a base64 payload: $visible",

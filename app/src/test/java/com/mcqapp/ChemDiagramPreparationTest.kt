@@ -4,7 +4,10 @@ import com.mcqapp.data.export.ChemDiagramCache
 import com.mcqapp.data.export.ChemDiagramPreparation
 import com.mcqapp.data.export.ChemDiagramRenderer
 import com.mcqapp.data.export.ExportFormat
+import com.mcqapp.data.export.HtmlPaperWriter
 import com.mcqapp.data.export.PaperStream
+import com.mcqapp.data.export.chemAccessibleText
+import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.export.preparePaperForExport
 import com.mcqapp.data.io.CategoryDto
@@ -321,6 +324,23 @@ class ChemDiagramPreparationTest {
             .single()
         assertEquals("the stored sample is not mutated by the preparation pass",
             "", authored.diagram)
+
+        // The real sample reaction exports as the in-app page shows it: the
+        // drawing (handles in alt), followed by its "(A)" product label.
+        val organic = byId.getValue("q-org-1").elements
+            .filterIsInstance<ContentElement.ChemElement>().single()
+        assertEquals("O=C1OCCCCC(=O)C1>>", organic.smiles)
+        assertEquals("A", organic.formula)
+        val page = buildString { HtmlPaperWriter.writeHtml(stream, this) }
+        val alt = com.mcqapp.data.escapeHtmlText(chemAccessibleText(organic))
+        assertTrue(
+            "the reaction picture carries its label right after it: $alt",
+            page.contains("<img src=\"$png\" alt=\"$alt\">\nA")
+        )
+        assertFalse(
+            "the organic handles are not printed beside the drawing",
+            page.contains(com.mcqapp.data.escapeHtmlText(chemElementText(organic)))
+        )
     }
 
     @Test

@@ -130,7 +130,7 @@ class AnkiMediaPoolTest {
     }
 
     @Test
-    fun chemHandlesAreReadableAndItsPngIsSpooledByFilename() {
+    fun chemHandlesMoveIntoTheAltAndItsPngIsSpooledByFilename() {
         val pool = AnkiMediaPool()
         val html = pool.elementsToHtml(
             listOf(
@@ -140,10 +140,10 @@ class AnkiMediaPoolTest {
                 )
             )
         )
-        assertTrue(html.contains("Benzene"))
-        assertTrue(html.contains("C6H6"))
-        assertTrue(html.contains("c1ccccc1"))
-        assertTrue(html.contains("mcqapp-0.png"))
+        // The card shows the drawing; the handles are its accessible label.
+        assertTrue(html.contains("<img src=\"mcqapp-0.png\" alt=\"Benzene C6H6\">"))
+        assertFalse("the handles are not printed beside the picture: $html",
+            html.contains("Benzene C6H6 c1ccccc1"))
         assertFalse(html.contains("<svg"))
         assertEquals(1, pool.size)
         pool.close()
@@ -310,7 +310,7 @@ class AnkiMediaPoolTest {
     }
 
     @Test
-    fun aCellWithTextImageFormulaAndChemExportsMediaHandlesAndMath() {
+    fun aCellWithTextImageFormulaAndChemExportsMediaAltsAndMath() {
         val chem = ContentElement.ChemElement(
             smiles = "c1ccccc1",
             formula = "C6H6",
@@ -322,7 +322,10 @@ class AnkiMediaPoolTest {
         val pool = AnkiMediaPool()
         try {
             val html = pool.elementsToHtml(listOf(ContentElement.TableElement(listOf(listOf(cell)))))
-            assertTrue(html, html.contains("Benzene C6H6 c1ccccc1"))
+            assertTrue("the structure's handles ride its alt: $html",
+                html.contains("alt=\"Benzene C6H6\""))
+            assertFalse("the handles are not printed beside the cell picture: $html",
+                html.contains("Benzene C6H6 c1ccccc1"))
             assertTrue(html, html.contains("<math><mi>x</mi></math>"))
             assertTrue(html, Regex("mcqapp-0\\.png").containsMatchIn(html))
             assertTrue(html, Regex("mcqapp-1\\.png").containsMatchIn(html))

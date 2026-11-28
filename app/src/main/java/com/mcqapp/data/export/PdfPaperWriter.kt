@@ -411,7 +411,7 @@ object PdfPaperWriter {
         /** The oversized-block test observes the draining of the flow here. */
         internal fun finalY(): Float = y
 
-        fun image(src: String?, indent: Float = 0f) {
+        open fun image(src: String?, indent: Float = 0f) {
             if (src == null) return
             val embedded = parseDataUri(src)
             // Subsampled, and Throwable because an oversized embedded image
@@ -491,17 +491,27 @@ object PdfPaperWriter {
                             is ContentElement.ImageElement -> image(element.src, indent = indent)
                             is ContentElement.TableElement -> table(element.rows, indent = indent)
                             is ContentElement.ChemElement -> {
-                                // Caption, formula and SMILES are plain text on
-                                // the page; a valid PNG diagram rides the same
-                                // image() path every other picture uses. No new
-                                // renderer — an SVG or broken URI leaves only
-                                // the text handles.
-                                paragraph(
-                                    chemElementText(element), 11f,
-                                    Typeface.NORMAL, Color.BLACK, indent = indent
-                                )
+                                // A valid PNG diagram is drawn through the image
+                                // path every other picture uses, and the readable
+                                // handles are skipped: PDF has no alt text, but the
+                                // in-app page shows only the drawing, so the print
+                                // surface matches it. A structure without a valid
+                                // PNG keeps the handles; a reaction appends its
+                                // product label ("A") after the picture.
                                 if (isPngDataUri(element.diagram)) {
                                     image(element.diagram, indent = indent)
+                                    val label = chemProductLabel(element)
+                                    if (label.isNotBlank()) {
+                                        paragraph(
+                                            label, 11f,
+                                            Typeface.NORMAL, Color.BLACK, indent = indent
+                                        )
+                                    }
+                                } else {
+                                    paragraph(
+                                        chemElementText(element), 11f,
+                                        Typeface.NORMAL, Color.BLACK, indent = indent
+                                    )
                                 }
                             }
                             is ContentElement.MathElement -> error("unreachable")
@@ -919,6 +929,15 @@ internal fun buildCellBlocks(cell: String, width: Float, paint: TextPaint): List
                 } else {
                     flush()
                     pending += PendingBlock.Picture(diagram)
+                    // A reaction's product label ("A") follows the picture,
+                    // mirroring the in-app scheme. There is no alt text in PDF,
+                    // so the handles are deliberately not printed.
+                    val label = chemProductLabel(piece.element)
+                    if (label.isNotBlank()) {
+                        pending += PendingBlock.Text(
+                            CellBlock.Text(cellLayout(SpannableStringBuilder(label), width, paint))
+                        )
+                    }
                 }
             }
         }
@@ -1024,6 +1043,10 @@ internal fun cellNaturalWidth(cell: String, paint: TextPaint): Float {
                 if (piece.element.diagram.isNotEmpty()) {
                     flush()
                     widest = maxOf(widest, TABLE_CELL_IMAGE_NOMINAL_PX)
+                    val label = chemProductLabel(piece.element)
+                    if (label.isNotBlank()) {
+                        widest = maxOf(widest, Layout.getDesiredWidth(label, paint))
+                    }
                 } else {
                     run.append(chemElementText(piece.element))
                 }

@@ -1,7 +1,9 @@
 package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.MediaSpool
+import com.mcqapp.data.export.chemAccessibleText
 import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.chemProductLabel
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.export.mediaKey
@@ -93,13 +95,26 @@ class AnkiMediaPool : Closeable {
             normalizeMathText(sanitizeMathml(repairStoredMathml(element.mathml)))
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
-        // The readable field carries the structure's text handles. Only a
-        // valid PNG diagram is spooled through the media path, so it lands in
-        // the deck as mcqapp-N.png and Anki resolves it by filename. The full
-        // ChemElement itself rides unchanged in the third (mcqapp) payload.
-        is ContentElement.ChemElement ->
-            escapeHtml(chemElementText(element)) +
-                if (isPngDataUri(element.diagram)) imageElement(element.diagram) else ""
+        // A valid PNG is spooled through the media path and the readable
+        // handles move into its alt text, matching the in-app page's
+        // drawing-only presentation. A structure without a drawable diagram
+        // keeps the handles as visible text. The full ChemElement itself rides
+        // unchanged in the third (mcqapp) payload. A reaction appends its
+        // product label ("A") after the picture.
+        is ContentElement.ChemElement -> chemToHtml(element)
+    }
+
+    /**
+     * One chemical structure in a readable field. A valid PNG is spooled and
+     * referenced by filename with the readable handles in its `alt`; a
+     * structure without one keeps the handles as visible text. A reaction's
+     * product label ("A") follows the picture.
+     */
+    private fun chemToHtml(element: ContentElement.ChemElement): String {
+        if (!isPngDataUri(element.diagram)) return escapeHtml(chemElementText(element))
+        val image = imageElement(element.diagram, chemAccessibleText(element))
+        val label = chemProductLabel(element)
+        return if (label.isNotBlank()) image + escapeHtml(label) else image
     }
 
     private fun tableToHtml(table: ContentElement.TableElement): String {
@@ -118,9 +133,10 @@ class AnkiMediaPool : Closeable {
      * One cell in Anki's field HTML, built from the shared cell grammar rather
      * than escaped as a whole:
      *
-     * - a chemical structure becomes its readable handles plus its diagram,
-     *   which is spooled as `mcqapp-N.png` (a structure without a valid PNG
-     *   keeps the handles only, exactly as a standalone block does);
+     * - a chemical structure becomes its diagram with the readable handles in
+     *   its alt text, spooled as `mcqapp-N.png` (a structure without a valid
+     *   PNG keeps the handles only, exactly as a standalone block does, and a
+     *   reaction appends its product label after the picture);
      * - a formula is normalized with the same [normalizeMathText] a top-level
      *   [ContentElement.MathElement] gets, so the deck shows `<math>` instead
      *   of escaped MathML;
@@ -132,9 +148,7 @@ class AnkiMediaPool : Closeable {
     private fun cellToHtml(cell: String): String =
         cellSegments(cell).joinToString("") { segment ->
             when (segment) {
-                is CellSegment.Chem ->
-                    escapeHtml(chemElementText(segment.element)) +
-                        if (isPngDataUri(segment.element.diagram)) imageElement(segment.element.diagram) else ""
+                is CellSegment.Chem -> chemToHtml(segment.element)
                 is CellSegment.Text -> cellTextToHtml(segment.html)
             }
         }
@@ -198,7 +212,7 @@ class AnkiMediaPool : Closeable {
             value.startsWith("//")
     }
 
-    private fun imageElement(src: String?): String {
+    private fun imageElement(src: String?, alt: String = ""): String {
         if (src.isNullOrBlank()) return ""
         val dataUri = parseDataUri(src)
         if (dataUri != null) {
@@ -208,10 +222,10 @@ class AnkiMediaPool : Closeable {
                 spool.add(spool.size.toString(), dataUri.bytes)
                 name
             }
-            return " " + AnkiPackageWriter.imageTag(filename)
+            return " " + AnkiPackageWriter.imageTag(filename, alt)
         }
         // A remote URL: keep it, Anki will fetch it over the network.
-        return " " + AnkiPackageWriter.imageTag(src)
+        return " " + AnkiPackageWriter.imageTag(src, alt)
     }
 
     companion object {

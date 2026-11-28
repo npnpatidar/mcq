@@ -34,7 +34,8 @@ import java.util.zip.ZipInputStream
 /**
  * Rich table cells in the Word export/import pair: a picture becomes a real
  * `word/media` drawing, a formula inline OMML, and a chemical structure its
- * captured PNG plus readable handles. None of them may fall back to the
+ * captured PNG (with the readable handles in the drawing's description) or its
+ * handles text when it has no PNG. None of them may fall back to the
  * literal `[image]`/`[formula]` markers on a supported cell, and the hidden
  * payload must stay fresh on an untouched round trip so marks, difficulty and
  * tags survive.
@@ -423,7 +424,8 @@ class DocxTableCellRichTest {
         val rels = files.getValue("word/_rels/document.xml.rels").toString(Charsets.UTF_8)
         assertEquals(2, Regex("relationships/image").findAll(rels).count())
 
-        // The structure prints its handles whether or not it has a diagram.
+        // The structure's handles ride the drawing's description; a cell
+        // without a diagram prints them as visible text.
         assertTrue(xml.contains("ethanol"))
         assertTrue(xml.contains("C2H5OH"))
         assertTrue(xml.contains("descr=\"Image in table\""))
@@ -833,12 +835,13 @@ class DocxTableCellRichTest {
             afterRows.flatten().any { it.contains("Edited") }
         )
         assertFalse(
-            "the structure degrades to the visible handles, never a marker or raw tag",
+            "the structure degrades to what the reader sees, never a marker or raw tag",
             afterRows.flatten().any { it.contains("mcq-chem-cell") }
         )
-        assertTrue(
-            "the handles are still readable",
-            afterRows[0][1].contains("ethanol") && afterRows[0][1].contains("C2H5OH")
+        assertEquals(
+            "the visible drawing that replaced the handles is the exact chem source",
+            listOf(chem().diagram),
+            cellSrcs(afterRows[0][1])
         )
         assertTrue(
             "the edited cell's picture still round-trips from word/media",

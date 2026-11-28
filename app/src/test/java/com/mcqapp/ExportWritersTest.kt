@@ -593,8 +593,10 @@ class ExportWritersTest {
         )
         for (quiz in listOf(false, true)) {
             val html = htmlOf(paper, quiz = quiz)
-            assertTrue("quiz=$quiz", html.contains("c1ccccc1"))
-            assertTrue("quiz=$quiz", html.contains("C6H6"))
+            // The picture replaces the handles; the escaped handles live in
+            // the alt, and no raw markup from the caption can reach the page.
+            assertFalse("quiz=$quiz", html.contains("Benzene &lt;aromatic&gt; &amp; friends C6H6 c1ccccc1"))
+            assertFalse("quiz=$quiz", html.contains("c1ccccc1"))
             assertFalse("inline markup in a caption is text", html.contains("<aromatic>"))
             assertTrue(
                 "alt uses the spoken-first fallback, not just the caption: $html",
@@ -633,8 +635,8 @@ class ExportWritersTest {
     @Test
     fun htmlRendersAChemTableCellInBothPageVariants() {
         // A cell structure must render like a standalone ChemElement: its
-        // readable handles plus the stored PNG. It used to degrade to the
-        // handles text alone, so the exported table lost every drawing.
+        // drawing with the readable handles in the alt. It used to degrade to
+        // the handles text alone, so the exported table lost every drawing.
         val element = ContentElement.ChemElement(
             smiles = "c1ccccc1",
             formula = "C6H6",
@@ -651,7 +653,6 @@ class ExportWritersTest {
         for (quiz in listOf(false, true)) {
             val html = htmlOf(paper, quiz = quiz)
             val label = "quiz=$quiz"
-            val handlesAt = html.indexOf(handles)
             val structureAt = html.indexOf("<img src=\"$cellPng\" alt=\"aromatic ring C6H6\">")
             val mathAt = html.indexOf("<math><mi>x</mi></math>")
             val imageAt = html.indexOf(
@@ -659,8 +660,9 @@ class ExportWritersTest {
             )
             val afterAt = html.indexOf("prose after")
             assertTrue("$label: prose first: $html", html.contains("Prose before"))
-            assertTrue("$label: handles text: $html", handlesAt >= 0)
-            assertTrue("$label: the structure picture: $html", structureAt > handlesAt)
+            assertFalse("$label: handles are not printed beside the picture: $html",
+                html.contains(handles))
+            assertTrue("$label: the structure picture: $html", structureAt >= 0)
             assertTrue("$label: the formula is typeset: $html", mathAt > structureAt)
             assertTrue("$label: the cell picture keeps its style/alt: $html", imageAt > mathAt)
             assertTrue("$label: order kept: $html", afterAt > imageAt)
@@ -707,6 +709,28 @@ class ExportWritersTest {
         assertFalse("no picture from a hostile marker: $html", html.contains("<img"))
         assertFalse("no base64: $html", html.contains("base64,"))
         assertFalse("no raw marker: $html", html.contains("mcq-chem-cell"))
+    }
+
+    @Test
+    fun htmlAppendsAReactionLabelInsideAChemCell() {
+        // The cell path shares chemElementHtml, so the picture replaces the
+        // handles and the product label follows it exactly as standalone.
+        val element = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            spoken = "lactone reduced by LiAlH4 and ether",
+            diagram = cellPng
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+        val imageAt = html.indexOf("<img src=\"$cellPng\"")
+        assertTrue("the reaction picture: $html", imageAt >= 0)
+        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1).trimStart()
+        assertTrue("the product label follows the picture: $html", afterPicture.startsWith("A"))
+        assertFalse(
+            "the readable handles are not printed beside the picture: $html",
+            html.contains(com.mcqapp.data.escapeHtmlText(com.mcqapp.data.export.chemElementText(element)))
+        )
     }
 
     @Test

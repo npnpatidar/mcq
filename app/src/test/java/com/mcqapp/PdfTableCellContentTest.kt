@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.text.Layout
 import android.text.Spanned
 import android.text.TextPaint
 import com.mcqapp.data.export.CellBlock
@@ -819,6 +820,88 @@ class PdfTableCellContentTest {
         writer.table(listOf(listOf(cell)), indent = 0f)
         writer.finish()
         assertTrue("the chem PNG reaches the page as a bitmap", sink.bitmaps.isNotEmpty())
+    }
+
+    @Test
+    fun aReactionCellDrawsItsPictureAndProductLabelWithoutHandles() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            spoken = "lactone reduced by LiAlH4 and ether",
+            diagram = pngDataUri(30, 30)
+        )
+        val blocks = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(reaction), 300f, paint()
+        )
+        try {
+            assertEquals("the scheme is one picture", 1, blocks.count { it is CellBlock.Picture })
+            assertEquals("the picture and the label are two blocks", 2, blocks.size)
+            assertTrue("the picture comes first", blocks[0] is CellBlock.Picture)
+            val label = blocks[1] as CellBlock.Text
+            assertEquals("the label follows the picture", "A", label.layout.text.toString())
+            val text = textOf(blocks)
+            assertEquals("the product label is the only visible text", "A", text.trim())
+            assertFalse(
+                "the handles are not printed beside the picture",
+                text.contains("O=C1OCCCCC(=O)C1>>")
+            )
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    @Test
+    fun aReactionCellMeasuresItsProductLabelBeyondTheNominalPictureWidth() {
+        val p = paint()
+        val longLabel = "product A after reduction and work-up"
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = longLabel,
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(30, 30)
+        )
+        val labelWidth = Layout.getDesiredWidth(longLabel, p)
+        assertTrue(
+            "the fixture label must be wider than the nominal picture column: $labelWidth",
+            labelWidth > TABLE_CELL_IMAGE_NOMINAL_PX
+        )
+        assertEquals(
+            "without a label the cell measures as the picture column",
+            TABLE_CELL_IMAGE_NOMINAL_PX,
+            cellNaturalWidth(chemCellHtml(reaction.copy(formula = "")), p),
+            0.01f
+        )
+        assertEquals(
+            "the measured column must cover the product label",
+            labelWidth,
+            cellNaturalWidth(chemCellHtml(reaction), p),
+            0.5f
+        )
+        // The sample's short "A" fits inside the nominal column and still draws.
+        assertEquals(
+            TABLE_CELL_IMAGE_NOMINAL_PX,
+            cellNaturalWidth(chemCellHtml(reaction.copy(formula = "A")), p),
+            0.01f
+        )
+    }
+
+    @Test
+    fun anInvalidStoredPngCellFallsBackToItsHandles() {
+        val payload = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3, 4))
+        val marker = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+            "data-formula=\"C2H5OH\" data-caption=\"ethanol\" data-png=\"$payload\">" +
+            "ethanol C2H5OH CCO</span>"
+        val blocks = buildCellBlocks(marker, 300f, paint())
+        try {
+            assertEquals("an invalid payload is not a picture", 0,
+                blocks.count { it is CellBlock.Picture })
+            val text = textOf(blocks)
+            assertEquals("ethanol C2H5OH CCO", text)
+            assertFalse("no data URI may reach the page", text.contains("data:image"))
+        } finally {
+            releaseCellBlocks(blocks)
+        }
     }
 
     @Test

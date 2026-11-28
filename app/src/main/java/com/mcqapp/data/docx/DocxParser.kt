@@ -2,6 +2,7 @@ package com.mcqapp.data.docx
 
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.chemProductLabel
 import com.mcqapp.data.export.docxCellImageSrc
 import com.mcqapp.data.export.forEachDocxCellImage
 import com.mcqapp.data.export.imageSrcHash
@@ -311,18 +312,22 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
                 parts.add("tbl:" + canonTable(element.rows))
             }
             is ContentElement.ChemElement -> {
-                // The writer prints the handles as a text paragraph. Adjacent
-                // paragraphs merge on the visible side, so the payload's
-                // handles join the same text buffer rather than starting a
-                // second `t:` part — a stem of "Identify:" + a structure must
-                // canon to one run, not two. The PNG, when present, is a real
-                // picture and breaks the run after the text is flushed.
+                // A structure with a drawable PNG prints only its picture, so
+                // the payload side is one picture part followed by the reaction
+                // label, if any. Without a PNG the writer prints the handles as
+                // a text paragraph; adjacent paragraphs merge on the visible
+                // side, so the payload's handles join the same text buffer
+                // rather than starting a second `t:` part — a stem of
+                // "Identify:" + a structure must canon to one run, not two.
                 // Spoken is an accessibility label and is never printed.
-                val handles = chemElementText(element)
-                if (handles.isNotBlank()) text.append(handles)
                 if (isPngDataUri(element.diagram)) {
                     flushText()
                     parts.add("i")
+                    val label = chemProductLabel(element)
+                    if (label.isNotBlank()) text.append(label)
+                } else {
+                    val handles = chemElementText(element)
+                    if (handles.isNotBlank()) text.append(handles)
                 }
             }
         }
@@ -379,13 +384,14 @@ internal fun canonTable(rows: List<List<String>>): String = buildString {
 }
 
 /**
- * One cell's freshness canon. A chemical structure contributes its readable
- * handles plus one picture position when it has a valid PNG (or the DOCX
- * payload's descriptor for it); prose and math follow the body's rules (tags
- * stripped, whitespace removed, math by leaf text; a formula the writer must
- * linearise is text), and every picture the writer embeds contributes one `i`.
- * A non-embeddable data picture contributes the same visible `[image]` text the
- * writer prints; a remote/file/empty source or a tag with no readable source
+ * One cell's freshness canon. A chemical structure with a drawable PNG
+ * contributes one picture position (or the DOCX payload's descriptor for it)
+ * followed by its reaction product label, when present; a structure without one
+ * contributes its readable handles text. Prose and math follow the body's rules
+ * (tags stripped, whitespace removed, math by leaf text; a formula the writer
+ * must linearise is text), and every picture the writer embeds contributes one
+ * `i`. A non-embeddable data picture contributes the same visible `[image]` text
+ * the writer prints; a remote/file/empty source or a tag with no readable source
  * contributes nothing on either side.
  *
  * Every text and math part is length-prefixed with its type (`t:<len>:…`,
@@ -403,9 +409,10 @@ internal fun canonCell(cell: String): String {
     for (segment in cellSegments(cell)) {
         when (segment) {
             is CellSegment.Chem -> {
-                text.append(chemElementText(segment.element))
-                // A payload descriptor is the same picture the visible cell
-                // draws; its hash must count at the same position.
+                // A drawable structure contributes one picture part; its
+                // readable handles are not printed (the in-app page shows only
+                // the drawing), but a reaction's product label is visible text
+                // after the picture. Without a picture the handles are text.
                 val hash = when {
                     isPngDataUri(segment.element.diagram) ->
                         imageSrcHash(segment.element.diagram)
@@ -415,6 +422,10 @@ internal fun canonCell(cell: String): String {
                 if (hash != null) {
                     flush()
                     parts.add(canonPart("i", hash))
+                    val label = chemProductLabel(segment.element)
+                    if (label.isNotBlank()) text.append(label)
+                } else {
+                    text.append(chemElementText(segment.element))
                 }
             }
             is CellSegment.Text -> for (part in tableCellParts(segment.html)) {

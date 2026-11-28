@@ -671,18 +671,31 @@ object DocxPaperWriter {
                     }
                 is ContentElement.TableElement -> items.add(Tbl(element.rows))
                 is ContentElement.ChemElement -> {
-                    // A structure prints as its readable handles. [spoken] is an
-                    // accessibility label and [diagram] is base64, so neither is
-                    // text. The diagram is an ordinary word/media picture when it
-                    // is a valid PNG data URI; another format or broken base64
-                    // leaves only the text (no raw SVG/XML in the document).
-                    val text = chemElementText(element)
-                    if (text.isNotBlank()) {
-                        items.add(Runs(inlineRuns(text), breaksParagraph = !flowsInline))
+                    // A valid PNG is drawn as an ordinary word/media picture and
+                    // the readable handles move into the picture's description,
+                    // exactly as the on-screen page shows the drawing. A broken
+                    // or non-PNG diagram keeps the handles as visible text (no
+                    // raw SVG/XML in the document). A reaction carries its
+                    // product label ("A") right after the picture.
+                    val pic = if (isPngDataUri(element.diagram)) {
+                        media.embedPortable(
+                            element.diagram,
+                            warnings,
+                            alt = chemAccessibleText(element)
+                        )
+                    } else {
+                        null
                     }
-                    if (isPngDataUri(element.diagram)) {
-                        media.embedPortable(element.diagram, warnings)?.let {
-                            items.add(it.copy(breaksParagraph = !flowsInline))
+                    if (pic != null) {
+                        items.add(pic.copy(breaksParagraph = !flowsInline))
+                        val label = chemProductLabel(element)
+                        // Same paragraph: the label sits at the picture's side,
+                        // not on a line of its own.
+                        if (label.isNotBlank()) items.add(Runs(inlineRuns(label)))
+                    } else {
+                        val text = chemElementText(element)
+                        if (text.isNotBlank()) {
+                            items.add(Runs(inlineRuns(text), breaksParagraph = !flowsInline))
                         }
                     }
                 }
@@ -795,8 +808,10 @@ object DocxPaperWriter {
      * One table cell as a single paragraph: prose through the same inline
      * pipeline as body text, a formula as inline OMML (with the linear
      * fallback the body uses), a portable picture as a real `word/media`
-     * drawing clamped to the column, and a chemical structure as its readable
-     * handles plus its captured PNG when one is valid.
+     * drawing clamped to the column, and a chemical structure as its captured
+     * PNG with the readable handles in the drawing's description (a structure
+     * without one prints the handles as text; a reaction appends its product
+     * label after the picture).
      *
      * A picture or formula never becomes the literal `[image]`/`[formula]`
      * marker here: those belong to text-only surfaces. A non-portable picture
@@ -818,20 +833,30 @@ object DocxPaperWriter {
         for (segment in cellSegments(cell)) {
             when (segment) {
                 is CellSegment.Chem -> {
-                    val handles = chemElementText(segment.element)
-                    if (handles.isNotBlank()) builder.add(inlineRuns(handles))
-                    if (isPngDataUri(segment.element.diagram)) {
+                    val element = segment.element
+                    val handles = chemElementText(element)
+                    val pic = if (isPngDataUri(element.diagram)) {
                         media.embedPortable(
-                            segment.element.diagram,
+                            element.diagram,
                             warnings,
                             maxCx,
-                            chemAccessibleText(segment.element)
-                        )?.let(builder::addPicture)
-                    } else if (handles.isNotBlank() && warnedChem.add(handles)) {
-                        warnings.add(
-                            "A table structure had no diagram and was printed as text — " +
-                                "its drawing is only in the app."
+                            chemAccessibleText(element)
                         )
+                    } else {
+                        null
+                    }
+                    if (pic != null) {
+                        builder.addPicture(pic)
+                        val label = chemProductLabel(element)
+                        if (label.isNotBlank()) builder.add(inlineRuns(label))
+                    } else {
+                        if (handles.isNotBlank()) builder.add(inlineRuns(handles))
+                        if (handles.isNotBlank() && warnedChem.add(handles)) {
+                            warnings.add(
+                                "A table structure had no diagram and was printed as text — " +
+                                    "its drawing is only in the app."
+                            )
+                        }
                     }
                 }
                 is CellSegment.Text -> for (part in tableCellParts(segment.html)) {
@@ -1710,6 +1735,26 @@ internal fun chemAccessibleText(element: ContentElement.ChemElement): String {
         }
     }.trim()
 }
+
+/**
+ * True when the structure is a reaction scheme. ReactionParser's grammar is
+ * exactly two `>` (empty reagents and products are allowed: `substrate>>`),
+ * so a lone `>` is malformed and stays on the molecule path.
+ */
+internal fun isReactionScheme(element: ContentElement.ChemElement): Boolean =
+    element.smiles.count { it == '>' } == 2
+
+/**
+ * The product label printed immediately after a reaction's picture — the same
+ * `element.formula` ("A") the in-app renderer places beside the scheme. Empty
+ * for a molecule or a blank formula.
+ *
+ * The sample's organic reactions are stored with an empty product
+ * (`substrate>>`) by design: the learner picks the product from the options, so
+ * `A` is the label of the answer to find, not a missing molecule.
+ */
+internal fun chemProductLabel(element: ContentElement.ChemElement): String =
+    if (isReactionScheme(element) && element.formula.isNotBlank()) element.formula else ""
 
 private const val PNG_DATA_URI_PREFIX = "data:image/png;base64,"
 private val PNG_BASE64_PAYLOAD = Regex("^[A-Za-z0-9+/]+={0,2}$")

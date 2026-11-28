@@ -689,11 +689,11 @@ internal fun applyCellChemDiagram(
  * Applies a renderer capture to the draft.
  *
  * A capture that changes a diagram is persisted content too: the PNG is what
- * the DOCX/HTML/PDF exports draw, so the draft must become dirty and a later
- * Save (or a Prev/Next auto-save) must write it. This matters most for a
- * capture that arrives *after* the user pressed Save: the write already
- * snapshotted the form without the PNG, so only a dirty draft can carry it to
- * the next write.
+ * the DOCX/HTML/PDF exports draw. It therefore dirties the draft once the
+ * draft is already dirty or has been saved once, so the next Save (or a
+ * Prev/Next auto-save) writes it. Before the first save on a clean draft it is
+ * preview-load work: the content (and the caller's clean baseline) moves
+ * without making a read-only visit look edited.
  *
  * A capture that changes nothing — the same raster arriving again, a stale
  * key, an invalid payload — leaves the state instance and the clean flag
@@ -702,10 +702,12 @@ internal fun applyCellChemDiagram(
 internal fun applyChemCapture(
     s: EditorUiState,
     chemKey: String,
-    pngDataUri: String
+    pngDataUri: String,
+    savedOnce: Boolean = true
 ): EditorUiState {
     val next = applyKeyedChemDiagram(s, chemKey, pngDataUri)
-    return if (next === s) s else next.copy(isDirty = true)
+    if (next === s) return s
+    return if (s.isDirty || savedOnce) next.copy(isDirty = true) else next.copy(isDirty = false)
 }
 
 /**
@@ -961,13 +963,24 @@ class EditorViewModel(
      */
     private var cleanSignature: String = ""
 
+    /**
+     * True once this draft has been persisted at least once. A renderer
+     * capture on a never-saved draft is merely the preview rasterising what it
+     * was handed; it must not make a read-only visit look edited. After the
+     * first save a fresh capture is new content the next save must write, so
+     * it dirties the draft. Reset when a different draft is loaded.
+     */
+    private var savedOnce: Boolean = false
+
     private fun snapshotClean() {
         cleanSignature = editorSnapshot(_state.value)
+        savedOnce = false
         _state.update { it.copy(isDirty = false) }
     }
 
     private fun markClean(signature: String) {
         cleanSignature = signature
+        savedOnce = true
         // Fields stay editable while the write is in flight. Recompute against
         // the CURRENT form: a keystroke made after the snapshot must stay dirty
         // (it was not persisted), never be cleared by a stale "clean" flag.
@@ -1603,17 +1616,32 @@ class EditorViewModel(
     }
 
     /**
-     * Write-back for the shared renderer's captured PNG. A capture that
-     * changes a diagram is stored content (it is what the next export draws),
-     * so it marks the draft dirty; otherwise a capture that finishes after
-     * Save would never be written. It bypasses [updateState] only to keep
-     * the rest of the dirty decision in [applyChemCapture]; a no-op leaves
-     * the state instance untouched, so repeated capture callbacks do not
-     * churn composition. The key also carries the SMILES the PNG was drawn
-     * from; stale captures are rejected by [applyKeyedChemDiagram].
+     * Write-back for the shared renderer's captured PNG. Unlike every other
+     * block edit this is not a user action, so it does not go through
+     * [updateState]. Before the first save the capture is preview-load work on
+     * a clean draft: it updates the content (and the clean baseline) without
+     * making a read-only visit look edited. Once the draft has been saved, or
+     * is already dirty, a new capture is content the next save must write, so
+     * it dirties the draft. A no-op leaves the state instance untouched, and an
+     * identical repeat capture therefore changes nothing. The key also carries
+     * the SMILES the PNG was drawn from; stale captures are rejected by
+     * [applyKeyedChemDiagram].
      */
     fun updateChemDiagram(chemKey: String, pngDataUri: String) {
-        _state.update { applyChemCapture(it, chemKey, pngDataUri) }
+        _state.update { current ->
+            val next = applyChemCapture(current, chemKey, pngDataUri, savedOnce)
+            if (next === current) {
+                current
+            } else {
+                // Clean, never-saved draft: move the clean baseline with the
+                // captured raster so a later edit is measured against what the
+                // draft now contains, and a later save includes it.
+                if (!next.isDirty && !current.isDirty && !savedOnce) {
+                    cleanSignature = editorSnapshot(next)
+                }
+                next
+            }
+        }
     }
 
     private fun updateState(block: (EditorUiState) -> EditorUiState) {

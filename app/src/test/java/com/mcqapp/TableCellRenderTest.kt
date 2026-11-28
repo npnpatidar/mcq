@@ -403,7 +403,7 @@ class TableCellRenderTest {
         // unquoted tag; normalisation must still canonicalise it.)
         val src = "data:image/png;base64,AAAA"
         val cell = "<img <img src=$src>"
-        assertEquals(cellImageTag(src), normalizeCellImages(cell, { it }) { fail(it) })
+        assertEquals(" ${cellImageTag(src)}", normalizeCellImages(cell, { it }) { fail(it) })
     }
 
     @Test

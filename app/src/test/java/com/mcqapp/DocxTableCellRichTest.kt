@@ -231,14 +231,11 @@ class DocxTableCellRichTest {
     }
 
     /**
-     * KNOWN DEPENDENCY: the payload-freshness canon (another branch) still
-     * types an unsupported cell formula as a math part while the writer emits
-     * its linear text as prose, so the untouched export reads as edited and
-     * the payload is ignored. This test pins the required end state: metadata
-     * (marks, difficulty, tags) survives such a cell. Enable it when that
-     * canon fix lands; do not weaken the assertion.
+     * An unsupported cell formula prints as linear text. The freshness canon
+     * must use the writer's own decision (math part only when OMML converts),
+     * so the untouched export stays fresh and metadata (marks, difficulty,
+     * tags) rides the payload.
      */
-    @org.junit.Ignore("depends on the payload canon fix for unsupported cell MathML")
     @Test
     fun anUnsupportedCellFormulaRoundTripKeepsMetadata() {
         val unsupported = "<math><munder><mi>x</mi><mo>^</mo></munder></math>"

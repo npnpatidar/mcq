@@ -1256,19 +1256,19 @@ Modal bottom sheet (Anki's Card Info):
 
 **Passage Dropdown** (if category has passages or question assigned): `Remove from passage` + passages in current category.
 
-**Question Body — BlockListEditor:** Label `Question`. Blocks: Text, Image, Table, Formula (MathML/LaTeX via MathLiveEditor), Chemistry (SMILES). Per-block: add/move/remove/edit. Images: gallery picker → `data:` URI. Tables: cell add/remove row/col, edit cell.
+**Question Body — BlockListEditor:** Label `Question`. Blocks: Text, Image, Table, Formula (MathML/LaTeX via MathLiveEditor), Chemistry (SMILES). Per-block: add/move/remove/edit. Images: gallery picker → `data:` URI. Tables: cell add/remove row/col, edit cell; each cell has a Text / Formula / Image / Structure menu (see [Rich table cells](#rich-table-cells)).
 
 **Legacy Question Image** (read-only): if pre-block image exists → label + image + Remove.
 
 **Preview Card:** read-only render of blocks.
 
-**Options Section:** Label `Options`, hint `Tick the correct answer(s)`. Per option: checkbox (correct), title `Option (a)`, move up/down, Remove (only if > 2), BlockListEditor (no table cell editing), legacy image row. **Add Option** button.
+**Options Section:** Label `Options`, hint `Tick the correct answer(s)`. Per option: checkbox (correct), title `Option (a)`, move up/down, Remove (only if > 2), BlockListEditor (table cells editable per cell), legacy image row. **Add Option** button.
 
 **Difficulty Dropdown:** Easy / Medium / Hard / Very Hard.
 
 **Marks Field:** `Marks (default 1)`, single line, non-negative decimal.
 
-**Explanation Section:** Label `Explanation`, BlockListEditor (tables read-only), legacy image row.
+**Explanation Section:** Label `Explanation`, BlockListEditor with the same table cell editor, legacy image row.
 
 **Tags:** Existing tags as `InputChip` (tap → remove). Add tag: field + `Add` button.
 
@@ -1635,8 +1635,9 @@ The structure marker is the only non-obvious shape:
 ```
 
 - `data-smiles` is required and is what the renderer draws; the other four
-  attributes are optional. `data-png` is a reserved export-cache slot and is
-  not written by this change; the sample bank never ships one.
+  attributes are optional. `data-png` is an export cache: when it holds a
+  valid PNG payload, exports print that picture next to the handles; nothing
+  in the editor writes it for a cell yet, and the sample bank never ships one.
 - The body is the handles text `caption formula SMILES`. Every surface that
   does not understand the marker (the native cell, search, a text-only surface,
   an older build) prints that, never raw tags or base64.
@@ -1681,8 +1682,49 @@ picture contributes no search text. On import a picture over 800 px is
 downscaled; it becomes `[image]` only when the scaled result is still over
 512 KB, unreadable or torn.
 
-**Editor and exports:** per-cell authoring and rich-cell handling in the
-document exporters are not part of this change.
+**Editor:** every cell has one menu — **Text**, **Formula**, **Image**,
+**Structure** — plus a Remove entry for each rich part it actually contains.
+Formula opens the same MathLive editor a block formula uses and stores the
+MathML in the cell. Image uses the gallery picker, downscales past 800 px and
+refuses a result still over 512 KB with a message, inserting the canonical
+`<img>`. Structure asks for SMILES plus optional formula, caption and spoken
+label, validates the SMILES with the drawer's own rule, and inserts the marker
+through the same writer the import path uses. The field shows one opaque label
+per rich part (`[Formula]`, `[Image]`, `[Structure]`) and editing the words
+around them never rewrites a marker; a part pasted from another cell, or one
+left behind by undo after its part was deleted, is dropped instead of being
+re-attached. A rich table previews live under the grid, and the preview never
+captures or dirties the form. Stem, option and explanation tables share the
+same cell editor.
+
+**Exports:** a rich cell is handled by every document writer; plain tables keep
+their old fast path.
+
+| Surface | Prose | Formula | Picture | Structure |
+|---|---|---|---|---|
+| HTML / print | inline HTML | typeset MathML | inline picture, capped height | handles + `data-png` picture when present |
+| DOCX | runs | inline OMML (unsupported MathML falls back to linear text with a warning) | embedded `word/media` picture, clamped to the column | handles + PNG picture when present |
+| PDF | runs | real typeset formula fitted to the column | scaled inside the cell, never upscaled | handles + PNG when present |
+| Anki | inline HTML | normalised MathML | real media file (`mcqapp-N.png`), never base64 | handles + PNG media when present |
+| In-app | mixed WebView | typeset MathML | inline picture | drawn live by SmilesDrawer |
+
+A table containing a formula, picture or structure takes the WebView path;
+plain tables stay native. A table that draws a structure switches to a fixed
+layout with wrapped labels so a wide drawing cannot widen the page.
+
+**Exports print a structure as a drawing only when a captured PNG exists.** The
+app captures a standalone structure while its editor preview is open; cell
+captures are not produced yet, so a structure in a table cell prints its
+readable handles in every export. Exports never emit raw markup, SMILES as a
+picture or base64 text; the handles are always there as the fallback. Rendering
+structures at export time (so no stored capture is needed) is the first item of
+the next release.
+
+**Round trips:** an untouched DOCX round trip restores the exact cell strings
+(pictures and structures are carried by small hash-verified descriptors in the
+hidden payload) and keeps marks, difficulty and tags. A cell edited in Word
+degrades to its visible content and loses the payload metadata. A descriptor
+that cannot be resolved never reaches storage.
 
 ### Attempt Schema (`AttemptDto`)
 

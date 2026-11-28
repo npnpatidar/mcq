@@ -34,10 +34,13 @@ import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.normalizeMathText
+import com.mcqapp.domain.BareMathScan
 import com.mcqapp.domain.CELL_MATH_PATTERN
 import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.scanBareMath
 import com.mcqapp.domain.tableCellParts
+import com.mcqapp.domain.wrapBareMathRun
 import kotlinx.coroutines.delay
 
 /** Which renderer [ContentElements] picks, exposed for pure-JVM tests. */
@@ -70,13 +73,25 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
     else -> ContentRenderPath.NATIVE
 }
 
+/**
+ * True when [cell] carries something only the mixed WebView page can draw:
+ * a formula (a complete block or a bare MathLive fragment that [tableCellParts]
+ * repairs), a portable picture, or a chemical-structure marker. Shared by the
+ * render-path choice and the rich-table layout class so the two can never
+ * disagree.
+ */
+internal fun cellIsRich(cell: String): Boolean =
+    tableCellParts(cell).any { it is CellPart.Math } ||
+        cellHasPortableImage(cell) ||
+        hasChemCell(cell)
+
 /** True when any cell of this table needs the mixed view or its asset pipeline. */
 private fun ContentElement.TableElement.needsMixedCellRendering(): Boolean =
-    rows.any { row ->
-        row.any {
-            CELL_MATH_PATTERN.containsMatchIn(it) || cellHasPortableImage(it) || hasChemCell(it)
-        }
-    }
+    rows.any { row -> row.any(::cellIsRich) }
+
+/** True when any cell of this table takes the fixed rich-table layout. */
+private fun ContentElement.TableElement.carriesRichCell(): Boolean =
+    rows.any { row -> row.any(::cellIsRich) }
 
 /** True when any cell carries a valid chemical-structure marker. */
 private fun ContentElement.TableElement.carriesChemCell(): Boolean =
@@ -926,11 +941,14 @@ internal fun mixedContentHtml(
     var chemIndex = 0
     // One drawer asset per page, and one id counter for blocks AND cell
     // structures: a structure in a cell gets the same mcq-chem-N ids a block
-    // does, so a page mixing both can never collide. The tables carrying a
-    // structure are collected once, so the page-level flag and the per-table
-    // class do not scan every cell twice.
-    val chemTables = elements.filterIsInstance<ContentElement.TableElement>()
-        .filter { it.carriesChemCell() }
+    // does, so a page mixing both can never collide. The tables are collected
+    // once each: `richTables` decides the fixed-column class and `chemTables`
+    // only drives the page-level SmilesDrawer asset. A "rich" table is any
+    // table with a formula, portable picture or structure; a plain text table
+    // keeps the browser's automatic layout.
+    val tables = elements.filterIsInstance<ContentElement.TableElement>()
+    val chemTables = tables.filter { it.carriesChemCell() }
+    val richTables = tables.filter { it.carriesRichCell() }
     val hasChem = chemTables.isNotEmpty() || elements.any { it is ContentElement.ChemElement }
     val body = buildString {
         for (element in elements) {
@@ -944,10 +962,12 @@ internal fun mixedContentHtml(
                     append(com.mcqapp.data.renderInlineHtml(element.text).replace("\n", "<br/>"))
                 is ContentElement.MathElement -> append(stripMathAttributes(element.mathml))
                 is ContentElement.TableElement -> {
-                    // Only a table that actually draws a structure switches to
-                    // fixed columns; a plain table keeps its existing layout.
+                    // A table with any rich cell takes fixed columns, so a wide
+                    // formula, picture or structure shrinks into its own
+                    // column instead of widening the page; a plain table keeps
+                    // its existing automatic layout.
                     append("<table")
-                    if (chemTables.any { it === element }) append(" class=\"mcq-chem-table\"")
+                    if (richTables.any { it === element }) append(" class=\"mcq-rich-table\"")
                     append(" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
                         append("<tr>")
@@ -1021,15 +1041,20 @@ internal fun mixedContentHtml(
         td{vertical-align:middle}
         td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}
         .mcq-chem{margin:4px 0}
-        /* A table that draws a structure gets fixed columns, so a wide drawing
-           scales down to its own column instead of widening the page. A plain
-           table keeps the browser's automatic layout above. */
-        table.mcq-chem-table{table-layout:fixed;width:100%}
+        /* A table that draws a formula, picture or structure gets fixed
+           columns, so a wide token scales down to its own column instead of
+           widening the page. A plain table keeps the browser's automatic
+           layout above. */
+        table.mcq-rich-table{table-layout:fixed;width:100%}
         /* A fixed column can be narrower than one unbreakable word: a long
-           label ("Hexatriacontane") painted straight over the next column
-           because nothing let the browser break it. Only a chem table's cells
-           get a break rule; a plain table keeps the browser's own wrapping. */
-        table.mcq-chem-table td{overflow-wrap:break-word;word-break:break-word}
+           label ("Hexatriacontane"), URL or formula run painted straight over
+           the next column because nothing let the browser break it. Anywhere
+           rather than break-word: the rich page has a bounded width, so a
+           token with no break opportunity must still wrap inside its cell. */
+        table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}
+        /* A typeset formula is an SVG with an intrinsic width; cap it to the
+           cell so a long formula word cannot widen the table or the page. */
+        table.mcq-rich-table td svg{max-width:100%;height:auto}
         /* A structure inside a cell is a block in its own row; its SVG must
            never widen the column past the table's width cap. */
         .mcq-chem-cell{display:block;max-width:100%}
@@ -1139,13 +1164,35 @@ internal fun androidx.compose.ui.graphics.Color.toCssRgba(): String {
 }
 
 /**
+ * A bare MathML run stored as a body/option/explanation `MathElement` (the
+ * same bug that hit table cells) is not a document: renderers look for
+ * `<math>` and print the raw tags otherwise. This returns [mathml] as one
+ * complete block when the whole value is a balanced allow-listed run, and
+ * [mathml] unchanged for a complete block, prose or anything ambiguous.
+ *
+ * Attributes are stripped and bare text tokenized, matching the canonical
+ * form [stripMathAttributes] produces, so a repaired legacy element and a
+ * freshly committed formula render identically.
+ */
+internal fun repairStoredMathml(mathml: String): String {
+    val trimmed = mathml.trim()
+    if (trimmed.isEmpty() || CELL_MATH_PATTERN.containsMatchIn(trimmed)) return mathml
+    val scan = scanBareMath(trimmed, 0)
+    if (scan !is BareMathScan.Found || scan.end != trimmed.length) return mathml
+    val (sanitized, escapedUnknownTag) = com.mcqapp.data.sanitizeMathmlReporting(scan.run)
+    if (escapedUnknownTag) return mathml
+    val normalized = com.mcqapp.data.normalizeMathText(sanitized)
+    return wrapBareMathRun(normalized, scan.soleMrow)
+}
+
+/**
  * MathJax's MathML input is strict about the root `<math>` element and
  * doesn't handle MathLive's `<semantics>`/`<annotation>` wrapper. Strip
  * `display`/`xmlns` from `<math>`, unwrap `<semantics>` (dropping
  * `<annotation>`), and ensure an `<mrow>` wrapper remains.
  */
 internal fun stripMathAttributes(mathml: String): String {
-    val trimmed = mathml.trim()
+    val trimmed = repairStoredMathml(mathml).trim()
     // Surrounding prose is kept, escaped as text (as splitTextRuns does), not
     // dropped: the function used to keep only the first <math> block and
     // silently discard everything around it (consolidated_bugs.md G7).

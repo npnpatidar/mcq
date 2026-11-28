@@ -1505,15 +1505,15 @@ class EditorViewModel(
     // index that id maps to is read from the current state when it fires.
 
     fun updateMathBody(blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Body(blockId), mml)
+        applyMathTarget(it, MathTarget.Body(blockId), normalizeFormulaMathml(mml))
     }
 
     fun updateMathExplanation(blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Explanation(blockId), mml)
+        applyMathTarget(it, MathTarget.Explanation(blockId), normalizeFormulaMathml(mml))
     }
 
     fun updateMathOption(optionId: String, blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Option(optionId, blockId), mml)
+        applyMathTarget(it, MathTarget.Option(optionId, blockId), normalizeFormulaMathml(mml))
     }
 
     /**

@@ -82,6 +82,10 @@ class PdfTableCellContentTest {
     private val formula =
         "<math><mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow></math>"
 
+    /** The exact shape the buggy editor build stored: no `<math>` root. */
+    private val formulaWithoutRoot =
+        "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+
     /** The one text run of a cell that draws no picture. */
     private fun cellSpanned(cell: String, width: Float = 400f): Spanned {
         val blocks = buildCellBlocks(cell, width, paint())
@@ -95,6 +99,54 @@ class PdfTableCellContentTest {
     // ------------------------------------------------------------------
     // Content grammar, formatting and fallbacks
     // ------------------------------------------------------------------
+
+    /**
+     * The owner-reported bug: a bare MathLive fragment stored in a cell used to
+     * print as raw XML. The cell grammar repairs it, so the PDF gets one fitted
+     * [MathSpan] and the prose around it, never the markup or a marker.
+     */
+    @Test
+    fun aBareMathLiveFragmentInACellDrawsOneMathSpanBesideItsProse() {
+        val cell = "Find x $formulaWithoutRoot now"
+        val blocks = buildCellBlocks(cell, 200f, paint())
+        try {
+            val text = textOf(blocks)
+            assertTrue("prose before survives: $text", text.contains("Find x"))
+            assertTrue("prose after survives: $text", text.contains("now"))
+            assertFalse("never raw markup: $text", text.contains("mrow"))
+            assertFalse("never the fallback marker: $text", text.contains("[formula"))
+            assertEquals("the repaired fragment is one MathSpan", 1, spansOf(blocks).size)
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    /**
+     * `<mspace/>` is one empty atom: the sanitizer used to re-emit it as an
+     * open `<mspace>` that swallowed every following sibling, so the PDF drew
+     * a truncated formula.
+     */
+    @Test
+    fun aMathSpaceInACellStillDrawsTheNextAtom() {
+        val cell = "<mi>a</mi><mspace width=\"0.5em\"/><mi>b</mi>"
+        val blocks = buildCellBlocks(cell, 300f, paint())
+        try {
+            val text = blocks.filterIsInstance<CellBlock.Text>().single().layout.text as Spanned
+            val span = text.getSpans(0, text.length, MathSpan::class.java).single()
+            val canvas = RecordingTextCanvas()
+            span.draw(
+                canvas, text,
+                text.getSpanStart(span), text.getSpanEnd(span),
+                0f, 0, 0, 0, paint()
+            )
+            assertTrue("the atom before the space is drawn: ${canvas.texts}",
+                canvas.texts.contains("a"))
+            assertTrue("the atom after the space is drawn: ${canvas.texts}",
+                canvas.texts.contains("b"))
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
 
     @Test
     fun textImageFormulaAndChemCellDrawsEverySupportedPiece() {

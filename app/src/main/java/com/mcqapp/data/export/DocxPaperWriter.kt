@@ -609,6 +609,9 @@ object DocxPaperWriter {
                 is ContentElement.TextElement ->
                     items.add(Runs(inlineRuns(element.text), breaksParagraph = !flowsInline))
                 is ContentElement.MathElement -> {
+                    // mathMlToOmml is deliberately lenient about a rootless
+                    // forest (a legacy bare MathLive run), so Word needs no
+                    // separate read-time repair here.
                     val omml = mathMlToOmml(element.mathml)
                     if (omml != null) {
                         items.add(Math(omml))
@@ -617,7 +620,13 @@ object DocxPaperWriter {
                             "An equation uses constructs Word export does not support " +
                                 "and was kept as plain text — check it after re-import."
                         )
-                        items.add(Runs(listOf(RunSpec(mathMlLinearText(element.mathml), RunFlags()))))
+                        items.add(
+                            Runs(
+                                listOf(
+                                    RunSpec(mathMlLinearText(element.mathml), RunFlags())
+                                )
+                            )
+                        )
                     }
                 }
                 is ContentElement.ImageElement ->

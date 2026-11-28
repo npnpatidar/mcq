@@ -542,9 +542,8 @@ private fun TableBlockEditor(
             blockId = blockId,
             onDismiss = { formulaTarget = null },
             onCommit = { mathml ->
-                onSetCellPart?.invoke(
-                    blockId, target.row, target.col, target.partIndex,
-                    CellEditPart.Formula(mathml)
+                cellFormulaCommit(
+                    blockId, target.row, target.col, target.partIndex, mathml, onSetCellPart
                 )
                 formulaTarget = null
             }

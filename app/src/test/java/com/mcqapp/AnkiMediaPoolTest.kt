@@ -21,6 +21,56 @@ class AnkiMediaPoolTest {
     private val otherPng = "data:image/png;base64,iVBORw0KGgo="
 
     @Test
+    fun aLegacyBareFormulaElementBecomesRealMathInTheDeck() {
+        val pool = AnkiMediaPool()
+        try {
+            val html = pool.elementsToHtml(
+                listOf(ContentElement.MathElement("<msup><mi>x</mi><mn>2</mn></msup>")),
+                null
+            )
+            assertTrue("the run is a complete block: $html", html.contains("<math><mrow><msup>"))
+            assertFalse("never escaped tag text: $html", html.contains("&lt;msup"))
+            // A complete block is untouched.
+            assertEquals(
+                "<math><mi>y</mi></math>",
+                pool.elementsToHtml(
+                    listOf(ContentElement.MathElement("<math><mi>y</mi></math>")),
+                    null
+                )
+            )
+        } finally {
+            pool.close()
+        }
+    }
+
+    @Test
+    fun aBareMathLiveFragmentInACellBecomesRealMathInTheDeck() {
+        val cell = "Find <msup><mi>x</mi><mn>2</mn></msup> here"
+        val html = AnkiMediaPool().elementsToHtml(
+            listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+            null
+        )
+        assertTrue("the fragment becomes live MathML: $html", html.contains("<math><mrow><msup>"))
+        assertTrue("prose before survives: $html", html.contains("Find "))
+        assertTrue("prose after survives: $html", html.contains(" here"))
+        assertFalse("never escaped tag text: $html",
+            html.contains("&lt;msup") || html.contains("&lt;mrow"))
+        assertFalse("never the fallback marker: $html", html.contains("[formula]"))
+    }
+
+    @Test
+    fun aRepairedFragmentDropsAttributesBeforeItReachesTheDeck() {
+        val cell = "<mi onclick=\"alert(1)\" mathvariant=\"bold\">x</mi>"
+        val html = AnkiMediaPool().elementsToHtml(
+            listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+            null
+        )
+        assertTrue("still a formula: $html", html.contains("<math><mrow><mi>x</mi></mrow></math>"))
+        assertFalse("no handler leaks: $html", html.contains("onclick"))
+        assertFalse("no attribute leaks: $html", html.contains("mathvariant"))
+    }
+
+    @Test
     fun inlineFormattingTagsSurviveInFields() {
         val html = AnkiMediaPool().elementsToHtml(
             listOf(ContentElement.TextElement("H<sub>2</sub>O <strong>x</strong> <em>y</em> <del>z</del>")),

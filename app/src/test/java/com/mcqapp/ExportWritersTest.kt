@@ -13,6 +13,7 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_FORMULA_MARKER
 import com.mcqapp.util.CELL_IMAGE_ALT
 import com.mcqapp.util.CELL_IMAGE_MARKER
 import com.mcqapp.util.CELL_IMAGE_STYLE
@@ -642,14 +643,85 @@ class ExportWritersTest {
 
         assertTrue(
             "the chem table is marked: $html",
-            html.contains("<table class=\"mcq-chem-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
         )
         // The rules the class relies on travel in the page's own stylesheet.
-        assertTrue(html.contains("table.mcq-chem-table{table-layout:fixed;width:100%}"))
-        assertTrue(html.contains("table.mcq-chem-table td{overflow-wrap:break-word}"))
+        assertTrue(html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
+        assertTrue(html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
         assertTrue(
-            html.contains("table.mcq-chem-table td img{max-width:100%;height:auto;max-height:240px}")
+            html.contains("table.mcq-rich-table td img{max-width:100%;height:auto;max-height:240px}")
         )
+    }
+
+    @Test
+    fun htmlTypesetsABareMathLiveFragmentAndKeepsItsProse() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+        val html = htmlOf(cellChemPaper("Find x = $bare now"))
+        assertTrue("the repaired table is rich: $html",
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"))
+        assertTrue("one complete formula: $html", html.contains("<math><mrow><msup>"))
+        assertTrue("prose before survives: $html", html.contains("Find x = "))
+        assertTrue("prose after survives: $html", html.contains(" now"))
+        assertFalse("never escaped tag text: $html", html.contains("&lt;mrow"))
+        assertFalse("never escaped atom: $html", html.contains("&lt;msup"))
+        assertFalse("never the fallback marker: $html", html.contains(CELL_FORMULA_MARKER))
+    }
+
+    @Test
+    fun htmlGivesAFormulaTableTheFixedRichLayout() {
+        val html = htmlOf(cellChemPaper("<math><mi>v</mi></math> m/s"))
+        assertTrue(
+            "the formula table is rich: $html",
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        assertTrue(html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
+        assertTrue(html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
+        assertTrue(html.contains("table.mcq-rich-table td svg{max-width:100%;height:auto}"))
+        // The export page has no MathJax, so native MathML is made into a
+        // bounded box too.
+        assertTrue(html.contains(
+            "math { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }"
+        ))
+    }
+
+    @Test
+    fun htmlKeepsAMathSpaceMeaningfulAndRepairsALegacyBareElement() {
+        // A cell formula using `<mspace/>`: the tag is emitted as one empty
+        // element, so the atom after it is not swallowed.
+        val spaced = htmlOf(cellChemPaper("a <mi>a</mi><mspace width=\"0.5em\"/><mi>b</mi> b"))
+        assertTrue("space preserved: $spaced", spaced.contains("<mspace/>"))
+        assertTrue("sibling survives: $spaced", spaced.contains("<mi>b</mi>"))
+        assertFalse("never an open space tag: $spaced", spaced.contains("<mspace>"))
+
+        // A bare run stored as a body MathElement is repaired too.
+        val paper = PaperDto(
+            id = "p1",
+            title = "Legacy",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Solve?",
+                            elements = listOf(
+                                ContentElement.TextElement("Solve: "),
+                                ContentElement.MathElement("<msup><mi>x</mi><mn>2</mn></msup>")
+                            ),
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        assertTrue(
+            "the legacy run is a complete block: $html",
+            html.contains("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>")
+        )
+        assertFalse("never raw tag text: $html", html.contains("&lt;msup"))
     }
 
     @Test
@@ -684,7 +756,7 @@ class ExportWritersTest {
         )
         val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
 
-        val tableAt = html.indexOf("<table class=\"mcq-chem-table\"")
+        val tableAt = html.indexOf("<table class=\"mcq-rich-table\"")
         val imageAt = html.indexOf("<img src=\"$wide\"")
         val closeAt = html.indexOf("</table>")
         assertTrue("the chem table is fixed-layout: $html", tableAt >= 0)
@@ -694,7 +766,7 @@ class ExportWritersTest {
         )
         assertTrue(
             "its size is capped by the cell rule: $html",
-            html.contains("table.mcq-chem-table td img{max-width:100%;height:auto;max-height:240px}")
+            html.contains("table.mcq-rich-table td img{max-width:100%;height:auto;max-height:240px}")
         )
     }
 

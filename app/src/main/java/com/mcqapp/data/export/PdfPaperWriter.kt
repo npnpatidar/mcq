@@ -33,6 +33,7 @@ import com.mcqapp.util.cellSegments
 import com.mcqapp.util.forEachCellImage
 import com.mcqapp.util.mapCellImages
 import com.mcqapp.util.portableCellImageSrc
+import com.mcqapp.util.repairStoredMathml
 import java.io.OutputStream
 
 /**
@@ -270,7 +271,12 @@ object PdfPaperWriter {
         }
     }
 
-    internal class Writer(
+    /**
+     * `open` only so a test can observe the run `elements` hands to
+     * [paragraph]: Robolectric's `StaticLayout.draw` never reaches the canvas,
+     * so a recording page cannot prove the writer built a `MathSpan`.
+     */
+    internal open class Writer(
         private val pages: PdfPageSink,
         private val twoColumn: Boolean
     ) {
@@ -330,7 +336,7 @@ object PdfPaperWriter {
             if (twoColumn && y > MARGIN && y + minRemaining > BOTTOM) advance()
         }
 
-        fun paragraph(
+        open fun paragraph(
             text: CharSequence,
             size: Float,
             style: Int,
@@ -477,19 +483,7 @@ object PdfPaperWriter {
                         if (rich.isNotBlank()) run.append(rich)
                     }
                     is ContentElement.MathElement -> {
-                        val nodes = mathMlToNodes(element.mathml)
-                        if (nodes != null) {
-                            val start = run.length
-                            run.append("\uFFFC")
-                            run.setSpan(
-                                MathSpan(nodes, 11f),
-                                start, run.length,
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                            )
-                        } else {
-                            val linear = mathToLinear(element.mathml)
-                            run.append(if (linear.isNotBlank()) "[formula: $linear]" else "[formula]")
-                        }
+                        appendElementMath(run, element.mathml)
                     }
                     else -> {
                         flushRun()
@@ -1344,6 +1338,31 @@ private val entityPattern = Regex("&(#\\d+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);")
  * renderer: prefers the TeX annotation MathLive embeds
  * (`x^{2} + 2x + 1 = 0`), else strips tags and decodes entities.
  */
+/**
+ * One top-level formula appended to the flowing run [PdfPaperWriter.Writer.elements]
+ * draws. A legacy bare fragment is repaired to a complete block first: the PDF
+ * parser starts at the outer `<math>` and would otherwise print the
+ * `[formula: …]` fallback instead of typesetting it. Internal so a test can
+ * assert the run the writer builds (`MathSpan` vs fallback) without a real
+ * `PdfDocument`.
+ */
+internal fun appendElementMath(run: SpannableStringBuilder, mathml: String) {
+    val repaired = repairStoredMathml(mathml)
+    val nodes = mathMlToNodes(repaired)
+    if (nodes != null) {
+        val start = run.length
+        run.append('\uFFFC')
+        run.setSpan(
+            MathSpan(nodes, 11f),
+            start, run.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    } else {
+        val linear = mathToLinear(repaired)
+        run.append(if (linear.isNotBlank()) "[formula: $linear]" else "[formula]")
+    }
+}
+
 internal fun mathToLinear(mathml: String): String {
     annotationTex(mathml)?.let { return it }
     if (!mathml.contains('<') && !mathml.contains('&')) return mathml.trim()

@@ -250,7 +250,9 @@ fun MathLiveEditor(
                     // Bridge callbacks arrive off the main thread.
                     view.post {
                         userEdited.value = true
-                        emitMathMl(blockId, mml)
+                        // MathLive reports an atom run, not a document; store
+                        // the canonical block every surface recognises.
+                        emitMathMl(blockId, normalizeFormulaMathml(mml))
                     }
                 }
 

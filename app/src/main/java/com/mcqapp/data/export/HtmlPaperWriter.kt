@@ -255,16 +255,16 @@ object HtmlPaperWriter {
                 is ContentElement.TextElement -> sb.append(renderInlineHtml(element.text))
                 is ContentElement.ImageElement -> appendImage(sb, element.src)
                 is ContentElement.TableElement -> {
-                    // A table carrying a chemical structure switches to fixed
-                    // columns, exactly as the in-app page does: under auto
-                    // layout a percentage max-width does not constrain
-                    // intrinsic sizing, so one wide structure PNG (or a wide
-                    // cell picture) pushed the grid past the page's cap. A
-                    // table with no chem cell keeps the old markup byte for
+                    // A table with any rich cell switches to fixed columns,
+                    // exactly as the in-app page does: under auto layout a
+                    // percentage max-width does not constrain intrinsic
+                    // sizing, so one wide formula, structure PNG or cell
+                    // picture pushed the grid past the page's cap. A table
+                    // with only plain text keeps the old markup byte for
                     // byte, so its existing layout is untouched.
                     sb.append("<table")
-                    if (element.rows.any { row -> row.any { com.mcqapp.util.hasChemCell(it) } }) {
-                        sb.append(" class=\"mcq-chem-table\"")
+                    if (element.rows.any { row -> row.any { com.mcqapp.util.cellIsRich(it) } }) {
+                        sb.append(" class=\"mcq-rich-table\"")
                     }
                     sb.append(" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
                     for (row in element.rows) {
@@ -287,7 +287,11 @@ object HtmlPaperWriter {
                     }
                     sb.append("</table>")
                 }
-                is ContentElement.MathElement -> sb.append(com.mcqapp.data.sanitizeMathml(element.mathml))
+                is ContentElement.MathElement -> sb.append(
+                    com.mcqapp.data.sanitizeMathml(
+                        com.mcqapp.util.repairStoredMathml(element.mathml)
+                    )
+                )
                 is ContentElement.ChemElement -> sb.append(chemElementHtml(element))
             }
         }
@@ -356,13 +360,20 @@ ul.opts li { padding: 2px 0; }
 ul.opts li.correct { color: #2E7D32; font-weight: bold; }
 ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
-/* A table holding a chemical structure takes fixed columns, like the in-app
-   page: auto layout lets a wide drawing PNG widen the whole grid past the
-   body cap, because a percentage max-width does not constrain intrinsic
-   sizing. Plain tables keep the auto layout above. */
-table.mcq-chem-table{table-layout:fixed;width:100%}
-table.mcq-chem-table td{overflow-wrap:break-word}
-table.mcq-chem-table td img{max-width:100%;height:auto;max-height:240px}
+/* The export page has no MathJax: the browser lays out native MathML, which
+   has no built-in cap. Inline-block + max-width makes the formula a box the
+   page can constrain; overflow-x keeps a pathologically wide formula
+   scrollable inside its own box instead of widening the page. */
+math { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }
+math[display="block"] { display: block; overflow-x: auto; }
+/* A table holding a formula, picture or chemical structure takes fixed
+   columns, like the in-app page: auto layout lets a wide drawing or formula
+   widen the whole grid past the body cap, because a percentage max-width does
+   not constrain intrinsic sizing. Plain tables keep the auto layout above. */
+table.mcq-rich-table{table-layout:fixed;width:100%}
+table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}
+table.mcq-rich-table td img{max-width:100%;height:auto;max-height:240px}
+table.mcq-rich-table td svg{max-width:100%;height:auto}
 .answer { color: #2E7D32; }
 .passage { background: #f5f5f5; border-left: 3px solid #1976D2; padding: 8px 12px;
   margin: 0 0 8px 0; border-radius: 4px; }

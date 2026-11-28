@@ -3,6 +3,9 @@ package com.mcqapp
 import com.mcqapp.data.sanitizeMathml
 import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.MAX_BARE_MATH_RUN_CHARS
+import com.mcqapp.domain.scanEscapedMathTag
+import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.tableCellParts
 import com.mcqapp.util.CELL_FORMULA_MARKER
 import com.mcqapp.util.CELL_IMAGE_ALT
@@ -637,5 +640,344 @@ class TableCellRenderTest {
                 listOf(CELL_FORMULA_MARKER, escaped)
             ))))
         )
+    }
+
+    // ---- bare MathLive fragments stored by the buggy build ----------------
+
+    /**
+     * MathLive's `getValue('math-ml')` is an atom run, not a document: the
+     * buggy build stored `<mrow>…</mrow>` (and sibling runs) verbatim, so
+     * every surface printed the raw XML and the column widened to it.
+     */
+    @Test
+    fun `a bare mrow fragment is repaired into one formula in place`() {
+        val fragment = "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+        val cell = "Solve $fragment = 0"
+        val parts = tableCellParts(cell)
+        assertEquals(3, parts.size)
+        assertEquals(CellPart.Text("Solve "), parts[0])
+        assertEquals(
+            CellPart.Math("<math><mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow></math>"),
+            parts[1]
+        )
+        assertEquals(CellPart.Text(" = 0"), parts[2])
+        // The native/text surfaces see the marker, never the bare tag text.
+        assertEquals("Solve $CELL_FORMULA_MARKER = 0", sanitizeTableCell(cell))
+        // And the table now needs the mixed renderer, which can typeset it.
+        assertEquals(
+            ContentRenderPath.MIXED,
+            contentRenderPath(listOf(ContentElement.TableElement(listOf(listOf(cell)))))
+        )
+    }
+
+    @Test
+    fun `sibling bare elements are wrapped in one mrow`() {        val cell = "<msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn>"
+        assertEquals(
+            listOf(
+                CellPart.Math(
+                    "<math><mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow></math>"
+                )
+            ),
+            tableCellParts(cell)
+        )
+        // A lone token element is a valid run too.
+        assertEquals(
+            listOf(CellPart.Math("<math><mrow><mi>x</mi></mrow></math>")),
+            tableCellParts("<mi>x</mi>")
+        )
+    }
+
+    @Test
+    fun `a complete math block is never rewrapped by the repair`() {
+        val cell = "<math display=\"block\"><mi>x</mi></math>"
+        assertEquals(listOf(CellPart.Math(cell)), tableCellParts(cell))
+    }
+
+    @Test
+    fun `two bare formulas in one cell stay separate`() {
+        assertEquals(
+            listOf(
+                CellPart.Math("<math><mrow><mi>a</mi></mrow></math>"),
+                CellPart.Text(" and "),
+                CellPart.Math("<math><mrow><mi>b</mi></mrow></math>")
+            ),
+            tableCellParts("<mi>a</mi> and <mi>b</mi>")
+        )
+    }
+
+    @Test
+    fun `a newline between bare siblings does not split the formula`() {
+        assertEquals(
+            listOf(CellPart.Math("<math><mrow><mi>x</mi>\n<mo>+</mo><mn>1</mn></mrow></math>")),
+            tableCellParts("<mi>x</mi>\n<mo>+</mo><mn>1</mn>")
+        )
+    }
+
+    @Test
+    fun `a bare fragment beside a portable picture keeps both parts`() {
+        val cell = "<msup><mi>x</mi><mn>2</mn></msup> " +
+            "<img src=\"data:image/png;base64,AAAA\"/>"
+        val parts = tableCellParts(cell)
+        assertEquals(2, parts.size)
+        assertEquals(
+            CellPart.Math("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>"),
+            parts[0]
+        )
+        assertTrue("the picture stays prose: ${parts[1]}", parts[1] is CellPart.Text)
+        // Text-only surfaces: formula marker then picture marker.
+        assertEquals("$CELL_FORMULA_MARKER $CELL_IMAGE_MARKER", sanitizeTableCell(cell))
+    }
+
+    @Test
+    fun `a bare fragment beside a chem marker keeps both parts`() {
+        val chem = chemCellHtml(
+            ContentElement.ChemElement(smiles = "CCO", formula = "C2H5OH", caption = "ethanol")
+        )
+        val cell = "$chem <mi>y</mi>"
+        // The marker is prose to this grammar; the adjacent atom run is still
+        // repaired, and neither is swallowed by the other.
+        assertEquals(
+            CellPart.Math("<math><mrow><mi>y</mi></mrow></math>"),
+            tableCellParts(cell).filterIsInstance<CellPart.Math>().single()
+        )
+        val text = sanitizeTableCell(cell)
+        assertTrue("formula marker: $text", text.contains(CELL_FORMULA_MARKER))
+        assertTrue("structure handles: $text", text.contains("ethanol C2H5OH CCO"))
+        assertFalse("no raw marker: $text", text.contains("mcq-chem-cell"))
+        assertFalse("no raw tags: $text", text.contains("<mi>"))
+    }
+
+    @Test
+    fun `an unclosed or unbalanced bare fragment stays prose`() {
+        val unclosed = "<mrow><mi>x</mi>"
+        val mismatched = "<mrow><mi>x</mn></mrow>"
+        for (cell in listOf(unclosed, mismatched)) {
+            val parts = tableCellParts(cell)
+            assertEquals("stays prose: $cell", listOf(CellPart.Text(cell)), parts)
+            assertEquals(cell, sanitizeTableCell(cell))
+        }
+    }
+
+    @Test
+    fun `html, hostile tags and escaped tags inside a run keep it prose`() {
+        val bad = listOf(
+            "<mrow><b>x</b></mrow>",
+            "<mrow><span>x</span></mrow>",
+            "<mrow><img src=\"data:image/png;base64,AAAA\"/></mrow>",
+            "<mrow><script>alert(1)</script></mrow>",
+            "<mrow>&lt;mi&gt;x&lt;/mi&gt;</mrow>"
+        )
+        for (cell in bad) {
+            val parts = tableCellParts(cell)
+            assertTrue("no formula from: $cell", parts.all { it is CellPart.Text })
+            assertEquals("verbatim: $cell", cell, parts.joinToString("") { (it as CellPart.Text).html })
+        }
+        val escaped = "&lt;mrow&gt;&lt;mi&gt;x&lt;/mi&gt;&lt;/mrow&gt;"
+        assertEquals(listOf(CellPart.Text(escaped)), tableCellParts(escaped))
+        assertEquals(escaped, sanitizeTableCell(escaped))
+        // An unclosed `<mi>` after prose is not a run either.
+        val prose = "Use <mi> as the tag"
+        assertEquals(listOf(CellPart.Text(prose)), tableCellParts(prose))
+    }
+
+    @Test
+    fun `a bare run with an escaped comparison operator still repairs`() {
+        // MathLive serialises `<` in an operator as `&lt;`; that is math
+        // content, not an escaped tag, so an inequality must not fall back to
+        // prose (the owner's bug would otherwise persist for `x < 2`).
+        val cell = "<mi>x</mi><mo>&lt;</mo><mn>2</mn>"
+        assertEquals(
+            listOf(CellPart.Math("<math><mrow><mi>x</mi><mo>&lt;</mo><mn>2</mn></mrow></math>")),
+            tableCellParts(cell)
+        )
+    }
+
+    @Test
+    fun `a bare run with escaped token text still repairs`() {
+        // MathLive writes `\text{a < b}` as `&lt;` inside mtext. That is
+        // content, not escaped markup, so it must not fall back to prose.
+        val cell = "<mtext>a &lt; b</mtext>"
+        assertEquals(
+            listOf(CellPart.Math("<math><mrow><mtext>a &lt; b</mtext></mrow></math>")),
+            tableCellParts(cell)
+        )
+    }
+
+    @Test
+    fun `a self-closing math space keeps its siblings`() {
+        val cell = "<mi>a</mi><mspace/><mi>b</mi>"
+        assertEquals(
+            listOf(
+                CellPart.Math("<math><mrow><mi>a</mi><mspace/><mi>b</mi></mrow></math>")
+            ),
+            tableCellParts(cell)
+        )
+        // Whitespace before the closing `>` is still self-closing.
+        assertEquals(
+            listOf(
+                CellPart.Math("<math><mrow><mi>a</mi><mspace/><mi>b</mi></mrow></math>")
+            ),
+            tableCellParts("<mi>a</mi><mspace/ ><mi>b</mi>")
+        )
+        // A complete stored block keeps its raw form, but the HTML/text
+        // surfaces must not turn `<mspace/>` into a container.
+        val html = tableCellHtml(cell) { sanitizeMathml(it) }
+        assertTrue("space preserved: $html", html.contains("<mspace/>"))
+        assertTrue("the sibling after the space survives: $html", html.contains("<mi>b</mi>"))
+        assertFalse("never an open space tag: $html", html.contains("<mspace>"))
+    }
+
+    @Test
+    fun `a repaired run drops attributes before it reaches an export`() {
+        // Anki re-emits formula tags; a hostile stored fragment must not carry
+        // a handler into the deck.
+        val cell = "<mi onclick=\"alert(1)\" mathvariant=\"bold\">x</mi>"
+        val math = tableCellParts(cell).filterIsInstance<CellPart.Math>().single()
+        assertEquals("<math><mrow><mi>x</mi></mrow></math>", math.mathml)
+        assertFalse("no handler: ${math.mathml}", math.mathml.contains("onclick"))
+        assertFalse("no attributes: ${math.mathml}", math.mathml.contains("mathvariant"))
+    }
+
+    @Test
+    fun `sibling runs cut at the repair cap stay wholly prose`() {
+        // A run that CONTINUES past the cap must not be repaired as a prefix
+        // plus a second formula: the cap is a bound, not a split.
+        val continuing = "<mi>abcde</mi>" + "<mi>x</mi>".repeat(2_000)
+        assertTrue(continuing.length > MAX_BARE_MATH_RUN_CHARS)
+        assertEquals(listOf(CellPart.Text(continuing)), tableCellParts(continuing))
+    }
+
+    @Test
+    fun `a short run followed by long prose is still repaired`() {
+        val cell = "<mi>x</mi>" + " y".repeat(20_000)
+        val parts = tableCellParts(cell)
+        assertEquals(2, parts.size)
+        assertEquals(CellPart.Math("<math><mrow><mi>x</mi></mrow></math>"), parts[0])
+        assertTrue("the prose stays text: ${parts[1]}", parts[1] is CellPart.Text)
+    }
+
+    @Test
+    fun `a huge html tag before a complete formula does not hide it`() {
+        val image = hugeImageTag()
+        assertTrue("fixture must exceed the cap: ${image.length}",
+            image.length > MAX_BARE_MATH_RUN_CHARS)
+        val block = "<math><mrow><mi>x</mi></mrow></math>"
+        assertEquals(
+            listOf(CellPart.Text(image), CellPart.Math(block)),
+            tableCellParts(image + block)
+        )
+        assertEquals(
+            listOf(CellPart.Math(block), CellPart.Text(image)),
+            tableCellParts(block + image)
+        )
+    }
+
+    @Test
+    fun `a huge html tag before or after a bare formula does not hide it`() {
+        val image = hugeImageTag()
+        val bare = "<msup><mi>v</mi><mn>2</mn></msup>"
+        val repaired = CellPart.Math("<math><mrow><msup><mi>v</mi><mn>2</mn></msup></mrow></math>")
+        assertEquals(
+            listOf(CellPart.Text(image), repaired),
+            tableCellParts(image + bare)
+        )
+        assertEquals(
+            listOf(repaired, CellPart.Text(image)),
+            tableCellParts(bare + image)
+        )
+        // The text-only surface still shows the markers, not the tags.
+        assertEquals(
+            "$CELL_IMAGE_MARKER$CELL_FORMULA_MARKER",
+            sanitizeTableCell(image + bare)
+        )
+    }
+
+    /** A valid-shaped `<img>` tag longer than the bare-run repair cap. */
+    private fun hugeImageTag(): String =
+        "<img src=\"data:image/png;base64," + "A".repeat(17_000) + "\"/>"
+
+    @Test
+    fun `a hostile escaped-tag chunk is scanned in linear time`() {
+        // Thousands of `&lt;` starts with the only `&gt;` BEFORE them: the old
+        // lazy-looking matcher rescanned to the chunk end from every start.
+        val chunk = "&gt;" + "&lt;a".repeat(3_200)
+        val cell = "<mtext>$chunk</mtext>"
+        val scan = scanEscapedMathTag(chunk)
+        assertFalse("no allow-listed escaped tag is present", scan.found)
+        // The discriminating guard: a linear pass examines each character a
+        // bounded number of times; a rescan-from-every-`&lt;` implementation
+        // reports O(n^2) visits here.
+        assertTrue(
+            "scan visits ${scan.visits} for ${chunk.length} chars",
+            scan.visits <= 2 * chunk.length
+        )
+        val started = System.nanoTime()
+        val parts = tableCellParts(cell)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(1, parts.size)
+        assertTrue("the token text is one math run: ${parts.single()}", parts.single() is CellPart.Math)
+        assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 1_000)
+    }
+
+    @Test
+    fun `a bare run past the repair cap stays prose`() {
+        val long = "<mrow>" + "<mi>x</mi>".repeat(2_000) + "</mrow>"
+        assertTrue("fixture must exceed the cap: ${long.length}", long.length > MAX_BARE_MATH_RUN_CHARS)
+        assertEquals(listOf(CellPart.Text(long)), tableCellParts(long))
+    }
+
+    /**
+     * Every `<` that is not a tag must be visited once, not trigger a rescan
+     * of the rest of the cell: this 40 KB input used to be quadratic.
+     *
+     * The budget mirrors the chem-scan guard: 2000 ms is ~15x headroom over
+     * the linear cost (one pass, ~10 ms) while a quadratic regression takes
+     * tens of seconds, and a loaded CI runner cannot make it flaky. One
+     * measurement, no average.
+     */
+    @Test
+    fun `a hostile cell of malformed math tags stays prose and is scanned once`() {
+        val hostile = "<mi>" + "< ".repeat(20_000) + "<mo>"
+        val started = System.nanoTime()
+        assertEquals(listOf(CellPart.Text(hostile)), tableCellParts(hostile))
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("scanned a ${hostile.length}-char cell in ${elapsedMs}ms", elapsedMs < 2_000)
+    }
+
+    @Test
+    fun `the repaired form is stable and is never wrapped twice`() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>"
+        val repaired = (tableCellParts(bare).single() as CellPart.Math).mathml
+        assertEquals("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>", repaired)
+        assertEquals(listOf(CellPart.Math(repaired)), tableCellParts(repaired))
+        // Sibling atoms wrap once and stay put on the next read.
+        val siblings = "<mi>x</mi><mo>+</mo><mn>1</mn>"
+        val wrapped = (tableCellParts(siblings).single() as CellPart.Math).mathml
+        assertEquals("<math><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow></math>", wrapped)
+        assertEquals(listOf(CellPart.Math(wrapped)), tableCellParts(wrapped))
+    }
+
+    @Test
+    fun `a repaired fragment reaches every html and text surface as a formula`() {
+        val cell = "before <msup><mi>v</mi><mn>2</mn></msup> after"
+        val text = sanitizeTableCell(cell)
+        assertEquals("before $CELL_FORMULA_MARKER after", text)
+        val html = tableCellHtml(cell) { sanitizeMathml(it) }
+        assertTrue("formula live: $html", html.contains("<math><mrow><msup><mi>v</mi><mn>2</mn></msup></mrow></math>"))
+        assertFalse("never raw tag text: $html", html.contains("&lt;msup"))
+        val elements = listOf(ContentElement.TableElement(listOf(listOf(cell))))
+        val spoken = accessibleContentText(elements)
+        assertTrue("spoken around the formula: $spoken", spoken.contains("before"))
+        assertTrue("spoken around the formula: $spoken", spoken.contains("after"))
+        // The old text path treated the fragment as prose and dropped the
+        // formula, so this structural wording is what fails it now.
+        assertTrue("the structure is spoken: $spoken", spoken.contains("v superscribed 2"))
+        assertFalse("never raw tags in speech: $spoken", spoken.contains("msup"))
+        // Search flattens the stored cell too: the formula's text stays
+        // findable and no tag name leaks into the index.
+        val search = elements.searchableText
+        assertTrue("formula text is searchable: $search", search.contains("v 2"))
+        assertFalse("no markup in search: $search", search.contains("msup"))
+        assertFalse("no markup in search: $search", search.contains("<"))
     }
 }

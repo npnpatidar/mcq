@@ -383,6 +383,54 @@ class AnkiRoundTripTest {
         assertFalse(front.contains("base64"))
     }
 
+    /**
+     * A bare MathLive fragment stored by the buggy editor build must reach the
+     * deck as a real `<math>` block (the writer repairs it through the shared
+     * cell grammar), and the payload must hand the stored cell back unchanged
+     * so a re-export/re-import is stable.
+     */
+    @Test
+    fun aBareMathLiveFragmentCellExportsMathAndRoundTripsStably() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>"
+        val cell = "Find $bare here"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Math",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Tables",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Study this table",
+                            elements = listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+                            options = listOf(OptionDto("a", "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+
+        val apkg = apkgOf(paper)
+        val read = AnkiPackageReader.read(apkg)
+
+        assertEquals("every referenced media file must resolve", 0, read.missingMedia)
+        val restored = read.file.papers.single().categories.single().questions.single()
+        assertEquals(
+            "the payload returns the stored cell unchanged",
+            listOf(listOf(cell)),
+            restored.elements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        val front = collectionFields(apkg).single().substringBefore("\u001f")
+        assertTrue(front, front.contains("<table"))
+        assertTrue("the deck carries a real formula: $front", front.contains("<math><mrow>"))
+        assertFalse("no escaped tag text: $front",
+            front.contains("&lt;mrow") || front.contains("&lt;msup"))
+        assertFalse("no visible marker: $front", front.contains("[formula]"))
+    }
+
     private fun collectionSortFields(apkg: ByteArray): List<String> {
         val collection = ZipInputStream(apkg.inputStream()).use { zip ->
             var entry = zip.nextEntry

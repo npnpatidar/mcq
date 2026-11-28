@@ -938,13 +938,24 @@ class EditorViewModel(
      */
     private var cleanSignature: String = ""
 
+    /**
+     * True once this draft has been persisted at least once. A renderer
+     * capture on a never-saved draft is merely the preview rasterising what it
+     * was handed; it must not make a read-only visit look edited. After the
+     * first save a fresh capture is new content the next save must write, so
+     * it dirties the draft. Reset when a different draft is loaded.
+     */
+    private var savedOnce: Boolean = false
+
     private fun snapshotClean() {
         cleanSignature = editorSnapshot(_state.value)
+        savedOnce = false
         _state.update { it.copy(isDirty = false) }
     }
 
     private fun markClean(signature: String) {
         cleanSignature = signature
+        savedOnce = true
         // Fields stay editable while the write is in flight. Recompute against
         // the CURRENT form: a keystroke made after the snapshot must stay dirty
         // (it was not persisted), never be cleared by a stale "clean" flag.
@@ -1581,12 +1592,15 @@ class EditorViewModel(
 
     /**
      * Write-back for the shared renderer's captured PNG. Unlike every other
-     * block edit this is not a user action, so it deliberately bypasses
-     * [updateState] and preserves the dirty flag: capturing a diagram must
-     * not make a clean form look edited (or clear a real edit). A no-op leaves
-     * the state instance untouched, so repeated capture callbacks do not
-     * churn composition. The key also carries the SMILES the PNG was drawn
-     * from; stale captures are rejected by [applyKeyedChemDiagram].
+     * block edit this is not a user action, so it does not go through
+     * [updateState]. Before the first save the capture is preview-load work on
+     * a clean draft: it updates the content (and the clean baseline) without
+     * making a read-only visit look edited. Once the draft has been saved, or
+     * is already dirty, a new capture is content the next save must write, so
+     * it dirties the draft. A no-op leaves the state instance untouched, and an
+     * identical repeat capture therefore changes nothing. The key also carries
+     * the SMILES the PNG was drawn from; stale captures are rejected by
+     * [applyKeyedChemDiagram].
      */
     fun updateChemDiagram(chemKey: String, pngDataUri: String) {
         _state.update { current ->
@@ -1594,10 +1608,19 @@ class EditorViewModel(
             if (next === current) {
                 current
             } else {
-                // Keep the clean baseline in step with the captured content so
-                // a later edit-and-revert is not mistaken for a user change.
-                if (!current.isDirty) cleanSignature = editorSnapshot(next)
-                next.copy(isDirty = current.isDirty)
+                when {
+                    // Never clear a real edit, and after a save a fresh
+                    // capture belongs to the next write.
+                    current.isDirty || savedOnce -> next.copy(isDirty = true)
+                    // Clean, never-saved draft: a preview capture is not an
+                    // edit. Move the clean baseline with it so a later edit is
+                    // still measured against what the draft now contains; the
+                    // captured raster is in the DTO any later save builds.
+                    else -> {
+                        cleanSignature = editorSnapshot(next)
+                        next.copy(isDirty = false)
+                    }
+                }
             }
         }
     }

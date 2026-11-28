@@ -77,11 +77,16 @@ internal inline fun forEachCellImageSpan(
 ) {
     val length = html.length
     var i = 0
+    // Memoised "next `>` at or after the start being scanned". It only moves
+    // forward, so deciding whether any bracket is left costs one linear pass
+    // over the cell instead of one per torn `<img` start.
+    var nextBracket = html.indexOf('>')
     while (i < length) {
         if (!isImgTagStart(html, i)) {
             i++
             continue
         }
+        if (nextBracket >= 0 && nextBracket < i) nextBracket = html.indexOf('>', i)
         var j = i + IMG_TAG_LENGTH
         var quote = '\u0000'
         var quoteStart = -1
@@ -129,12 +134,16 @@ internal inline fun forEachCellImageSpan(
             val end = tagEnd + 1
             onImage(html.substring(i, end), i, end)
             i = end
-        } else if (tagEnd < 0 && quote == '\u0000' && lastValueEnd < 0) {
-            // No `>` in the rest of the cell and no quoted value to delimit the
-            // span: every remaining `<img` is a torn prefix whose unquoted
-            // `name=value` run may hold a payload. Report them in one forward
-            // pass, so a cell full of `<img ` starts is read once instead of
-            // re-reading its tail from every one.
+        } else if (tagEnd < 0 &&
+            quote == '\u0000' &&
+            lastValueEnd < 0 &&
+            nextBracket < 0
+        ) {
+            // No `>` anywhere after this start and no quoted value to delimit
+            // the span: every remaining `<img` is torn, so no later start can
+            // produce a complete tag. Report them in one forward pass, so a
+            // cell full of `<img ` starts is read once instead of re-reading
+            // its tail from every one.
             var s = i
             while (true) {
                 onImage(null, s, unquotedTagPrefixEnd(html, s + IMG_TAG_LENGTH))
@@ -178,28 +187,22 @@ internal inline fun forEachCellImageSpan(
                 // and never a payload — stays in the cell.
                 else -> unquotedTagPrefixEnd(html, i + IMG_TAG_LENGTH)
             }
-            // Resume at the last nested `<img` only when it lies beyond the
-            // span already reported; otherwise that start is inside the span
-            // and must not be reported twice. The tail before it is part of
-            // the same torn tag, so it is reported as one span and removed
-            // whole by the normaliser.
+            // A later `<img` can still be a complete tag ending at the `>` this
+            // scan stopped at. Re-read from that start; the torn span itself
+            // stops at [end], so prose between it and the next start survives.
             val resumeAtLastNested = tagEnd >= 0 &&
                 quote == '\u0000' &&
                 lastNestedImgStart > end
-            val spanEnd = if (resumeAtLastNested) lastNestedImgStart else end
-            onImage(null, i, spanEnd)
+            onImage(null, i, end)
             i = when {
                 // An open quote cannot be told from a payload: the scan read to
                 // the end, and nothing inside it can be a picture either.
                 quote != '\u0000' -> length
-                // A later `<img` can still be a complete tag ending at the
-                // `>` this scan stopped at. Re-read from that one start only;
-                // the next pass then consumes the tag and moves on.
                 resumeAtLastNested -> lastNestedImgStart
                 // No nested picture start beyond the span: leave the rest of
                 // the text to the outer loop, so prose after a torn prefix
                 // survives.
-                else -> spanEnd.coerceAtLeast(i + 1)
+                else -> end.coerceAtLeast(i + 1)
             }
         }
     }

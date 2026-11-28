@@ -12,7 +12,9 @@ import com.mcqapp.util.CELL_IMAGE_MARKER
 import com.mcqapp.util.CELL_IMAGE_TOO_LARGE_MESSAGE
 import com.mcqapp.util.Logger
 import com.mcqapp.util.MAX_CELL_IMAGE_BYTES
+import com.mcqapp.util.cellHasPortableImage
 import com.mcqapp.util.cellImageTag
+import com.mcqapp.util.mapCellImages
 import com.mcqapp.util.normalizeCellImages
 import com.mcqapp.util.portableCellImageSrc
 import java.util.Base64
@@ -180,6 +182,30 @@ class CellImageNormalizationTest {
             assertFalse("the payload must never become prose", out.contains("base64"))
             assertFalse(out.contains("AAAA"))
         }
+    }
+
+    @Test
+    fun aCompleteCanonicalTagAfterAStrayQuoteIsStillAPicture() {
+        // A quote before the second tag used to make the first, failed scan the
+        // whole cell's quote state; the bulk torn pass then reported the real
+        // picture as null and deleted it. Each start must be scanned with its
+        // own quote state.
+        val src = dataSrc("AAAA")
+        val canonical = cellImageTag(src)
+        val cell = "a <img b\" c $canonical d\""
+
+        assertTrue("the canonical picture is complete", cellHasPortableImage(cell))
+        val out = normalizeCellImages(cell, identity) { fail(it) }
+        assertTrue("the picture survives normalisation: $out", out.contains(canonical))
+        assertTrue("the trailing prose survives: $out", out.contains(" d\""))
+    }
+
+    @Test
+    fun aTornPrefixDoesNotSwallowTheProseBeforeTheNextTag() {
+        // Resuming over the intervening text used to delete " hello ". The torn
+        // span ends at its own prefix; the text before the next start is prose.
+        val mapped = mapCellImages("<img src=\"x\" hello <img src=y>") { "IMG" }
+        assertEquals("IMG hello IMG", mapped)
     }
 
     @Test

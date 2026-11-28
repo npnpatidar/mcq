@@ -461,11 +461,13 @@ class PdfTableCellContentTest {
 
     /**
      * A scaled table: the formula's natural width is larger than the column it
-     * lands in. A ReplacementSpan cannot wrap, so it must be built at a size
-     * that fits, not painted over the neighbour.
+     * lands in. A ReplacementSpan cannot wrap, so it is built at a size that
+     * fits, not painted over the neighbour — but below the legibility floor it
+     * is not shrunk any further. The cell prints the same linear fallback the
+     * body uses instead of a clipped 4 pt span.
      */
     @Test
-    fun aFormulaIsShrunkToFitItsScaledColumn() {
+    fun aFormulaTooWideForItsScaledColumnFallsBackToLinearText() {
         val wide = "<math><mrow><mfrac><mn>" + "1234567890".repeat(6) +
             "</mn><mn>" + "0987654321".repeat(6) + "</mn></mfrac><mo>+</mo>" +
             "<mn>1234567890</mn></mrow></math>"
@@ -486,17 +488,31 @@ class PdfTableCellContentTest {
 
         val blocks = buildCellBlocks(wide, contentWidth, p)
         try {
-            val span = spansOf(blocks).single()
-            // The fitted size is the proportional shrink, floored at
-            // MIN_FORMULA_SIZE when the column is narrower than the floor.
-            val proportional = p.textSize * (contentWidth / formulaWidth).coerceAtMost(1f)
-            val expected = maxOf(4f, proportional)
             assertTrue(
-                "fitted size ${span.sizePx} must be <= expected $expected",
-                span.sizePx <= expected + 0.01f
+                "no span below the 6 pt legibility floor may be built",
+                spansOf(blocks).isEmpty()
             )
-            assertTrue("the formula was shrunk from the base size", span.sizePx < p.textSize)
-            assertTrue("a sane minimum keeps it legible", span.sizePx >= 4f)
+            val text = textOf(blocks)
+            assertTrue("the linear fallback is printed: $text", text.contains("[formula:"))
+            assertFalse("not the bare marker", text.trim() == "[formula]")
+            assertTrue("the formula's readable text survives: $text", text.contains("1234567890"))
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    /**
+     * The 6 pt decision only rejects a formula the column cannot hold at a
+     * legible size. A formula that fits keeps the real span and its native
+     * layout — the floor must not turn every cell into linear text.
+     */
+    @Test
+    fun aFormulaThatFitsItsColumnKeepsTheNativeSpan() {
+        val blocks = buildCellBlocks("y $formula", 400f, paint())
+        try {
+            val span = spansOf(blocks).single()
+            assertTrue("a fitting formula is typeset at a legible size", span.sizePx >= 6f)
+            assertFalse("a legible formula keeps its native layout", textOf(blocks).contains("[formula"))
         } finally {
             releaseCellBlocks(blocks)
         }
@@ -556,6 +572,29 @@ class PdfTableCellContentTest {
         val flat = cellFlatText(cell)
         assertTrue("the formula linearises to 'a2' in '$flat'", flat.contains("a2"))
         assertFalse(flat.contains("[formula]"))
+    }
+
+    /**
+     * The answer key is read as plain text. A structure cell must contribute
+     * the same readable handles every other text surface prints, never the
+     * storage marker or its captured base64 payload.
+     */
+    @Test
+    fun theAnswerKeyFlattensAStructureCellToItsHandles() {
+        val element = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            spoken = "ethanol",
+            diagram = pngDataUri(8, 8)
+        )
+        val flat = cellFlatText(chemCellHtml(element))
+        assertEquals("ethanol C2H5OH CCO", flat)
+        assertFalse("no marker class in '$flat'", flat.contains("mcq-chem-cell"))
+        assertFalse("no marker attribute in '$flat'", flat.contains("data-smiles"))
+        assertFalse("no base64 in '$flat'", flat.contains("data:image"))
+        assertFalse("no captured payload in '$flat'", flat.contains(element.diagram.substringAfter(',')))
+        assertFalse("the structure is not an image marker", flat.contains("[image]"))
     }
 
     @Test

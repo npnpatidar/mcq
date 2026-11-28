@@ -69,6 +69,21 @@ object DocxPaperWriter {
      */
     suspend fun writeDocx(stream: PaperStream, out: OutputStream) {
         val warnings = mutableListOf<String>()
+        writeDocx(stream, out, warnings)
+        for (warning in warnings) Logger.w("DOCX", warning)
+    }
+
+    /**
+     * The writer with an explicit warning sink. The public entry point logs
+     * the same messages; the internal overload lets a test assert that one
+     * unrepresentable construct produced exactly one warning, which no log
+     * ring can tell because plain `W` lines are not recorded.
+     */
+    internal suspend fun writeDocx(
+        stream: PaperStream,
+        out: OutputStream,
+        warnings: MutableList<String>
+    ) {
         val media = MediaPool()
         try {
             val bySection = flattenCategories(stream.categories).associateBy { it.dto.id }
@@ -128,7 +143,6 @@ object DocxPaperWriter {
         } finally {
             media.close()
         }
-        for (warning in warnings) Logger.w("DOCX", warning)
     }
 
     private fun writeEntry(zip: ZipOutputStream, name: String, xml: String) {

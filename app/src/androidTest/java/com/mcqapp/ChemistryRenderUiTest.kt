@@ -18,6 +18,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.ContentElements
+import com.mcqapp.util.chemCellHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -563,6 +564,41 @@ class ChemistryRenderUiTest {
         compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }
         val (key, png) = captured.get()!!
         assertEquals("chem-42", key)
+        assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))
+        assertTrue("empty PNG", png.length > 100)
+    }
+
+    /**
+     * The editor's preview is the only surface that captures a structure
+     * inside a table cell. The standalone block test above proves the bridge
+     * works; this one proves the CELL path is actually keyed and reports the
+     * stable `"<blockId>#<row>:<col>@<smiles>"` the ViewModel resolves.
+     */
+    @Test
+    fun aStructureInAKeyedCellCapturesWithItsCellKey() {
+        val captured = AtomicReference<Pair<String, String>?>(null)
+        val cell = chemCellHtml(
+            ContentElement.ChemElement(
+                smiles = "CCO",
+                formula = "C2H5OH",
+                caption = "ethanol",
+                spoken = "ethanol"
+            )
+        )
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Box(Modifier.width(320.dp).height(480.dp)) {
+                    ContentElements(
+                        listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+                        cellBlockIds = listOf("t1"),
+                        onChemDiagram = { key, png -> captured.set(key to png) }
+                    )
+                }
+            }
+        }
+        compose.waitUntil(timeoutMillis = 30_000) { captured.get() != null }
+        val (key, png) = captured.get()!!
+        assertEquals("t1#0:0@CCO", key)
         assertTrue("not a PNG data URI: ${png.take(40)}", png.startsWith("data:image/png;base64,"))
         assertTrue("empty PNG", png.length > 100)
     }

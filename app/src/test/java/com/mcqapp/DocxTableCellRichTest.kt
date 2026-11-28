@@ -166,6 +166,72 @@ class DocxTableCellRichTest {
     private fun singleQuestion(parsed: com.mcqapp.data.docx.DocxParseResult): QuestionDto =
         LegacyParser.parse(parsed.json).papers.single().categories.single().questions.single()
 
+    /** The writer with its warning sink exposed; the public entry only logs. */
+    private fun docxWithWarnings(paper: PaperDto): Pair<ByteArray, List<String>> {
+        val warnings = mutableListOf<String>()
+        val bytes = exportBytes { out ->
+            com.mcqapp.data.export.DocxPaperWriter.writeDocx(
+                com.mcqapp.data.export.PaperStream.of(paper),
+                out,
+                warnings
+            )
+        }
+        return bytes to warnings
+    }
+
+    /**
+     * Word export cannot express every MathML construct. The cell must still
+     * show readable linear text (never raw markup or a marker), and the one
+     * unrepresentable formula must produce exactly one warning — not one per
+     * pass and not silence.
+     */
+    @Test
+    fun anUnsupportedCellMathEmitsLinearTextAndOneWarning() {
+        val unsupported = "<math><munder><mi>x</mi><mo>^</mo></munder></math>"
+        val cell = "before $unsupported after"
+        val (bytes, warnings) = docxWithWarnings(paper(listOf(listOf(cell))))
+
+        assertEquals("one formula, one warning: $warnings", 1, warnings.size)
+        assertTrue(
+            "the warning names the fallback: $warnings",
+            warnings.single().contains("does not support") &&
+                warnings.single().contains("plain text")
+        )
+
+        val xml = documentXml(bytes)
+        parseXml(xml.toByteArray(Charsets.UTF_8), "document")
+        assertFalse("no OMML for an unsupported construct: $xml", xml.contains("<m:oMath>"))
+        assertFalse("never raw MathML: $xml", xml.contains("<m:under") || xml.contains("&lt;munder"))
+        assertFalse("never the fallback marker: $xml", xml.contains("[formula"))
+        assertTrue("prose before survives: $xml", xml.contains("before "))
+        assertTrue("prose after survives: $xml", xml.contains(" after"))
+        assertTrue("the formula's leaf text is printed: $xml", xml.contains(">x^<"))
+    }
+
+    /**
+     * KNOWN DEPENDENCY: the payload-freshness canon (another branch) still
+     * types an unsupported cell formula as a math part while the writer emits
+     * its linear text as prose, so the untouched export reads as edited and
+     * the payload is ignored. This test pins the required end state: metadata
+     * (marks, difficulty, tags) survives such a cell. Enable it when that
+     * canon fix lands; do not weaken the assertion.
+     */
+    @org.junit.Ignore("depends on the payload canon fix for unsupported cell MathML")
+    @Test
+    fun anUnsupportedCellFormulaRoundTripKeepsMetadata() {
+        val unsupported = "<math><munder><mi>x</mi><mo>^</mo></munder></math>"
+        val paper = paper(listOf(listOf("before $unsupported after")))
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue(
+            "the untouched export must read as fresh: ${parsed.warnings}",
+            parsed.warnings.isEmpty()
+        )
+        val after = singleQuestion(parsed)
+        assertEquals("marks ride the payload", 2.5, after.marks, 0.0)
+        assertEquals("difficulty rides the payload", "hard", after.difficulty)
+        assertEquals("tags ride the payload", listOf("table", "rich"), after.tags)
+    }
+
     /**
      * The owner-reported bug: MathLive committed a bare `<mrow>…</mrow>` (or a
      * sibling run) into a cell, so the DOCX writer treated it as prose. The

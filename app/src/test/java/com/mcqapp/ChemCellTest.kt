@@ -643,9 +643,11 @@ class ChemCellTest {
                 "style=\"display:none;\">ethanol C2H5OH CCO</div>"
         ))
         assertFalse("no stored marker attribute: $html", html.contains(CELL_CHEM_ATTR + "="))
-        // A cell must never capture: the page key is a block's key, and a
-        // future keyed page could have the cell overwrite that block.
-        assertFalse("cell page captures a diagram: $html", html.contains("capture();"))
+        // This page is unkeyed (Browse/Study/Test): with no cell key the page
+        // must not spend a raster on a structure nothing can store. The editor
+        // preview supplies a key and does capture; that path is asserted in
+        // EditorTableCellCaptureTest.
+        assertFalse("unkeyed cell page captures a diagram: $html", html.contains("capture();"))
         assertFalse("cell page calls the diagram bridge: $html",
             html.contains(CHEM_DIAGRAM_BRIDGE))
         assertFalse("no stored payload: $html", html.contains("data-png"))

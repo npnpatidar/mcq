@@ -2,6 +2,8 @@ package com.mcqapp.domain
 
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.io.normalizedFlashcard
+import com.mcqapp.util.forEachCellImageSpan
+import com.mcqapp.util.imgTagSrc
 
 /**
  * Advisory import validation: flags questions that import cleanly but will
@@ -49,12 +51,41 @@ object ImportWarnings {
         if (q.marks == 0.0) {
             add(Warning(q.id, label, "Worth 0 marks — never affects the score"))
         }
-        val imageChars = (q.image?.length ?: 0) +
-            q.options.sumOf { it.image?.length ?: 0 } +
-            (q.explanationImage?.length ?: 0)
+        val imageChars = (q.image?.length?.toLong() ?: 0L) +
+            q.options.sumOf { it.image?.length?.toLong() ?: 0L } +
+            (q.explanationImage?.length?.toLong() ?: 0L) +
+            cellImageChars(q)
         if (imageChars > LARGE_IMAGE_CHARS) {
             add(Warning(q.id, label, "Large images (~${imageChars / 1024} KB) — slows import"))
         }
+    }
+
+    /**
+     * Characters of embedded pictures stored inside table cells. A cell image
+     * is a data URI in the same question row as a scalar picture, so it slows
+     * an import exactly as much; leaving it out let a table-only question
+     * with several large pictures look small. Only a complete `<img>` tag with
+     * a real `src` counts, so prose that merely mentions `<img` is ignored.
+     */
+    private fun cellImageChars(q: QuestionDto): Long {
+        var total = 0L
+        val lists = buildList {
+            add(q.elements)
+            q.options.forEach { add(it.elements) }
+            add(q.explanationElements)
+        }
+        for (elements in lists) {
+            for (element in elements) {
+                if (element !is ContentElement.TableElement) continue
+                for (cell in element.rows.flatten()) {
+                    forEachCellImageSpan(cell) { tag, _, _ ->
+                        val src = tag?.let { imgTagSrc(it) } ?: return@forEachCellImageSpan
+                        total += src.length
+                    }
+                }
+            }
+        }
+        return total
     }
 
     /**

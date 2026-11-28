@@ -495,6 +495,74 @@
               ]
             },
             {
+              "id": "q-chem-6",
+              "question_elements": [
+                {
+                  "type": "text",
+                  "content": "The table shows water in four forms. Which statement is correct?"
+                },
+                {
+                  "type": "table",
+                  "content": [
+                    [
+                      "Name",
+                      "Formula",
+                      "Structure",
+                      "Picture"
+                    ],
+                    [
+                      "Water",
+                      "<math><msub><mtext>H</mtext><mn>2</mn></msub><mtext>O</mtext></math>",
+                      "<span class=\"mcq-chem-cell\" data-smiles=\"O\" data-formula=\"H₂O\" data-caption=\"water\" data-spoken=\"one oxygen atom bonded to two hydrogen atoms, water\">water H₂O O</span>",
+                      "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAL4AAACECAIAAACh9wYBAAADZ0lEQVR42u3cYXKbMBAGUB0nx8zxeiu3f5KhgEEISUar902n4zpAyfJYYQykl0hRkhIIOoKOjEgn/eT3n8sfLSdYTrZdyPb1wZJXE6wmO12fnOXsruTuf3T/91ot5/idIHTeQTneVO+2yupFziY/3VRly8lBcH+unNc5P41DZ/fvnBK/m6uMzqWug85T6GwbyelYUEYnZ1ArWE4mgrLfa3fG1euDQS3ygNVo7xy36xzvEvldZ2g3I9F5yLHO6THcpQErTtfp/Anr9JPIdq7i5eR8wmp3rLNdw2jHOiLoCDqCjqAjgo6gI+gIOoKOCDqCjqAj6Ag6IugIOoKOoCOCjoSjM/q9JuHrkB5Vo+PMY2WIOqRR6jWJnoHqkB5VrPuTxUAzRB3SQ+rVaPrh3AxUhzRQvaLqGbQOn6eT8+Zr86SfeHSGq0N6VL3y3w+jZ9w6pA/W637Jhn/OyMh1SI/a1S7thWHoDFoHdNBBBx10Ms+izkDnyXVIn6pXrZIN/FSswetgwDJgoYMOOuiggw46HY8QnU0epQ6+w3po4/EdVmG7zpnx+ydD0/m3/jfr8LHN99gTG6dzfS/Sbg1bu/ml43qdtnp23dTS0/m64OXKu0rw7ga7OlkVQKk0VdD8rrZrk3vv8Xf0rBb+5+sr589NQMcr7I6IJnryN0YOoAI07wAVo9ldT/dh9T5EvaTnDppdQHVXr+ehekA6VY4htlvoZrMpaD9lTXGAM1KvcDnYTnXR5LSfkGjC0jnY0Ru5WeoJ32yC09ndeE3drPTERhOfznITthuqdoet8G5ekzyaqY+bXT2RqzoPnUsCDpaWqSe2mynolLWc+3TCPw0oaTnV6Ww/baETn06Oj5xp0Jmu5dSiM4MedNBBBx100EEHHXTQQWcqOgUnA6vTCaxH19F10EEHHXTQQQcddNBBBx10muipRcc35zM2HtfroFN+YtBVguiUN577dOJXdR46ne+IQIcebuam82p81/BUQ9V0dF597zlHx7BlqELnfz3dnq+Djvaj2aBTo/1M22zQWevp9gRTdMIC6vDcZHQmNaRQ6GRhUgR0BB1BR9ARdETQEXQEHUFHBB1BR9ARdAQdEXQEHUFH0BF0RNARdAQdQUfQUQJBR9ARdAQdEXQEHUFH0BF0RNARdORh+QtCJS94kQ1OWwAAAABJRU5ErkJggg==\" alt=\"A water molecule drawn as one oxygen atom joined to two hydrogen atoms\">"
+                    ]
+                  ]
+                }
+              ],
+              "options_elements": {
+                "a": [
+                  {
+                    "type": "text",
+                    "content": "The formula is CH₄, and the structure is a ring of six carbon atoms."
+                  }
+                ],
+                "b": [
+                  {
+                    "type": "text",
+                    "content": "The formula is H₂O, and the structure is one oxygen atom bonded to two hydrogen atoms."
+                  }
+                ],
+                "c": [
+                  {
+                    "type": "text",
+                    "content": "The picture shows sodium chloride, so the formula must be NaCl."
+                  }
+                ],
+                "d": [
+                  {
+                    "type": "text",
+                    "content": "The structure is benzene, and the picture shows a different molecule."
+                  }
+                ]
+              },
+              "explanation_elements": [
+                {
+                  "type": "text",
+                  "content": "The name cell says water. The formula cell typesets H₂O — two hydrogen atoms for every oxygen atom. The structure cell draws the SMILES O, the same one-oxygen, two-hydrogen molecule, and the picture shows its bent H–O–H shape. Methane, sodium chloride and benzene are different substances, so the other options are wrong."
+                }
+              ],
+              "difficulty": "easy",
+              "marks": 1,
+              "tags": [
+                "water",
+                "table-question",
+                "rich-table"
+              ],
+              "correctOptionIds": [
+                "b"
+              ]
+            },
+            {
               "id": "q-org-1",
               "question_elements": [
                 {

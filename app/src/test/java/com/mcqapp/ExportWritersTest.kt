@@ -13,6 +13,10 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_FORMULA_MARKER
+import com.mcqapp.util.CELL_IMAGE_ALT
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CELL_IMAGE_STYLE
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -28,6 +32,10 @@ import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
 
 class ExportWritersTest {
+
+    /** Exactly the wrapper the writer emits around every MathElement. */
+    private val inlineMathWrapper =
+        "<span class=\"math-block\" style=\"display:inline-block;overflow-x:auto;max-width:100%\">"
 
     private fun samplePaper(imageSrc: String? = null): PaperDto {
         val q = QuestionDto(
@@ -383,6 +391,80 @@ class ExportWritersTest {
         }
     }
 
+    /**
+     * The shared cell grammar also holds pictures: the writer remapped only
+     * top-level ImageElements, so a cell `<img>` and a structure's captured
+     * `data-png` stayed inline base64 in paper.json and never reached
+     * `images/`, contradicting the format's own promise.
+     */
+    @Test
+    fun zipMovesRichCellPicturesAndStructureRastersIntoTheFolder() {
+        val cellImageBytes = ByteArray(16) { (it + 1).toByte() }
+        val cellImageSrc = dataUri("image/png", cellImageBytes)
+        val structure = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            diagram = cellPng
+        )
+        val formula = "<math><mi>x</mi><msup><mi>y</mi><mn>2</mn></msup></math>"
+        val richCell = "Text <b>bold</b> $formula " +
+            com.mcqapp.util.cellImageTag(cellImageSrc) + " " +
+            com.mcqapp.util.chemCellHtml(structure)
+        val remote = "https://example.com/remote.png"
+        val svg = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
+        val plainCell = "remote <img src=\"$remote\"> svg <img src=\"$svg\">"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(
+                ContentElement.TableElement(listOf(listOf(richCell, plainCell)))
+            ),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Rich cells",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+
+        val entries = unzip(zipOf(paper))
+        val json = entries.getValue("paper.json").toString(Charsets.UTF_8)
+        val images = entries.filterKeys { it.startsWith("images/") }
+
+        assertEquals("one entry per distinct embedded picture", 2, images.size)
+        assertTrue(
+            "the cell picture's bytes must reach images/: $json",
+            images.values.any { it.contentEquals(cellImageBytes) }
+        )
+        assertTrue(
+            "the structure raster's bytes must reach images/",
+            images.values.any { it.contentEquals(cellPngBytes) }
+        )
+        val paths = Regex("images/img\\d{3}\\.png").findAll(json).map { it.value }.toSet()
+        assertEquals("each picture is referred to by its own relative path", 2, paths.size)
+        assertTrue(
+            "the cell <img> must point at a file: $json",
+            json.contains("src=\\\"images/")
+        )
+        assertTrue(
+            "the structure data-png must point at a file: $json",
+            json.contains("data-png=\\\"images/")
+        )
+        assertFalse(
+            "no portable base64 may stay in paper.json: $json",
+            json.contains("data:image/png;base64")
+        )
+        assertFalse(
+            "no captured raster bytes may stay in paper.json: $json",
+            json.contains(cellPngBytes.let { java.util.Base64.getEncoder().encodeToString(it) })
+        )
+        assertTrue("a formula is text, not an image", json.contains(formula))
+        assertTrue("a remote source is left untouched", json.contains(remote))
+        assertTrue("a non-portable data source is left untouched", json.contains(svg))
+    }
+
     @Test
     fun zipKeepsRemoteUrlsUntouched() {
         val bytes = zipOf(
@@ -445,6 +527,52 @@ class ExportWritersTest {
     }
 
     @Test
+    fun htmlEmbedsATableCellImageAndMarkersOnlyTheRest() {
+        val src = "data:image/png;base64,AAAA"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf("before <img src=\"$src\"/> after"),
+                        listOf("<img src=\"http://example.com/x.png\"/>")
+                    )
+                )
+            ),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+        // The same writer serves the plain page and quiz mode.
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            assertTrue(
+                "quiz=$quiz: the real image is embedded: $html",
+                html.contains(
+                    "<img src=\"$src\" style=\"$CELL_IMAGE_STYLE\" alt=\"$CELL_IMAGE_ALT\""
+                )
+            )
+            assertTrue("quiz=$quiz: order kept", html.contains("before <img"))
+            assertTrue("quiz=$quiz: order kept", html.contains("/> after"))
+            assertTrue(
+                "quiz=$quiz: a non-portable source is the marker",
+                html.contains("<td>$CELL_IMAGE_MARKER</td>")
+            )
+            assertFalse("quiz=$quiz: no remote tag leaks", html.contains("http://example.com/x.png"))
+            assertEquals(
+                "quiz=$quiz: exactly one cell image",
+                1,
+                Regex("<img src=\"data:image/png;base64,AAAA\"").findAll(html).count()
+            )
+        }
+    }
+
+    @Test
     fun htmlEscapesChemHandlesButKeepsTheDiagramTag() {
         val chem = ContentElement.ChemElement(
             smiles = "c1ccccc1",
@@ -465,8 +593,10 @@ class ExportWritersTest {
         )
         for (quiz in listOf(false, true)) {
             val html = htmlOf(paper, quiz = quiz)
-            assertTrue("quiz=$quiz", html.contains("c1ccccc1"))
-            assertTrue("quiz=$quiz", html.contains("C6H6"))
+            // The picture replaces the handles; the escaped handles live in
+            // the alt, and no raw markup from the caption can reach the page.
+            assertFalse("quiz=$quiz", html.contains("Benzene &lt;aromatic&gt; &amp; friends C6H6 c1ccccc1"))
+            assertFalse("quiz=$quiz", html.contains("c1ccccc1"))
             assertFalse("inline markup in a caption is text", html.contains("<aromatic>"))
             assertTrue(
                 "alt uses the spoken-first fallback, not just the caption: $html",
@@ -474,6 +604,455 @@ class ExportWritersTest {
             )
             assertTrue(html.contains("<img src=\"data:image/png;base64,iVBORw0KGgo=\""))
         }
+    }
+
+    // ---- chemistry inside a table cell ---------------------------------
+
+    /** A 2x2 PNG header: the strict validator accepts its signature. */
+    private val cellPngBytes = ByteArray(24).also { b ->
+        byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(b, 0)
+        b[19] = 2 // width = 2
+        b[23] = 2 // height = 2
+    }
+    private val cellPng: String =
+        "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(cellPngBytes)
+
+    private fun cellChemPaper(cell: String): PaperDto {
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        return PaperDto(
+            id = "p1",
+            title = "Paper",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+    }
+
+    @Test
+    fun htmlRendersAChemTableCellInBothPageVariants() {
+        // A cell structure must render like a standalone ChemElement: its
+        // drawing with the readable handles in the alt. It used to degrade to
+        // the handles text alone, so the exported table lost every drawing.
+        val element = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "Benzene <ring> & co",
+            spoken = "aromatic ring",
+            diagram = cellPng
+        )
+        val tableImage = "data:image/png;base64,AAAA"
+        val cell = "Prose before " + com.mcqapp.util.chemCellHtml(element) +
+            " <math><mi>x</mi></math> <img src=\"$tableImage\"/> prose after"
+        val handles = com.mcqapp.data.escapeHtmlText(com.mcqapp.data.export.chemElementText(element))
+        val paper = cellChemPaper(cell)
+
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            val label = "quiz=$quiz"
+            val structureAt = html.indexOf("<img src=\"$cellPng\" alt=\"aromatic ring C6H6\"")
+            val mathAt = html.indexOf("<math><mi>x</mi></math>")
+            val imageAt = html.indexOf(
+                "<img src=\"$tableImage\" style=\"$CELL_IMAGE_STYLE\" alt=\"$CELL_IMAGE_ALT\""
+            )
+            val afterAt = html.indexOf("prose after")
+            assertTrue("$label: prose first: $html", html.contains("Prose before"))
+            assertFalse("$label: handles are not printed beside the picture: $html",
+                html.contains(handles))
+            assertTrue("$label: the structure picture: $html", structureAt >= 0)
+            assertTrue("$label: the formula is typeset: $html", mathAt > structureAt)
+            assertTrue("$label: the cell picture keeps its style/alt: $html", imageAt > mathAt)
+            assertTrue("$label: order kept: $html", afterAt > imageAt)
+            assertFalse("$label: no raw marker: $html", html.contains("mcq-chem-cell"))
+            assertFalse("$label: no attribute leaks: $html", html.contains("data-smiles"))
+            assertFalse("$label: no data-png: $html", html.contains("data-png"))
+        }
+    }
+
+    @Test
+    fun htmlKeepsAChemCellWithoutAValidPngAsHandlesOnly() {
+        // The payload is well-formed base64 but not a PNG: the marker stays a
+        // structure (so no [image] marker) and prints only its handles. No raw
+        // data-png attribute and no base64 text may reach the page.
+        val payload = java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3, 4))
+        val marker = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+            "data-formula=\"C2H5OH\" data-caption=\"ethanol\" data-png=\"$payload\">" +
+            "ethanol C2H5OH CCO</span>"
+        val html = htmlOf(cellChemPaper("Look " + marker + " done"))
+
+        assertTrue("handles kept: $html", html.contains("ethanol C2H5OH CCO"))
+        assertTrue("surrounding prose kept: $html", html.contains("Look "))
+        assertFalse("no structure picture: $html", html.contains("<img src=\"data:image/png"))
+        assertFalse("no base64 text: $html", html.contains(payload))
+        assertFalse("no opaque marker: $html", html.contains(CELL_IMAGE_MARKER))
+        assertFalse("no data-png text: $html", html.contains("data-png"))
+        assertFalse("no raw marker: $html", html.contains("mcq-chem-cell"))
+    }
+
+    @Test
+    fun htmlNeverRebuildsAHostileChemCellMarker() {
+        // Neither a stray attribute nor an unquoted value may be promoted to
+        // markup: both spans degrade to their readable body, so no tag,
+        // handler, payload or printed attribute can come out of them.
+        val extraAttribute = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
+            "onclick=\"alert(1)\">ethanol CCO</span>"
+        val unquoted = "<span class=mcq-chem-cell data-smiles=CCO>ethanol CCO</span>"
+        val html = htmlOf(cellChemPaper("$extraAttribute | $unquoted"))
+
+        assertTrue("the hostile span stays readable prose: $html", html.contains("ethanol CCO"))
+        assertFalse("no attribute text: $html", html.contains("onclick"))
+        assertFalse("no attribute was emitted: $html", html.contains("onclick=\"alert(1)\""))
+        assertFalse("no span element: $html", html.contains("<span"))
+        assertFalse("no picture from a hostile marker: $html", html.contains("<img"))
+        assertFalse("no base64: $html", html.contains("base64,"))
+        assertFalse("no raw marker: $html", html.contains("mcq-chem-cell"))
+    }
+
+    @Test
+    fun htmlAppendsAReactionLabelInsideAChemCell() {
+        // The cell path shares chemElementHtml, so the picture replaces the
+        // handles and the product label follows it exactly as standalone.
+        val element = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            spoken = "lactone reduced by LiAlH4 and ether",
+            diagram = cellPng
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+        assertTrue("the reaction wrapper: $html", html.contains("class=\"chem-scheme\""))
+        val imageAt = html.indexOf("<img src=\"$cellPng\"")
+        assertTrue("the reaction picture: $html", imageAt >= 0)
+        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1)
+        assertTrue(
+            "the product label stays inside the same container: $html",
+            afterPicture.startsWith("<span class=\"chem-product\">A</span></span>")
+        )
+        assertFalse(
+            "the readable handles are not printed beside the picture: $html",
+            html.contains(com.mcqapp.data.escapeHtmlText(com.mcqapp.data.export.chemElementText(element)))
+        )
+    }
+
+    @Test
+    fun htmlGivesAChemTableFixedColumnsAndItsCss() {
+        val element = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            diagram = cellPng
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+
+        assertTrue(
+            "the chem table is marked: $html",
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        // The rules the class relies on travel in the page's own stylesheet.
+        assertTrue(html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
+        assertTrue(html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
+        assertTrue(
+            html.contains("table.mcq-rich-table td img{max-width:100%;height:auto;max-height:240px}")
+        )
+    }
+
+    @Test
+    fun htmlTypesetsABareMathLiveFragmentAndKeepsItsProse() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><mn>1</mn></mrow>"
+        val html = htmlOf(cellChemPaper("Find x = $bare now"))
+        assertTrue("the repaired table is rich: $html",
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"))
+        assertTrue("one complete formula: $html", html.contains("<math><mrow><msup>"))
+        assertTrue("prose before survives: $html", html.contains("Find x = "))
+        assertTrue("prose after survives: $html", html.contains(" now"))
+        assertFalse("never escaped tag text: $html", html.contains("&lt;mrow"))
+        assertFalse("never escaped atom: $html", html.contains("&lt;msup"))
+        assertFalse("never the fallback marker: $html", html.contains(CELL_FORMULA_MARKER))
+    }
+
+    @Test
+    fun htmlGivesAFormulaTableTheFixedRichLayout() {
+        val html = htmlOf(cellChemPaper("<math><mi>v</mi></math> m/s"))
+        assertTrue(
+            "the formula table is rich: $html",
+            html.contains("<table class=\"mcq-rich-table\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        assertTrue(html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
+        assertTrue(html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
+        assertTrue(html.contains("table.mcq-rich-table td svg{max-width:100%;height:auto}"))
+        assertStylesheetLeavesMathLayoutAlone(html)
+        // An inline, in-cell formula keeps its native MathML markup and is
+        // never put in the block wrapper: the wrapper is for a formula that
+        // sits on its own line.
+        assertTrue("the cell formula is native: $html", html.contains("<math><mi>v</mi></math> m/s"))
+        assertFalse("an inline formula is not wrapped: $html", html.contains("<div class=\"math-block\""))
+    }
+
+    /**
+     * A `display` declaration on a `math` selector replaces the browser's
+     * native MathML container; Chrome then lays out every atom on its own line
+     * (the owner's broken export screenshot). A string test cannot observe the
+     * resulting layout, so this pins the stylesheet state that caused it: no
+     * `display` on `<math>` at all, and the width cap only on the wrapper.
+     */
+    private fun assertStylesheetLeavesMathLayoutAlone(html: String) {
+        val css = html.substringAfter("<style>").substringBefore("</style>")
+        val mathRuleDisplay = Regex("""(^|})\s*math\b[^{}]*\{([^}]*)}""")
+            .findAll(css)
+            .map { it.groupValues[2] }
+            .firstOrNull { it.contains("display") }
+        assertNull("no display override on <math>: $mathRuleDisplay", mathRuleDisplay)
+        assertFalse("no math[display] selector: $css", css.contains("math[display"))
+        assertFalse(
+            "the old broken rule is gone: $css",
+            css.contains("math { display: inline-block")
+        )
+        assertTrue(
+            "the inline wrapper carries the width cap: $css",
+            css.contains(".math-block { display: inline-block; overflow-x: auto; max-width: 100%; }")
+        )
+    }
+
+    @Test
+    fun htmlWrapsABlockFractionAndPowerWithoutTouchingItsMathml() {
+        // The previous export CSS made <math> an inline-block with a
+        // vertical-align, which destroyed native MathML layout: a fraction
+        // and a power rendered as stacks of single characters. The stylesheet
+        // assertion above pins the fix; here the markup itself must stay one
+        // contiguous formula with no per-token div/br inserted.
+        val mathml = "<math><mrow><mfrac><mi>a</mi><mi>b</mi></mfrac>" +
+            "<msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Fractions",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Simplify?",
+                            elements = listOf(
+                                ContentElement.MathElement(mathml),
+                                ContentElement.TextElement(" then check the table")
+                            ),
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            val label = "quiz=$quiz"
+            assertStylesheetLeavesMathLayoutAlone(html)
+
+            val wrapper = inlineMathWrapper
+            val wrapperAt = html.indexOf(wrapper)
+            val mathAt = html.indexOf("<math>", wrapperAt)
+            val mathEnd = html.indexOf("</math>", mathAt)
+            assertTrue("$label: the formula is wrapped: $html", wrapperAt >= 0)
+            assertTrue("$label: the formula follows the wrapper: $html", mathAt > wrapperAt)
+            assertEquals(
+                "$label: nothing between wrapper and formula",
+                wrapper.length,
+                mathAt - wrapperAt
+            )
+            val formula = html.substring(mathAt, mathEnd + "</math>".length)
+            assertTrue("$label: fraction kept: $formula", formula.contains("<mfrac>"))
+            assertTrue("$label: power kept: $formula", formula.contains("<msup>"))
+            assertFalse("$label: no per-token div: $formula", formula.contains("<div"))
+            assertFalse("$label: no injected line break: $formula", formula.contains("<br"))
+            assertEquals(
+                "$label: the wrapper closes immediately after the formula",
+                "</span>",
+                html.substring(mathEnd + "</math>".length).take("</span>".length)
+            )
+            assertTrue("$label: prose after the formula kept: $html", html.contains(" then check the table"))
+        }
+    }
+
+    @Test
+    fun htmlKeepsAnOptionLabelAndFormulaOnOneLine() {
+        // Owner screenshot: the wrapper must not push an option's formula onto
+        // the next line. The writer's label, the stored option text and the
+        // formula stay contiguous — no block element and no newline between
+        // them.
+        val mathml = "<math><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Options",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Pick one?",
+                            options = listOf(
+                                OptionDto(
+                                    id = "a",
+                                    text = "",
+                                    elements = listOf(
+                                        ContentElement.TextElement("A) "),
+                                        ContentElement.MathElement(mathml)
+                                    )
+                                )
+                            ),
+                            correctOptionIds = emptyList()
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        val expected = "A) $inlineMathWrapper$mathml</span>"
+        assertTrue("label and formula share one line: $html", html.contains(expected))
+        assertFalse(
+            "no block wrapper around the formula: $html",
+            html.contains("<div class=\"math-block\"")
+        )
+        val expectedAt = html.indexOf(expected)
+        assertTrue("the label precedes the formula: $html", expectedAt >= 0)
+        assertFalse(
+            "no newline injected between label and formula",
+            html.substring(expectedAt, expectedAt + expected.length).contains("\n")
+        )
+    }
+
+    @Test
+    fun htmlKeepsASentenceAndItsTrailingFormulaContiguous() {
+        // An explanation reads "… formula." — the period must follow the
+        // formula on the same line, so text, wrapper and text stay in order.
+        val mathml = "<math><msup><mi>c</mi><mn>2</mn></msup></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Explanations",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "What is it?",
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a"),
+                            explanationElements = listOf(
+                                ContentElement.TextElement("By the identity "),
+                                ContentElement.MathElement(mathml),
+                                ContentElement.TextElement(".")
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        val expected = "By the identity $inlineMathWrapper$mathml</span>."
+        val start = html.indexOf("By the identity ")
+        assertTrue("the explanation is rendered: $html", start >= 0)
+        assertEquals(
+            "text, wrapper and trailing period stay in order: $html",
+            expected,
+            html.substring(start, start + expected.length)
+        )
+        assertFalse(
+            "no block wrapper around the formula: $html",
+            html.contains("<div class=\"math-block\"")
+        )
+    }
+
+    @Test
+    fun htmlKeepsAMathSpaceMeaningfulAndRepairsALegacyBareElement() {
+        // A cell formula using `<mspace/>`: the tag is emitted as one empty
+        // element, so the atom after it is not swallowed.
+        val spaced = htmlOf(cellChemPaper("a <mi>a</mi><mspace width=\"0.5em\"/><mi>b</mi> b"))
+        assertTrue("space preserved: $spaced", spaced.contains("<mspace/>"))
+        assertTrue("sibling survives: $spaced", spaced.contains("<mi>b</mi>"))
+        assertFalse("never an open space tag: $spaced", spaced.contains("<mspace>"))
+
+        // A bare run stored as a body MathElement is repaired too.
+        val paper = PaperDto(
+            id = "p1",
+            title = "Legacy",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Solve?",
+                            elements = listOf(
+                                ContentElement.TextElement("Solve: "),
+                                ContentElement.MathElement("<msup><mi>x</mi><mn>2</mn></msup>")
+                            ),
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        assertTrue(
+            "the legacy run is a complete block: $html",
+            html.contains("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>")
+        )
+        assertFalse("never raw tag text: $html", html.contains("&lt;msup"))
+    }
+
+    @Test
+    fun htmlLeavesAPlainTableOnItsOldMarkup() {
+        // No chem cell: the markup and therefore the auto layout stay exactly
+        // as they were, so an ordinary table's columns are unchanged.
+        val html = htmlOf(richPaper())
+
+        assertTrue(
+            "plain table markup: $html",
+            html.contains("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
+        )
+        assertFalse("no chem-table class: $html", html.contains("<table class="))
+    }
+
+    @Test
+    fun htmlKeepsAWideStructureImageInsideAFixedLayoutTable() {
+        // A wide PNG would widen an auto-layout grid past the page cap; the
+        // chem table's fixed columns and image cap are what hold it inside.
+        val wideBytes = ByteArray(24).also { b ->
+            byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(b, 0)
+            b[16] = 0; b[17] = 0; b[18] = 0x06.toByte(); b[19] = 0x40 // width = 1600
+            b[20] = 0; b[21] = 0; b[22] = 0x03.toByte(); b[23] = 0x84.toByte() // height = 900
+        }
+        val wide = "data:image/png;base64," +
+            java.util.Base64.getEncoder().encodeToString(wideBytes)
+        val element = ContentElement.ChemElement(
+            smiles = "c1ccccc1",
+            formula = "C6H6",
+            caption = "Benzene",
+            diagram = wide
+        )
+        val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+
+        val tableAt = html.indexOf("<table class=\"mcq-rich-table\"")
+        val imageAt = html.indexOf("<img src=\"$wide\"")
+        val closeAt = html.indexOf("</table>")
+        assertTrue("the chem table is fixed-layout: $html", tableAt >= 0)
+        assertTrue(
+            "the wide structure image sits inside that table: $html",
+            imageAt > tableAt && imageAt < closeAt
+        )
+        assertTrue(
+            "its size is capped by the cell rule: $html",
+            html.contains("table.mcq-rich-table td img{max-width:100%;height:auto;max-height:240px}")
+        )
     }
 
     @Test

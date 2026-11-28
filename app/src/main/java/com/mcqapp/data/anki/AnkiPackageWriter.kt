@@ -424,8 +424,15 @@ object AnkiPackageWriter {
         return " ${tags.joinToString(" ")} "
     }
 
-    fun imageTag(src: String): String =
-        "<img src=\"${src.replace("&", "&amp;").replace("\"", "&quot;")}\">"
+    fun imageTag(src: String, alt: String = ""): String {
+        fun escape(value: String) = value
+            .replace("&", "&amp;")
+            .replace("\"", "&quot;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        val attr = if (alt.isBlank()) "" else " alt=\"${escape(alt)}\""
+        return "<img src=\"${escape(src)}\"$attr>"
+    }
 
     /**
      * A stable, Anki-shaped guid derived from the question's identity rather

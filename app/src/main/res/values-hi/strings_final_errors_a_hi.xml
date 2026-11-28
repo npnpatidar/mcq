@@ -24,6 +24,7 @@
     <string name="editor_question_not_in_list">यह प्रश्न अब वर्तमान सूची में नहीं है।</string>
     <string name="editor_move_failed">दूसरे प्रश्न पर नहीं जा सके।</string>
     <string name="editor_image_unreadable">यह छवि पढ़ी नहीं जा सकी। दूसरी छवि आज़माएँ।</string>
+    <string name="editor_cell_image_too_large">यह छवि तालिका के सेल के लिए बहुत बड़ी है। कोई छोटी छवि आज़माएँ।</string>
     <string name="editor_delete_failed">यह प्रश्न हटाया नहीं जा सका।</string>
 
     <!-- Study -->

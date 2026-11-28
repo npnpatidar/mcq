@@ -8,6 +8,9 @@ import com.mcqapp.domain.ai.PassageMode
 import com.mcqapp.domain.ai.QuestionKind
 import com.mcqapp.domain.ai.SchemaOptions
 import com.mcqapp.domain.ai.SchemaWrapper
+import com.mcqapp.util.CellSegment
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.chemCellHtml
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -24,7 +27,9 @@ import org.junit.Test
 /**
  * Every combination the generator screen can produce is parsed by the real
  * LegacyParser. A schema that is internally consistent but describes keys the
- * importer ignores is useless, so the example is the proof.
+ * importer ignores is useless, so the example is the proof. The cross-product
+ * includes the chemistry toggle, so a chem block, its table cell object and the
+ * chemistry-off shape are all exercised on every other axis.
  */
 class AiSchemaGeneratorTest {
 
@@ -35,12 +40,15 @@ class AiSchemaGeneratorTest {
                     for (image in listOf(false, true)) {
                         for (passage in PassageMode.entries) {
                             for (wrapper in SchemaWrapper.entries) {
-                                add(
-                                    SchemaOptions(
-                                        kind = kind, table = table, math = math,
-                                        image = image, passage = passage, wrapper = wrapper
+                                for (chem in listOf(false, true)) {
+                                    add(
+                                        SchemaOptions(
+                                            kind = kind, table = table, math = math,
+                                            image = image, passage = passage, wrapper = wrapper,
+                                            chem = chem
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }
@@ -99,7 +107,7 @@ class AiSchemaGeneratorTest {
 
     @Test
     fun everyUiCombinationParsesIntoTheExpectedShape() {
-        assertEquals("every UI combination is covered", 144, allOptions.size)
+        assertEquals("every UI combination is covered", 288, allOptions.size)
         allOptions.forEach { options ->
             val label = options.toString()
             val generated = AiSchemaGenerator.generate(options)
@@ -166,6 +174,47 @@ class AiSchemaGeneratorTest {
                     )
                 }
 
+                val chemElements = q.elements.filterIsInstance<ContentElement.ChemElement>()
+                if (options.chem) {
+                    val chem = chemElements.single()
+                    assertEquals("$label q$index: chem smiles", "c1ccccc1", chem.smiles)
+                    assertEquals("$label q$index: chem formula", "C6H6", chem.formula)
+                    assertEquals("$label q$index: chem caption", "benzene", chem.caption)
+                    assertTrue("$label q$index: chem spoken", chem.spoken.contains("aromatic"))
+                    assertEquals("$label q$index: no AI diagram", "", chem.diagram)
+                    if (q.explanationElements.isNotEmpty()) {
+                        assertEquals(
+                            "$label q$index: the back carries the same chem block",
+                            chem,
+                            q.explanationElements.filterIsInstance<ContentElement.ChemElement>().single()
+                        )
+                    }
+                } else {
+                    assertTrue("$label q$index: no chem block", chemElements.isEmpty())
+                    assertTrue(
+                        "$label q$index: no chem block on the back",
+                        q.explanationElements.none { it is ContentElement.ChemElement }
+                    )
+                }
+
+                if (options.table) {
+                    val cells = q.elements.filterIsInstance<ContentElement.TableElement>()
+                        .single().rows.flatten()
+                    if (options.chem) {
+                        val cellChem = cells.flatMap(::cellSegments)
+                            .filterIsInstance<CellSegment.Chem>().single().element
+                        assertEquals("$label q$index: structure cell smiles", "c1ccccc1", cellChem.smiles)
+                        assertEquals("$label q$index: structure cell formula", "C6H6", cellChem.formula)
+                        assertEquals("$label q$index: structure cell caption", "benzene", cellChem.caption)
+                        assertEquals("$label q$index: structure cell has no diagram", "", cellChem.diagram)
+                    } else {
+                        assertTrue(
+                            "$label q$index: no structure cell",
+                            cells.none { it.contains("mcq-chem-cell") }
+                        )
+                    }
+                }
+
                 if (options.passage == PassageMode.NONE) {
                     assertNull("$label q$index: no passage link", q.passageId)
                 } else {
@@ -214,6 +263,59 @@ class AiSchemaGeneratorTest {
                     generated.schema.contains("\"const\":\"image\"")
                 )
                 assertTrue("$label: prompt says no image fields", generated.prompt.contains("no image fields"))
+            }
+            if (options.chem) {
+                assertTrue("$label: chem arm declared", generated.schema.contains("\"const\":\"chem\""))
+                assertTrue("$label: chem block in the example", generated.example.contains("\"type\":\"chem\""))
+                assertTrue("$label: smiles declared", "smiles" in declared)
+                assertTrue("$label: formula declared", "formula" in declared)
+                assertTrue("$label: caption declared", "caption" in declared)
+                assertTrue("$label: spoken declared", "spoken" in declared)
+                assertTrue("$label: prompt teaches SMILES", generated.prompt.contains("SMILES"))
+                assertFalse(
+                    "$label: the example carries no diagram",
+                    generated.example.contains("\"diagram\"")
+                )
+            } else {
+                assertFalse("$label: no chem arm in schema", generated.schema.contains("\"const\":\"chem\""))
+                assertFalse("$label: no chem block in the example", generated.example.contains("\"type\":\"chem\""))
+                assertFalse("$label: no chem marker in the example", generated.example.contains("mcq-chem-cell"))
+                assertFalse("$label: no smiles key", "smiles" in declared)
+                assertFalse("$label: no formula key", "formula" in declared)
+                assertFalse("$label: no caption key", "caption" in declared)
+                assertFalse("$label: no spoken key", "spoken" in declared)
+                assertFalse("$label: no SMILES guidance", generated.prompt.contains("SMILES"))
+            }
+            if (options.table) {
+                val cells = tableCellSchema(generated)
+                if (options.chem) {
+                    val arms = cells["oneOf"]!!.asArray()
+                    assertEquals("$label: string and chem cell arms", 2, arms.size)
+                    assertEquals(
+                        "$label: string cell arm",
+                        JsonPrimitive("string"),
+                        arms[0].jsonObjectOf()["type"]
+                    )
+                    val chemArm = arms[1].jsonObjectOf()
+                    assertEquals(
+                        "$label: closed chem cell arm",
+                        JsonPrimitive(false),
+                        chemArm["additionalProperties"]
+                    )
+                    assertEquals(
+                        "$label: chem cell arm type",
+                        JsonPrimitive("chem"),
+                        chemArm["properties"]!!.jsonObjectOf()["type"]
+                            ?.jsonObjectOf()?.get("const")
+                    )
+                } else {
+                    assertEquals(
+                        "$label: plain string cell",
+                        JsonPrimitive("string"),
+                        cells["type"]
+                    )
+                    assertNull("$label: no cell oneOf", cells["oneOf"])
+                }
             }
             if (options.wrapper == SchemaWrapper.PAPERLESS) {
                 assertFalse("$label: no papers key", "papers" in declared)
@@ -558,6 +660,142 @@ class AiSchemaGeneratorTest {
         val off = AiSchemaGenerator.generate(SchemaOptions())
         assertFalse("no chem arm when off", off.schema.contains("\"const\":\"chem\""))
         assertFalse("no SMILES guidance when off", off.prompt.contains("SMILES"))
+    }
+
+    private fun tableCellSchema(generated: AiSchemaGenerator.Generated): JsonObject {
+        val schema = Json.parseToJsonElement(generated.schema)
+        val table = findBlockSchema(schema, "table")!!
+        val content = table["properties"]!!.jsonObjectOf().getValue("content").jsonObjectOf()
+        return content.getValue("items").jsonObjectOf()
+            .getValue("items").jsonObjectOf()
+    }
+
+    /**
+     * With chemistry on, a cell may be a string or the same closed chem object
+     * the block uses, so a model can describe a structure without inventing a
+     * marker. Chemistry off keeps the old `array<array<string>>` byte-shape.
+     */
+    @Test
+    fun chemTableCellsAcceptStringOrObjectOnlyWhenChemIsOn() {
+        val on = AiSchemaGenerator.generate(SchemaOptions(table = true, chem = true))
+        val cells = tableCellSchema(on)
+        val arms = cells["oneOf"]!!.asArray()
+        assertEquals("a string arm and a chem arm", 2, arms.size)
+        assertEquals("string", arms[0].jsonObjectOf()["type"]!!.jsonPrimitive.content)
+        val chemArm = arms[1].jsonObjectOf()
+        val chemArmProps = chemArm["properties"]!!.jsonObjectOf()
+        assertEquals(
+            JsonPrimitive("chem"),
+            chemArmProps.getValue("type").jsonObjectOf()["const"]
+        )
+        assertEquals(
+            "the cell arm is closed like the block arm",
+            JsonPrimitive(false),
+            chemArm["additionalProperties"]
+        )
+        assertEquals(
+            listOf("type", "content"),
+            chemArm["required"]!!.asArray().map { it.jsonPrimitive.content }
+        )
+        val chemContent = chemArmProps.getValue("content").jsonObjectOf()
+        assertEquals(
+            setOf("smiles", "formula", "caption", "spoken"),
+            chemContent.getValue("properties").jsonObjectOf().keys
+        )
+        assertEquals(
+            "smiles",
+            chemContent.getValue("required").asArray().single().jsonPrimitive.content
+        )
+        assertEquals(
+            "the cell object is closed too",
+            JsonPrimitive(false),
+            chemContent["additionalProperties"]
+        )
+        assertTrue(
+            "the prompt explains the structure cell",
+            on.prompt.contains("structure cell") && on.prompt.contains("table cell")
+        )
+
+        // The example stays the canonical string, because storage is strings.
+        assertTrue("example shows the marker", on.example.contains("mcq-chem-cell"))
+        val file = LegacyParser.parse(on.example)
+        assertEquals(emptyList<String>(), file.warnings)
+        val question = file.papers.single().categories.single().questions.first()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        val chem = cellSegments(table.rows[1].last())
+            .filterIsInstance<CellSegment.Chem>().single().element
+        assertEquals("c1ccccc1", chem.smiles)
+        assertEquals("C6H6", chem.formula)
+        assertEquals("benzene", chem.caption)
+        assertEquals("", chem.diagram)
+        // The hard-coded example must be exactly what the writer emits, or a
+        // later ChemCell grammar change would leave the schema teaching a
+        // marker the importer no longer accepts.
+        assertEquals(
+            "the schema example is the writer's canonical marker",
+            chemCellHtml(
+                ContentElement.ChemElement(
+                    smiles = "c1ccccc1",
+                    formula = "C6H6",
+                    caption = "benzene",
+                    spoken = "benzene ring, an aromatic hydrocarbon"
+                )
+            ),
+            table.rows[1].last()
+        )
+
+        val off = AiSchemaGenerator.generate(SchemaOptions(table = true))
+        assertEquals(
+            "chemistry off keeps the plain string cell",
+            JsonPrimitive("string"),
+            tableCellSchema(off)["type"]
+        )
+        assertNull("no oneOf arm when chemistry is off", tableCellSchema(off)["oneOf"])
+        assertFalse("no chem arm when off", off.schema.contains("\"const\":\"chem\""))
+        assertFalse("no marker in an off example", off.example.contains("mcq-chem-cell"))
+    }
+
+    /**
+     * One table demonstrates every payload the selected blocks allow: Math on
+     * gives a formula cell, Image on a picture cell, Chem on a structure cell.
+     * All three stay strings in the table and import without a warning.
+     */
+    @Test
+    fun richTableExampleCarriesOneCellPerEnabledPayload() {
+        val options = SchemaOptions(
+            kind = QuestionKind.FLASHCARDS,
+            table = true,
+            math = true,
+            image = true,
+            chem = true
+        )
+        val generated = AiSchemaGenerator.generate(options)
+        val file = LegacyParser.parse(generated.example)
+        assertEquals(emptyList<String>(), file.warnings)
+        val question = file.papers.single().categories.single().questions.single()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        val header = table.rows[0]
+        val row = table.rows[1]
+        assertEquals(listOf("Header A", "Formula", "Picture", "Structure"), header)
+        assertEquals(4, row.size)
+        assertTrue("formula cell", row[1].startsWith("<math>"))
+        assertTrue("picture cell", row[2].startsWith("<img src=\"data:image/png;base64,"))
+        assertTrue("structure cell", row[3].contains("class=\"mcq-chem-cell\""))
+        assertTrue(
+            "the prompt names the formula cell",
+            generated.prompt.contains("formula cell") && generated.prompt.contains("<math>")
+        )
+        assertTrue("the prompt names the picture cell", generated.prompt.contains("picture cell"))
+
+        val onlyImage = AiSchemaGenerator.generate(
+            SchemaOptions(kind = QuestionKind.FLASHCARDS, table = true, image = true)
+        )
+        val imageTable = LegacyParser.parse(onlyImage.example)
+            .papers.single().categories.single().questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals(listOf("Header A", "Header B", "Picture"), imageTable.rows[0])
+        assertEquals(3, imageTable.rows[1].size)
+        assertTrue(imageTable.rows[1][2].startsWith("<img"))
     }
 
     /**

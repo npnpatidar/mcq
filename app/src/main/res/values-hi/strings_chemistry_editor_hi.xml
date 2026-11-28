@@ -9,4 +9,20 @@
     <string name="chem_editor_spoken">बोली जाने वाली जानकारी (वैकल्पिक)</string>
     <string name="chem_editor_preview">पूर्वावलोकन</string>
     <string name="chem_editor_structure_cd">रासायनिक संरचना: %1$s</string>
+    <string name="chem_editor_cell_menu">सेल विकल्प: पंक्ति %1$d, स्तंभ %2$d</string>
+    <string name="chem_editor_cell_text">पाठ</string>
+    <string name="chem_editor_cell_formula">सूत्र</string>
+    <string name="chem_editor_cell_image">चित्र</string>
+    <string name="chem_editor_cell_structure">संरचना</string>
+    <string name="chem_editor_cell_formula_title">पंक्ति %1$d, स्तंभ %2$d में सूत्र</string>
+    <string name="chem_editor_cell_structure_title">पंक्ति %1$d, स्तंभ %2$d में संरचना</string>
+    <string name="chem_editor_cell_remove_formula">सूत्र हटाएँ</string>
+    <string name="chem_editor_cell_remove_image">चित्र हटाएँ</string>
+    <string name="chem_editor_cell_remove_structure">संरचना हटाएँ</string>
+    <string name="chem_editor_cell_insert">सम्मिलित करें</string>
+    <string name="chem_editor_cell_replace">बदलें</string>
+    <string name="chem_editor_cell_token_formula">[सूत्र]</string>
+    <string name="chem_editor_cell_token_image">[चित्र]</string>
+    <string name="chem_editor_cell_token_structure">[संरचना]</string>
+    <string name="chem_editor_smiles_invalid">इस SMILES टेक्स्ट में ऐसे अक्षर हैं जिनका उपयोग ड्राइंग इंजन नहीं कर सकता।</string>
 </resources>

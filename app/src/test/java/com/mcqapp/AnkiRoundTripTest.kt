@@ -6,9 +6,12 @@ import com.mcqapp.data.io.CategoryDto
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.Passage
+import com.mcqapp.util.chemCellHtml
 import android.database.sqlite.SQLiteDatabase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -130,6 +133,57 @@ class AnkiRoundTripTest {
         val fronts = collectionFields(apkg).map { it.substringBefore("\u001f") }
         assertEquals(2, fronts.size)
         assertTrue(fronts.all { it.contains("Energy") && it.contains("Cells make ATP.") })
+    }
+
+    /**
+     * A picture inside a table that belongs to a passage follows the same
+     * media path: one spooled file referenced by filename, no data URI in the
+     * readable field, and the payload returns the table cell unchanged.
+     */
+    @Test
+    fun aPassageTablePictureRoundTripsAndStaysOutOfTheField() {
+        val png =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        val cell = "See <img src=\"$png\">"
+        val passage = Passage(
+            id = "passage-1",
+            categoryId = "c1",
+            title = "Data",
+            elements = listOf(ContentElement.TableElement(listOf(listOf(cell))))
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Reading",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cells",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Which cell?",
+                            passageId = "passage-1",
+                            options = listOf(OptionDto("a", "Rod")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+
+        val apkg = apkgOf(paper, passages = mapOf("passage-1" to passage))
+        val read = AnkiPackageReader.read(apkg)
+
+        assertEquals(0, read.missingMedia)
+        val restored = read.file.passages.single()
+        assertEquals(
+            listOf(listOf(cell)),
+            restored.elements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        val front = collectionFields(apkg).single().substringBefore("\u001f")
+        assertTrue(front, front.contains("mcqapp-0.png"))
+        assertFalse("no data URI may be written as text", front.contains("data:"))
+        assertFalse(front.contains("base64"))
     }
 
     private fun collectionFields(apkg: ByteArray): List<String> {
@@ -274,6 +328,107 @@ class AnkiRoundTripTest {
             read.file.papers.isEmpty())
         assertTrue("no question may survive a fully empty note",
             read.file.papers.flatMap { it.categories.flatMap { c -> c.questions } }.isEmpty())
+    }
+
+    /**
+     * A table cell carrying prose, a picture, a formula and a chemical
+     * structure must reach the deck as media plus markup: the readable field
+     * never carries the data URI, and the payload restores the cell verbatim.
+     */
+    @Test
+    fun aRichTableCellRoundTripKeepsMediaOutOfTheField() {
+        val png =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        val chem = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H6O",
+            caption = "ethanol",
+            diagram = png
+        )
+        val cell = "Ethanol <img src=\"$png\"> has <math><mi>x</mi></math> " + chemCellHtml(chem)
+        val paper = PaperDto(
+            id = "p1",
+            title = "Chemistry",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Tables",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Study this table",
+                            elements = listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+                            options = listOf(OptionDto("a", "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+
+        val apkg = apkgOf(paper)
+        val read = AnkiPackageReader.read(apkg)
+
+        assertEquals("every referenced media file must resolve", 0, read.missingMedia)
+        val restored = read.file.papers.single().categories.single().questions.single()
+        assertEquals(
+            listOf(listOf(cell)),
+            restored.elements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        val front = collectionFields(apkg).single().substringBefore("\u001f")
+        assertTrue(front, front.contains("<table"))
+        assertTrue("the cell keeps its formula markup", front.contains("<math>"))
+        assertTrue("the pictures must be media references", front.contains("mcqapp-"))
+        assertFalse("no data URI may be written as text", front.contains("data:"))
+        assertFalse(front.contains("base64"))
+    }
+
+    /**
+     * A bare MathLive fragment stored by the buggy editor build must reach the
+     * deck as a real `<math>` block (the writer repairs it through the shared
+     * cell grammar), and the payload must hand the stored cell back unchanged
+     * so a re-export/re-import is stable.
+     */
+    @Test
+    fun aBareMathLiveFragmentCellExportsMathAndRoundTripsStably() {
+        val bare = "<mrow><msup><mi>x</mi><mn>2</mn></msup></mrow>"
+        val cell = "Find $bare here"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Math",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Tables",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Study this table",
+                            elements = listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+                            options = listOf(OptionDto("a", "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+
+        val apkg = apkgOf(paper)
+        val read = AnkiPackageReader.read(apkg)
+
+        assertEquals("every referenced media file must resolve", 0, read.missingMedia)
+        val restored = read.file.papers.single().categories.single().questions.single()
+        assertEquals(
+            "the payload returns the stored cell unchanged",
+            listOf(listOf(cell)),
+            restored.elements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        val front = collectionFields(apkg).single().substringBefore("\u001f")
+        assertTrue(front, front.contains("<table"))
+        assertTrue("the deck carries a real formula: $front", front.contains("<math><mrow>"))
+        assertFalse("no escaped tag text: $front",
+            front.contains("&lt;mrow") || front.contains("&lt;msup"))
+        assertFalse("no visible marker: $front", front.contains("[formula]"))
     }
 
     private fun collectionSortFields(apkg: ByteArray): List<String> {

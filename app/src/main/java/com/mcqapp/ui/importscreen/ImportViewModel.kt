@@ -455,14 +455,27 @@ internal data class PreviewClassification(
  * Hashes the shape the importer stores, not the raw DTO. The importer downscales
  * images before hashing (option images are part of the hash), so hashing the
  * full-size twin made a re-import of our own export read as "changed" forever.
- * [scale] is injected so the rule is testable off-device.
+ * [scale] is injected so the top-level rule is testable off-device.
+ *
+ * Table cells are deliberately *not* part of this hash: [ContentHash.of] builds
+ * it from `textContent`, which drops tables entirely, so scaling a cell here
+ * could not change the result. Cell pictures are compared by
+ * [classifyPreviewDetailed] instead, whose `withDownscaledImages` call applies
+ * the same 800 px cell cap the importer stores. `includeCells = false` skips
+ * the cell normaliser outright — running it against the identity scaler was
+ * dead work that could also spend the once-per-session oversized-cell warning
+ * before the real import logged it.
  */
 internal fun previewHashOf(
     question: QuestionDto,
     scale: (String?) -> String?
 ): Pair<QuestionDto, String> {
     val normalized = question.normalizedFlashcard()
-    val scaled = normalized.withScaledImages(scale)
+    val scaled = normalized.withScaledImages(
+        scale = scale,
+        cellScale = { it },
+        includeCells = false
+    )
     return normalized to com.mcqapp.data.io.ContentHash.of(scaled)
 }
 

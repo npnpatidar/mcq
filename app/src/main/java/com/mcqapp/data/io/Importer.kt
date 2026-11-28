@@ -24,7 +24,9 @@ import com.mcqapp.domain.passageSearchText
 import com.mcqapp.domain.searchableText
 import com.mcqapp.domain.textContent
 import com.mcqapp.domain.toContentJson
+import com.mcqapp.util.CELL_IMAGE_MAX_DIMENSION
 import com.mcqapp.util.Logger
+import com.mcqapp.util.normalizeCellImages
 import androidx.room.withTransaction
 import kotlinx.serialization.json.Json
 
@@ -1168,46 +1170,112 @@ internal fun PaperDto.withDownscaledImages(): PaperDto = copy(
  * can each carry a [ContentElement.ImageElement], and a foreign file (an Anki
  * deck's media, a legacy JSON with an inline base64 picture) can put a
  * full-size one there. Storing those untouched keeps the bloat this scaler
- * exists to remove.
+ * exists to remove. Table cells carry pictures too, at the smaller
+ * [CELL_IMAGE_MAX_DIMENSION] cap.
+ *
+ * [scale] is injectable only so the cap wiring can be asserted off-device:
+ * the default is [ImageDownscale.downscaleDataUri], and the two call sites are
+ * where 1280 (top level) and 800 (cell) are decided.
  */
-internal fun QuestionDto.withDownscaledImages(): QuestionDto =
-    withScaledImages { ImageDownscale.downscaleDataUri(it) }
+internal fun QuestionDto.withDownscaledImages(
+    scale: (src: String?, maxDimension: Int) -> String? = ImageDownscale::downscaleDataUri
+): QuestionDto =
+    withScaledImages(
+        scale = { downscaleAt(scale, it, ImageDownscale.DEFAULT_MAX_DIMENSION) },
+        cellScale = { downscaleAt(scale, it, CELL_IMAGE_MAX_DIMENSION) }
+    )
 
 /**
  * The same traversal with the scaler injected, so the pure part can be
  * asserted off-device: [withDownscaledImages] hands it [ImageDownscale], whose
  * bitmap work needs a real device (Robolectric passes every image through
  * untouched), so a fake scaler is the only way to pin which fields are visited.
+ * [cellScale] has no default: a cell image has a different cap from a
+ * top-level one, and a caller that forgets it must not silently inherit 1280.
+ *
+ * [includeCells] off leaves every [ContentElement.TableElement] untouched. The
+ * preview hash needs that: `ContentHash.of` reads `textContent`, which drops
+ * tables, so normalising a cell there is dead work — and an oversized cell
+ * picture would spend the once-per-session warning before the real import.
  */
-internal fun QuestionDto.withScaledImages(scale: (String?) -> String?): QuestionDto = copy(
-    elements = elements.withScaledImages(scale),
+internal fun QuestionDto.withScaledImages(
+    scale: (String?) -> String?,
+    cellScale: (String?) -> String?,
+    includeCells: Boolean = true
+): QuestionDto = copy(
+    elements = elements.withScaledImages(scale, cellScale, includeCells),
     image = scale(image),
     options = options.map {
         it.copy(
-            elements = it.elements.withScaledImages(scale),
+            elements = it.elements.withScaledImages(scale, cellScale, includeCells),
             image = scale(it.image)
         )
     },
-    explanationElements = explanationElements.withScaledImages(scale),
+    explanationElements = explanationElements.withScaledImages(scale, cellScale, includeCells),
     explanationImage = scale(explanationImage)
 )
 
-/** Every image element's src goes through [scale]; every other element is untouched. */
-internal fun List<ContentElement>.withScaledImages(scale: (String?) -> String?): List<ContentElement> =
+/**
+ * Every image element's src goes through [scale]; every table cell goes through
+ * [normalizeCellImages] with [cellScale]. The normaliser also canonicalises the
+ * payload and drops torn tags, so the cell that reaches the row is the same
+ * shape a re-import reads back and the content comparison compares.
+ *
+ * With [includeCells] off a [ContentElement.TableElement] is returned exactly
+ * as it arrived: [cellScale] is never called, nothing is logged, and even a
+ * torn tag survives. Only callers that never read the cells (the preview hash)
+ * may pass false; the import and the 800-scaled comparison keep it on.
+ */
+internal fun List<ContentElement>.withScaledImages(
+    scale: (String?) -> String?,
+    cellScale: (String?) -> String?,
+    includeCells: Boolean = true
+): List<ContentElement> =
     map { element ->
-        if (element is ContentElement.ImageElement) {
-            ContentElement.ImageElement(scale(element.src) ?: element.src)
-        } else {
-            element
+        when (element) {
+            is ContentElement.ImageElement -> ContentElement.ImageElement(scale(element.src) ?: element.src)
+            is ContentElement.TableElement -> if (!includeCells) {
+                element
+            } else {
+                element.copy(
+                    rows = element.rows.map { row ->
+                        row.map { cell ->
+                            normalizeCellImages(cell, cellScale) { message ->
+                                Logger.warnOnce("IMPORT", message)
+                            }
+                        }
+                    }
+                )
+            }
+            else -> element
         }
     }
 
-/** The passage-level scaler: a passage's elements carry pictures too, plus the scalar one. */
-internal fun PassageDto.withDownscaledImages(): PassageDto =
-    withScaledImages { ImageDownscale.downscaleDataUri(it) }
+/** One image through the injected scaler at an explicit cap. */
+private fun downscaleAt(
+    scale: (String?, Int) -> String?,
+    src: String?,
+    maxDimension: Int
+): String? = scale(src, maxDimension)
 
-internal fun PassageDto.withScaledImages(scale: (String?) -> String?): PassageDto = copy(
-    elements = elements.withScaledImages(scale),
+/**
+ * The passage-level scaler: a passage's elements carry pictures too, plus the
+ * scalar one, at the same 1280/800 caps as a question.
+ */
+internal fun PassageDto.withDownscaledImages(
+    scale: (src: String?, maxDimension: Int) -> String? = ImageDownscale::downscaleDataUri
+): PassageDto =
+    withScaledImages(
+        scale = { downscaleAt(scale, it, ImageDownscale.DEFAULT_MAX_DIMENSION) },
+        cellScale = { downscaleAt(scale, it, CELL_IMAGE_MAX_DIMENSION) }
+    )
+
+internal fun PassageDto.withScaledImages(
+    scale: (String?) -> String?,
+    cellScale: (String?) -> String?,
+    includeCells: Boolean = true
+): PassageDto = copy(
+    elements = elements.withScaledImages(scale, cellScale, includeCells),
     image = scale(image)
 )
 

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -100,7 +101,11 @@ class ChemistryAnkiRoundTripTest {
                     val frontAndPayload = rows.getString(0)
                     assertTrue(
                         "the readable field must reference the media by filename: $frontAndPayload",
-                        "<img src=\"mcqapp-0.png\">" in frontAndPayload
+                        "<img src=\"mcqapp-0.png\" alt=\"aromatic ring C6H6\">" in frontAndPayload
+                    )
+                    assertFalse(
+                        "the handles are not printed beside the picture: $frontAndPayload",
+                        "Benzene ring C6H6 c1ccccc1" in frontAndPayload
                     )
                 }
             } finally {

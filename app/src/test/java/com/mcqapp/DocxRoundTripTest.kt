@@ -57,7 +57,7 @@ class DocxRoundTripTest {
     /** Pictures compare by content: a data class would use array identity. */
     private data class Img(val base64: String) : El
 
-    /** A chemical structure: its printed handles plus the diagram's bytes. */
+    /** A chemical structure: its readable handles plus the diagram's bytes. */
     private data class Ch(val text: String, val diagram: String) : El
 
     private fun shape(elements: List<ContentElement>): List<El> = elements.map { element ->

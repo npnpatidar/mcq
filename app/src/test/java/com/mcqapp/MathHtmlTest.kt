@@ -3,13 +3,20 @@ package com.mcqapp
 import androidx.compose.ui.graphics.Color
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_FORMULA_MARKER
+import com.mcqapp.util.CELL_IMAGE_STYLE
 import com.mcqapp.util.CONTENT_HEIGHT_BRIDGE
 import com.mcqapp.util.ContentHeightCache
+import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.MATHJAX_ASSET_URL
+import com.mcqapp.util.chemCellHtml
+import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mixedContentHtml
+import com.mcqapp.util.repairStoredMathml
 import com.mcqapp.util.stripMathAttributes
 import com.mcqapp.util.toCssRgba
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +50,210 @@ class MathHtmlTest {
         assertTrue(html.contains("<td>a&lt;b</td>"))
         assertTrue(html.contains("<td>c&amp;d</td>"))
         assertTrue(html.contains("<img src=\"https://example.com/f.png\""))
+    }
+
+    @Test
+    fun tableCellsWithMathReachMathJaxAndTheTableBoxIsCapped() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(listOf("case", "<math><mi>y</mi></math> + <math><mn>2</mn></math>"))
+            )
+        )
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        assertTrue("prose cell: $html", html.contains("<td>case</td>"))
+        // Both formulas in the one cell survive the strip, wrapped for MathJax.
+        assertTrue("first formula: $html",
+            html.contains("<td><math><mrow><mi>y</mi></mrow></math> + <math><mrow><mn>2</mn></mrow></math></td>"))
+        assertEquals("two formulas typeset, not one", 2, Regex("<math>").findAll(html).count())
+        assertTrue(html.contains(MATHJAX_ASSET_URL))
+        // These rules cap the TABLE box only. The width a single very wide
+        // formula can take is handled by the rich-table class (fixed layout
+        // plus the SVG cap) covered below and by the 320 dp UI probe.
+        assertTrue(html.contains("table{border-collapse:collapse;margin:4px 0;max-width:100%}"))
+        assertTrue(html.contains("mjx-container{max-width:100%}"))
+    }
+
+    @Test
+    fun tablePicturesShareTheCanonicalCellStyleAndAreCappedByCss() {
+        val elements = listOf(
+            ContentElement.TableElement(
+                listOf(listOf("a <img src=\"data:image/png;base64,AAAA\"/> b"))
+            )
+        )
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        // The rebuilt tag carries the same style the app and the exports use.
+        assertTrue(
+            "picture in the cell: $html",
+            html.contains("<td>a <img src=\"data:image/png;base64,AAAA\"")
+        )
+        assertTrue("canonical style: $html", html.contains("style=\"$CELL_IMAGE_STYLE\""))
+        // The page's own rule caps the image, so a tall picture cannot stretch
+        // the row to several thousand pixels. Pinned as the exact CSS rule.
+        assertTrue(
+            "td img cap: $html",
+            html.contains("td img{max-width:100%;height:auto;max-height:240px;vertical-align:middle}")
+        )
+        assertTrue("cap matches the canonical style", html.contains("td img{$CELL_IMAGE_STYLE}"))
+    }
+
+    /**
+     * A rich table's columns are fixed, so one unbreakable word wider than its
+     * column used to paint straight over the next one (owner report: a
+     * "Hexatriacontane" label at 16 px in a ~99 px three-column cell). Only a
+     * rich table's cells may break inside a word; a plain table keeps the
+     * browser's automatic layout and its ordinary wrapping.
+     */
+    @Test
+    fun chemTableCellsBreakLongWordsAndPlainTablesKeepTheirWrap() {
+        val chem = mixedContentHtml(
+            listOf(
+                ContentElement.TableElement(
+                    listOf(
+                        listOf("Name", "Formula", "Structure"),
+                        listOf(
+                            "Hexatriacontane",
+                            "C36H74",
+                            chemCellHtml(ContentElement.ChemElement("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
+                        )
+                    )
+                )
+            ),
+            16f,
+            "rgba(0,0,0,1)"
+        )
+        assertTrue("chem table class missing: $chem",
+            chem.contains("<table class=\"mcq-rich-table\""))
+        // The exact rule, scoped to a rich table's cells.
+        assertTrue("cell word break rule missing: $chem",
+            chem.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
+        // And nowhere else: an unscoped td rule would change every table.
+        assertEquals("word break must be rich-scoped only", 1,
+            chem.split("overflow-wrap").size - 1)
+        assertTrue("generic cell rule changed: $chem", chem.contains("td{vertical-align:middle}"))
+
+        val plain = mixedContentHtml(
+            listOf(ContentElement.TableElement(listOf(listOf("Hexatriacontane", "C36H74")))),
+            16f,
+            "rgba(0,0,0,1)"
+        )
+        // No chem class anywhere on a plain page, so the scoped rule cannot
+        // reach its cells; the markup and the fixed-layout rule stay off.
+        assertTrue("plain table markup: $plain",
+            plain.contains("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"))
+        assertEquals("plain table cell: $plain", 1,
+            plain.split("<td>Hexatriacontane</td>").size - 1)
+        assertFalse("plain table gained the rich class: $plain",
+            plain.contains("mcq-rich-table\""))
+    }
+
+    /**
+     * A formula or a portable picture is as much a rich cell as a structure:
+     * the fixed-column class and the break/svg caps must reach those tables
+     * too, while a plain text table keeps the automatic layout byte for byte.
+     */
+    @Test
+    fun formulaAndPictureTablesTakeTheFixedRichLayoutAndAPlainTableDoesNot() {
+        val formulaTable = ContentElement.TableElement(
+            listOf(listOf("speed", "<math><mi>v</mi></math> m/s"))
+        )
+        val html = mixedContentHtml(listOf(formulaTable), 16f, "rgba(0,0,0,1)")
+        assertTrue("formula table is rich: $html",
+            html.contains("<table class=\"mcq-rich-table\""))
+        assertTrue("fixed layout: $html",
+            html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
+        assertTrue("cell wrapping: $html",
+            html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
+        assertTrue("formula svg is capped to its cell: $html",
+            html.contains("table.mcq-rich-table td svg{max-width:100%;height:auto}"))
+
+        val pictureTable = ContentElement.TableElement(
+            listOf(listOf("before <img src=\"data:image/png;base64,AAAA\"/> after"))
+        )
+        val pictureHtml = mixedContentHtml(listOf(pictureTable), 16f, "#000")
+        assertTrue("picture table is rich: $pictureHtml",
+            pictureHtml.contains("<table class=\"mcq-rich-table\""))
+
+        val plain = mixedContentHtml(
+            listOf(ContentElement.TableElement(listOf(listOf("a", "b")))),
+            16f,
+            "rgba(0,0,0,1)"
+        )
+        assertTrue("plain table markup: $plain",
+            plain.contains("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\">"))
+        assertFalse("plain table keeps the auto layout: $plain",
+            plain.contains("class=\"mcq-rich-table\""))
+    }
+
+    /**
+     * The owner-reported bug: MathLive stores a bare `<mrow>…</mrow>` (or a
+     * sibling run), so every cell surface printed the raw XML and the column
+     * ballooned. The cell grammar repairs the stored fragment on read, and the
+     * mixed page then typesets it like any other formula.
+     */
+    @Test
+    fun aBareMathLiveFragmentInACellIsRepairedAndTypeset() {
+        val cell = "value <mrow><msup><mi>x</mi><mn>2</mn></msup></mrow> units"
+        val elements = listOf(ContentElement.TableElement(listOf(listOf(cell))))
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(elements))
+        val html = mixedContentHtml(elements, 16f, "rgba(0,0,0,1)")
+        assertTrue("formula is a complete block: $html",
+            html.contains("<td>value <math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math> units</td>"))
+        assertFalse("never visible tag text: $html", html.contains("&lt;mrow"))
+    }
+
+    @Test
+    fun repairStoredMathmlIsConservativeAndStable() {
+        val block = "<math><mi>x</mi></math>"
+        assertEquals("a complete block is untouched", block, repairStoredMathml(block))
+        assertEquals("prose is untouched", "plain x", repairStoredMathml("plain x"))
+        val repaired = repairStoredMathml("<msup><mi>x</mi><mn>2</mn></msup>")
+        assertEquals(
+            "<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>",
+            repaired
+        )
+        // Second call sees a complete block: no double `<math>`/`mrow`.
+        assertEquals(repaired, repairStoredMathml(repaired))
+        // Attributes never survive the repair.
+        assertEquals(
+            "<math><mrow><mi>x</mi></mrow></math>",
+            repairStoredMathml("<mi onclick=\"x()\" mathvariant=\"bold\">x</mi>")
+        )
+    }
+
+    /**
+     * A bare fragment already stored in a body/option/explanation
+     * `MathElement` (not a cell) has the same bug: renderers look for
+     * `<math>` and printed the raw run. The read-time repair wraps it.
+     */
+    @Test
+    fun mixedPageRepairsALegacyBareMathElement() {
+        val elements = listOf(
+            ContentElement.TextElement("Solve: "),
+            ContentElement.MathElement("<msup><mi>x</mi><mn>2</mn></msup>")
+        )
+        val html = mixedContentHtml(elements, 16f, "rgba(0,0,0,1)")
+        assertTrue(
+            "the stored run is a complete block: $html",
+            html.contains("<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>")
+        )
+        assertFalse("never raw tag text: $html", html.contains("&lt;msup"))
+    }
+
+    /**
+     * The regression this PR fixes: a question whose only content is a table
+     * with a formula cell used to take the native path, which can only print
+     * the literal [formula] marker. The path must be chosen by cell content.
+     */
+    @Test
+    fun aTableOnlyFormulaQuestionRendersThroughTheMixedPath() {
+        val elements = listOf(
+            ContentElement.TableElement(listOf(listOf("speed", "<math><mi>v</mi></math> m/s")))
+        )
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(elements))
+        val html = mixedContentHtml(elements, 48f, "rgba(0,0,0,1)")
+        assertTrue("cell math is live markup: $html", html.contains("<td><math>"))
+        assertFalse("never the native marker: $html", html.contains(CELL_FORMULA_MARKER))
+        assertTrue("MATHJAX", html.contains(MATHJAX_ASSET_URL))
     }
 
     @Test

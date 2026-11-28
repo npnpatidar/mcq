@@ -37,7 +37,10 @@ class StringResourceUsageTest {
      * when a use actually lands in one of these or in [renderingAssignments].
      */
     private val renderingSinkCalls = feedbackSinks + setOf(
-        "createChooser", "onExportLogsError", "exportSelection"
+        "createChooser", "onExportLogsError", "exportSelection",
+        // A cell token's label is rendered inside the editable field by the
+        // visual transformation, not by a Text composable.
+        "CellTokenVisualTransformation"
     )
 
     /** Property assignments whose value is always spoken or shown. */

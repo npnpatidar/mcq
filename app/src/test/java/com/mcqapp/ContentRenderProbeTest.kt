@@ -3,10 +3,14 @@ package com.mcqapp
 import com.mcqapp.data.docx.DocxBlock
 import com.mcqapp.data.docx.readDocx
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.ContentRenderPath
 import com.mcqapp.util.InlineHtml
+import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mixedContentHtml
 import com.mcqapp.util.stripMathAttributes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -108,11 +112,14 @@ class ContentRenderProbeTest {
     }
 
     /**
-     * BUG (mixed view): an equation inside a DOCX table cell stays in the
-     * cell string, so the "maths table" shows raw MathML markup.
+     * FIXED (images in tables): a DOCX table-cell equation stays in the cell
+     * string (the import contract), but the mixed view now typesets it instead
+     * of printing raw MathML — [com.mcqapp.util.contentRenderPath] sends a
+     * math-bearing table to the WebView and `tableCellHtml` keeps the formula
+     * for MathJax.
      */
     @Test
-    fun mathInTableCellIsRawMarkup() {
+    fun mathInTableCellIsTypesetByTheMixedView() {
         val bytes = docx(
             "<w:tbl><w:tr><w:tc>" +
                 "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">" +
@@ -121,17 +128,25 @@ class ContentRenderProbeTest {
         )
         val read = readDocx(bytes)
         val table = read.blocks.filterIsInstance<DocxBlock.Table>().single()
-        assertTrue("cell keeps the MathML: ${table.rows}", table.rows.single().single().contains("<math"))
+        val cell = table.rows.single().single()
+        assertTrue("cell keeps the MathML: ${table.rows}", cell.contains("<math"))
+        val html = mixedContentHtml(
+            listOf(ContentElement.TableElement(table.rows)), 16f, "rgba(0,0,0,1)"
+        )
+        assertTrue("the formula reaches MathJax: $html", html.contains("<math>"))
+        assertFalse("never escaped markup: $html", html.contains("&lt;math"))
     }
 
     /**
-     * BUG (most visible): a picture inside a DOCX table cell imports as a
-     * raw <img src="data:image/png;base64,…"> string in the cell — the
-     * native table (Text) and the mixed view (escaped) both render the
-     * whole base64 blob as literal text instead of an image.
+     * FIXED (images in tables): a picture inside a DOCX table cell imports as
+     * a portable data-URI `<img>` in the cell string — that part is the
+     * import contract, not a bug — and every drawing surface now uses it. A
+     * table with a portable cell picture takes the mixed/WebView path, which
+     * draws the real image sized to the cell; a text-only surface still shows
+     * the marker. No surface prints the base64 as text.
      */
     @Test
-    fun pictureInTableCellImportsAsBase64Text() {
+    fun pictureInTableCellIsDrawnInsteadOfBase64Text() {
         val png = java.util.Base64.getEncoder().encodeToString(
             byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)
         )
@@ -162,7 +177,18 @@ xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
         val read = readDocx(out.toByteArray())
         val table = read.blocks.filterIsInstance<DocxBlock.Table>().single()
         val cell = table.rows.single().single()
-        assertTrue("cell carries the img tag: $cell", cell.startsWith("<img src=\"data:image/png;base64,"))
+        assertTrue("cell carries the portable tag: $cell", cell.startsWith("<img src=\"data:image/png;base64,"))
+
+        val elements = listOf(ContentElement.TableElement(table.rows))
+        assertEquals(ContentRenderPath.MIXED, contentRenderPath(elements))
+        val html = mixedContentHtml(elements, 16f, "rgba(0,0,0,1)")
+        assertTrue("the screen draws the image: $html", html.contains("<img src=\"data:image/png;base64,"))
+        assertTrue(
+            "sized to the cell: $html",
+            html.contains("style=\"max-width:100%;height:auto;max-height:240px;vertical-align:middle\"")
+        )
+        assertTrue("labelled for a reader: $html", html.contains("alt=\"Image in table\""))
+        assertFalse("no marker where the picture can be drawn: $html", html.contains(CELL_IMAGE_MARKER))
     }
 
     /**

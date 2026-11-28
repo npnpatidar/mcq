@@ -8,6 +8,7 @@ import com.mcqapp.ui.editor.ChemTemplates
 import com.mcqapp.ui.editor.EditorBlockType
 import com.mcqapp.ui.editor.EditorUiState
 import com.mcqapp.ui.editor.OptionEditorState
+import com.mcqapp.ui.editor.applyChemCapture
 import com.mcqapp.ui.editor.applyChemDiagram
 import com.mcqapp.ui.editor.applyKeyedChemDiagram
 import com.mcqapp.ui.editor.editorSnapshot
@@ -32,6 +33,12 @@ import java.io.File
  * Pure JVM: no Robolectric, no Compose, so it runs on the ARM64 host too.
  */
 class ChemistryEditorTest {
+
+    /** A complete 8-byte PNG signature, so the shared strict validator accepts it. */
+    private val validPng = CHEM_DIAGRAM_PREFIX + "iVBORw0KGgo="
+
+    /** A second complete PNG, distinct from [validPng]. */
+    private val otherPng = CHEM_DIAGRAM_PREFIX + "iVBORw0KGgoAAA=="
 
     private fun state(elements: List<ContentElement>, ids: List<String>? = null) = EditorUiState(
         loading = false,
@@ -181,30 +188,48 @@ class ChemistryEditorTest {
         val before = state(listOf(ChemTemplates.BENZENE.toElement()), listOf("chem-1"))
         val rejected = listOf(
             "", "   ", "AAA", "data:image/jpeg;base64,AAA", CHEM_DIAGRAM_PREFIX,
+            CHEM_DIAGRAM_PREFIX + "AAA",
+            CHEM_DIAGRAM_PREFIX + "bm90IGEgcG5n",
             "https://example.com/structure.png"
         )
         rejected.forEach { assertSame("rejected $it", before, applyChemDiagram(before, "chem-1", it)) }
-        assertSame(before, applyChemDiagram(before, "missing", CHEM_DIAGRAM_PREFIX + "AAA"))
+        assertSame(before, applyChemDiagram(before, "missing", validPng))
         // A non-chem block with the same id must not turn into a diagram either.
         val text = state(listOf(ContentElement.TextElement("plain")), listOf("chem-1"))
-        assertSame(text, applyChemDiagram(text, "chem-1", CHEM_DIAGRAM_PREFIX + "AAA"))
+        assertSame(text, applyChemDiagram(text, "chem-1", validPng))
     }
 
     @Test
     fun anUnchangedDiagramIsANoOpAndDoesNotTouchDirty() {
-        val png = CHEM_DIAGRAM_PREFIX + "AAA"
-        val chem = ChemTemplates.BENZENE.toElement().copy(diagram = png)
+        val chem = ChemTemplates.BENZENE.toElement().copy(diagram = validPng)
         val before = state(listOf(chem), listOf("chem-1")).copy(isDirty = false)
-        assertSame(before, applyChemDiagram(before, "chem-1", png))
-        val changed = applyChemDiagram(before, "chem-1", png + "B")
+        assertSame(before, applyChemDiagram(before, "chem-1", validPng))
+        val changed = applyChemDiagram(before, "chem-1", otherPng)
         assertNotSame(before, changed)
-        assertFalse("a capture is not a user edit", changed.isDirty)
-        assertTrue("the captured diagram is persisted content", changed.elements.single().toString().contains(png + "B"))
+        assertFalse("the raw writer leaves the dirty decision to the caller", changed.isDirty)
+        assertTrue("the captured diagram is persisted content", changed.elements.single().toString().contains(otherPng))
+    }
+
+    /**
+     * A capture that arrives after Save carries the export raster the save did
+     * not see. It must dirty the draft so the next save/navigation writes it;
+     * the identical follow-up callback must be a no-op.
+     */
+    @Test
+    fun aBlockCaptureAfterACleanSaveMarksTheDraftDirty() {
+        val chem = ChemTemplates.BENZENE.toElement()
+        val clean = state(listOf(chem), listOf("chem-1")).copy(isDirty = false)
+        val captured = applyChemCapture(clean, "chem-1@${chem.smiles}", validPng)
+        assertNotSame(clean, captured)
+        assertTrue("the unpersisted PNG is a real edit", captured.isDirty)
+        assertEquals(validPng, (captured.elements.single() as ContentElement.ChemElement).diagram)
+        assertSame(captured, applyChemCapture(captured, "chem-1@${chem.smiles}", validPng))
+        assertTrue(captured.isDirty)
     }
 
     @Test
     fun diagramCaptureTargetsTheNamedBlockInAnyList() {
-        val png = CHEM_DIAGRAM_PREFIX + "AAA"
+        val png = validPng
         val option = OptionEditorState(
             id = "a",
             elements = listOf(EditorBlockType.CHEM.defaultElement()),
@@ -316,17 +341,18 @@ class ChemistryEditorTest {
 
         // The callback that was already in flight when the user typed carries
         // the old key; it must not stamp the benzene raster onto "c".
-        assertSame(edited, applyKeyedChemDiagram(edited, oldKey, CHEM_DIAGRAM_PREFIX + "OLD"))
-        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1", CHEM_DIAGRAM_PREFIX + "OLD"))
-        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@", CHEM_DIAGRAM_PREFIX + "OLD"))
+        assertSame(edited, applyKeyedChemDiagram(edited, oldKey, otherPng))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1", otherPng))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@", otherPng))
 
-        val freshPng = CHEM_DIAGRAM_PREFIX + "NEW"
+        val freshPng = validPng
         val stored = applyKeyedChemDiagram(edited, "chem-1@c", freshPng)
         assertNotSame(edited, stored)
         assertEquals(freshPng, (stored.elements.single() as ContentElement.ChemElement).diagram)
-        assertFalse("a capture is still not a user edit", stored.isDirty)
+        assertFalse("the raw writer still leaves the dirty decision to the caller", stored.isDirty)
         // The invalid-PNG and no-op guards still apply on the keyed path.
         assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", "data:image/jpeg;base64,AAA"))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", CHEM_DIAGRAM_PREFIX + "AAA"))
         assertSame(stored, applyKeyedChemDiagram(stored, "chem-1@c", freshPng))
     }
 

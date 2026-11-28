@@ -25,6 +25,7 @@
     <string name="editor_question_not_in_list">That question is no longer in the current list.</string>
     <string name="editor_move_failed">Could not move to another question.</string>
     <string name="editor_image_unreadable">That image could not be read. Try another image.</string>
+    <string name="editor_cell_image_too_large">That image is too large for a table cell. Try a smaller one.</string>
     <string name="editor_delete_failed">Could not delete the question.</string>
 
     <!-- Study -->

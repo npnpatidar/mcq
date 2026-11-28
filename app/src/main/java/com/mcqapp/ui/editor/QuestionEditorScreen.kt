@@ -167,6 +167,11 @@ fun QuestionEditorScreen(
         viewModel.beginImagePick(target)
         pickBlockImageLauncher.launch("image/*")
     }
+    // A cell picture shares the one gallery launcher; the target names the
+    // table by stable block id plus the cell/part it is for.
+    val pickCellImage: (String, Int, Int, Int?) -> Unit = { blockId, row, col, replacePart ->
+        pickBlockImage(ImageTarget.TableCell(blockId, row, col, replacePart))
+    }
 
     // Derived from the COLLECTED state: this read is what makes the outer
     // composable re-run when the form changes. Reading it via the ViewModel
@@ -346,6 +351,10 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeTableRow,
                 onAddColumn = viewModel::addTableColumn,
                 onRemoveColumn = viewModel::removeTableColumn,
+                onUpdateCellText = viewModel::updateTableCellEditor,
+                onSetCellPart = viewModel::setTableCellPart,
+                onRemoveCellPart = viewModel::removeTableCellPart,
+                onPickCellImage = pickCellImage,
                 onPickImage = { blockId -> pickBlockImage(ImageTarget.Body(blockId)) },
                 onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
             )
@@ -372,7 +381,15 @@ fun QuestionEditorScreen(
             // time.
             Card(modifier = Modifier.fillMaxWidth().testTag("editor-preview")) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    ContentElements(state.elements)
+                    ContentElements(
+                        state.elements,
+                        // The preview is the table's only live page now: it
+                        // keys each cell structure by its stable block id and
+                        // row/column, so a captured PNG lands in that exact
+                        // marker.
+                        cellBlockIds = state.blockIds,
+                        onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                    )
                     if (state.cardType == EditorCardType.FLASHCARD) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text(
@@ -381,7 +398,11 @@ fun QuestionEditorScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(4.dp))
-                        ContentElements(state.explanationElements)
+                        ContentElements(
+                            state.explanationElements,
+                            cellBlockIds = state.explanationBlockIds,
+                            onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                        )
                         if (state.explanationImage.isNotBlank()) {
                             QuestionImage(src = state.explanationImage)
                         }
@@ -465,7 +486,11 @@ fun QuestionEditorScreen(
                         onAddColumn = { viewModel.addOptionTableColumn(option.id, it) },
                         onRemoveColumn = { index, col ->
                             viewModel.removeOptionTableColumn(option.id, index, col)
-                        }
+                        },
+                        onUpdateCellText = viewModel::updateTableCellEditor,
+                        onSetCellPart = viewModel::setTableCellPart,
+                        onRemoveCellPart = viewModel::removeTableCellPart,
+                        onPickCellImage = pickCellImage
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -526,8 +551,16 @@ fun QuestionEditorScreen(
                 onRemoveRow = viewModel::removeExplanationTableRow,
                 onAddColumn = viewModel::addExplanationTableColumn,
                 onRemoveColumn = viewModel::removeExplanationTableColumn,
+                onUpdateCellText = viewModel::updateTableCellEditor,
+                onSetCellPart = viewModel::setTableCellPart,
+                onRemoveCellPart = viewModel::removeTableCellPart,
+                onPickCellImage = pickCellImage,
                 onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) },
-                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) },
+                // A flashcard's back is already drawn in the question preview
+                // above; a regular explanation has no other preview, so its
+                // table draws one here and can capture a cell structure.
+                richCellPreview = state.cardType != EditorCardType.FLASHCARD
             )
             Spacer(Modifier.height(8.dp))
             if (state.explanationImage.isNotBlank()) {
@@ -827,7 +860,17 @@ private fun OptionEditorRow(
     onAddRow: (index: Int) -> Unit,
     onRemoveRow: (index: Int, row: Int) -> Unit,
     onAddColumn: (index: Int) -> Unit,
-    onRemoveColumn: (index: Int, col: Int) -> Unit
+    onRemoveColumn: (index: Int, col: Int) -> Unit,
+    onUpdateCellText: (blockId: String, row: Int, col: Int, text: String) -> Unit,
+    onSetCellPart: (
+        blockId: String,
+        row: Int,
+        col: Int,
+        partIndex: Int?,
+        part: com.mcqapp.util.CellEditPart
+    ) -> Unit,
+    onRemoveCellPart: (blockId: String, row: Int, col: Int, partIndex: Int) -> Unit,
+    onPickCellImage: (blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit
 ) {
     // Imported option ids can be arbitrary strings, so the label is the
     // position (A, B, C…); the id stays internal for answer-key references
@@ -889,8 +932,15 @@ private fun OptionEditorRow(
             onRemoveRow = onRemoveRow,
             onAddColumn = onAddColumn,
             onRemoveColumn = onRemoveColumn,
+            onUpdateCellText = onUpdateCellText,
+            onSetCellPart = onSetCellPart,
+            onRemoveCellPart = onRemoveCellPart,
+            onPickCellImage = onPickCellImage,
             onPickImage = onPickBlockImage,
-            onChemDiagram = onChemDiagram
+            onChemDiagram = onChemDiagram,
+            // An option has no whole-question preview of its own, so this
+            // table's structures need a local page to capture their PNG.
+            richCellPreview = true
         )
         // As with the question image, no blank field: an option image is added
         // as an Image block. A pre-existing one stays visible and removable.

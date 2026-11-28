@@ -13,6 +13,7 @@ import com.mcqapp.ui.importscreen.ImportDataHolder
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,6 +76,36 @@ class EditorViewModelTest {
         )
     }
 
+    private fun chemDto(id: String): QuestionDto = QuestionDto(
+        id = id,
+        text = "Q",
+        elements = listOf(
+            ContentElement.TextElement("Q"),
+            ContentElement.ChemElement(
+                smiles = "CCO",
+                formula = "C2H5OH",
+                caption = "ethanol",
+                spoken = "ethanol"
+            )
+        ),
+        options = listOf(
+            OptionDto("a", "A", listOf(ContentElement.TextElement("A"))),
+            OptionDto("b", "B", listOf(ContentElement.TextElement("B")))
+        ),
+        correctOptionIds = listOf("a")
+    )
+
+    private fun captureKey(vm: EditorViewModel, smiles: String = "CCO"): String {
+        val s = vm.state.value
+        val chemIndex = s.elements.indexOfFirst { it is ContentElement.ChemElement }
+        return "${s.blockIds[chemIndex]}@$smiles"
+    }
+
+    private fun diagramOf(elements: List<ContentElement>): String =
+        elements.filterIsInstance<ContentElement.ChemElement>().single().diagram
+
+    private fun diagramOf(dto: QuestionDto): String = diagramOf(dto.elements)
+
     private fun vmFor(dto: QuestionDto, writer: ((QuestionDto) -> Unit)? = null): EditorViewModel {
         ImportDataHolder.pendingEditQuestion = dto
         if (writer != null) {
@@ -94,6 +125,41 @@ class EditorViewModelTest {
     fun tearDown() {
         ImportDataHolder.pendingEditQuestion = null
         EditorSession.clear()
+    }
+
+    @Test
+    fun mathBridgeCommitsBareMathLiveValuesAsCompleteBlocks() {
+        val vm = vmFor(richDto("q-math-commit"))
+        val bare = "<msup><mi>x</mi><mn>2</mn></msup>"
+        val canonical = "<math><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+
+        // Body: the MathLive callback goes through updateMathBody.
+        val s = vm.state.value
+        val bodyIndex = s.elements.indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathBody(s.blockIds[bodyIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.elements[bodyIndex]
+        )
+
+        // Option b: same bridge, addressed by the option's own block id.
+        val option = vm.state.value.options.first { it.id == "b" }
+        val optionIndex = option.elements.indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathOption(option.id, option.blockIds[optionIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.options.first { it.id == "b" }.elements[optionIndex]
+        )
+
+        // Explanation: same bridge again.
+        val before = vm.state.value
+        val explanationIndex = before.explanationElements
+            .indexOfFirst { it is ContentElement.MathElement }
+        vm.updateMathExplanation(before.explanationBlockIds[explanationIndex], bare)
+        assertEquals(
+            ContentElement.MathElement(canonical),
+            vm.state.value.explanationElements[explanationIndex]
+        )
     }
 
     @Test
@@ -449,6 +515,76 @@ class EditorViewModelTest {
         vm.save { }
         val saved = captured ?: throw AssertionError("importWriter was not called")
         assertEquals("pass-42", saved.passageId)
+    }
+
+    @Test
+    fun aPreviewCaptureOnACleanUnsavedDraftStaysCleanAndALaterSaveWritesIt() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        var saved: QuestionDto? = null
+        val vm = vmFor(chemDto("q-capture-clean"), writer = { saved = it })
+        val key = captureKey(vm)
+        assertFalse("a loaded draft starts clean", vm.state.value.isDirty)
+
+        vm.updateChemDiagram(key, png)
+        assertFalse("preview-load capture is not a user edit", vm.state.value.isDirty)
+        assertEquals(png, diagramOf(vm.state.value.elements))
+
+        // A later edit makes the draft dirty; the captured raster rides along.
+        vm.updateBlock(0, ContentElement.TextElement("edited stem"))
+        assertTrue(vm.state.value.isDirty)
+        vm.save { }
+        val written = saved ?: throw AssertionError("importWriter was not called")
+        assertEquals(png, diagramOf(written))
+    }
+
+    @Test
+    fun aCaptureAfterTheFirstSaveDirtiesAndIsWrittenNextTime() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        var saved: QuestionDto? = null
+        val vm = vmFor(chemDto("q-capture-after-save"), writer = { saved = it })
+        val key = captureKey(vm)
+
+        vm.save { }
+        assertFalse("the clean save leaves the draft clean", vm.state.value.isDirty)
+
+        vm.updateChemDiagram(key, png)
+        assertTrue("a fresh capture after a save is unsaved content", vm.state.value.isDirty)
+
+        val once = vm.state.value
+        vm.updateChemDiagram(key, png)
+        assertSame("an identical repeat capture is a no-op", once, vm.state.value)
+
+        vm.save { }
+        val written = saved ?: throw AssertionError("importWriter was not called")
+        assertEquals(png, diagramOf(written))
+        assertFalse("the write clears the dirty flag", vm.state.value.isDirty)
+    }
+
+    @Test
+    fun aCaptureOnAnAlreadyDirtyDraftKeepsItDirty() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        val vm = vmFor(chemDto("q-capture-dirty"), writer = { })
+        val key = captureKey(vm)
+        vm.updateBlock(0, ContentElement.TextElement("edited stem"))
+        assertTrue(vm.state.value.isDirty)
+
+        vm.updateChemDiagram(key, png)
+        assertTrue("a capture must never clear a real edit", vm.state.value.isDirty)
+        assertEquals(png, diagramOf(vm.state.value.elements))
+    }
+
+    @Test
+    fun aSecondIdenticalCaptureOnACleanDraftIsANoOp() {
+        val png = "data:image/png;base64,iVBORw0KGgo="
+        val vm = vmFor(chemDto("q-capture-repeat"), writer = { })
+        val key = captureKey(vm)
+        vm.updateChemDiagram(key, png)
+        val once = vm.state.value
+        assertFalse(once.isDirty)
+
+        vm.updateChemDiagram(key, png)
+        assertSame("the same raster must not churn the draft", once, vm.state.value)
+        assertFalse(vm.state.value.isDirty)
     }
 
     @Test

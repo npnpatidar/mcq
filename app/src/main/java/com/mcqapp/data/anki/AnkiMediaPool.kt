@@ -1,14 +1,26 @@
 package com.mcqapp.data.anki
 
 import com.mcqapp.data.export.MediaSpool
+import com.mcqapp.data.export.chemAccessibleText
 import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.chemProductLabel
 import com.mcqapp.data.export.imageExtension
 import com.mcqapp.data.export.isPngDataUri
 import com.mcqapp.data.export.mediaKey
 import com.mcqapp.data.export.parseDataUri
 import com.mcqapp.data.normalizeMathText
 import com.mcqapp.data.renderInlineHtml
+import com.mcqapp.data.sanitizeMathml
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CellSegment
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.forEachCellImage
+import com.mcqapp.util.mapCellImages
+import com.mcqapp.util.portableCellImageSrc
+import com.mcqapp.util.repairStoredMathml
 import java.io.Closeable
 import java.io.OutputStream
 
@@ -76,17 +88,33 @@ class AnkiMediaPool : Closeable {
         // helper escapes anything else.
         is ContentElement.TextElement -> renderInlineHtml(element.text)
         // Bare text in mrow is invalid MathML (browsers drop it); the
-        // shared normalizer tokenizes it into mi/mn/mo.
-        is ContentElement.MathElement -> normalizeMathText(element.mathml)
+        // shared normalizer tokenizes it into mi/mn/mo. A legacy bare run is
+        // repaired to a full block first, and attributes are stripped so a
+        // hostile stored fragment cannot reach the deck as live markup.
+        is ContentElement.MathElement ->
+            normalizeMathText(sanitizeMathml(repairStoredMathml(element.mathml)))
         is ContentElement.ImageElement -> imageElement(element.src)
         is ContentElement.TableElement -> tableToHtml(element)
-        // The readable field carries the structure's text handles. Only a
-        // valid PNG diagram is spooled through the media path, so it lands in
-        // the deck as mcqapp-N.png and Anki resolves it by filename. The full
-        // ChemElement itself rides unchanged in the third (mcqapp) payload.
-        is ContentElement.ChemElement ->
-            escapeHtml(chemElementText(element)) +
-                if (isPngDataUri(element.diagram)) imageElement(element.diagram) else ""
+        // A valid PNG is spooled through the media path and the readable
+        // handles move into its alt text, matching the in-app page's
+        // drawing-only presentation. A structure without a drawable diagram
+        // keeps the handles as visible text. The full ChemElement itself rides
+        // unchanged in the third (mcqapp) payload. A reaction appends its
+        // product label ("A") after the picture.
+        is ContentElement.ChemElement -> chemToHtml(element)
+    }
+
+    /**
+     * One chemical structure in a readable field. A valid PNG is spooled and
+     * referenced by filename with the readable handles in its `alt`; a
+     * structure without one keeps the handles as visible text. A reaction's
+     * product label ("A") follows the picture.
+     */
+    private fun chemToHtml(element: ContentElement.ChemElement): String {
+        if (!isPngDataUri(element.diagram)) return escapeHtml(chemElementText(element))
+        val image = imageElement(element.diagram, chemAccessibleText(element))
+        val label = chemProductLabel(element)
+        return if (label.isNotBlank()) image + escapeHtml(label) else image
     }
 
     private fun tableToHtml(table: ContentElement.TableElement): String {
@@ -94,14 +122,97 @@ class AnkiMediaPool : Closeable {
         table.rows.forEach { row ->
             sb.append("<tr>")
             row.forEach { cell ->
-                sb.append("<td>").append(renderInlineHtml(cell)).append("</td>")
+                sb.append("<td>").append(cellToHtml(cell)).append("</td>")
             }
             sb.append("</tr>")
         }
         return sb.append("</table>").toString()
     }
 
-    private fun imageElement(src: String?): String {
+    /**
+     * One cell in Anki's field HTML, built from the shared cell grammar rather
+     * than escaped as a whole:
+     *
+     * - a chemical structure becomes its diagram with the readable handles in
+     *   its alt text, spooled as `mcqapp-N.png` (a structure without a valid
+     *   PNG keeps the handles only, exactly as a standalone block does, and a
+     *   reaction appends its product label after the picture);
+     * - a formula is normalized with the same [normalizeMathText] a top-level
+     *   [ContentElement.MathElement] gets, so the deck shows `<math>` instead
+     *   of escaped MathML;
+     * - a portable cell picture is spooled through the media pool and
+     *   referenced by filename, never written as its data URI text;
+     * - everything else goes through [renderInlineHtml], so inline formatting
+     *   survives and unknown markup stays visible.
+     */
+    private fun cellToHtml(cell: String): String =
+        cellSegments(cell).joinToString("") { segment ->
+            when (segment) {
+                is CellSegment.Chem -> chemToHtml(segment.element)
+                is CellSegment.Text -> cellTextToHtml(segment.html)
+            }
+        }
+
+    /** Prose and formulas of one cell, each through its own existing pipeline. */
+    private fun cellTextToHtml(html: String): String =
+        tableCellParts(html).joinToString("") { part ->
+            when (part) {
+                is CellPart.Math -> normalizeMathText(
+                    sanitizeMathml(
+                        mapCellImages(part.mathml) { src -> cellImageToHtml(src) },
+                        // The map above already reduced every picture to the
+                        // canonical, validated `<img>` this pool writes; it
+                        // must survive the MathML sanitizer, while every tag
+                        // the stored cell carried loses its attributes (a
+                        // foreign `<mi onclick=…>` must not reach the deck).
+                        passthroughTags = setOf("img")
+                    )
+                )
+                is CellPart.Text -> cellProseToHtml(part.html)
+            }
+        }
+
+    /**
+     * One prose run of a cell: the inline pipeline around each picture, with a
+     * picture spooled into the media pool. A torn `<img` tag is the shared
+     * cell scanner's `null` source and collapses to the visible marker, so a
+     * truncated payload can never survive as text.
+     */
+    private fun cellProseToHtml(html: String): String {
+        var out: StringBuilder? = null
+        var pos = 0
+        forEachCellImage(html) { src, start, end ->
+            val sb = out ?: StringBuilder(html.length).also { out = it }
+            sb.append(renderInlineHtml(html.substring(pos, start)))
+            sb.append(cellImageToHtml(src))
+            pos = end
+        }
+        val sb = out ?: return renderInlineHtml(html)
+        sb.append(renderInlineHtml(html.substring(pos)))
+        return sb.toString()
+    }
+
+    /**
+     * A picture from a cell as an Anki reference: only a portable inline
+     * picture (or a remote URL Anki can fetch itself) is emitted. Anything
+     * else — a torn tag, `file:`, `javascript:`, SVG, a code-injected
+     * attribute — is not drawable and becomes the visible marker.
+     */
+    private fun cellImageToHtml(src: String?): String = when {
+        src == null -> CELL_IMAGE_MARKER
+        portableCellImageSrc(src) || isRemoteImage(src) -> imageElement(src).trimStart()
+        else -> CELL_IMAGE_MARKER
+    }
+
+    /** A URL Anki itself fetches; unlike a data URI it needs no media entry. */
+    private fun isRemoteImage(src: String): Boolean {
+        val value = src.trim()
+        return value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("//")
+    }
+
+    private fun imageElement(src: String?, alt: String = ""): String {
         if (src.isNullOrBlank()) return ""
         val dataUri = parseDataUri(src)
         if (dataUri != null) {
@@ -111,10 +222,10 @@ class AnkiMediaPool : Closeable {
                 spool.add(spool.size.toString(), dataUri.bytes)
                 name
             }
-            return " " + AnkiPackageWriter.imageTag(filename)
+            return " " + AnkiPackageWriter.imageTag(filename, alt)
         }
         // A remote URL: keep it, Anki will fetch it over the network.
-        return " " + AnkiPackageWriter.imageTag(src)
+        return " " + AnkiPackageWriter.imageTag(src, alt)
     }
 
     companion object {

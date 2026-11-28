@@ -16,6 +16,16 @@ import com.mcqapp.domain.QuestionOption
 import com.mcqapp.domain.hasVisibleContent
 import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
+import com.mcqapp.util.CellEditPart
+import com.mcqapp.util.canonicalCellImageSrc
+import com.mcqapp.util.cellEditPartHtml
+import com.mcqapp.util.cellEditParts
+import com.mcqapp.util.cellTokenKey
+import com.mcqapp.util.cellWithPartInserted
+import com.mcqapp.util.cellWithPartRemoved
+import com.mcqapp.util.cellWithPartReplaced
+import com.mcqapp.util.isRendererPngDataUri
+import com.mcqapp.util.withCellEditorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -119,6 +129,20 @@ sealed interface ImageTarget {
     data class Body(override val blockId: String) : ImageTarget
     data class Explanation(override val blockId: String) : ImageTarget
     data class Option(val optionId: String, override val blockId: String) : ImageTarget
+
+    /**
+     * One cell of the table block named by [blockId]. The block is resolved
+     * among the body, explanation and option lists by its stable id, so a
+     * reordered or deleted table can never receive a picture meant for
+     * another one. [replacePart] names the cell part to replace; null appends
+     * a new picture.
+     */
+    data class TableCell(
+        override val blockId: String,
+        val row: Int,
+        val col: Int,
+        val replacePart: Int? = null
+    ) : ImageTarget
 }
 
 /**
@@ -330,6 +354,53 @@ internal fun ContentElement.TableElement.withCell(
     })
 }
 
+/**
+ * Applies one edit of the cell's visible text field. Only the cell's text
+ * parts change: every formula, picture and structure keeps its identity and
+ * its position around the edited text (see [withCellEditorText]).
+ */
+internal fun ContentElement.TableElement.withCellEditorText(
+    row: Int,
+    col: Int,
+    editorText: String,
+    tokenKey: String = ""
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = withCellEditorText(cell, editorText, tokenKey)
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
+/**
+ * Inserts ([partIndex] null) or replaces one rich part of a cell. A replace
+ * whose index no longer exists, or now names another kind of part, is a
+ * no-op: a stale dialog or gallery callback must never rewrite a neighbour.
+ */
+internal fun ContentElement.TableElement.withCellPart(
+    row: Int,
+    col: Int,
+    partIndex: Int?,
+    part: CellEditPart
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = if (partIndex == null) {
+        cellWithPartInserted(cell, part)
+    } else {
+        cellWithPartReplaced(cell, partIndex, part)
+    }
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
+/** Removes one rich part of a cell; an out-of-range index is a no-op. */
+internal fun ContentElement.TableElement.withCellPartRemoved(
+    row: Int,
+    col: Int,
+    partIndex: Int
+): ContentElement.TableElement {
+    val cell = rows.getOrNull(row)?.getOrNull(col) ?: return this
+    val updated = cellWithPartRemoved(cell, partIndex)
+    return if (updated == cell) this else withCell(row, col, updated)
+}
+
 internal fun ContentElement.TableElement.withRowAdded(): ContentElement.TableElement {
     val width = rows.firstOrNull()?.size ?: 1
     return copy(rows = rows + listOf(List(width) { "" }))
@@ -361,6 +432,42 @@ internal fun ContentElement.TableElement.withColumnRemoved(col: Int): ContentEle
 }
 
 /**
+ * Applies [transform] to the table block named by [blockId], searching the
+ * question body, the explanation and every option. Block ids are unique
+ * inside one editor instance, so a callback installed before a reorder finds
+ * the same table afterwards instead of writing into whatever now occupies
+ * the old position.
+ */
+internal fun updateTableBlockById(
+    s: EditorUiState,
+    blockId: String,
+    transform: (ContentElement.TableElement) -> ContentElement.TableElement
+): EditorUiState {
+    fun replace(elements: List<ContentElement>, ids: List<String>): List<ContentElement> {
+        val i = ids.indexOf(blockId)
+        if (i !in elements.indices) return elements
+        val table = elements[i] as? ContentElement.TableElement ?: return elements
+        val updated = transform(table)
+        if (updated === table) return elements
+        return elements.toMutableList().also { it[i] = updated }
+    }
+
+    val body = replace(s.elements, s.blockIds)
+    if (body !== s.elements) return s.copy(elements = body)
+    val explanation = replace(s.explanationElements, s.explanationBlockIds)
+    if (explanation !== s.explanationElements) return s.copy(explanationElements = explanation)
+    val options = s.options.map { o ->
+        val updated = replace(o.elements, o.blockIds)
+        if (updated === o.elements) o else o.copy(elements = updated)
+    }
+    return if (options.indices.any { options[it] !== s.options[it] }) {
+        s.copy(options = options)
+    } else {
+        s
+    }
+}
+
+/**
  * Writes [src] into the block the target names, resolving the id against the
  * *current* lists. A target whose block or option is gone (deleted while the
  * picker was open) writes nothing rather than a neighbouring block.
@@ -388,6 +495,18 @@ internal fun applyImageTarget(s: EditorUiState, target: ImageTarget, src: String
                 if (o.id != option.id) o
                 else o.copy(elements = o.elements.toMutableList().also { it[i] = image })
             })
+        }
+        is ImageTarget.TableCell -> {
+            val canonical = com.mcqapp.util.canonicalCellImageSrc(src) ?: return s
+            if (!com.mcqapp.util.cellImageAllowed(canonical)) return s
+            updateTableBlockById(s, target.blockId) { table ->
+                table.withCellPart(
+                    target.row,
+                    target.col,
+                    target.replacePart,
+                    CellEditPart.Image(com.mcqapp.util.cellImageTag(canonical))
+                )
+            }
         }
     }
 }
@@ -446,9 +565,10 @@ internal fun applyChemDiagram(
     blockId: String,
     pngDataUri: String
 ): EditorUiState {
-    if (!pngDataUri.startsWith(CHEM_DIAGRAM_PREFIX) ||
-        pngDataUri.length == CHEM_DIAGRAM_PREFIX.length
-    ) return s
+    // One bounded PNG validator for blocks and cells alike: a renderer capture
+    // must carry the real PNG signature, without decoding the whole payload on
+    // the UI thread. Storage/export still run the strict validator.
+    if (!isRendererPngDataUri(pngDataUri)) return s
 
     fun replace(elements: List<ContentElement>, ids: List<String>): List<ContentElement> {
         val i = ids.indexOf(blockId)
@@ -474,7 +594,8 @@ internal fun applyChemDiagram(
 }
 
 /**
- * Applies a PNG capture whose key is `"<blockId>@<smiles>"`.
+ * Applies a PNG capture whose key is `"<blockId>@<smiles>"` for a chem block,
+ * or `"<blockId>#<row>:<col>@<smiles>"` for a structure inside one table cell.
  *
  * The renderer draws from the SMILES in the HTML; by the time it rasterises
  * the SVG the user may already have typed a different source. Such a stale
@@ -489,11 +610,24 @@ internal fun applyKeyedChemDiagram(
 ): EditorUiState {
     val at = chemKey.indexOf('@')
     if (at <= 0 || at == chemKey.lastIndex) return s
-    val blockId = chemKey.substring(0, at)
+    val target = chemKey.substring(0, at)
     val smiles = chemKey.substring(at + 1)
 
+    // A cell key carries its row/column before the SMILES. SMILES itself may
+    // contain '#', so only the target part is searched for the separator.
+    val hash = target.lastIndexOf('#')
+    if (hash > 0) {
+        val blockId = target.substring(0, hash)
+        val coords = target.substring(hash + 1)
+        val colon = coords.indexOf(':')
+        if (colon <= 0 || colon == coords.lastIndex) return s
+        val row = coords.substring(0, colon).toIntOrNull() ?: return s
+        val col = coords.substring(colon + 1).toIntOrNull() ?: return s
+        return applyCellChemDiagram(s, blockId, row, col, smiles, pngDataUri)
+    }
+
     fun currentSmiles(ids: List<String>, elements: List<ContentElement>): String? {
-        val i = ids.indexOf(blockId)
+        val i = ids.indexOf(target)
         if (i !in elements.indices) return null
         return (elements[i] as? ContentElement.ChemElement)?.smiles
     }
@@ -503,7 +637,77 @@ internal fun applyKeyedChemDiagram(
         ?: s.options.firstNotNullOfOrNull { currentSmiles(it.blockIds, it.elements) }
         ?: return s
     if (liveSmiles != smiles) return s
-    return applyChemDiagram(s, blockId, pngDataUri)
+    return applyChemDiagram(s, target, pngDataUri)
+}
+
+/**
+ * Stores a renderer-captured PNG on the structure named by its cell key.
+ *
+ * The write resolves the table by its stable block id against the *current*
+ * draft, so a capture queued before a reorder or a delete finds nothing rather
+ * than a neighbouring table. The row/column must still exist, and the cell
+ * must still hold a structure drawn from [smiles]; anything else is a no-op.
+ * The marker is rebuilt through [chemCellHtml] by way of [cellEditPartHtml],
+ * so its other attributes and the text around it stay intact, and the result
+ * is identical for a repeated capture (the caller then leaves the state
+ * instance untouched).
+ */
+internal fun applyCellChemDiagram(
+    s: EditorUiState,
+    blockId: String,
+    row: Int,
+    col: Int,
+    smiles: String,
+    pngDataUri: String
+): EditorUiState {
+    // A cell payload travels into every export and backup part, so the same
+    // bounded renderer rule applies here; the writer validates again.
+    if (!isRendererPngDataUri(pngDataUri)) return s
+    return updateTableBlockById(s, blockId) { table ->
+        val cell = table.rows.getOrNull(row)?.getOrNull(col)
+            ?: return@updateTableBlockById table
+        val parts = cellEditParts(cell)
+        var changed = false
+        val updated = parts.map { part ->
+            val structure = part as? CellEditPart.Structure ?: return@map part
+            if (structure.element.smiles != smiles || structure.element.diagram == pngDataUri) {
+                part
+            } else {
+                changed = true
+                CellEditPart.Structure(structure.element.copy(diagram = pngDataUri))
+            }
+        }
+        if (!changed) {
+            table
+        } else {
+            table.withCell(row, col, updated.joinToString("") { cellEditPartHtml(it) })
+        }
+    }
+}
+
+/**
+ * Applies a renderer capture to the draft.
+ *
+ * A capture that changes a diagram is persisted content too: the PNG is what
+ * the DOCX/HTML/PDF exports draw. It therefore dirties the draft once the
+ * draft is already dirty or has been saved once, so the next Save (or a
+ * Prev/Next auto-save) writes it. Before the first save on a clean draft it is
+ * preview-load work: the content (and the caller's clean baseline) moves
+ * without making a read-only visit look edited.
+ *
+ * A capture that changes nothing — the same raster arriving again, a stale
+ * key, an invalid payload — leaves the state instance and the clean flag
+ * untouched, so an unchanged form is not made to look edited.
+ */
+internal fun applyChemCapture(
+    s: EditorUiState,
+    chemKey: String,
+    pngDataUri: String,
+    savedOnce: Boolean = true
+): EditorUiState {
+    val next = applyKeyedChemDiagram(s, chemKey, pngDataUri)
+    if (next === s) return s
+    return if (s.isDirty || savedOnce) next.copy(isDirty = true) else next.copy(isDirty = false)
 }
 
 /**
@@ -759,13 +963,24 @@ class EditorViewModel(
      */
     private var cleanSignature: String = ""
 
+    /**
+     * True once this draft has been persisted at least once. A renderer
+     * capture on a never-saved draft is merely the preview rasterising what it
+     * was handed; it must not make a read-only visit look edited. After the
+     * first save a fresh capture is new content the next save must write, so
+     * it dirties the draft. Reset when a different draft is loaded.
+     */
+    private var savedOnce: Boolean = false
+
     private fun snapshotClean() {
         cleanSignature = editorSnapshot(_state.value)
+        savedOnce = false
         _state.update { it.copy(isDirty = false) }
     }
 
     private fun markClean(signature: String) {
         cleanSignature = signature
+        savedOnce = true
         // Fields stay editable while the write is in flight. Recompute against
         // the CURRENT form: a keystroke made after the snapshot must stay dirty
         // (it was not persisted), never be cleared by a stale "clean" flag.
@@ -1098,6 +1313,39 @@ class EditorViewModel(
     fun removeTableColumn(index: Int, col: Int) =
         updateTable(index) { it.withColumnRemoved(col) }
 
+    // ---- rich cell parts, addressed by stable block id ----
+    //
+    // The cell menu, its dialogs and the picture picker all outlive a
+    // composition (a picker result, a rotation), so they name the table by
+    // its stable id, never by a positional index. The same three methods serve
+    // the body, explanation and option tables because a block id is unique
+    // inside one editor instance.
+
+    fun updateTableCellEditor(blockId: String, row: Int, col: Int, editorText: String) =
+        updateState { updateTableBlockById(it, blockId) { table ->
+            table.withCellEditorText(
+                row,
+                col,
+                editorText,
+                cellTokenKey(blockId, row, col)
+            )
+        } }
+
+    fun setTableCellPart(
+        blockId: String,
+        row: Int,
+        col: Int,
+        partIndex: Int?,
+        part: CellEditPart
+    ) = updateState { updateTableBlockById(it, blockId) { table ->
+        table.withCellPart(row, col, partIndex, part)
+    } }
+
+    fun removeTableCellPart(blockId: String, row: Int, col: Int, partIndex: Int) =
+        updateState { updateTableBlockById(it, blockId) { table ->
+            table.withCellPartRemoved(row, col, partIndex)
+        } }
+
     // ---- table cells (option and explanation lists) ----
 
     private fun updateOptionTable(
@@ -1356,36 +1604,42 @@ class EditorViewModel(
     // index that id maps to is read from the current state when it fires.
 
     fun updateMathBody(blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Body(blockId), mml)
+        applyMathTarget(it, MathTarget.Body(blockId), normalizeFormulaMathml(mml))
     }
 
     fun updateMathExplanation(blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Explanation(blockId), mml)
+        applyMathTarget(it, MathTarget.Explanation(blockId), normalizeFormulaMathml(mml))
     }
 
     fun updateMathOption(optionId: String, blockId: String, mml: String) = updateState {
-        applyMathTarget(it, MathTarget.Option(optionId, blockId), mml)
+        applyMathTarget(it, MathTarget.Option(optionId, blockId), normalizeFormulaMathml(mml))
     }
 
     /**
      * Write-back for the shared renderer's captured PNG. Unlike every other
-     * block edit this is not a user action, so it deliberately bypasses
-     * [updateState] and preserves the dirty flag: capturing a diagram must
-     * not make a clean form look edited (or clear a real edit). A no-op leaves
-     * the state instance untouched, so repeated capture callbacks do not
-     * churn composition. The key also carries the SMILES the PNG was drawn
-     * from; stale captures are rejected by [applyKeyedChemDiagram].
+     * block edit this is not a user action, so it does not go through
+     * [updateState]. Before the first save the capture is preview-load work on
+     * a clean draft: it updates the content (and the clean baseline) without
+     * making a read-only visit look edited. Once the draft has been saved, or
+     * is already dirty, a new capture is content the next save must write, so
+     * it dirties the draft. A no-op leaves the state instance untouched, and an
+     * identical repeat capture therefore changes nothing. The key also carries
+     * the SMILES the PNG was drawn from; stale captures are rejected by
+     * [applyKeyedChemDiagram].
      */
     fun updateChemDiagram(chemKey: String, pngDataUri: String) {
         _state.update { current ->
-            val next = applyKeyedChemDiagram(current, chemKey, pngDataUri)
+            val next = applyChemCapture(current, chemKey, pngDataUri, savedOnce)
             if (next === current) {
                 current
             } else {
-                // Keep the clean baseline in step with the captured content so
-                // a later edit-and-revert is not mistaken for a user change.
-                if (!current.isDirty) cleanSignature = editorSnapshot(next)
-                next.copy(isDirty = current.isDirty)
+                // Clean, never-saved draft: move the clean baseline with the
+                // captured raster so a later edit is measured against what the
+                // draft now contains, and a later save includes it.
+                if (!next.isDirty && !current.isDirty && !savedOnce) {
+                    cleanSignature = editorSnapshot(next)
+                }
+                next
             }
         }
     }
@@ -1824,7 +2078,34 @@ class EditorViewModel(
                 }
                 return@launch
             }
-            applyPickedImage(target, encoded)
+            // A cell travels inside the question row, its fingerprints and
+            // every backup part, so its picture is capped at the import
+            // contract (800 px long edge, 512 KB) before it can be written.
+            // The picker encodes at the top-level 1024 px; one downscale here
+            // keeps the stored cell identical to what an import would store.
+            val src = if (target is ImageTarget.TableCell) {
+                val scaled = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.mcqapp.data.io.ImageDownscale.downscaleDataUri(
+                        encoded,
+                        com.mcqapp.util.CELL_IMAGE_MAX_DIMENSION
+                    )
+                }
+                // The scaler emits MIME-wrapped base64; store the canonical
+                // unwrapped form so the cell contract, hashes and round trips
+                // agree with an imported picture.
+                val canonical = scaled?.let { canonicalCellImageSrc(it) }
+                if (canonical == null || !com.mcqapp.util.cellImageAllowed(canonical)) {
+                    Logger.w("EDITORVM", "Picked cell image is invalid or over the cell cap; nothing written")
+                    _state.update {
+                        it.copy(imageError = friendly(R.string.editor_cell_image_too_large))
+                    }
+                    return@launch
+                }
+                canonical
+            } else {
+                encoded
+            }
+            applyPickedImage(target, src)
         }
     }
 

@@ -335,7 +335,13 @@ class ChemDiagramPreparationTest {
         val alt = com.mcqapp.data.escapeHtmlText(chemAccessibleText(organic))
         assertTrue(
             "the reaction picture carries its label right after it: $alt",
-            page.contains("<img src=\"$png\" alt=\"$alt\">\nA")
+            page.contains(
+                "<span class=\"chem-scheme\" " +
+                    "style=\"display:inline-flex;align-items:center;gap:6px;max-width:100%\">" +
+                    "<img src=\"$png\" alt=\"$alt\" " +
+                    "style=\"max-width:100%;height:auto;min-width:48px;vertical-align:middle\">" +
+                    "<span class=\"chem-product\">A</span></span>"
+            )
         )
         assertFalse(
             "the organic handles are not printed beside the drawing",

@@ -328,19 +328,59 @@ object HtmlPaperWriter {
      * as prose. A pictured structure does not print its handles next to the
      * drawing (the in-app page shows only the drawing); they travel in the alt
      * instead, as the same spoken-first fallback the renderer uses, so a blank
-     * caption still yields a non-empty accessible label. A reaction appends its
-     * product label ("A") right after the picture.
+     * caption still yields a non-empty accessible label.
+     *
+     * A reaction puts the picture and its product label ("A") in one inline
+     * flex container: a bare image would let a narrow viewport wrap the label
+     * to the next line. The image keeps a 48 px floor (`min-width:48px`), so a
+     * long label can never collapse the drawing; the label itself may wrap
+     * inside the row (`.chem-product`), and `align-items:center` centres it on
+     * the scheme. A molecule keeps the simple bare image.
      */
     private fun chemElementHtml(element: ContentElement.ChemElement): String {
         val diagram = element.diagram
         if (!isPngDataUri(diagram)) return esc(chemElementText(element))
-        val sb = StringBuilder("<img src=\"").append(esc(diagram))
+        val image = StringBuilder("<img src=\"").append(esc(diagram))
             .append("\" alt=\"").append(esc(chemAccessibleText(element)))
-            .append("\">\n")
+            .append("\" style=\"").append(CHEM_IMAGE_STYLE).append("\">")
         val label = chemProductLabel(element)
-        if (label.isNotBlank()) sb.append(esc(label))
-        return sb.toString()
+        // A label is plain text: `<`, `&` and tag shapes stay literal, the
+        // same rule PDF and DOCX follow. Escape raw (no entity decode), or a
+        // stored `A&amp;B` would display differently here than in Word/PDF.
+        if (label.isBlank()) return image.append('\n').toString()
+        return StringBuilder("<span class=\"chem-scheme\" " +
+            "style=\"display:inline-flex;align-items:center;gap:6px;max-width:100%\">")
+            .append(image)
+            .append("<span class=\"chem-product\">").append(escapeLabel(label)).append("</span>")
+            .append("</span>\n")
+            .toString()
     }
+
+    /**
+     * Escapes a product label once, without decoding stored entities. The
+     * label is a literal string in every export, so `A&amp;B` must display as
+     * those seven characters in HTML, DOCX and PDF alike.
+     */
+    private fun escapeLabel(label: String): String = buildString(label.length + 16) {
+        for (ch in label) {
+            when (ch) {
+                '&' -> append("&amp;")
+                '<' -> append("&lt;")
+                '>' -> append("&gt;")
+                '"' -> append("&quot;")
+                else -> append(ch)
+            }
+        }
+    }
+
+    /**
+     * Keeps a structure drawing inside its line: it may shrink with the
+     * viewport but never below 48 px (the same floor PDF and DOCX use), so a
+     * long product label can never collapse the scheme. It is centred on the
+     * text it sits beside.
+     */
+    private const val CHEM_IMAGE_STYLE =
+        "max-width:100%;height:auto;min-width:48px;vertical-align:middle"
 
     /**
      * Renders inline HTML tags (`<sub>`, `<sup>`, `<strong>`, `<em>`, etc.)
@@ -380,6 +420,9 @@ ul.opts li { padding: 2px 0; }
 ul.opts li.correct { color: #2E7D32; font-weight: bold; }
 ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
+/* A reaction label may wrap inside the flex row instead of forcing the
+   picture (which has a 48 px floor) or the page wider. */
+.chem-product { min-width: 0; overflow-wrap: anywhere; }
 /* The export page has no MathJax: the browser lays out native MathML. Never
    override `display` on <math> — it replaces the native math container and
    the formula's children stack as single characters. The .math-block wrapper

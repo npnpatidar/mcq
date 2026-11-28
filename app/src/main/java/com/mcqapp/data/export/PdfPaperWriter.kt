@@ -411,7 +411,18 @@ object PdfPaperWriter {
         /** The oversized-block test observes the draining of the flow here. */
         internal fun finalY(): Float = y
 
-        open fun image(src: String?, indent: Float = 0f) {
+        /**
+         * Draws one picture and advances the flow once. A [trailingLabel] (a
+         * reaction's product label, e.g. "A") is reserved beside the picture:
+         * the bitmap is scaled into the width the label leaves, then the label
+         * is drawn at the picture's right edge, vertically centred on it, so
+         * the two read as one scheme rather than as two stacked blocks.
+         *
+         * When the label leaves less than [MIN_LABELLED_PICTURE_WIDTH] for the
+         * drawing, the scheme would be illegible; the old stacked layout is
+         * kept instead (picture, then the label as its own paragraph).
+         */
+        open fun image(src: String?, indent: Float = 0f, trailingLabel: String? = null) {
             if (src == null) return
             val embedded = parseDataUri(src)
             // Subsampled, and Throwable because an oversized embedded image
@@ -422,27 +433,55 @@ object PdfPaperWriter {
             if (bitmap == null) {
                 val label = if (embedded == null) unreadableImageLabel(src) else "[unreadable image]"
                 paragraph(label, 10f, Typeface.NORMAL, Color.GRAY, indent = indent)
+                if (!trailingLabel.isNullOrBlank()) {
+                    paragraph(trailingLabel, 11f, Typeface.NORMAL, Color.BLACK, indent = indent)
+                }
                 return
             }
             try {
+                val labelText = trailingLabel?.takeIf { it.isNotBlank() }
+                val labelPaint = labelText?.let { paint(11f, Typeface.NORMAL, Color.BLACK) }
+                val labelWidth = if (labelText != null) labelPaint!!.measureText(labelText) else 0f
+                val labelMetrics = labelPaint?.fontMetrics
+                val labelHeight = labelMetrics?.let { it.descent - it.ascent } ?: 0f
                 val maxW = geometry.contentWidth() - indent
+                // The label needs its own room; below the floor the picture
+                // would be an unreadable sliver, so keep the stacked layout.
+                val beside = labelText != null &&
+                    maxW - labelWidth - CHEM_LABEL_GAP >= MIN_LABELLED_PICTURE_WIDTH
+                val pictureW = if (beside) maxW - labelWidth - CHEM_LABEL_GAP else maxW
                 val maxH = BOTTOM - MARGIN
-                var scale = minOf(1f, maxW / bitmap.width)
+                var scale = minOf(1f, pictureW / bitmap.width)
                 if (bitmap.height * scale > maxH) scale = maxH / bitmap.height
                 val dw = (bitmap.width * scale).toInt().coerceAtLeast(1)
                 val dh = (bitmap.height * scale).toInt().coerceAtLeast(1)
-                if (y + dh > BOTTOM && y > MARGIN) advance()
+                val blockH = maxOf(dh.toFloat(), if (beside) labelHeight else 0f)
+                if (y + blockH > BOTTOM && y > MARGIN) advance()
                 val scaled = if (dw != bitmap.width || dh != bitmap.height) {
                     Bitmap.createScaledBitmap(bitmap, dw, dh, true)
                 } else {
                     bitmap
                 }
+                val x = geometry.originX(col) + indent
+                // Both sides are anchored inside the block: a label taller
+                // than a flat picture used to start above `y` and be clipped.
+                val pictureTop = y + (blockH - dh) / 2f
                 try {
-                    page.canvas.drawBitmap(scaled, geometry.originX(col) + indent, y, null)
+                    page.canvas.drawBitmap(scaled, x, pictureTop, null)
+                    if (beside) {
+                        val labelTop = y + (blockH - labelHeight) / 2f
+                        page.canvas.drawText(
+                            labelText!!, x + dw + CHEM_LABEL_GAP,
+                            labelTop - labelMetrics!!.ascent, labelPaint!!
+                        )
+                    }
                 } finally {
                     if (scaled !== bitmap) scaled.recycle()
                 }
-                y += dh + 6f
+                y += blockH + 6f
+                if (labelText != null && !beside) {
+                    paragraph(labelText, 11f, Typeface.NORMAL, Color.BLACK, indent = indent)
+                }
             } finally {
                 bitmap.recycle()
             }
@@ -496,17 +535,14 @@ object PdfPaperWriter {
                                 // handles are skipped: PDF has no alt text, but the
                                 // in-app page shows only the drawing, so the print
                                 // surface matches it. A structure without a valid
-                                // PNG keeps the handles; a reaction appends its
-                                // product label ("A") after the picture.
+                                // PNG keeps the handles; a reaction's product label
+                                // ("A") rides beside the picture on the same line.
                                 if (isPngDataUri(element.diagram)) {
-                                    image(element.diagram, indent = indent)
-                                    val label = chemProductLabel(element)
-                                    if (label.isNotBlank()) {
-                                        paragraph(
-                                            label, 11f,
-                                            Typeface.NORMAL, Color.BLACK, indent = indent
-                                        )
-                                    }
+                                    image(
+                                        element.diagram,
+                                        indent = indent,
+                                        trailingLabel = chemProductLabel(element).ifBlank { null }
+                                    )
                                 } else {
                                     paragraph(
                                         chemElementText(element), 11f,
@@ -684,6 +720,27 @@ object PdfPaperWriter {
                         ) {
                             drawBitmap(block.bitmap, x, cy, null)
                         }
+                        is CellBlock.LabelledPicture -> if (
+                            intersectsBand(offset, block.height, contentTop, contentBottom)
+                        ) {
+                            // Both sides are centred inside the block height:
+                            // a label taller than a flat picture used to start
+                            // above `cy` and be clipped by the cell.
+                            val pictureTop =
+                                cy + (block.height - block.bitmap.height) / 2f
+                            drawBitmap(block.bitmap, x, pictureTop, null)
+                            // Plain text, like every export label: the drawing
+                            // is a direct call so the label's position is
+                            // observable and a label with "<sub>" stays text.
+                            val labelPaint = block.label.paint
+                            val labelTop = cy + (block.height - block.label.height) / 2f
+                            drawText(
+                                block.label.text.toString(),
+                                x + block.bitmap.width + CHEM_LABEL_GAP,
+                                labelTop - labelPaint.fontMetrics.ascent,
+                                labelPaint
+                            )
+                        }
                     }
                     cy += block.height + CELL_BLOCK_GAP
                 }
@@ -694,6 +751,17 @@ object PdfPaperWriter {
 
 /** Vertical gap between two blocks of one cell (text vs picture). */
 private const val CELL_BLOCK_GAP = 2f
+
+/** Horizontal gap between a reaction picture and its product label. */
+internal const val CHEM_LABEL_GAP = 6f
+
+/**
+ * The narrowest a reaction picture is drawn to sit beside its product label.
+ * 48 px is about four body-size characters; below that the scheme's atom labels
+ * stop being legible, so the label keeps the stacked (picture then label)
+ * layout instead of a one-pixel sliver.
+ */
+internal const val MIN_LABELLED_PICTURE_WIDTH = 48f
 
 /**
  * Horizontal padding inside every table cell. Shared with the picture height
@@ -734,6 +802,20 @@ internal sealed interface CellBlock {
         override val height: Float get() = bitmap.height.toFloat()
         internal val width: Float get() = bitmap.width.toFloat()
     }
+
+    /**
+     * A reaction scheme: the picture and its product label on one block, the
+     * label at the picture's right edge and vertically centred. The block is
+     * as tall as the taller of the two, so the cell does not reserve two rows
+     * for one scheme.
+     */
+    class LabelledPicture(
+        internal val bitmap: Bitmap,
+        internal val label: StaticLayout
+    ) : CellBlock {
+        override val height: Float get() = maxOf(bitmap.height.toFloat(), label.height.toFloat())
+        internal val width: Float get() = bitmap.width.toFloat()
+    }
 }
 
 /** Height of one cell's blocks, including the gaps between them. */
@@ -747,7 +829,12 @@ internal fun cellBlocksHeight(blocks: List<CellBlock>): Float {
 /** Releases the decoded pictures of a finished row (banding re-draws them). */
 internal fun releaseCellBlocks(blocks: List<CellBlock>) {
     for (block in blocks) {
-        if (block is CellBlock.Picture && !block.bitmap.isRecycled) block.bitmap.recycle()
+        val bitmap = when (block) {
+            is CellBlock.Picture -> block.bitmap
+            is CellBlock.LabelledPicture -> block.bitmap
+            is CellBlock.Text -> null
+        }
+        if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
     }
 }
 
@@ -928,16 +1015,10 @@ internal fun buildCellBlocks(cell: String, width: Float, paint: TextPaint): List
                     run.append(chemElementText(piece.element))
                 } else {
                     flush()
-                    pending += PendingBlock.Picture(diagram)
-                    // A reaction's product label ("A") follows the picture,
-                    // mirroring the in-app scheme. There is no alt text in PDF,
-                    // so the handles are deliberately not printed.
-                    val label = chemProductLabel(piece.element)
-                    if (label.isNotBlank()) {
-                        pending += PendingBlock.Text(
-                            CellBlock.Text(cellLayout(SpannableStringBuilder(label), width, paint))
-                        )
-                    }
+                    // A reaction's product label ("A") stays with the picture
+                    // in one block, mirroring the in-app scheme. There is no alt
+                    // text in PDF, so the handles are deliberately not printed.
+                    pending += PendingBlock.Picture(diagram, chemProductLabel(piece.element))
                 }
             }
         }
@@ -949,7 +1030,9 @@ internal fun buildCellBlocks(cell: String, width: Float, paint: TextPaint): List
 /** A laid-out text block, or a picture still waiting for its page-height share. */
 private sealed interface PendingBlock {
     class Text(val block: CellBlock.Text) : PendingBlock
-    class Picture(val src: String) : PendingBlock
+
+    /** [label] is a reaction's product label, empty for an ordinary picture. */
+    class Picture(val src: String, val label: String = "") : PendingBlock
 }
 
 /**
@@ -962,6 +1045,12 @@ private sealed interface PendingBlock {
  * measured first; pictures then share `printable - otherHeight - gaps`, split
  * evenly between them, never below [MIN_CELL_PICTURE_HEIGHT]. When even that
  * floor cannot fit, the cap is the floor and the row bands (documented slice).
+ *
+ * A reaction's product label is measured first and its width reserved, so the
+ * picture shrinks into what is left and the two share one [CellBlock]. When
+ * the label leaves less than [MIN_LABELLED_PICTURE_WIDTH], the label keeps the
+ * old stacked form (picture, then a text block) rather than an illegible
+ * sliver. The scheme's block height is the taller of picture and label.
  */
 private fun layoutPendingBlocks(
     pending: List<PendingBlock>,
@@ -972,37 +1061,75 @@ private fun layoutPendingBlocks(
         return pending.map { (it as PendingBlock.Text).block }
     }
     val printable = PdfPaperWriter.BOTTOM - PdfPaperWriter.MARGIN - 2 * TABLE_CELL_PAD
+    // Lay out every label up front: a label that must stack is a real text
+    // block, so its height and gap belong in the budget before the pictures
+    // share it. Reading `pending` alone over-allocated a later picture and let
+    // the row overflow its band.
+    val labelLayouts = HashMap<PendingBlock.Picture, StaticLayout>()
+    val stackedLabels = HashSet<PendingBlock.Picture>()
     var textHeight = 0f
     for (block in pending) {
-        if (block is PendingBlock.Text) textHeight += block.block.height
+        when (block) {
+            is PendingBlock.Text -> textHeight += block.block.height
+            is PendingBlock.Picture -> {
+                val layout = block.label.takeIf { it.isNotBlank() }
+                    ?.let { cellLayout(SpannableStringBuilder(it), width, paint) }
+                    ?: continue
+                labelLayouts[block] = layout
+                val labelWidth = Layout.getDesiredWidth(layout.text, paint)
+                if (width - labelWidth - CHEM_LABEL_GAP < MIN_LABELLED_PICTURE_WIDTH) {
+                    stackedLabels += block
+                    textHeight += layout.height
+                }
+            }
+        }
     }
-    val gaps = CELL_BLOCK_GAP * (pending.size - 1).coerceAtLeast(0)
+    val gaps = CELL_BLOCK_GAP * (pending.size + stackedLabels.size - 1).coerceAtLeast(0)
     var remaining = printable - textHeight - gaps
     var picturesLeft = pending.count { it is PendingBlock.Picture }
-    return pending.map { block ->
+    val out = mutableListOf<CellBlock>()
+    for (block in pending) {
         when (block) {
-            is PendingBlock.Text -> block.block
+            is PendingBlock.Text -> out += block.block
             is PendingBlock.Picture -> {
                 val share = if (picturesLeft > 0) remaining / picturesLeft else remaining
                 val budget = maxOf(share, MIN_CELL_PICTURE_HEIGHT)
-                val picture = decodedCellPicture(block.src, width, minOf(printable, budget))
+                val labelLayout = labelLayouts[block]
+                val beside = labelLayout != null && block !in stackedLabels
+                val besideRoom = if (labelLayout != null) {
+                    width - Layout.getDesiredWidth(labelLayout.text, paint) - CHEM_LABEL_GAP
+                } else {
+                    width
+                }
+                val picture = decodedCellPicture(
+                    block.src,
+                    if (beside) besideRoom else width,
+                    minOf(printable, budget)
+                )
                 picturesLeft--
                 if (picture == null) {
                     // Passed the portable-shape check but cannot be decoded: a
                     // readable label, never the data URI.
-                    CellBlock.Text(
+                    out += CellBlock.Text(
                         cellLayout(
                             SpannableStringBuilder(unreadableImageLabel(block.src)),
                             width, paint
                         )
                     )
+                    if (labelLayout != null) out += CellBlock.Text(labelLayout)
                 } else {
                     remaining -= picture.height
-                    CellBlock.Picture(picture)
+                    if (beside) {
+                        out += CellBlock.LabelledPicture(picture, labelLayout!!)
+                    } else {
+                        out += CellBlock.Picture(picture)
+                        if (labelLayout != null) out += CellBlock.Text(labelLayout)
+                    }
                 }
             }
         }
     }
+    return out
 }
 
 /**

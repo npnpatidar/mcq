@@ -55,6 +55,48 @@ class ChemistryExportTest {
 
     private val png = "data:image/png;base64," + Base64.getEncoder().encodeToString(pngBytes)
 
+    /**
+     * A PNG with a chosen pixel size. DOCX sizes a drawing from the header
+     * alone, so a wide one exercises the label's width reserve without
+     * decoding anything.
+     */
+    private fun sizedPng(w: Int, h: Int): String {
+        val bytes = ByteArray(24)
+        byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).copyInto(bytes, 0)
+        'I'.code.toByte().let { bytes[8] = it }
+        'H'.code.toByte().let { bytes[9] = it }
+        'D'.code.toByte().let { bytes[10] = it }
+        'R'.code.toByte().let { bytes[11] = it }
+        bytes[16] = (w shr 24).toByte(); bytes[17] = (w shr 16).toByte()
+        bytes[18] = (w shr 8).toByte(); bytes[19] = w.toByte()
+        bytes[20] = (h shr 24).toByte(); bytes[21] = (h shr 16).toByte()
+        bytes[22] = (h shr 8).toByte(); bytes[23] = h.toByte()
+        return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes)
+    }
+
+    private fun drawingCx(xml: String): Int =
+        Regex("<wp:extent cx=\"(\\d+)\"").find(xml)!!.groupValues[1].toInt()
+
+    /** The run between the picture and its label must stay inside one `<w:p>`. */
+    private fun assertSameParagraph(xml: String, label: String) {
+        val drawingEnd = xml.indexOf("</w:drawing>")
+        assertTrue("the drawing: $xml", drawingEnd >= 0)
+        val labelAt = xml.indexOf("<w:t xml:space=\"preserve\">$label</w:t>", drawingEnd)
+        assertTrue("the label follows the drawing: $xml", labelAt > drawingEnd)
+        val between = xml.substring(drawingEnd, labelAt)
+        assertFalse("no paragraph break between picture and label: $between",
+            between.contains("</w:p>"))
+        assertFalse("no hard break between picture and label: $between",
+            between.contains("<w:br"))
+        assertFalse("no carriage return between picture and label: $between",
+            between.contains("<w:cr"))
+        assertEquals(
+            "the label prints exactly once",
+            1,
+            Regex("<w:t[^>]*>${Regex.escape(label)}</w:t>").findAll(xml).count()
+        )
+    }
+
     private fun chem(diagram: String = png) = ContentElement.ChemElement(
         smiles = "c1ccccc1",
         formula = "C6H6",
@@ -155,7 +197,12 @@ class ChemistryExportTest {
     fun htmlDrawsTheDiagramAndKeepsTheHandlesInAlt() {
         val html = htmlOf(paper(chem()))
         // The picture replaces the printed handles, matching the in-app page.
-        assertTrue(html.contains("<img src=\"$png\" alt=\"aromatic ring C6H6\">"))
+        assertTrue(
+            html.contains(
+                "<img src=\"$png\" alt=\"aromatic ring C6H6\" " +
+                    "style=\"max-width:100%;height:auto;min-width:48px;vertical-align:middle\">"
+            )
+        )
         assertFalse(
             "the readable handles are not printed beside the picture",
             html.contains("Benzene ring C6H6 c1ccccc1")
@@ -166,12 +213,20 @@ class ChemistryExportTest {
     }
 
     @Test
-    fun htmlAppendsTheReactionLabelAfterThePicture() {
+    fun htmlAppendsTheReactionLabelInsideOneFlexScheme() {
         val html = htmlOf(paper(reaction()))
-        val imageAt = html.indexOf("<img src=\"$png\"")
+        val wrapperAt = html.indexOf(
+            "<span class=\"chem-scheme\" " +
+                "style=\"display:inline-flex;align-items:center;gap:6px;max-width:100%\">"
+        )
+        assertTrue("the reaction wrapper: $html", wrapperAt >= 0)
+        val imageAt = html.indexOf("<img src=\"$png\"", wrapperAt)
         assertTrue("the reaction picture: $html", imageAt >= 0)
-        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1).trimStart()
-        assertTrue("the product label follows the picture: $html", afterPicture.startsWith("A"))
+        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1)
+        assertTrue(
+            "the label immediately follows the picture inside the same container: $html",
+            afterPicture.startsWith("<span class=\"chem-product\">A</span></span>")
+        )
         assertFalse(
             "the readable handles are not printed beside the picture",
             html.contains(escapeHtmlText(chemElementText(reaction())))
@@ -179,14 +234,101 @@ class ChemistryExportTest {
     }
 
     @Test
+    fun htmlKeepsALongReactionLabelFromCollapsingThePicture() {
+        val longLabel = "productA".repeat(40)
+        val html = htmlOf(paper(reaction().copy(formula = longLabel)))
+        assertTrue("the scheme wrapper: $html", html.contains("class=\"chem-scheme\""))
+        assertTrue(
+            "the picture keeps a legible floor: $html",
+            html.contains("min-width:48px")
+        )
+        assertTrue(
+            "the long label stays inside the wrapper: $html",
+            html.contains("<span class=\"chem-product\">$longLabel</span>")
+        )
+        assertFalse("the image must not be allowed to collapse", html.contains("min-width:0"))
+        assertTrue(
+            "the label may wrap instead of widening the page",
+            html.contains(".chem-product { min-width: 0; overflow-wrap: anywhere; }")
+        )
+    }
+
+    @Test
+    fun productLabelsArePlainTextInEveryExport() {
+        val label = "A<sub>2</sub> & B"
+        val element = reaction().copy(formula = label)
+        val escaped = "A&lt;sub&gt;2&lt;/sub&gt; &amp; B"
+
+        val html = htmlOf(paper(element))
+        assertTrue(
+            "HTML escapes the label instead of parsing it: $html",
+            html.contains("<span class=\"chem-product\">$escaped</span>")
+        )
+        assertFalse("a label is not inline markup", html.contains("A<sub>2</sub>"))
+
+        val xml = entries(docxOf(paper(element)))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        assertTrue(
+            "DOCX prints the label literally: $xml",
+            xml.contains("<w:t xml:space=\"preserve\">$escaped</w:t>")
+        )
+        assertFalse(
+            "DOCX must not turn a label's <sub> into subscript",
+            xml.contains("<w:vertAlign w:val=\"subscript\"/>")
+        )
+
+        val cell = com.mcqapp.util.chemCellHtml(element)
+        val cellXml = entries(
+            docxOf(paper(ContentElement.TableElement(listOf(listOf(cell)))))
+        ).getValue("word/document.xml").toString(Charsets.UTF_8)
+        assertTrue(
+            "the cell label is plain too: $cellXml",
+            cellXml.contains("<w:t xml:space=\"preserve\">$escaped</w:t>")
+        )
+        assertFalse(
+            "the cell label must not become subscript",
+            cellXml.contains("<w:vertAlign w:val=\"subscript\"/>")
+        )
+
+        val cellHtml = htmlOf(
+            paper(ContentElement.TableElement(listOf(listOf(cell))))
+        )
+        assertTrue(
+            "the HTML cell label is escaped: $cellHtml",
+            cellHtml.contains("<span class=\"chem-product\">$escaped</span>")
+        )
+    }
+
+    @Test
+    fun productLabelsKeepStoredEntitiesLiteral() {
+        val label = "A&amp;B"
+        val element = reaction().copy(formula = label)
+        val html = htmlOf(paper(element))
+        assertTrue(
+            "HTML escapes the stored entity once: $html",
+            html.contains("<span class=\"chem-product\">A&amp;amp;B</span>")
+        )
+        assertFalse(
+            "HTML must not decode the label's stored entity",
+            html.contains("<span class=\"chem-product\">A&amp;B</span>")
+        )
+        val xml = entries(docxOf(paper(element)))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        assertTrue(
+            "DOCX prints the same literal characters: $xml",
+            xml.contains("<w:t xml:space=\"preserve\">A&amp;amp;B</w:t>")
+        )
+    }
+
+    @Test
     fun diagramAltIsNotEmptyWhenCaptionIsBlank() {
         val noCaption = chem().copy(caption = "", spoken = "")
         val html = htmlOf(paper(noCaption))
-        assertTrue(html.contains("<img src=\"$png\" alt=\"c1ccccc1 C6H6\">"))
+        assertTrue(html.contains("<img src=\"$png\" alt=\"c1ccccc1 C6H6\""))
         val spokenOnly = chem().copy(caption = "", formula = "", diagram = png)
         assertTrue(
             htmlOf(paper(spokenOnly)).contains(
-                "<img src=\"$png\" alt=\"aromatic ring\">"
+                "<img src=\"$png\" alt=\"aromatic ring\""
             )
         )
     }
@@ -282,6 +424,119 @@ class ChemistryExportTest {
         val parsed = parseDocx(bytes)
         assertTrue("an untouched reaction cell export must stay fresh: ${parsed.warnings}",
             parsed.warnings.isEmpty())
+    }
+
+    /**
+     * A full-width drawing used to leave no room for the label run, so Word
+     * wrapped "A" onto the next line. The labelled picture must be narrower
+     * than the same scheme without a label, and both must stay in one
+     * paragraph.
+     */
+    @Test
+    fun docxSizesABodyReactionPictureToLeaveRoomForItsLabel() {
+        val wide = sizedPng(600, 300)
+        val labelled = entries(docxOf(paper(reaction(wide))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        val plain = entries(docxOf(paper(reaction(wide).copy(formula = ""))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+
+        assertTrue(
+            "the labelled picture (${drawingCx(labelled)}) must be narrower than " +
+                "the unlabelled one (${drawingCx(plain)})",
+            drawingCx(labelled) < drawingCx(plain)
+        )
+        assertSameParagraph(labelled, "A")
+        assertTrue(
+            "the handles stay in the picture description",
+            labelled.contains("descr=\"lactone reduced by LiAlH4 and ether A\"")
+        )
+    }
+
+    @Test
+    fun docxSizesAReactionCellPictureToLeaveRoomForItsLabel() {
+        // Wider than the cell clamp, so both variants are actually clamped.
+        val wide = sizedPng(1200, 300)
+        val labelledCell = com.mcqapp.util.chemCellHtml(reaction(wide))
+        val plainCell = com.mcqapp.util.chemCellHtml(reaction(wide).copy(formula = ""))
+        val labelled = entries(
+            docxOf(paper(ContentElement.TableElement(listOf(listOf(labelledCell)))))
+        ).getValue("word/document.xml").toString(Charsets.UTF_8)
+        val plain = entries(
+            docxOf(paper(ContentElement.TableElement(listOf(listOf(plainCell)))))
+        ).getValue("word/document.xml").toString(Charsets.UTF_8)
+
+        assertTrue(
+            "the labelled cell picture (${drawingCx(labelled)}) must be narrower than " +
+                "the unlabelled one (${drawingCx(plain)})",
+            drawingCx(labelled) < drawingCx(plain)
+        )
+        assertSameParagraph(labelled, "A")
+    }
+
+    @Test
+    fun docxLongBodyLabelKeepsTheStackedFallback() {
+        val wide = sizedPng(600, 300)
+        val longLabel = "W".repeat(600)
+        val labelled = entries(docxOf(paper(reaction(wide).copy(formula = longLabel))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        val plain = entries(docxOf(paper(reaction(wide).copy(formula = ""))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+
+        assertEquals(
+            "a label that cannot fit beside the picture leaves it at full width",
+            drawingCx(plain),
+            drawingCx(labelled)
+        )
+        assertSameParagraph(labelled, longLabel)
+    }
+
+    @Test
+    fun docxLongCellLabelKeepsTheStackedFallback() {
+        val wide = sizedPng(1200, 300)
+        val longLabel = "W".repeat(600)
+        val labelledCell = com.mcqapp.util.chemCellHtml(reaction(wide).copy(formula = longLabel))
+        val plainCell = com.mcqapp.util.chemCellHtml(reaction(wide).copy(formula = ""))
+        val labelled = entries(
+            docxOf(paper(ContentElement.TableElement(listOf(listOf(labelledCell)))))
+        ).getValue("word/document.xml").toString(Charsets.UTF_8)
+        val plain = entries(
+            docxOf(paper(ContentElement.TableElement(listOf(listOf(plainCell)))))
+        ).getValue("word/document.xml").toString(Charsets.UTF_8)
+
+        assertEquals(
+            "a label that cannot fit beside the cell picture leaves it at full column width",
+            drawingCx(plain),
+            drawingCx(labelled)
+        )
+        assertSameParagraph(labelled, longLabel)
+    }
+
+    /**
+     * The label reserve is conditional: a molecule never gets one, and a
+     * structure without a valid PNG keeps its handles and creates no drawing.
+     */
+    @Test
+    fun docxLeavesMoleculesAndPngLessStructuresUnchanged() {
+        val wide = sizedPng(600, 300)
+        val moleculeXml = entries(docxOf(paper(chem(wide).copy(formula = "A"))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        val blankReactionXml = entries(docxOf(paper(reaction(wide).copy(formula = ""))))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        assertEquals(
+            "a molecule's picture keeps the full line, exactly like an unlabelled scheme",
+            drawingCx(blankReactionXml),
+            drawingCx(moleculeXml)
+        )
+        assertFalse("a molecule prints no product label", moleculeXml.contains(">A</w:t>"))
+
+        val noPng = chem(diagram = "").copy(formula = "C6H6")
+        val noPngXml = entries(docxOf(paper(noPng)))
+            .getValue("word/document.xml").toString(Charsets.UTF_8)
+        assertFalse("a PNG-less structure draws no picture", noPngXml.contains("<w:drawing>"))
+        assertTrue(
+            "a PNG-less structure still prints its handles",
+            noPngXml.contains(escapeXmlText(chemElementText(noPng)))
+        )
     }
 
     @Test
@@ -461,11 +716,15 @@ class ChemistryExportTest {
         val html = htmlOf(paper(blank))
         assertTrue(
             "the reaction picture still draws: $html",
-            html.contains("<img src=\"$png\" alt=\"lactone reduced by LiAlH4 and ether\">\n")
+            html.contains("<img src=\"$png\" alt=\"lactone reduced by LiAlH4 and ether\"")
         )
         assertFalse(
             "a blank formula prints no HTML label",
-            html.contains("alt=\"lactone reduced by LiAlH4 and ether\">\nA")
+            html.contains("<span class=\"chem-product\">")
+        )
+        assertFalse(
+            "a blank formula emits no scheme wrapper",
+            html.contains("<span class=\"chem-scheme\"")
         )
         val xml = entries(docxOf(paper(blank))).getValue("word/document.xml")
             .toString(Charsets.UTF_8)
@@ -479,11 +738,15 @@ class ChemistryExportTest {
         val moleculeHtml = htmlOf(paper(molecule))
         assertTrue(
             "the molecule picture still draws: $moleculeHtml",
-            moleculeHtml.contains("<img src=\"$png\" alt=\"aromatic ring A\">\n")
+            moleculeHtml.contains("<img src=\"$png\" alt=\"aromatic ring A\"")
         )
         assertFalse(
             "a molecule never gets a product label",
-            moleculeHtml.contains("alt=\"aromatic ring A\">\nA")
+            moleculeHtml.contains("<span class=\"chem-product\">")
+        )
+        assertFalse(
+            "a molecule emits no scheme wrapper",
+            moleculeHtml.contains("<span class=\"chem-scheme\"")
         )
         val moleculeXml = entries(docxOf(paper(molecule))).getValue("word/document.xml")
             .toString(Charsets.UTF_8)

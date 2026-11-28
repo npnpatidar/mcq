@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.text.Layout
 import android.text.Spanned
 import android.text.TextPaint
+import com.mcqapp.data.export.CHEM_LABEL_GAP
 import com.mcqapp.data.export.CellBlock
 import com.mcqapp.data.export.MathSpan
 import com.mcqapp.data.export.PdfPaperWriter
@@ -62,6 +63,15 @@ class PdfTableCellContentTest {
         bitmap.recycle()
         return "data:image/png;base64," +
             Base64.getEncoder().encodeToString(bytes.toByteArray())
+    }
+
+    /** A payload the strict signature check accepts but no decoder can read. */
+    private fun brokenPngDataUri(): String {
+        val bytes = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0, 1, 2, 3
+        )
+        return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes)
     }
 
     private fun imageTag(src: String) = "<img src=\"$src\"/>"
@@ -631,7 +641,16 @@ class PdfTableCellContentTest {
             val recycled: Boolean
         )
 
+        data class TextDraw(
+            val text: String,
+            val left: Float,
+            val baseline: Float,
+            val top: Float,
+            val bottom: Float
+        )
+
         val bitmaps = mutableListOf<BitmapDraw>()
+        val texts = mutableListOf<TextDraw>()
         /** Every clipRect the writer issued: left, top, right, bottom. */
         val clips = mutableListOf<FloatArray>()
         var pageCount = 0
@@ -680,6 +699,11 @@ class PdfTableCellContentTest {
                     left, top, bitmap.width, bitmap.height, page,
                     clipTop, clipBottom, bitmap.isRecycled
                 )
+            }
+
+            override fun drawText(text: String, x: Float, y: Float, paint: Paint) {
+                val fm = paint.fontMetrics
+                texts += TextDraw(text, x, y, y + fm.ascent, y + fm.descent)
             }
         }
     }
@@ -823,29 +847,335 @@ class PdfTableCellContentTest {
     }
 
     @Test
-    fun aReactionCellDrawsItsPictureAndProductLabelWithoutHandles() {
+    fun aReactionCellDrawsItsPictureAndProductLabelOnOneBlock() {
         val reaction = ContentElement.ChemElement(
             smiles = "O=C1OCCCCC(=O)C1>>",
             formula = "A",
             caption = "LiAlH₄ / ether",
             spoken = "lactone reduced by LiAlH4 and ether",
-            diagram = pngDataUri(30, 30)
+            // A wide scheme: it must shrink to leave the label its room.
+            diagram = pngDataUri(2000, 100)
         )
         val blocks = buildCellBlocks(
             com.mcqapp.util.chemCellHtml(reaction), 300f, paint()
         )
         try {
-            assertEquals("the scheme is one picture", 1, blocks.count { it is CellBlock.Picture })
-            assertEquals("the picture and the label are two blocks", 2, blocks.size)
-            assertTrue("the picture comes first", blocks[0] is CellBlock.Picture)
-            val label = blocks[1] as CellBlock.Text
-            assertEquals("the label follows the picture", "A", label.layout.text.toString())
-            val text = textOf(blocks)
-            assertEquals("the product label is the only visible text", "A", text.trim())
+            val scheme = blocks.single() as CellBlock.LabelledPicture
+            assertEquals("the label rides the picture's block", "A", scheme.label.text.toString())
+            val labelWidth = Layout.getDesiredWidth(scheme.label.text, paint())
+            assertTrue(
+                "the picture leaves room for the label: picture=${scheme.width}, " +
+                    "label=$labelWidth, width=300",
+                scheme.width + CHEM_LABEL_GAP + labelWidth <= 300f + 1f
+            )
+            assertTrue(
+                "the picture still scales down from its 2000 px natural width",
+                scheme.width < 300f
+            )
+            assertEquals(
+                "the block is as tall as the taller of picture and label",
+                maxOf(scheme.bitmap.height.toFloat(), scheme.label.height.toFloat()),
+                scheme.height,
+                0f
+            )
             assertFalse(
                 "the handles are not printed beside the picture",
-                text.contains("O=C1OCCCCC(=O)C1>>")
+                textOf(blocks).contains("O=C1OCCCCC(=O)C1>>")
             )
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    @Test
+    fun aReactionCellHeightTakesTheTallerOfPictureAndLabel() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            // 200:1, so the scaled picture is far shorter than the label line.
+            diagram = pngDataUri(2000, 10)
+        )
+        val blocks = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(reaction), 300f, paint()
+        )
+        try {
+            val scheme = blocks.single() as CellBlock.LabelledPicture
+            assertTrue(
+                "the fixture needs the label to be the taller side",
+                scheme.label.height > scheme.bitmap.height
+            )
+            assertEquals(
+                "the cell height is the label's, not the picture's",
+                scheme.label.height.toFloat(),
+                scheme.height,
+                0f
+            )
+            assertEquals(scheme.height, cellBlocksHeight(blocks), 0f)
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    @Test
+    fun aReactionCellDrawsItsLabelBesideThePicture() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(2000, 300)
+        )
+        val cell = com.mcqapp.util.chemCellHtml(reaction)
+        val p = paint()
+        val contentWidth = fitColumns(
+            floatArrayOf(cellNaturalWidth(cell, p) + 2 * TABLE_CELL_PAD),
+            PdfPaperWriter.CONTENT_W
+        )[0] - 2 * TABLE_CELL_PAD
+        val scheme = buildCellBlocks(cell, contentWidth, p).single() as CellBlock.LabelledPicture
+        val blockHeight = scheme.height
+        releaseCellBlocks(listOf(scheme))
+
+        val sink = RecordingSink()
+        val writer = PdfPaperWriter.Writer(sink, twoColumn = false)
+        writer.table(listOf(listOf(cell)), indent = 0f)
+        writer.finish()
+
+        val picture = sink.bitmaps.single()
+        val label = sink.texts.single { it.text == "A" }
+        val contentTop = PdfPaperWriter.MARGIN + TABLE_CELL_PAD
+        assertTrue(
+            "the label starts at or after the picture's right edge: " +
+                "label x=${label.left}, picture right=${picture.left + picture.width}",
+            label.left >= picture.left + picture.width
+        )
+        assertTrue(
+            "the label stays in the scheme's block band: label y=${label.baseline}, " +
+                "block ${contentTop}..${contentTop + blockHeight}",
+            label.baseline >= contentTop - 0.5f && label.baseline <= contentTop + blockHeight + 0.5f
+        )
+        val pictureCentre = picture.top + picture.height / 2f
+        val blockCentre = contentTop + blockHeight / 2f
+        assertEquals(
+            "the picture is centred in the scheme's block: picture=$pictureCentre block=$blockCentre",
+            blockCentre.toDouble(),
+            pictureCentre.toDouble(),
+            1.0
+        )
+    }
+
+    /**
+     * A flat picture is shorter than the label line. Both are centred inside
+     * the block, so the label must start at the cell's content top, never
+     * above it (where the cell clip would erase it).
+     */
+    @Test
+    fun aFlatReactionCellKeepsATallerLabelInsideTheCell() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(2000, 10)
+        )
+        val cell = com.mcqapp.util.chemCellHtml(reaction)
+        val p = paint()
+        val contentWidth = fitColumns(
+            floatArrayOf(cellNaturalWidth(cell, p) + 2 * TABLE_CELL_PAD),
+            PdfPaperWriter.CONTENT_W
+        )[0] - 2 * TABLE_CELL_PAD
+        val scheme = buildCellBlocks(cell, contentWidth, p).single() as CellBlock.LabelledPicture
+        assertTrue(
+            "the fixture needs the label to be the taller side",
+            scheme.label.height > scheme.bitmap.height
+        )
+        val blockHeight = scheme.height
+        releaseCellBlocks(listOf(scheme))
+
+        val sink = RecordingSink()
+        val writer = PdfPaperWriter.Writer(sink, twoColumn = false)
+        writer.table(listOf(listOf(cell)), indent = 0f)
+        writer.finish()
+
+        val picture = sink.bitmaps.single()
+        val label = sink.texts.single { it.text == "A" }
+        val contentTop = PdfPaperWriter.MARGIN + TABLE_CELL_PAD
+        assertTrue(
+            "the label baseline starts at/inside the cell content top: label y=${label.baseline}, " +
+                "expected at least $contentTop",
+            label.baseline >= contentTop - 0.5f
+        )
+        assertTrue(
+            "the label stays inside the cell band: label y=${label.baseline}, " +
+                "band ${contentTop}..${contentTop + blockHeight}",
+            label.baseline <= contentTop + blockHeight + 0.5f
+        )
+        assertTrue(
+            "the shorter picture is centred inside the block, never above its top: " +
+                "picture=${picture.top}..${picture.top + picture.height}",
+            picture.top >= contentTop - 0.5f
+        )
+    }
+
+    @Test
+    fun twoStructuresInOneCellKeepTheirOrderAndABudgetedHeight() {
+        val labelled = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(2000, 100)
+        )
+        val plain = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            // Tall enough that an over-allocated share shows up as an
+            // over-tall row, not as a harmless natural-size picture. Kept
+            // small in pixels so the marker's payload stays under the cell
+            // raster cap on a host whose PNG compressor is a pass-through.
+            diagram = pngDataUri(40, 400)
+        )
+        // Grow the label until the same measurement the writer uses makes it
+        // too wide to leave a 48 px picture beside it. Deriving it from the
+        // host's font metrics keeps the stacked path exercised everywhere.
+        val p = paint()
+        val cellWidth = 400f
+        var longLabel = "W".repeat(10)
+        while (Layout.getDesiredWidth(longLabel, p) <
+            cellWidth - CHEM_LABEL_GAP - 48f
+        ) {
+            longLabel += "W".repeat(10)
+            check(longLabel.length < 10_000) { "label never exceeded the picture floor" }
+        }
+        val stacked = labelled.copy(formula = longLabel, diagram = pngDataUri(40, 400))
+        val mixed = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(stacked) + com.mcqapp.util.chemCellHtml(plain),
+            cellWidth, p
+        )
+        try {
+            // The first label cannot leave a 48 px picture here, so it takes
+            // the stacked path: picture, label text, then the second picture.
+            assertEquals(3, mixed.size)
+            assertTrue(mixed[0] is CellBlock.Picture)
+            assertEquals(longLabel, (mixed[1] as CellBlock.Text).layout.text.toString())
+            assertTrue(mixed[2] is CellBlock.Picture)
+            val printable =
+                PdfPaperWriter.BOTTOM - PdfPaperWriter.MARGIN - 2 * TABLE_CELL_PAD
+            assertTrue(
+                "the stacked label must reduce the pictures' budget: " +
+                    "height=${cellBlocksHeight(mixed)}, printable=$printable",
+                cellBlocksHeight(mixed) <= printable
+            )
+            mixed.filterIsInstance<CellBlock.Picture>().forEach {
+                assertTrue("each picture keeps a positive height", it.height >= 1f)
+            }
+        } finally {
+            releaseCellBlocks(mixed)
+        }
+
+        val second = labelled.copy(formula = "B")
+        val both = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(labelled) + com.mcqapp.util.chemCellHtml(second),
+            400f, paint()
+        )
+        try {
+            assertEquals(2, both.size)
+            val schemes = both.filterIsInstance<CellBlock.LabelledPicture>()
+            assertEquals(listOf("A", "B"), schemes.map { it.label.text.toString() })
+            schemes.forEach {
+                assertEquals(
+                    "a labelled block is as tall as its taller side",
+                    maxOf(it.bitmap.height.toFloat(), it.label.height.toFloat()).toDouble(),
+                    it.height.toDouble(),
+                    0.01
+                )
+            }
+        } finally {
+            releaseCellBlocks(both)
+        }
+    }
+
+    @Test
+    fun aReactionCellWithAnUndecodablePngPrintsTextThenTheLabel() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            diagram = brokenPngDataUri()
+        )
+        val blocks = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(reaction), 300f, paint()
+        )
+        try {
+            assertEquals("the unreadable notice and the label", 2, blocks.size)
+            val notice = blocks[0] as CellBlock.Text
+            assertTrue(
+                "the picture failure is readable text",
+                notice.layout.text.toString().contains("[unreadable image]")
+            )
+            val label = blocks[1] as CellBlock.Text
+            assertEquals("the label still follows", "A", label.layout.text.toString())
+        } finally {
+            releaseCellBlocks(blocks)
+        }
+    }
+
+    /**
+     * A caller can hand the block builder a zero or negative width; the
+     * layout must fall back inertly rather than crash or emit a negative
+     * picture extent.
+     */
+    @Test
+    fun aZeroOrNegativeCellWidthFallsBackWithoutCrashing() {
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = "A",
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(2000, 100)
+        )
+        val cell = com.mcqapp.util.chemCellHtml(reaction)
+        for (width in listOf(0f, -10f)) {
+            val blocks = buildCellBlocks(cell, width, paint())
+            try {
+                assertTrue("width=$width still yields the label", textOf(blocks).contains("A"))
+                blocks.filterIsInstance<CellBlock.Picture>().forEach {
+                    assertTrue("width=$width: positive picture width", it.width >= 1f)
+                    assertTrue("width=$width: positive picture height", it.height >= 1f)
+                }
+            } finally {
+                releaseCellBlocks(blocks)
+            }
+        }
+    }
+
+    /**
+     * A label too wide to leave a legible picture keeps the old stacked form:
+     * the picture on its own line, then the label text below. The documented
+     * floor is 48 px.
+     */
+    @Test
+    fun aVeryLongReactionLabelFallsBackToTheStackedLayout() {
+        val longLabel = "product A after reduction and work-up"
+        val reaction = ContentElement.ChemElement(
+            smiles = "O=C1OCCCCC(=O)C1>>",
+            formula = longLabel,
+            caption = "LiAlH₄ / ether",
+            diagram = pngDataUri(2000, 100)
+        )
+        // A narrow cell leaves the label no legible picture width on either
+        // measurement path (Robolectric's own text metrics vary by host).
+        val blocks = buildCellBlocks(
+            com.mcqapp.util.chemCellHtml(reaction), 80f, paint()
+        )
+        try {
+            assertEquals("the picture and the label are separate blocks", 2, blocks.size)
+            val picture = blocks[0] as CellBlock.Picture
+            assertEquals(
+                "the picture keeps the full column when the label cannot fit beside it",
+                80f,
+                picture.width,
+                1f
+            )
+            val label = blocks[1] as CellBlock.Text
+            assertEquals("the label follows below", longLabel, label.layout.text.toString())
         } finally {
             releaseCellBlocks(blocks)
         }
@@ -854,7 +1184,10 @@ class PdfTableCellContentTest {
     @Test
     fun aReactionCellMeasuresItsProductLabelBeyondTheNominalPictureWidth() {
         val p = paint()
-        val longLabel = "product A after reduction and work-up"
+        // One unbroken token measures predictably on every Robolectric host;
+        // this one is long enough even where the test font reports one pixel
+        // per glyph.
+        val longLabel = "product" + "A".repeat(140)
         val reaction = ContentElement.ChemElement(
             smiles = "O=C1OCCCCC(=O)C1>>",
             formula = longLabel,

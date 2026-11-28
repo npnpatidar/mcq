@@ -653,7 +653,7 @@ class ExportWritersTest {
         for (quiz in listOf(false, true)) {
             val html = htmlOf(paper, quiz = quiz)
             val label = "quiz=$quiz"
-            val structureAt = html.indexOf("<img src=\"$cellPng\" alt=\"aromatic ring C6H6\">")
+            val structureAt = html.indexOf("<img src=\"$cellPng\" alt=\"aromatic ring C6H6\"")
             val mathAt = html.indexOf("<math><mi>x</mi></math>")
             val imageAt = html.indexOf(
                 "<img src=\"$tableImage\" style=\"$CELL_IMAGE_STYLE\" alt=\"$CELL_IMAGE_ALT\""
@@ -723,10 +723,14 @@ class ExportWritersTest {
             diagram = cellPng
         )
         val html = htmlOf(cellChemPaper(com.mcqapp.util.chemCellHtml(element)))
+        assertTrue("the reaction wrapper: $html", html.contains("class=\"chem-scheme\""))
         val imageAt = html.indexOf("<img src=\"$cellPng\"")
         assertTrue("the reaction picture: $html", imageAt >= 0)
-        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1).trimStart()
-        assertTrue("the product label follows the picture: $html", afterPicture.startsWith("A"))
+        val afterPicture = html.substring(html.indexOf('>', imageAt) + 1)
+        assertTrue(
+            "the product label stays inside the same container: $html",
+            afterPicture.startsWith("<span class=\"chem-product\">A</span></span>")
+        )
         assertFalse(
             "the readable handles are not printed beside the picture: $html",
             html.contains(com.mcqapp.data.escapeHtmlText(com.mcqapp.data.export.chemElementText(element)))

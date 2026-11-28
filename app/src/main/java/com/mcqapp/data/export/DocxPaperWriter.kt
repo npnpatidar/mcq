@@ -676,22 +676,25 @@ object DocxPaperWriter {
                     // exactly as the on-screen page shows the drawing. A broken
                     // or non-PNG diagram keeps the handles as visible text (no
                     // raw SVG/XML in the document). A reaction carries its
-                    // product label ("A") right after the picture.
+                    // product label ("A") right after the picture, and the
+                    // picture is clamped to leave it room on that same line.
+                    val label = chemProductLabel(element)
                     val pic = if (isPngDataUri(element.diagram)) {
                         media.embedPortable(
                             element.diagram,
                             warnings,
-                            alt = chemAccessibleText(element)
+                            labelledPictureMaxCx(MAX_CX, label),
+                            chemAccessibleText(element)
                         )
                     } else {
                         null
                     }
                     if (pic != null) {
                         items.add(pic.copy(breaksParagraph = !flowsInline))
-                        val label = chemProductLabel(element)
                         // Same paragraph: the label sits at the picture's side,
-                        // not on a line of its own.
-                        if (label.isNotBlank()) items.add(Runs(inlineRuns(label)))
+                        // not on a line of its own. Plain text, never inline
+                        // markup: a formula's "<sub>" must print literally.
+                        if (label.isNotBlank()) items.add(Runs(plainRuns(label)))
                     } else {
                         val text = chemElementText(element)
                         if (text.isNotBlank()) {
@@ -835,11 +838,12 @@ object DocxPaperWriter {
                 is CellSegment.Chem -> {
                     val element = segment.element
                     val handles = chemElementText(element)
+                    val label = chemProductLabel(element)
                     val pic = if (isPngDataUri(element.diagram)) {
                         media.embedPortable(
                             element.diagram,
                             warnings,
-                            maxCx,
+                            labelledPictureMaxCx(maxCx, label),
                             chemAccessibleText(element)
                         )
                     } else {
@@ -847,8 +851,7 @@ object DocxPaperWriter {
                     }
                     if (pic != null) {
                         builder.addPicture(pic)
-                        val label = chemProductLabel(element)
-                        if (label.isNotBlank()) builder.add(inlineRuns(label))
+                        if (label.isNotBlank()) builder.add(plainRuns(label))
                     } else {
                         if (handles.isNotBlank()) builder.add(inlineRuns(handles))
                         if (handles.isNotBlank() && warnedChem.add(handles)) {
@@ -967,6 +970,14 @@ object DocxPaperWriter {
 
     /** Tags the display layer renders as line breaks. */
     private val breakTags = setOf("br", "p", "div", "li", "tr")
+
+    /**
+     * A product label as literal text. Unlike [inlineRuns] no tag is
+     * interpreted and no entity is decoded: HTML, DOCX and PDF all print the
+     * stored label exactly as written.
+     */
+    private fun plainRuns(text: String): List<RunSpec> =
+        listOf(RunSpec(text, RunFlags()))
 
     /**
      * Inline HTML (`<strong>`, `<sub>`, …) to run specs, mirroring what the
@@ -1231,6 +1242,40 @@ object DocxPaperWriter {
 
     private const val EMU_PER_PX = 9525
     private const val MAX_CX = 5486400
+
+    /**
+     * Room to reserve for a reaction's product label so it can share the
+     * picture's line. One em per character at the 11 pt body size plus a 6 px
+     * gap is deliberately wider than any real glyph advance (a `W` is about
+     * 0.94 em), so the reserve can never be smaller than the label the PDF
+     * measures — an estimate that is too small lets Word wrap the label onto
+     * its own line, which is the defect this fixes.
+     */
+    private const val LABEL_CHAR_EM = 1f
+    private const val LABEL_GAP_CX = 6 * EMU_PER_PX
+
+    /**
+     * The narrowest a labelled reaction picture is drawn. 96 px (one inch) is
+     * roughly a dozen body characters; a longer label would shrink the scheme
+     * past legibility, so it keeps the old stacked fallback (the picture fills
+     * the line and Word wraps the label below it) instead.
+     */
+    private const val MIN_LABELLED_PICTURE_CX = 96 * EMU_PER_PX
+
+    /** EMU width reserved beside a reaction picture for [label]. */
+    internal fun labelReserveCx(label: String): Int =
+        (label.length * 11f * LABEL_CHAR_EM * EMU_PER_PX).toInt() + LABEL_GAP_CX
+
+    /**
+     * The picture clamp for a labelled scheme: the line's [maxCx] less the
+     * label's reserve, or the unchanged [maxCx] when that would make the
+     * drawing illegible.
+     */
+    private fun labelledPictureMaxCx(maxCx: Int, label: String): Int {
+        if (label.isBlank()) return maxCx
+        val room = maxCx - labelReserveCx(label)
+        return if (room >= MIN_LABELLED_PICTURE_CX) room else maxCx
+    }
 
     /**
      * Pixels → the drawing's EMU extent, computed in LONG: pixel headers the

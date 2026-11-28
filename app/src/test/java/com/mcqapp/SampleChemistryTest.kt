@@ -5,11 +5,17 @@ import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.data.sanitizeMathml
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.searchableText
+import com.mcqapp.util.CELL_IMAGE_ALT
+import com.mcqapp.util.CellSegment
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.chemCellHtml
+import com.mcqapp.util.normalizeCellImages
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -148,6 +154,79 @@ class SampleChemistryTest {
             assertTrue("$option.id formula must flatten into searchable text",
                 option.elements.searchableText.contains(formulaText))
         }
+    }
+
+    /**
+     * The rich-table demo: a single table row carries prose, a formula cell, a
+     * canonical structure marker and an inline picture. The structure stays a
+     * cell string (not a ChemElement) because that is the wire format; the
+     * parser must hand it to the renderer untouched and the marker must match
+     * the one Kotlin rebuilds, so a hand-written grammar drift fails here.
+     */
+    @Test
+    fun theRichTableCellQuestionKeepsTextFormulaImageAndStructure() {
+        val question = organic("q-chem-6")
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals(listOf("Name", "Formula", "Structure", "Picture"), table.rows[0])
+        val row = table.rows[1]
+        assertEquals("the prose cell", "Water", row[0])
+        assertEquals(
+            "the formula cell is inline MathML, not subscript text",
+            formulaBlock(subscripted("H", 2), symbol("O")),
+            row[1]
+        )
+
+        val expectedChem = ContentElement.ChemElement(
+            smiles = "O",
+            formula = "H₂O",
+            caption = "water",
+            spoken = "one oxygen atom bonded to two hydrogen atoms, water",
+            diagram = ""
+        )
+        assertEquals(
+            "the structure cell must be the canonical marker",
+            chemCellHtml(expectedChem),
+            row[2]
+        )
+        assertTrue("the marker class must be first", row[2].startsWith("<span class=\"mcq-chem-cell\""))
+        assertFalse("the sample never ships a captured PNG", row[2].contains("data-png"))
+        val chem = cellSegments(row[2], withPng = false)
+            .filterIsInstance<CellSegment.Chem>().single().element
+        assertEquals("the cell must parse back to the same structure", expectedChem, chem)
+
+        assertTrue(
+            "the picture cell must be an embedded data URI",
+            row[3].startsWith("<img src=\"data:image/png;base64,")
+        )
+        // Import rebuilds every cell picture with the canonical alt, so the
+        // authored alt is deliberately not what storage keeps.
+        val normalizedPicture = normalizeCellImages(row[3], { it }, {})
+        assertTrue(
+            "the imported picture cell must carry the canonical alt",
+            normalizedPicture.contains("alt=\"$CELL_IMAGE_ALT\"")
+        )
+
+        assertEquals("four choices", 4, question.options.size)
+        assertEquals("H₂O with one oxygen, two hydrogens", listOf("b"), question.correctOptionIds)
+        assertTrue("the explanation names the formula", question.explanation.contains("H₂O"))
+        assertTrue("the explanation names the SMILES", question.explanation.contains("SMILES O"))
+        // A formula cell flattens tag-stripped with a space between tokens;
+        // "H₂O" in search comes from the structure cell's handles, so pin the
+        // formula cell's own contribution or deleting it would go unnoticed.
+        assertEquals(
+            "the formula cell's flattened text",
+            "H 2 O",
+            row[1].replace(Regex("<[^>]*>|&[a-zA-Z#0-9]+;"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+        )
+        assertTrue(
+            "search carries the formula cell's flattened text",
+            question.elements.searchableText.contains("H 2 O")
+        )
+        assertTrue(
+            "search keeps the structure's handles",
+            question.elements.searchableText.contains("water H₂O O")
+        )
     }
 
     @Test
@@ -355,6 +434,7 @@ class SampleChemistryTest {
             "q-top-1",
             "q-sci-1", "q-sci-2",
             "q-chem-1", "q-chem-2", "q-chem-3", "q-chem-4",
+            "q-chem-6",
             "q-org-1", "q-org-2",
             "q-phy-1", "q-phy-2", "q-phy-3", "q-fc-table",
             "q-math-1", "q-math-2", "q-math-3", "q-math-4", "q-math-5",
@@ -378,9 +458,9 @@ class SampleChemistryTest {
             previousIds.all { it in ids }
         )
         // The benzene demo and the id-less legacy question are checked by
-        // their own tests, not by this id list.
+        // their own tests, not by this id list; the rich-table demo is listed.
         assertEquals(previousIds.size + 2, questions.size)
-        assertEquals(7, paper.categories.single { it.id == "cat-chemistry" }.questions.size)
+        assertEquals(8, paper.categories.single { it.id == "cat-chemistry" }.questions.size)
 
         fun allElements() = buildList {
             questions.forEach { question ->

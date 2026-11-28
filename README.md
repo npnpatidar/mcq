@@ -85,7 +85,7 @@ or Anki (.apkg).
 | **Statistics** | `stats` | Scope chip (All papers / one paper), range chips (7 d / 30 d / 90 d / 1 y / All). Nine tabs. |
 | **Study** | `study/{paperId}?...` | One card at a time. Classic footer (Show answer → Again/Hard/Good/Easy) or Simplified (Guessing switch → Check → Change grade → Next). **Any question without an answer key** — a flashcard (zero options) or a keyless multiple-choice question — uses Show answer → Again/Hard/Good/Easy in both modes and is self-graded (no Check, no verdict tint). Clocks, passage header, summary on stop. |
 | **Browse** | `browse/{paperId}?...` | Question list with search, 4 filter chips (All / No answer key (multiple choice) / No explanation / Uncategorized), category dropdown, selection mode (bulk edit/move/copy/delete/export), reorder arrows, passage headers, Flashcard labels. |
-| **Editor** | `editor?...` | Full question editor: category, passage, BlockListEditor (text/image/table/math), options with checkboxes, marks, difficulty, tags, explanation, validation, Prev/Next over current filter, Save/Delete. |
+| **Editor** | `editor?...` | Full question editor: category, passage, BlockListEditor (text/image/table/math/chemistry), options with checkboxes, marks, difficulty, tags, explanation, validation, Prev/Next over current filter, Save/Delete. |
 | **Passages** | `passages` | List of passages with member counts. Create/Edit/Delete/Move. Tap member → opens in Browse. Delete guarded if members exist. |
 | **Bookmarks** | `bookmarks` | Paged list. Tap → opens in Browse (reading list). Remove icon. Export (all bookmarks as pseudo-paper). |
 | **Search** | `search` | Query field, 3 scope chips (All / Questions / Options). 300 ms debounce. Results: preview + paper title → tap opens in Browse. |
@@ -116,7 +116,7 @@ A question has:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| **Text** | String / rich blocks | Legacy `text` field + `elements` (text, image, table, math). `elements` takes precedence. |
+| **Text** | String / rich blocks | Legacy `text` field + `elements` (text, image, table, math, chem). `elements` takes precedence. Table cells may carry a formula, a picture or a structure. |
 | **Question image** | Optional | Data URI, `http(s)` URL, or `content://`. Legacy scalar field + block images. |
 | **Options** | 0 (flashcard) or 2+ | Each has id (a–j), text/blocks, optional image. Legacy scalar `image` field. Exactly one option is never valid. |
 | **Shape** | Derived | Zero options = a flashcard (front/back, studied only, never sampled into a test). No stored type column. |
@@ -1256,7 +1256,7 @@ Modal bottom sheet (Anki's Card Info):
 
 **Passage Dropdown** (if category has passages or question assigned): `Remove from passage` + passages in current category.
 
-**Question Body — BlockListEditor:** Label `Question`. Blocks: Text, Image, Table, Formula (MathML/LaTeX via MathLiveEditor). Per-block: add/move/remove/edit. Images: gallery picker → `data:` URI. Tables: cell add/remove row/col, edit cell.
+**Question Body — BlockListEditor:** Label `Question`. Blocks: Text, Image, Table, Formula (MathML/LaTeX via MathLiveEditor), Chemistry (SMILES). Per-block: add/move/remove/edit. Images: gallery picker → `data:` URI. Tables: cell add/remove row/col, edit cell.
 
 **Legacy Question Image** (read-only): if pre-block image exists → label + image + Remove.
 
@@ -1606,8 +1606,83 @@ Wire format: `{"type": "...", "content": ...}`
 |------|---------|-------|
 | `text` | String | Inline HTML: `<b><i><u><del><sub><sup><mark><br>`; unknown tags literal. |
 | `image` | String (src) | `data:image/...;base64,`, `http(s)://`, `content://`. |
-| `table` | `List<List<String>>` | Rows of cells; inline markup preserved. |
+| `table` | `List<List<String>>` | Rows of cells; each cell is one string (see [Rich table cells](#rich-table-cells)). |
 | `math` | String (MathML) | `<math>...</math>` blocks; attributes & line breaks kept. |
+| `chem` | Object | `{"smiles","formula","caption","spoken","diagram"}`; SMILES is required and `diagram` is an export cache, never authored. |
+
+### Rich table cells
+
+A table is still `List<List<String>>` — every cell is one string, and no wire
+version or Room column changed. A cell can carry a formula, an embedded
+picture or a chemical structure by using the same inline markup the rest of the
+app already sanitises:
+
+| Cell payload | Canonical cell content | What a text-only surface shows |
+|---|---|---|
+| Prose | Inline HTML (`<b>`, `<sub>`, `<mark>`, …) | the words |
+| Formula | raw MathML, e.g. `<math><msub><mtext>H</mtext><mn>2</mn></msub><mtext>O</mtext></math>` | the tags stripped: `H 2 O` |
+| Picture | one inline `<img src="data:image/png\|jpeg\|gif\|webp;base64,…" alt="…">` | `[image]` |
+| Structure | the `mcq-chem-cell` span below | its readable handles |
+
+The structure marker is the only non-obvious shape:
+
+```html
+<span class="mcq-chem-cell" data-smiles="O" data-formula="H₂O"
+      data-caption="water"
+      data-spoken="one oxygen atom bonded to two hydrogen atoms, water">
+  water H₂O O
+</span>
+```
+
+- `data-smiles` is required and is what the renderer draws; the other four
+  attributes are optional. `data-png` is a reserved export-cache slot and is
+  not written by this change; the sample bank never ships one.
+- The body is the handles text `caption formula SMILES`. Every surface that
+  does not understand the marker (the native cell, search, a text-only surface,
+  an older build) prints that, never raw tags or base64.
+- Reading is strict. Only the class token and the five `data-*` names are
+  accepted, quoted, once each; unknown attributes, an unclosed span or a blank
+  `data-smiles` make the whole span plain text. A writer rebuilds the marker
+  from parsed fields, so imports cannot smuggle `onclick`/`style`.
+
+The bundled sample's `q-chem-6` is one row with a name, a formula, a structure
+and a picture, so a new install exercises all four cell payloads.
+
+**Import:** with the chemistry block enabled, the AI schema may put the chem
+object below in a cell instead of a string; the importer rewrites it to the
+canonical span, so storage and every reader see one shape. A malformed cell
+object, or one whose `type`/`content`/`smiles` is wrong-typed, drops only that
+cell with a warning naming its row and column — the question survives. A
+wrong-typed optional field (`formula`/`caption`/`spoken`) is ignored and the
+rest of the cell is kept. Each human field is checked against a 2 KiB cap
+before the marker is built; after escaping, the emitted marker is capped at
+16 KiB (the worst case built before rejection is about 84 KiB) and an
+over-limit cell is blanked with a warning. A chemistry-off schema is unchanged
+(`array<array<string>>`) and accepts no chem object.
+
+**AI schema:** table cells are strings by default. With **Math** on, the prompt
+allows a formula cell as MathML; with **Image** on, a picture cell as one
+base64 data-URI `<img>`; with **Chemistry** on, the schema accepts either a
+string or the same closed chem object a block uses:
+
+```json
+["Water",
+ "<math><msub><mtext>H</mtext><mn>2</mn></msub><mtext>O</mtext></math>",
+ {"type": "chem", "content": {"smiles": "O", "formula": "H₂O",
+  "caption": "water", "spoken": "one oxygen atom bonded to two hydrogen atoms, water"}},
+ "<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=\" alt=\"water molecule\">"]
+```
+
+**Search, TalkBack and pictures:** search flattens the marker body/handles
+(`caption formula SMILES`) and a formula's tags; it never indexes `data-spoken`
+or `data-png`. TalkBack uses `data-spoken` first, then caption, formula and
+SMILES, so the spoken label can say more than the searchable handles. A cell
+picture contributes no search text. On import a picture over 800 px is
+downscaled; it becomes `[image]` only when the scaled result is still over
+512 KB, unreadable or torn.
+
+**Editor and exports:** per-cell authoring and rich-cell handling in the
+document exporters are not part of this change.
 
 ### Attempt Schema (`AttemptDto`)
 
@@ -1651,9 +1726,11 @@ the plain-string form and are what export writes:
 ```
 
 In `options_elements` the object **keys are the option ids**, which is what
-`correctOptionIds` must then refer to. Only the `text`, `math`, `image` and `table`
-types are read; every entry must be an element object, because a bare string is
-dropped without warning.
+`correctOptionIds` must then refer to. Only the `text`, `math`, `image`, `table`
+and `chem` types are read; every entry must be an element object, because a bare
+string is dropped without warning. A table cell is the exception: it is a
+string, or a `chem` element object that the importer rewrites to the canonical
+cell marker.
 
 ### Complete Annotated Example
 
@@ -1943,7 +2020,7 @@ small, closed JSON Schemas for asking an AI agent to write an importable bank.
 Choose:
 
 - **Question type:** Flashcards / MCQ / Mixed.
-- **Content blocks:** Text is always on; Table, Math (MathML) and Image are optional. Turning a block off removes its keys from the schema, making the prompt smaller.
+- **Content blocks:** Text is always on; Table, Math (MathML), Image and Chemistry (SMILES) are optional. Turning a block off removes its keys from the schema, making the prompt smaller. A table's cells stay strings, except that Chemistry on also lets a cell be the same chem object as a block; the importer rewrites it to the canonical cell marker.
 - **Passage mode:** none / text-only passage / rich passage.
 - **Wrapper:** a full bank (`papers` + categories) or a **paperless** root with just `passages` and `questions`, which the app wraps into one paper on import.
 

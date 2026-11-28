@@ -45,6 +45,23 @@ internal const val CELL_CHEM_ATTR = "data-smiles"
  */
 private const val MAX_CELL_PNG_PAYLOAD_CHARS = 4 * 1024 * 1024
 
+/**
+ * Longest one human field (SMILES, formula, caption, spoken) in a marker built
+ * from an imported chem object. A cell travels inside the question row (the
+ * 2 MB `CursorWindow` ceiling), its `CardContent` hash and every backup part,
+ * so a hostile field must not be copied verbatim into storage. 2 KiB is far
+ * above any real name, formula or spoken label.
+ */
+internal const val MAX_CELL_CHEM_FIELD_CHARS = 2 * 1024
+
+/**
+ * Longest emitted marker. The field cap alone is not enough: escaping can grow
+ * `&` fivefold and `"` sixfold, so four individually legal fields plus the
+ * duplicated handles body could still build a ~84 KiB cell. 16 KiB leaves room
+ * for a generous label while keeping one table cell far below the row ceiling.
+ */
+internal const val MAX_CELL_CHEM_MARKER_CHARS = 16 * 1024
+
 private const val PNG_DATA_URI_PREFIX = "data:image/png;base64,"
 
 /**

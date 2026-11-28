@@ -4,6 +4,9 @@ import com.mcqapp.data.export.isImageSrcDescriptor
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.droppedParserMessage
 import com.mcqapp.domain.textContent
+import com.mcqapp.util.MAX_CELL_CHEM_FIELD_CHARS
+import com.mcqapp.util.MAX_CELL_CHEM_MARKER_CHARS
+import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.forEachCellImageSpan
 import com.mcqapp.util.imgTagSrc
 import kotlinx.serialization.json.Json
@@ -1566,15 +1569,27 @@ object LegacyParser {
         obj: JsonObject,
         warnings: MutableList<String>? = null
     ): List<ContentElement> {
-        return when (obj["type"]?.jsonPrimitive?.contentOrNull) {
+        return when ((obj["type"] as? JsonPrimitive)?.contentOrNull) {
             "text" -> splitTextRuns(obj["content"]?.jsonPrimitive?.contentOrNull ?: "")
             "image" -> {
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
                 listOf(ContentElement.ImageElement(extractImgSrc(content) ?: content))
             }
             "table" -> {
-                val rows = obj["content"]?.jsonArray?.map { row ->
-                    row.jsonArray.map { it.jsonPrimitive.content }
+                val rows = obj["content"]?.jsonArray?.mapIndexed { row, cells ->
+                    val columns = cells as? JsonArray
+                    if (columns == null) {
+                        warnings?.add(
+                            droppedParserMessage(
+                                "Skipped table row r${row + 1}: not an array; its cells were dropped"
+                            )
+                        )
+                        emptyList()
+                    } else {
+                        columns.mapIndexed { column, cell ->
+                            parseTableCell(cell, warnings, "table cell r${row + 1}c${column + 1}")
+                        }
+                    }
                 } ?: return emptyList()
                 listOf(ContentElement.TableElement(rows))
             }
@@ -1592,24 +1607,110 @@ object LegacyParser {
                     warnings?.add(droppedParserMessage("Skipped chem element without an object content"))
                     return emptyList()
                 }
-                fun str(key: String): String = content[key]?.jsonPrimitive?.contentOrNull ?: ""
-                val smiles = str("smiles").trim()
-                if (smiles.isEmpty()) {
+                val element = chemElementFrom(content, includeDiagram = true)
+                if (element == null) {
                     warnings?.add(droppedParserMessage("Skipped chem element with no SMILES string"))
                     return emptyList()
                 }
-                listOf(
-                    ContentElement.ChemElement(
-                        smiles = smiles,
-                        formula = str("formula"),
-                        caption = str("caption"),
-                        spoken = str("spoken"),
-                        diagram = str("diagram")
-                    )
-                )
+                listOf(element)
             }
             else -> emptyList()
         }
+    }
+
+    /**
+     * One chemistry element from its `content` object, shared by a block and a
+     * table cell so the same input cannot produce two shapes. A cell passes
+     * [includeDiagram] false: a captured PNG is an export cache, never authored
+     * by a model, and a cell never stores one. Both paths keep the human fields
+     * verbatim; a cell marker is HTML, so an entity reference such as `&amp;`
+     * decodes once when that marker is read back.
+     */
+    private fun chemElementFrom(
+        content: JsonObject,
+        includeDiagram: Boolean
+    ): ContentElement.ChemElement? {
+        fun field(key: String): String = (content[key] as? JsonPrimitive)?.contentOrNull ?: ""
+        val smiles = field("smiles").trim()
+        if (smiles.isEmpty()) return null
+        return ContentElement.ChemElement(
+            smiles = smiles,
+            formula = field("formula"),
+            caption = field("caption"),
+            spoken = field("spoken"),
+            diagram = if (includeDiagram) field("diagram") else ""
+        )
+    }
+
+    /**
+     * One table cell, which the wire format stores as a string. An AI-written
+     * bank may put a chem element object in the cell instead (the generated
+     * schema allows it only while chemistry is on); it is normalised to the
+     * canonical `mcq-chem-cell` marker so storage and every renderer see one
+     * shape. A malformed or non-chem object drops that one cell with a warning
+     * naming its row and column — it must never drop the question, and nothing
+     * is reinterpreted. Every field is read through a safe cast: a wrong-typed
+     * `type`, `content` or `smiles` makes the cell unusable; a wrong-typed
+     * optional field (`formula`/`caption`/`spoken`) is simply ignored and the
+     * rest of the cell is kept.
+     *
+     * The four human fields are capped ([MAX_CELL_CHEM_FIELD_CHARS]) before the
+     * marker is built. The emitted marker is then capped
+     * ([MAX_CELL_CHEM_MARKER_CHARS]) after [chemCellHtml] has escaped it: the
+     * worst case that can be built is four 2 KiB fields plus the handles body,
+     * each source character escaping to up to six, so at most ~86,000
+     * characters (~84 KiB) are allocated before an over-limit marker is
+     * rejected.
+     */
+    private fun parseTableCell(
+        cell: JsonElement,
+        warnings: MutableList<String>?,
+        position: String
+    ): String {
+        if (cell !is JsonObject) {
+            val text = (cell as? JsonPrimitive)?.contentOrNull
+            if (text != null) return text
+            warnings?.add(droppedParserMessage("Skipped $position: not a string"))
+            return ""
+        }
+        val type = (cell["type"] as? JsonPrimitive)?.contentOrNull
+        if (type != "chem") {
+            warnings?.add(
+                droppedParserMessage(
+                    "Skipped $position: unsupported object type '${type ?: "unknown"}'; only chem is read"
+                )
+            )
+            return ""
+        }
+        val content = cell["content"] as? JsonObject
+        if (content == null) {
+            warnings?.add(droppedParserMessage("Skipped $position: chem object without an object content"))
+            return ""
+        }
+        val element = chemElementFrom(content, includeDiagram = false)
+        if (element == null) {
+            warnings?.add(droppedParserMessage("Skipped $position: chem object with no SMILES string"))
+            return ""
+        }
+        val fields = listOf(element.smiles, element.formula, element.caption, element.spoken)
+        if (fields.any { it.length > MAX_CELL_CHEM_FIELD_CHARS }) {
+            warnings?.add(
+                droppedParserMessage(
+                    "Skipped $position: a chem field exceeded $MAX_CELL_CHEM_FIELD_CHARS characters"
+                )
+            )
+            return ""
+        }
+        val marker = chemCellHtml(element)
+        if (marker.length > MAX_CELL_CHEM_MARKER_CHARS) {
+            warnings?.add(
+                droppedParserMessage(
+                    "Skipped $position: the chem marker exceeded $MAX_CELL_CHEM_MARKER_CHARS characters"
+                )
+            )
+            return ""
+        }
+        return marker
     }
 
     /**

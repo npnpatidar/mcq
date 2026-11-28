@@ -4,7 +4,11 @@ import com.mcqapp.data.io.LegacyParser
 import com.mcqapp.data.io.toOptionEntities
 import com.mcqapp.data.io.toQuestionEntity
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CellSegment
 import com.mcqapp.util.InlineHtml
+import com.mcqapp.util.MAX_CELL_CHEM_FIELD_CHARS
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.chemCellHtml
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -720,6 +724,99 @@ class LegacyParserTest {
         )
     }
 
+    /**
+     * An AI bank may put a chem element object in a table cell while the
+     * chemistry block is on. Storage is one string per cell, so the importer
+     * rebuilds the canonical marker from those fields — including escaping and
+     * the readable handles body — and ignores the export-only diagram.
+     */
+    @Test
+    fun chemObjectTableCellNormalisesToTheCanonicalMarker() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "table", "content": [
+                ["Structure", "Name"],
+                [{"type": "chem", "content": {
+                    "smiles": "CCO",
+                    "formula": "C2H6O",
+                    "caption": "ethanol",
+                    "spoken": "a two carbon chain with one hydroxyl group"
+                }}, "Ethanol"]
+              ]}
+            ],
+            "options_elements": {
+              "a": [{"type": "text", "content": "Yes"}],
+              "b": [{"type": "text", "content": "No"}]
+            },
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        assertEquals(emptyList<String>(), file.warnings)
+        val question = file.papers[0].categories[0].questions.single()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals("Ethanol", table.rows[1][1])
+        assertEquals(
+            com.mcqapp.util.chemCellHtml(
+                ContentElement.ChemElement(
+                    smiles = "CCO",
+                    formula = "C2H6O",
+                    caption = "ethanol",
+                    spoken = "a two carbon chain with one hydroxyl group",
+                    diagram = ""
+                )
+            ),
+            table.rows[1][0]
+        )
+    }
+
+    /**
+     * A cell object the schema does not allow is rejected per cell, with a
+     * warning: the question and its other cells must survive. Before this,
+     * a non-string cell threw out of the whole import.
+     */
+    @Test
+    fun malformedTableCellObjectDropsOnlyThatCell() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "table", "content": [
+                ["Kept", "Dropped", "Also kept"],
+                ["one", {"type": "image", "content": "pic.png"}, "two"],
+                [{"type": "chem", "content": {"formula": "H2O"}}, "three", "four"]
+              ]}
+            ],
+            "options_elements": {
+              "a": [{"type": "text", "content": "Yes"}],
+              "b": [{"type": "text", "content": "No"}]
+            },
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions.single()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals(listOf("one", "", "two"), table.rows[1])
+        assertEquals(listOf("", "three", "four"), table.rows[2])
+        val cellWarnings = file.warnings.filter { it.contains("table cell") }
+        assertEquals("each malformed cell is reported, the question is kept", 2, cellWarnings.size)
+        assertTrue(
+            "the picture cell must name row 2, column 2: $cellWarnings",
+            cellWarnings.any { it.contains("table cell r2c2") }
+        )
+        assertTrue(
+            "the no-SMILES cell must name row 3, column 1: $cellWarnings",
+            cellWarnings.any { it.contains("table cell r3c1") }
+        )
+    }
+
     @Test
     fun imageElementContentExtractsTheImgSrc() {
         val json = """
@@ -1398,6 +1495,244 @@ class LegacyParserTest {
             streamed.single().categories.flatMap { it.questions.map { q -> q.id } }
         )
     }
+
+    /**
+     * A wrong-typed cell object is a bad cell, not a fatal parse error: the
+     * question survives, the row keeps its width, and each unusable cell gets
+     * one positional warning. A wrong-typed optional field is ignored and its
+     * cell is kept. The safe casts are load-bearing — `jsonPrimitive` used to
+     * throw and `safeQuestion` then dropped the whole question.
+     */
+    @Test
+    fun wrongTypedTableCellFieldsNeverDropTheQuestion() {
+        val huge = "C".repeat(MAX_CELL_CHEM_FIELD_CHARS * 2)
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "table", "content": [
+                ["A", "B", "C"],
+                ["keep", {"type": ["chem"], "content": {"smiles": "C"}}, "keep2"],
+                [{"type": "chem", "content": {"smiles": {"nested": true}}},
+                 {"type": {"kind": "chem"}, "content": {"smiles": "C"}}, "y"],
+                [{"type": "chem", "content": {"smiles": "C", "formula": {"huge": "$huge"}}}, "z", "w"]
+              ]}
+            ],
+            "options_elements": {
+              "a": [{"type": "text", "content": "Yes"}],
+              "b": [{"type": "text", "content": "No"}]
+            },
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions.single()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals("the question must survive", 1,
+            file.papers[0].categories[0].questions.size)
+        assertTrue("every row must keep three cells", table.rows.all { it.size == 3 })
+        assertEquals(listOf("keep", "", "keep2"), table.rows[1])
+        assertEquals(listOf("", "", "y"), table.rows[2])
+        // A wrong-typed formula is ignored, not a reason to drop a valid cell.
+        assertEquals(
+            chemCellHtml(ContentElement.ChemElement(smiles = "C")),
+            table.rows[3][0]
+        )
+        assertTrue(
+            "the marker must not absorb the wrong-typed field's payload",
+            table.rows[3][0].length < 200
+        )
+
+        val cellWarnings = file.warnings.filter { it.contains("table cell") }
+        assertEquals("one warning per bad cell", 3, cellWarnings.size)
+        assertTrue(
+            "the array-typed type names row 2, column 2: $cellWarnings",
+            cellWarnings.any { it.contains("table cell r2c2") && it.contains("unsupported object type") }
+        )
+        assertTrue(
+            "the object-typed SMILES names row 3, column 1: $cellWarnings",
+            cellWarnings.any { it.contains("table cell r3c1") && it.contains("no SMILES") }
+        )
+        assertTrue(
+            "the object-typed type names row 3, column 2: $cellWarnings",
+            cellWarnings.any { it.contains("table cell r3c2") && it.contains("unsupported object type") }
+        )
+    }
+
+    /**
+     * A row that is not an array is one bad row, not a fatal parse error. It
+     * becomes an empty row with a positional warning; the question and the
+     * following rows survive.
+     */
+    @Test
+    fun nonArrayTableRowDropsOnlyThatRow() {
+        val json = """
+        [
+          {
+            "question_elements": [
+              {"type": "table", "content": [
+                {"0": "a"},
+                ["kept", "row"]
+              ]}
+            ],
+            "options_elements": {
+              "a": [{"type": "text", "content": "Yes"}],
+              "b": [{"type": "text", "content": "No"}]
+            },
+            "answer": "a"
+          }
+        ]
+        """.trimIndent()
+
+        val file = LegacyParser.parse(json)
+        val question = file.papers[0].categories[0].questions.single()
+        val table = question.elements.filterIsInstance<ContentElement.TableElement>().single()
+        assertEquals(listOf(emptyList<String>(), listOf("kept", "row")), table.rows)
+        assertTrue(
+            "the row warning must name row 1: ${file.warnings}",
+            file.warnings.any {
+                it.contains("table row r1") && it.contains("not an array")
+            }
+        )
+    }
+
+    /**
+     * The block and cell paths share one extraction, so identical content gives
+     * identical elements apart from the cell's export-cache slot. A cell never
+     * stores a captured PNG: the editor fills it, not the bank.
+     */
+    @Test
+    fun chemBlockAndCellObjectParseToTheSameElementExceptTheDiagram() {
+        val content = """
+            {"smiles": "CCO", "formula": "C2H6O", "caption": "ethanol",
+             "spoken": "a two carbon chain with one hydroxyl group",
+             "diagram": "data:image/png;base64,AAAA"}
+        """.trimIndent()
+        val blockJson = """
+        [{"question_elements": [{"type": "chem", "content": $content}],
+          "options_elements": {"a": [{"type": "text", "content": "Yes"}],
+                               "b": [{"type": "text", "content": "No"}]}, "answer": "a"}]
+        """.trimIndent()
+        val block = LegacyParser.parse(blockJson).papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.ChemElement>().single()
+
+        val cell = LegacyParser.parse(tableCellQuestion("""{"type": "chem", "content": $content}"""))
+            .papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        val cellElement = cellSegments(cell, withPng = false)
+            .filterIsInstance<CellSegment.Chem>().single().element
+
+        assertEquals("the block keeps its captured diagram", "data:image/png;base64,AAAA", block.diagram)
+        assertEquals("a cell never stores the export cache", "", cellElement.diagram)
+        assertEquals("every human field is shared", block.copy(diagram = ""), cellElement)
+    }
+
+    /**
+     * A cell marker is HTML, so a stored entity reference decodes once when the
+     * marker is read back; the block path stores its fields verbatim. Pinning
+     * both is deliberate: re-emitting the read element must be byte-stable.
+     */
+    @Test
+    fun literalEntityReferenceInACellDecodesOnceAndStaysStable() {
+        val content = """
+            {"smiles": "CCO", "formula": "A &amp; B", "caption": "ethanol",
+             "spoken": "a two carbon chain"}
+        """.trimIndent()
+        val blockJson = """
+        [{"question_elements": [{"type": "chem", "content": $content}],
+          "options_elements": {"a": [{"type": "text", "content": "Yes"}],
+                               "b": [{"type": "text", "content": "No"}]}, "answer": "a"}]
+        """.trimIndent()
+        val block = LegacyParser.parse(blockJson).papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.ChemElement>().single()
+        assertEquals("the block stores the field verbatim", "A &amp; B", block.formula)
+
+        val cell = LegacyParser.parse(tableCellQuestion("""{"type": "chem", "content": $content}"""))
+            .papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        val cellElement = cellSegments(cell, withPng = false)
+            .filterIsInstance<CellSegment.Chem>().single().element
+        assertEquals("a marker is HTML: the reference decodes once", "A & B", cellElement.formula)
+        assertEquals("re-emitting the read element is stable", cell, chemCellHtml(cellElement))
+    }
+
+    /** A reaction SMILES is legal in a cell; the `>` is escaped and comes back. */
+    @Test
+    fun reactionSmilesInACellIsPreserved() {
+        val cell = LegacyParser.parse(
+            tableCellQuestion("""{"type": "chem", "content": {"smiles": "CC>>"}}""")
+        ).papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        assertTrue("the marker escapes the arrow: $cell", cell.contains("data-smiles=\"CC&gt;&gt;\""))
+        val element = cellSegments(cell, withPng = false)
+            .filterIsInstance<CellSegment.Chem>().single().element
+        assertEquals("the reaction SMILES survives the marker", "CC>>", element.smiles)
+    }
+
+    /** A field just over the cap blanks the cell; just under it is kept. */
+    @Test
+    fun chemCellFieldCapIsEnforcedAtTheBoundary() {
+        val atLimit = "C".repeat(MAX_CELL_CHEM_FIELD_CHARS)
+        val under = LegacyParser.parse(
+            tableCellQuestion(
+                """{"type": "chem", "content": {"smiles": "C", "formula": "$atLimit"}}"""
+            )
+        )
+        val kept = under.papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        assertTrue("the boundary value is kept", kept.contains(atLimit))
+
+        val over = LegacyParser.parse(
+            tableCellQuestion(
+                """{"type": "chem", "content": {"smiles": "C", "formula": "${atLimit}C"}}"""
+            )
+        )
+        val dropped = over.papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        assertEquals("one character over the cap is blanked", "", dropped)
+        assertTrue(
+            "the cap warning names the position and the limit: ${over.warnings}",
+            over.warnings.any {
+                it.contains("table cell r2c1") &&
+                    it.contains("$MAX_CELL_CHEM_FIELD_CHARS characters")
+            }
+        )
+    }
+
+    /**
+     * The field cap alone cannot bound the stored cell: escaping can multiply a
+     * quote sixfold, so four individually legal fields can still overflow.
+     * The emitted-marker cap catches that before it reaches storage.
+     */
+    @Test
+    fun chemCellMarkerCapCatchesEscapingAmplification() {
+        // JSON-escaped quotes: the parsed fields are all quote characters.
+        val quotedField = "\\\"".repeat(MAX_CELL_CHEM_FIELD_CHARS)
+        val json = tableCellQuestion(
+            """{"type": "chem", "content": {
+                 "smiles": "C", "formula": "$quotedField",
+                 "caption": "$quotedField", "spoken": "$quotedField"}}"""
+        )
+        val file = LegacyParser.parse(json)
+        val cell = file.papers[0].categories[0].questions.single()
+            .elements.filterIsInstance<ContentElement.TableElement>().single().rows[1][0]
+        assertEquals("the amplified marker is blanked", "", cell)
+        assertTrue(
+            "the marker cap warning names the position: ${file.warnings}",
+            file.warnings.any {
+                it.contains("table cell r2c1") && it.contains("chem marker exceeded")
+            }
+        )
+    }
+
+    /** A minimal one-cell table question, so the cell tests stay readable. */
+    private fun tableCellQuestion(cell: String): String = """
+        [{"question_elements": [{"type": "table", "content": [["Header"], [$cell]]}],
+          "options_elements": {"a": [{"type": "text", "content": "Yes"}],
+                               "b": [{"type": "text", "content": "No"}]}, "answer": "a"}]
+    """.trimIndent()
 
     /** The sink-driven importer path also emits the root categories. */
     @Test

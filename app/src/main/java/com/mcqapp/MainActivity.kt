@@ -6,12 +6,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.mcqapp.data.export.ChemDiagramRendererProvider
+import com.mcqapp.data.export.SmilesWebViewRenderer
 import com.mcqapp.ui.common.Announcer
+import com.mcqapp.ui.common.ChemDiagramRenderHostView
 import com.mcqapp.ui.common.LocalAnnouncer
 import com.mcqapp.ui.haptics.LocalHapticsEnabled
 import com.mcqapp.ui.navigation.McqNavHost
@@ -128,6 +134,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Exports ask this provider for a drawing when a structure has no
+        // stored PNG. The render host below attaches the WebView it uses.
+        ChemDiagramRendererProvider.install(SmilesWebViewRenderer())
         val repository = (application as McqApplication).repository
         setContent {
             val themeMode by repository.themeMode().collectAsStateWithLifecycle(initialValue = "system")
@@ -159,7 +168,12 @@ class MainActivity : ComponentActivity() {
                     LocalHapticsEnabled provides hapticsEnabled,
                     LocalAnnouncer provides announcer
                 ) {
-                    McqNavHost(repository = repository)
+                    Box(Modifier.fillMaxSize()) {
+                        // First, so this 1 dp surface can never sit above the
+                        // navigation content and eat a touch.
+                        ChemDiagramRenderHostView()
+                        McqNavHost(repository = repository)
+                    }
                 }
             }
         }

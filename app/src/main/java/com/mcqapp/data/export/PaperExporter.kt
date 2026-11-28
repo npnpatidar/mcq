@@ -134,39 +134,44 @@ class PaperExporter(private val db: AppDatabase) {
         twoColumnPdf: Boolean = false
     ): ExportFile = withContext(Dispatchers.IO) {
         val base = baseName(title)
+        // Visual formats draw a structure from its SMILES when no stored PNG
+        // exists. The preparation pass decorates the walk with copies; JSON is
+        // deliberately excluded because it must remain a byte-faithful copy of
+        // storage.
+        val exportStream = preparePaperForExport(stream, format)
         val fileName = when (format) {
             ExportFormat.JSON_INLINE -> {
-                text(sink) { PaperJsonWriter.writePaperJson(it, stream) }
+                text(sink) { PaperJsonWriter.writePaperJson(it, exportStream) }
                 "$base.json"
             }
             ExportFormat.ZIP -> {
-                ZipPaperWriter.paperToZip(stream, sink)
+                ZipPaperWriter.paperToZip(exportStream, sink)
                 "$base.zip"
             }
             ExportFormat.HTML -> {
-                text(sink) { HtmlPaperWriter.writeHtml(stream, it) }
+                text(sink) { HtmlPaperWriter.writeHtml(exportStream, it) }
                 "$base.html"
             }
             ExportFormat.HTML_QUIZ -> {
-                text(sink) { HtmlPaperWriter.writeQuizHtml(stream, it) }
+                text(sink) { HtmlPaperWriter.writeQuizHtml(exportStream, it) }
                 "$base-quiz.html"
             }
             ExportFormat.PDF -> {
-                PdfPaperWriter.writePdf(stream, sink, twoColumn = twoColumnPdf)
+                PdfPaperWriter.writePdf(exportStream, sink, twoColumn = twoColumnPdf)
                 "$base.pdf"
             }
             ExportFormat.PDF_ANSWER_KEY -> {
                 PdfPaperWriter.writePdf(
-                    stream, sink, answersAtEnd = true, twoColumn = twoColumnPdf
+                    exportStream, sink, answersAtEnd = true, twoColumn = twoColumnPdf
                 )
                 "$base-answer-key.pdf"
             }
             ExportFormat.APKG -> {
-                AnkiPackageWriter.writeTo(stream, sink, schedulingFor)
+                AnkiPackageWriter.writeTo(exportStream, sink, schedulingFor)
                 "$base.apkg"
             }
             ExportFormat.DOCX -> {
-                DocxPaperWriter.writeDocx(stream, sink)
+                DocxPaperWriter.writeDocx(exportStream, sink)
                 "$base.docx"
             }
         }

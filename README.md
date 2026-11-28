@@ -1707,24 +1707,25 @@ their old fast path.
 
 | Surface | Prose | Formula | Picture | Structure |
 |---|---|---|---|---|
-| HTML / print | inline HTML | typeset MathML | inline picture, capped height | handles + `data-png` picture when present |
-| DOCX | runs | inline OMML (unsupported MathML falls back to linear text with a warning) | embedded `word/media` picture, clamped to the column | handles + PNG picture when present |
-| PDF | runs | real typeset formula fitted to the column | scaled inside the cell, never upscaled | handles + PNG when present |
-| Anki | inline HTML | normalised MathML | real media file (`mcqapp-N.png`), never base64 | handles + PNG media when present |
+| HTML / print | inline HTML | typeset MathML | inline picture, capped height | picture (handles in `alt`); a reaction appends its `formula` label; handles text only when there is no picture |
+| DOCX | runs | inline OMML (unsupported MathML falls back to linear text with a warning) | embedded `word/media` picture, clamped to the column | picture (`descr` carries the handles); reaction label after it; handles text only without a picture |
+| PDF | runs | real typeset formula fitted to the column | scaled inside the cell, never upscaled | picture plus a reaction’s label; handles text only without a picture |
+| Anki | inline HTML | normalised MathML | real media file (`mcqapp-N.png`), never base64 | media picture (handles in `alt`); reaction label after it; handles text only without a picture |
 | In-app | mixed WebView | typeset MathML | inline picture | drawn live by SmilesDrawer |
 
 A table containing a formula, picture or structure takes the WebView path and a
 fixed layout with wrapped labels, so a wide formula or drawing cannot widen the
 page; plain tables stay native and keep their old layout.
 
-**Exports print a structure as a drawing only when a captured PNG exists.** The
-editor captures a structure — a standalone block or one inside a table cell —
-while its preview is open, so opening and saving a question makes its structures
-draw in every export. A structure that has never been previewed (a fresh import
-or the bundled sample) prints its readable handles instead. Exports never emit
-raw markup, SMILES as a picture or base64 text; the handles are always the
-fallback. Rendering structures at export time, so no stored capture is needed,
-is the first item of the next release.
+**Exports draw a structure even when no capture exists.** The editor stores a
+light-theme PNG when a structure is previewed, and a visual export fills any
+missing or invalid diagram on a copy of the content first: an offscreen WebView
+draws the bundled SmilesDrawer with the editor’s options (including a reaction’s
+reagent text), the picture is cached per structure for that export, and the
+writers print it. A structure that cannot be rendered falls back to its readable
+handles, and the export never fails. Exports never emit raw markup, SMILES as a
+picture or base64 text. The JSON export is deliberately untouched (it stays
+byte-faithful); ZIP moves pictures and structure rasters into `images/`.
 
 **Round trips:** an untouched DOCX round trip restores the exact cell strings
 (pictures and structures are carried by small hash-verified descriptors in the

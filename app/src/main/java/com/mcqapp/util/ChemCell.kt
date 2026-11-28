@@ -3,8 +3,8 @@ package com.mcqapp.util
 import com.mcqapp.data.decodeHtmlEntities
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
-import com.mcqapp.domain.CELL_MATH_PATTERN
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.forEachCellMathBlock
 
 /**
  * The one storage grammar for a chemical structure inside a table cell:
@@ -191,7 +191,21 @@ internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
     var pos = 0
     var protectedIndex = 0
     for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
-        val element = parseChemSpan(match.groupValues[1], withPng) ?: continue
+        val element = parseChemSpan(match.groupValues[1], withPng)
+        if (element == null) {
+            // A span shaped like a marker (chem class + a data-smiles
+            // attribute) that fails the strict reader must never fall through
+            // as raw markup: the mixed page's inline pipeline would print
+            // every attribute, `data-png` payload included. Degrade it in
+            // place to the escaped handles body, exactly as a text-only
+            // surface does.
+            if (isMarkerShapedSpan(match.groupValues[1])) {
+                text.append(cell, pos, match.range.first)
+                    .append(escapeHtmlText(match.groupValues[2]))
+                pos = match.range.last + 1
+            }
+            continue
+        }
         val start = match.range.first
         while (protectedIndex < protected.size && protected[protectedIndex].last < start) {
             protectedIndex++
@@ -240,7 +254,7 @@ internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
  */
 private fun protectedRanges(cell: String): List<IntRange> {
     val ranges = mutableListOf<IntRange>()
-    for (match in CELL_MATH_PATTERN.findAll(cell)) ranges += match.range
+    forEachCellMathBlock(cell) { start, end -> ranges += start until end }
     var pos = 0
     while (pos < cell.length) {
         val open = cell.indexOf('<', pos)
@@ -341,6 +355,59 @@ private fun parseChemSpan(
         diagram = diagram
     )
 }
+
+/**
+ * The value of [name] in a span's attribute region, without validating it:
+ * the value when the name occurs, an empty string when it occurs without a
+ * value, or null when it is absent. Used only to decide whether a *failed*
+ * span is shaped like a chem marker and therefore must not print its
+ * attributes; the strict reader above still decides what a valid marker is.
+ */
+private fun lenientAttributeValue(attributes: String, name: String): String? {
+    var pos = 0
+    while (pos < attributes.length) {
+        while (pos < attributes.length && attributes[pos].isWhitespace()) pos++
+        val nameStart = pos
+        while (pos < attributes.length && isAttributeNameChar(attributes[pos])) pos++
+        if (pos == nameStart) {
+            pos++
+            continue
+        }
+        val matches = pos - nameStart == name.length &&
+            attributes.regionMatches(nameStart, name, 0, name.length, ignoreCase = true)
+        var k = pos
+        while (k < attributes.length && attributes[k].isWhitespace()) k++
+        if (k < attributes.length && attributes[k] == '=') {
+            k++
+            while (k < attributes.length && attributes[k].isWhitespace()) k++
+            if (k < attributes.length) {
+                val quote = attributes[k]
+                if (quote == '"' || quote == '\'') {
+                    val valueStart = k + 1
+                    var valueEnd = valueStart
+                    while (valueEnd < attributes.length && attributes[valueEnd] != quote) valueEnd++
+                    if (matches) return attributes.substring(valueStart, valueEnd)
+                    pos = if (valueEnd < attributes.length) valueEnd + 1 else attributes.length
+                    continue
+                }
+                val valueStart = k
+                var valueEnd = valueStart
+                while (valueEnd < attributes.length && !attributes[valueEnd].isWhitespace()) valueEnd++
+                if (matches) return attributes.substring(valueStart, valueEnd)
+                pos = valueEnd
+                continue
+            }
+        }
+        if (matches) return ""
+        pos = maxOf(pos, k)
+    }
+    return null
+}
+
+/** True when a span carries the chem class and the required `data-smiles` name. */
+private fun isMarkerShapedSpan(attributes: String): Boolean =
+    hasCellChemClass(lenientAttributeValue(attributes, "class")) &&
+        lenientAttributeValue(attributes, CELL_CHEM_ATTR) != null
 
 /** The class attribute lists [CELL_CHEM_CLASS] as one of its whitespace-separated tokens. */
 private fun hasCellChemClass(value: String?): Boolean {

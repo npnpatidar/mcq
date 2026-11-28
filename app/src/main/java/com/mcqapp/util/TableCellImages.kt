@@ -1,6 +1,7 @@
 package com.mcqapp.util
 
 import com.mcqapp.data.escapeHtmlText
+import com.mcqapp.data.export.isImageSrcDescriptor
 
 /** What a rendered cell picture is announced as, in HTML and to TalkBack. */
 internal const val CELL_IMAGE_ALT = "Image in table"
@@ -87,6 +88,12 @@ internal inline fun forEachCellImageSpan(
         var lastValueEnd = -1
         var truncated = false
         var tagEnd = -1
+        // The last `<img` a truncated scan read *outside* a quoted value. Only
+        // the last one can still be a complete tag: an earlier nested start was
+        // torn by a later `<`. Resuming there, rather than at `i + 4`, is what
+        // keeps a cell full of torn `<img` starts linear instead of re-reading
+        // the tail for every one of them.
+        var lastNestedImgStart = -1
         while (j < length) {
             val c = html[j]
             if (quote != '\u0000') {
@@ -103,6 +110,7 @@ internal inline fun forEachCellImageSpan(
                     }
                     '<' -> {
                         truncated = true
+                        if (isImgTagStart(html, j)) lastNestedImgStart = j
                         j++
                     }
                     '"', '\'' -> {
@@ -121,6 +129,33 @@ internal inline fun forEachCellImageSpan(
             val end = tagEnd + 1
             onImage(html.substring(i, end), i, end)
             i = end
+        } else if (tagEnd < 0 && quote == '\u0000' && lastValueEnd < 0) {
+            // No `>` in the rest of the cell and no quoted value to delimit the
+            // span: every remaining `<img` is a torn prefix whose unquoted
+            // `name=value` run may hold a payload. Report them in one forward
+            // pass, so a cell full of `<img ` starts is read once instead of
+            // re-reading its tail from every one.
+            var s = i
+            while (true) {
+                onImage(null, s, unquotedTagPrefixEnd(html, s + IMG_TAG_LENGTH))
+                var search = s + 1
+                var next = -1
+                while (true) {
+                    val candidate = html.indexOf(IMG_TAG, search, ignoreCase = true)
+                    if (candidate < 0) break
+                    if (isImgTagStart(html, candidate)) {
+                        next = candidate
+                        break
+                    }
+                    search = candidate + 1
+                }
+                if (next < 0) {
+                    s = length
+                    break
+                }
+                s = next
+            }
+            i = s
         } else {
             val end = when {
                 // The payload cannot be delimited: never leave part of it behind.
@@ -143,8 +178,29 @@ internal inline fun forEachCellImageSpan(
                 // and never a payload — stays in the cell.
                 else -> unquotedTagPrefixEnd(html, i + IMG_TAG_LENGTH)
             }
-            onImage(null, i, end)
-            i = end.coerceAtLeast(i + 1)
+            // Resume at the last nested `<img` only when it lies beyond the
+            // span already reported; otherwise that start is inside the span
+            // and must not be reported twice. The tail before it is part of
+            // the same torn tag, so it is reported as one span and removed
+            // whole by the normaliser.
+            val resumeAtLastNested = tagEnd >= 0 &&
+                quote == '\u0000' &&
+                lastNestedImgStart > end
+            val spanEnd = if (resumeAtLastNested) lastNestedImgStart else end
+            onImage(null, i, spanEnd)
+            i = when {
+                // An open quote cannot be told from a payload: the scan read to
+                // the end, and nothing inside it can be a picture either.
+                quote != '\u0000' -> length
+                // A later `<img` can still be a complete tag ending at the
+                // `>` this scan stopped at. Re-read from that one start only;
+                // the next pass then consumes the tag and moves on.
+                resumeAtLastNested -> lastNestedImgStart
+                // No nested picture start beyond the span: leave the rest of
+                // the text to the outer loop, so prose after a torn prefix
+                // survives.
+                else -> spanEnd.coerceAtLeast(i + 1)
+            }
         }
     }
 }
@@ -319,6 +375,12 @@ internal fun normalizeCellImages(
     if (tag == null) return@mapCellImageTags ""          // torn <img: never leave its payload as prose
     // A complete tag whose source cannot be read is not drawable: fail closed.
     val src = imgTagSrc(tag) ?: return@mapCellImageTags CELL_IMAGE_MARKER
+    // `mcqapp:img|…` is the DOCX writer's hidden payload stand-in, not a
+    // picture a stored cell may carry: the body cannot draw it, so a later
+    // DOCX export would count a picture that is not there. It never reaches a
+    // row from an import (the DOCX parser grafts the visible bytes back);
+    // a descriptor in a JSON file is blanked here rather than stored.
+    if (isImageSrcDescriptor(src)) return@mapCellImageTags CELL_IMAGE_MARKER
     val portable = compactCellImageSrc(src) ?: return@mapCellImageTags tag
     // The real downscaler returns a MIME-encoded (CRLF-wrapped) payload, and a
     // fake may return anything; either way the stored form is unwrapped and

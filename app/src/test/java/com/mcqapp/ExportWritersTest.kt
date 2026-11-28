@@ -619,20 +619,20 @@ class ExportWritersTest {
     @Test
     fun htmlNeverRebuildsAHostileChemCellMarker() {
         // Neither a stray attribute nor an unquoted value may be promoted to
-        // markup: both spans stay inert prose, so no tag, handler or picture
-        // can come out of them.
+        // markup: both spans degrade to their readable body, so no tag,
+        // handler, payload or printed attribute can come out of them.
         val extraAttribute = "<span class=\"mcq-chem-cell\" data-smiles=\"CCO\" " +
             "onclick=\"alert(1)\">ethanol CCO</span>"
         val unquoted = "<span class=mcq-chem-cell data-smiles=CCO>ethanol CCO</span>"
         val html = htmlOf(cellChemPaper("$extraAttribute | $unquoted"))
 
         assertTrue("the hostile span stays readable prose: $html", html.contains("ethanol CCO"))
-        assertTrue("it is escaped, not markup: $html",
-            html.contains("onclick=&quot;alert(1)&quot;"))
+        assertFalse("no attribute text: $html", html.contains("onclick"))
         assertFalse("no attribute was emitted: $html", html.contains("onclick=\"alert(1)\""))
         assertFalse("no span element: $html", html.contains("<span"))
         assertFalse("no picture from a hostile marker: $html", html.contains("<img"))
         assertFalse("no base64: $html", html.contains("base64,"))
+        assertFalse("no raw marker: $html", html.contains("mcq-chem-cell"))
     }
 
     @Test

@@ -77,7 +77,16 @@ private fun escapeMathTextKeepEntities(s: String): String = s
     .replace("<", "&lt;")
     .replace(">", "&gt;")
 
-internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
+internal fun sanitizeMathmlReporting(
+    mathml: String,
+    /**
+     * Tags emitted by the caller itself that must survive verbatim. The Anki
+     * cell writer spools a picture and hands back its canonical `<img>`; that
+     * tag is already built from validated values, so escaping it as an unknown
+     * MathML tag would print the tag instead of drawing the picture.
+     */
+    passthroughTags: Set<String> = emptySet()
+): Pair<String, Boolean> {
     if (!mathml.contains('<')) return Pair(escapeMathTextKeepEntities(mathml), false)
     val sb = StringBuilder()
     var escapedUnknownTag = false
@@ -86,10 +95,15 @@ internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
     for (match in tagPattern.findAll(mathml)) {
         sb.append(escapeMathTextKeepEntities(mathml.substring(pos, match.range.first)))
         val closing = match.groupValues[1] == "/"
-        val canonical = mathmlTags[match.groupValues[2].lowercase()]
+        val tag = match.groupValues[2].lowercase()
+        val canonical = mathmlTags[tag]
         if (canonical == null) {
-            escapedUnknownTag = true
-            sb.append(escapeMathTextKeepEntities(match.value))
+            if (tag in passthroughTags) {
+                sb.append(match.value)
+            } else {
+                escapedUnknownTag = true
+                sb.append(escapeMathTextKeepEntities(match.value))
+            }
         } else if (closing) {
             sb.append("</").append(canonical).append(">")
         } else {
@@ -106,7 +120,10 @@ internal fun sanitizeMathmlReporting(mathml: String): Pair<String, Boolean> {
     return Pair(sb.toString(), escapedUnknownTag)
 }
 
-internal fun sanitizeMathml(mathml: String): String = sanitizeMathmlReporting(mathml).first
+internal fun sanitizeMathml(
+    mathml: String,
+    passthroughTags: Set<String> = emptySet()
+): String = sanitizeMathmlReporting(mathml, passthroughTags).first
 
 internal fun escapeHtmlText(s: String): String {
     // Stored text may carry entity references (machine-escaped banks, hand

@@ -183,6 +183,20 @@ class CellImageNormalizationTest {
     }
 
     @Test
+    fun aPayloadAfterATornImagePrefixStillGoesWithoutAClosingBracket() {
+        // No `>` anywhere: the old resume at `i + 4` re-read the tail for every
+        // start. The one forward pass now reports each torn prefix, so an
+        // unquoted payload after a torn `<img` is removed rather than stored as
+        // visible prose.
+        val out = normalizeCellImages("a <img <img src=data:image/png;base64,AAAA", identity) {
+            fail(it)
+        }
+        assertFalse("never the payload: $out", out.contains("base64"))
+        assertFalse("never the payload: $out", out.contains("AAAA"))
+        assertTrue("the prose stays: $out", out.startsWith("a"))
+    }
+
+    @Test
     fun aTornTagWithAValueLessTokenLosesThePayloadAndKeepsTheProse() {
         val src = dataSrc("AAAA")
         val cases = listOf(
@@ -251,6 +265,27 @@ class CellImageNormalizationTest {
             assertEquals("left verbatim: $tag", "a $tag b", out)
             assertFalse("not scaled: $tag", scaled)
         }
+    }
+
+    @Test
+    fun aStoredImageDescriptorIsNeverStored() {
+        // `mcqapp:img|…` is the DOCX writer's hidden stand-in for a picture
+        // whose bytes ride in the payload. It is not drawable, so storing one
+        // makes a later DOCX export count a picture the body cannot draw.
+        // A descriptor in a JSON file is blanked during import normalisation.
+        val descriptor = "mcqapp:img|data|image|png|base64|0|A|deadbeef"
+        val cell = "a <img src=\"$descriptor\"> b"
+        val out = normalizeCellImages(cell, identity) { fail(it) }
+        assertEquals("a $CELL_IMAGE_MARKER b", out)
+        assertFalse("no descriptor survives: $out", out.contains("mcqapp:img|"))
+
+        val scaled = LegacyParser.parse(bank(cell)).papers.single()
+            .categories.single().questions.single()
+            .withScaledImages(identity, identity)
+        val stored = (scaled.elements.single() as ContentElement.TableElement).rows[0][0]
+        assertEquals("a $CELL_IMAGE_MARKER b", stored)
+        assertFalse("no descriptor in the row: $stored", stored.contains("mcqapp:img|"))
+        assertFalse("no descriptor in CardContent", CardContent.of(scaled).contains("mcqapp:img|"))
     }
 
     @Test

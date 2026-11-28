@@ -144,7 +144,15 @@ class AnkiMediaPool : Closeable {
         tableCellParts(html).joinToString("") { part ->
             when (part) {
                 is CellPart.Math -> normalizeMathText(
-                    mapCellImages(part.mathml) { src -> cellImageToHtml(src) }
+                    sanitizeMathml(
+                        mapCellImages(part.mathml) { src -> cellImageToHtml(src) },
+                        // The map above already reduced every picture to the
+                        // canonical, validated `<img>` this pool writes; it
+                        // must survive the MathML sanitizer, while every tag
+                        // the stored cell carried loses its attributes (a
+                        // foreign `<mi onclick=…>` must not reach the deck).
+                        passthroughTags = setOf("img")
+                    )
                 )
                 is CellPart.Text -> cellProseToHtml(part.html)
             }

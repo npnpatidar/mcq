@@ -354,6 +354,22 @@ class AnkiHtmlTest {
     }
 
     @Test
+    fun aHostileCellOfUnclosedMathStartsIsScannedInLinearTime() {
+        // ~60 KB of `<math>` openers and no closing tag. The old
+        // `CELL_MATH_PATTERN.findAll` scanned from every opener to the end of
+        // the cell (quadratic); the one forward block scan gives up at the
+        // first opener. One measurement, 2000 ms: the linear pass is a few
+        // milliseconds, a quadratic regression takes seconds.
+        val cell = "<math>".repeat(10_000)
+        assertTrue("fixture is large enough: ${cell.length}", cell.length >= 60_000)
+        val started = System.nanoTime()
+        val out = AnkiHtml.toCellRichText(cell)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertFalse("an unclosed formula stays text: $out", out.contains("<math>"))
+        assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 2_000)
+    }
+
+    @Test
     fun aCellEscapesAnUnknownTagAsVisibleText() {
         assertEquals(
             "Pick &lt;one&gt;?",

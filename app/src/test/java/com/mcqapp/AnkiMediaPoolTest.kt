@@ -71,6 +71,28 @@ class AnkiMediaPoolTest {
     }
 
     @Test
+    fun aCellMathBlockDropsAttributesAndKeepsSelfClosingMspace() {
+        // The cell branch used to normalise the block without sanitising it,
+        // unlike a top-level MathElement, so an imported handler reached the
+        // deck. Every tag is rebuilt bare; a self-closing `<mspace/>` stays one
+        // empty element instead of swallowing its siblings.
+        val cell = "<math><mi onclick=\"alert(1)\" data-png=\"iVBORw0KGgo=\">x</mi>" +
+            "<mspace width=\"1em\"/><mo>+</mo><mn>1</mn></math>"
+        val html = AnkiMediaPool().elementsToHtml(
+            listOf(ContentElement.TableElement(listOf(listOf(cell)))),
+            null
+        )
+        assertTrue("still a formula: $html", html.contains("<math>"))
+        assertTrue("token kept: $html", html.contains("<mi>x</mi>"))
+        assertTrue("self-closing space kept: $html", html.contains("<mspace/>"))
+        assertTrue("the sibling after the space survives: $html", html.contains("<mn>1</mn>"))
+        assertFalse("no handler leaks: $html", html.contains("onclick"))
+        assertFalse("no data attribute leaks: $html", html.contains("data-png"))
+        assertFalse("no payload leaks: $html", html.contains("iVBORw0KGgo="))
+        assertFalse("no open space tag: $html", html.contains("<mspace>"))
+    }
+
+    @Test
     fun inlineFormattingTagsSurviveInFields() {
         val html = AnkiMediaPool().elementsToHtml(
             listOf(ContentElement.TextElement("H<sub>2</sub>O <strong>x</strong> <em>y</em> <del>z</del>")),

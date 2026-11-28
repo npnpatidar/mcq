@@ -27,7 +27,9 @@ import org.junit.Test
 /**
  * Every combination the generator screen can produce is parsed by the real
  * LegacyParser. A schema that is internally consistent but describes keys the
- * importer ignores is useless, so the example is the proof.
+ * importer ignores is useless, so the example is the proof. The cross-product
+ * includes the chemistry toggle, so a chem block, its table cell object and the
+ * chemistry-off shape are all exercised on every other axis.
  */
 class AiSchemaGeneratorTest {
 
@@ -38,12 +40,15 @@ class AiSchemaGeneratorTest {
                     for (image in listOf(false, true)) {
                         for (passage in PassageMode.entries) {
                             for (wrapper in SchemaWrapper.entries) {
-                                add(
-                                    SchemaOptions(
-                                        kind = kind, table = table, math = math,
-                                        image = image, passage = passage, wrapper = wrapper
+                                for (chem in listOf(false, true)) {
+                                    add(
+                                        SchemaOptions(
+                                            kind = kind, table = table, math = math,
+                                            image = image, passage = passage, wrapper = wrapper,
+                                            chem = chem
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }
@@ -102,7 +107,7 @@ class AiSchemaGeneratorTest {
 
     @Test
     fun everyUiCombinationParsesIntoTheExpectedShape() {
-        assertEquals("every UI combination is covered", 144, allOptions.size)
+        assertEquals("every UI combination is covered", 288, allOptions.size)
         allOptions.forEach { options ->
             val label = options.toString()
             val generated = AiSchemaGenerator.generate(options)
@@ -169,6 +174,47 @@ class AiSchemaGeneratorTest {
                     )
                 }
 
+                val chemElements = q.elements.filterIsInstance<ContentElement.ChemElement>()
+                if (options.chem) {
+                    val chem = chemElements.single()
+                    assertEquals("$label q$index: chem smiles", "c1ccccc1", chem.smiles)
+                    assertEquals("$label q$index: chem formula", "C6H6", chem.formula)
+                    assertEquals("$label q$index: chem caption", "benzene", chem.caption)
+                    assertTrue("$label q$index: chem spoken", chem.spoken.contains("aromatic"))
+                    assertEquals("$label q$index: no AI diagram", "", chem.diagram)
+                    if (q.explanationElements.isNotEmpty()) {
+                        assertEquals(
+                            "$label q$index: the back carries the same chem block",
+                            chem,
+                            q.explanationElements.filterIsInstance<ContentElement.ChemElement>().single()
+                        )
+                    }
+                } else {
+                    assertTrue("$label q$index: no chem block", chemElements.isEmpty())
+                    assertTrue(
+                        "$label q$index: no chem block on the back",
+                        q.explanationElements.none { it is ContentElement.ChemElement }
+                    )
+                }
+
+                if (options.table) {
+                    val cells = q.elements.filterIsInstance<ContentElement.TableElement>()
+                        .single().rows.flatten()
+                    if (options.chem) {
+                        val cellChem = cells.flatMap(::cellSegments)
+                            .filterIsInstance<CellSegment.Chem>().single().element
+                        assertEquals("$label q$index: structure cell smiles", "c1ccccc1", cellChem.smiles)
+                        assertEquals("$label q$index: structure cell formula", "C6H6", cellChem.formula)
+                        assertEquals("$label q$index: structure cell caption", "benzene", cellChem.caption)
+                        assertEquals("$label q$index: structure cell has no diagram", "", cellChem.diagram)
+                    } else {
+                        assertTrue(
+                            "$label q$index: no structure cell",
+                            cells.none { it.contains("mcq-chem-cell") }
+                        )
+                    }
+                }
+
                 if (options.passage == PassageMode.NONE) {
                     assertNull("$label q$index: no passage link", q.passageId)
                 } else {
@@ -217,6 +263,59 @@ class AiSchemaGeneratorTest {
                     generated.schema.contains("\"const\":\"image\"")
                 )
                 assertTrue("$label: prompt says no image fields", generated.prompt.contains("no image fields"))
+            }
+            if (options.chem) {
+                assertTrue("$label: chem arm declared", generated.schema.contains("\"const\":\"chem\""))
+                assertTrue("$label: chem block in the example", generated.example.contains("\"type\":\"chem\""))
+                assertTrue("$label: smiles declared", "smiles" in declared)
+                assertTrue("$label: formula declared", "formula" in declared)
+                assertTrue("$label: caption declared", "caption" in declared)
+                assertTrue("$label: spoken declared", "spoken" in declared)
+                assertTrue("$label: prompt teaches SMILES", generated.prompt.contains("SMILES"))
+                assertFalse(
+                    "$label: the example carries no diagram",
+                    generated.example.contains("\"diagram\"")
+                )
+            } else {
+                assertFalse("$label: no chem arm in schema", generated.schema.contains("\"const\":\"chem\""))
+                assertFalse("$label: no chem block in the example", generated.example.contains("\"type\":\"chem\""))
+                assertFalse("$label: no chem marker in the example", generated.example.contains("mcq-chem-cell"))
+                assertFalse("$label: no smiles key", "smiles" in declared)
+                assertFalse("$label: no formula key", "formula" in declared)
+                assertFalse("$label: no caption key", "caption" in declared)
+                assertFalse("$label: no spoken key", "spoken" in declared)
+                assertFalse("$label: no SMILES guidance", generated.prompt.contains("SMILES"))
+            }
+            if (options.table) {
+                val cells = tableCellSchema(generated)
+                if (options.chem) {
+                    val arms = cells["oneOf"]!!.asArray()
+                    assertEquals("$label: string and chem cell arms", 2, arms.size)
+                    assertEquals(
+                        "$label: string cell arm",
+                        JsonPrimitive("string"),
+                        arms[0].jsonObjectOf()["type"]
+                    )
+                    val chemArm = arms[1].jsonObjectOf()
+                    assertEquals(
+                        "$label: closed chem cell arm",
+                        JsonPrimitive(false),
+                        chemArm["additionalProperties"]
+                    )
+                    assertEquals(
+                        "$label: chem cell arm type",
+                        JsonPrimitive("chem"),
+                        chemArm["properties"]!!.jsonObjectOf()["type"]
+                            ?.jsonObjectOf()?.get("const")
+                    )
+                } else {
+                    assertEquals(
+                        "$label: plain string cell",
+                        JsonPrimitive("string"),
+                        cells["type"]
+                    )
+                    assertNull("$label: no cell oneOf", cells["oneOf"])
+                }
             }
             if (options.wrapper == SchemaWrapper.PAPERLESS) {
                 assertFalse("$label: no papers key", "papers" in declared)

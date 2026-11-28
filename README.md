@@ -1680,8 +1680,8 @@ string or the same closed chem object a block uses:
 or `data-png`. TalkBack uses `data-spoken` first, then caption, formula and
 SMILES, so the spoken label can say more than the searchable handles. A cell
 picture contributes no search text. On import a picture over 800 px is
-downscaled; it becomes `[image]` only when the scaled result is still over
-512 KB, unreadable or torn.
+downscaled; a scaled result still over 512 KB, or a tag whose source cannot be
+read, becomes `[image]`; a torn tag is removed together with its payload.
 
 **Editor:** a table shows a compact read-only grid of cell chips — a short
 preview of the words plus one label per rich part (`[Formula]`, `[Image]`,
@@ -1696,9 +1696,10 @@ spoken label, validates the SMILES with the drawer's own rule, and inserts the
 marker through the same writer the import path uses. Editing the words around a
 label never rewrites a marker; a part pasted from another cell, or one left
 behind by undo after its part was deleted, is dropped instead of re-attached.
-One compact toolbar adds or removes a row or column, and the duplicate table
-preview is gone — the whole-question preview is the only drawing. Stem, option
-and explanation tables share the same editor; opening the editor captures a
+One compact toolbar adds or removes a row or column. The body table no longer
+draws its own second preview; options and regular explanations render a local
+preview because the whole-question preview does not show them. Stem, option and
+explanation tables share the same editor; opening the editor captures a
 structure into its exact cell, so a saved question exports a drawing.
 
 **Exports:** a rich cell is handled by every document writer; plain tables keep
@@ -1712,9 +1713,9 @@ their old fast path.
 | Anki | inline HTML | normalised MathML | real media file (`mcqapp-N.png`), never base64 | handles + PNG media when present |
 | In-app | mixed WebView | typeset MathML | inline picture | drawn live by SmilesDrawer |
 
-A table containing a formula, picture or structure takes the WebView path;
-plain tables stay native. A table that draws a structure switches to a fixed
-layout with wrapped labels so a wide drawing cannot widen the page.
+A table containing a formula, picture or structure takes the WebView path and a
+fixed layout with wrapped labels, so a wide formula or drawing cannot widen the
+page; plain tables stay native and keep their old layout.
 
 **Exports print a structure as a drawing only when a captured PNG exists.** The
 editor captures a structure — a standalone block or one inside a table cell —

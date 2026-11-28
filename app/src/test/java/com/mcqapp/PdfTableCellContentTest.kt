@@ -1039,8 +1039,11 @@ class PdfTableCellContentTest {
         val p = paint()
         val cellWidth = 400f
         var longLabel = "W".repeat(10)
-        while (Layout.getDesiredWidth(longLabel, p) <
-            cellWidth - CHEM_LABEL_GAP - 48f
+        // The writer stacks only on a strict `< floor`; grow past the
+        // boundary by one pixel so a host measuring exactly 346 cannot take
+        // the beside branch.
+        while (Layout.getDesiredWidth(longLabel, p) <=
+            cellWidth - CHEM_LABEL_GAP - 48f + 1f
         ) {
             longLabel += "W".repeat(10)
             check(longLabel.length < 10_000) { "label never exceeded the picture floor" }

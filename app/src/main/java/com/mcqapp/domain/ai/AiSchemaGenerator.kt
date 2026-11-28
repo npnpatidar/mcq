@@ -42,16 +42,20 @@ object AiSchemaGenerator {
 
     // --- schema ---
 
-    private fun blockSchema(block: ContentBlock): JsonObject {
+    private fun blockSchema(block: ContentBlock, options: SchemaOptions): JsonObject {
         val content = when (block) {
             ContentBlock.TEXT, ContentBlock.MATH, ContentBlock.IMAGE -> obj("type" to s("string"))
-            // A table is rows of cells, each a string; this is exactly the shape
-            // parseContentElement turns into ContentElement.TableElement.
+            // A table is rows of cells; this is exactly the shape
+            // parseContentElement turns into ContentElement.TableElement. Cells
+            // are strings by default, but with chemistry on a cell may also be
+            // a chem element object: the importer rewrites it to the marker
+            // string the storage grammar uses, so the table itself keeps its
+            // one-string-per-cell wire shape.
             ContentBlock.TABLE -> obj(
                 "type" to s("array"),
                 "items" to obj(
                     "type" to s("array"),
-                    "items" to obj("type" to s("string"))
+                    "items" to cellSchema(options)
                 )
             )
             // Chemistry carries an object, not a scalar. It is closed at both
@@ -81,10 +85,30 @@ object AiSchemaGenerator {
         )
     }
 
-    private fun elementsSchema(blocks: List<ContentBlock>): JsonObject = obj(
+    /**
+     * One table cell. A plain string carries prose, inline MathML or an inline
+     * data-URI picture; no shape change is needed for those. Only chemistry
+     * turns the cell into `oneOf`, and only while the chemistry block is on, so
+     * a chemistry-off schema is byte-for-byte the old `array<array<string>>`.
+     */
+    private fun cellSchema(options: SchemaOptions): JsonObject =
+        if (!options.chem) {
+            obj("type" to s("string"))
+        } else {
+            obj(
+                "oneOf" to arr(
+                    obj("type" to s("string")),
+                    blockSchema(ContentBlock.CHEM, options)
+                )
+            )
+        }
+
+    private fun elementsSchema(options: SchemaOptions): JsonObject = obj(
         "type" to s("array"),
         "minItems" to n(1),
-        "items" to obj("oneOf" to arr(*blocks.map(::blockSchema).toTypedArray()))
+        "items" to obj(
+            "oneOf" to arr(*options.blocks.map { blockSchema(it, options) }.toTypedArray())
+        )
     )
 
     private fun optionSchema(images: Boolean): JsonObject {
@@ -103,9 +127,9 @@ object AiSchemaGenerator {
     private fun questionSchema(options: SchemaOptions): JsonObject {
         val props = LinkedHashMap<String, JsonElement>()
         props["id"] = obj("type" to s("string"))
-        props["question_elements"] = elementsSchema(options.blocks)
+        props["question_elements"] = elementsSchema(options)
         if (options.kind != QuestionKind.MCQ) {
-            props["explanation_elements"] = elementsSchema(options.blocks)
+            props["explanation_elements"] = elementsSchema(options)
         }
         if (options.image) {
             props["image"] = obj("type" to s("string"))
@@ -161,7 +185,7 @@ object AiSchemaGenerator {
             val props = LinkedHashMap<String, JsonElement>()
             props["id"] = obj("type" to s("string"))
             props["title"] = obj("type" to s("string"))
-            props["elements"] = elementsSchema(options.blocks)
+            props["elements"] = elementsSchema(options)
             if (options.image) props["image"] = obj("type" to s("string"))
             obj(
                 "type" to s("object"),
@@ -276,31 +300,50 @@ object AiSchemaGenerator {
 
     // --- example ---
 
-    private fun elementsExample(blocks: List<ContentBlock>, text: String): JsonArray = JsonArray(
-        blocks.map { block ->
+    private fun elementsExample(options: SchemaOptions, text: String): JsonArray = JsonArray(
+        options.blocks.map { block ->
             obj(
                 "type" to s(blockName(block)),
                 "content" to when (block) {
                     ContentBlock.TEXT -> s(text)
-                    ContentBlock.TABLE -> arr(
-                        arr(s("Header A"), s("Header B")),
-                        arr(s("row 1"), s("row 2"))
-                    )
-                    ContentBlock.MATH ->
-                        s("<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>")
+                    ContentBlock.TABLE -> tableExample(options)
+                    ContentBlock.MATH -> s(MATH_EXAMPLE)
                     // Element blocks carry an <img> tag with a base64 data URI:
                     // parseContentElement extracts its src. Scalar image fields
                     // are bare data URIs too — never web URLs.
                     ContentBlock.IMAGE -> s(imageBlockContent())
-                    ContentBlock.CHEM -> obj(
-                        "smiles" to s("c1ccccc1"),
-                        "formula" to s("C6H6"),
-                        "caption" to s("benzene"),
-                        "spoken" to s("benzene ring, an aromatic hydrocarbon")
-                    )
+                    ContentBlock.CHEM -> chemExample()
                 }
             )
         }
+    )
+
+    /**
+     * A table example that demonstrates every payload the selected options
+     * allow: a formula cell when math is on, a picture cell when images are on
+     * and a structure cell when chemistry is on. Cells stay strings — the
+     * structure one is the canonical marker, not the object the schema also
+     * accepts, because storage is strings.
+     */
+    private fun tableExample(options: SchemaOptions): JsonArray {
+        val header = mutableListOf(s("Header A"), s(if (options.math) "Formula" else "Header B"))
+        val row = mutableListOf(s("row 1"), s(if (options.math) MATH_EXAMPLE else "row 2"))
+        if (options.image) {
+            header += s("Picture")
+            row += s(imageBlockContent())
+        }
+        if (options.chem) {
+            header += s("Structure")
+            row += s(CHEM_CELL_EXAMPLE)
+        }
+        return arr(arr(*header.toTypedArray()), arr(*row.toTypedArray()))
+    }
+
+    private fun chemExample(): JsonObject = obj(
+        "smiles" to s("c1ccccc1"),
+        "formula" to s("C6H6"),
+        "caption" to s("benzene"),
+        "spoken" to s("benzene ring, an aromatic hydrocarbon")
     )
 
     private fun questionExample(
@@ -314,12 +357,12 @@ object AiSchemaGenerator {
         val q = LinkedHashMap<String, JsonElement>()
         q["id"] = s(id)
         q["question_elements"] = elementsExample(
-            options.blocks,
+            options,
             if (inlineImage && options.image) firstQuestionText(text) else text
         )
         if (options.effectivePassage != PassageMode.NONE) q["passageId"] = s("p1")
         if (options.kind == QuestionKind.FLASHCARDS || card) {
-            q["explanation_elements"] = elementsExample(options.blocks, "This is the back of the card.")
+            q["explanation_elements"] = elementsExample(options, "This is the back of the card.")
             if (options.image) q["explanationImage"] = s(TINY_PNG_DATA_URI)
         } else {
             q["options"] = JsonArray((0 until 4).map { i ->
@@ -356,7 +399,7 @@ object AiSchemaGenerator {
             val p = LinkedHashMap<String, JsonElement>()
             p["id"] = s("p1")
             p["title"] = s("Reading passage")
-            p["elements"] = elementsExample(options.blocks, "A short passage that the questions refer to.")
+            p["elements"] = elementsExample(options, "A short passage that the questions refer to.")
             if (options.image) p["image"] = s(TINY_PNG_DATA_URI)
             JsonObject(p)
         }
@@ -427,10 +470,32 @@ object AiSchemaGenerator {
             PassageMode.RICH -> "one rich passage with typed elements"
         }
         val imageText = if (options.image) {
-            "image blocks and image fields are allowed; an inline image in a text block must be " +
-                "a base64 data URI such as <img src=\"data:image/png;base64,...\">, not a web URL"
+            "image blocks and image fields are allowed; an inline image in a text block or a " +
+                "table cell must be a base64 data URI such as " +
+                "<img src=\"data:image/png;base64,...\">, not a web URL"
         } else {
-            "use no image fields anywhere"
+            "use no image fields anywhere, including table cells"
+        }
+        val tableText = if (!options.table) {
+            ""
+        } else {
+            buildString {
+                append(" Table cells are HTML strings")
+                if (options.math) {
+                    append("; a formula cell holds MathML such as <math>...</math>")
+                }
+                if (options.image) {
+                    append("; a picture cell holds one inline data-URI <img>")
+                }
+                if (options.chem) {
+                    append(
+                        "; a structure cell may be a chem element object " +
+                            "{\"type\":\"chem\",\"content\":{\"smiles\":\"...\"}} " +
+                            "or its canonical string form, never a diagram"
+                    )
+                }
+                append('.')
+            }
         }
         val wrapperText = when {
             options.hasPapers && options.hasCategories -> "group questions into papers and categories"
@@ -441,12 +506,17 @@ object AiSchemaGenerator {
         val chemText = if (options.chem) {
             " Chem blocks carry a SMILES string (for example c1ccccc1) with an optional " +
                 "formula (C6H6), caption (benzene) and spoken description; never emit a " +
-                "diagram — the app draws the structure from the SMILES."
+                "diagram — the app draws the structure from the SMILES." +
+                if (options.table) {
+                    " A structure in a table cell uses the same fields."
+                } else {
+                    ""
+                }
         } else {
             ""
         }
         val sentence = "Make $kindText with $blockNames blocks, $passageText; $imageText; $wrapperText."
-        return "Output only JSON matching the schema. No markdown or commentary. $sentence$chemText"
+        return "Output only JSON matching the schema. No markdown or commentary. $sentence$tableText$chemText"
     }
 
     /**
@@ -471,6 +541,21 @@ object AiSchemaGenerator {
      */
     private const val TINY_PNG_DATA_URI =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+
+    /** A short formula cell: the block's MathML, which a cell carries verbatim. */
+    private const val MATH_EXAMPLE =
+        "<math><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></math>"
+
+    /**
+     * The canonical string form of a structure cell (`util/ChemCell.kt`): the
+     * same five values as a chem block, with readable handles as the body. The
+     * example stays a string; the schema also accepts the chem element object,
+     * which the importer rewrites to this marker.
+     */
+    private const val CHEM_CELL_EXAMPLE =
+        "<span class=\"mcq-chem-cell\" data-smiles=\"c1ccccc1\" data-formula=\"C6H6\" " +
+            "data-caption=\"benzene\" data-spoken=\"benzene ring, an aromatic hydrocarbon\">" +
+            "benzene C6H6 c1ccccc1</span>"
 
     /**
      * The first question's text block embeds one inline image so the example

@@ -15,7 +15,8 @@ changed.
 Between them the questions exercise every shape the importer understands:
 plain strings, structured elements, MathML formulas, chemical equations,
 a chemical structure drawn from SMILES, tables in the question / options /
-explanation, pictures in all three, reading passages shared by a group of
+explanation, a table that mixes prose, a formula, a picture and a structure in
+one row, pictures in all three, reading passages shared by a group of
 questions, flashcard backs of every kind, single and multiple correct answers,
 English and Hindi, plus deliberate edge cases.
 """
@@ -579,6 +580,110 @@ def chem(smiles, formula="", caption="", spoken="", diagram=""):
     }
 
 
+# Keep in step with util/ChemCell.kt: one human field in a cell marker, and
+# the whole emitted marker. A sample row that exceeds either must fail at
+# generation, not only in the Kotlin importer.
+CHEM_CELL_MAX_FIELD = 2 * 1024
+CHEM_CELL_MAX_MARKER = 16 * 1024
+
+_ENTITY_REF = re.compile(r"&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);")
+_NAMED_ENTITIES = {
+    "amp": "&",
+    "lt": "<",
+    "gt": ">",
+    "quot": '"',
+    "apos": "'",
+    "nbsp": "\u00a0",
+}
+
+
+def _decode_entities(value):
+    """Kotlin's `decodeHtmlEntities`, not Python's whole HTML5 table.
+
+    `html.unescape` also decodes named references such as `&copy;` or
+    `&mdash;`, which the app leaves as literal text. The sample must use the
+    same one-pass set as the Kotlin reader: numeric references, the XML five
+    and `nbsp`; anything else stays literal.
+    """
+
+    def replace(match):
+        body = match.group(1)
+        if body.startswith("#"):
+            try:
+                code = (
+                    int(body[2:], 16)
+                    if len(body) > 1 and body[1] in "xX"
+                    else int(body[1:])
+                )
+            except ValueError:
+                return match.group(0)
+            return chr(code) if 0 <= code <= 0x10FFFF else match.group(0)
+        return _NAMED_ENTITIES.get(body, match.group(0))
+
+    return _ENTITY_REF.sub(replace, value)
+
+
+def _utf16_len(value):
+    """Kotlin `String.length`, not Python's code-point count.
+
+    A non-BMP character is one Python code point but two UTF-16 units, so a
+    cell that fits the Kotlin cap by code points could exceed it in the app.
+    """
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _cell_attr(value):
+    """Escape one cell-marker attribute or its handles body.
+
+    Mirror of Kotlin's `escapeHtmlText`: decode stored entity references once
+    with the same entity set, then re-escape `&`, `<`, `>` and `"`. Decoding
+    first is what stops a stored `&amp;` from becoming `&amp;amp;`; the marker
+    is only ever rebuilt from parsed fields, so a value can never close its
+    attribute or the span.
+    """
+    return (
+        _decode_entities(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def chem_cell(smiles, formula="", caption="", spoken="", diagram=""):
+    """The canonical chemistry table-cell marker (`util/ChemCell.kt`).
+
+    A table cell is one string, not an element object. The span carries the
+    same values as a chem block, and its body is the readable handles text
+    (caption, formula, SMILES) every text-only surface prints instead of raw
+    markup. The sample never ships a captured PNG: the app draws the structure
+    from SMILES and an export uses `data-png` only after the editor captures it.
+    """
+    # A `>` is legal: the marker supports a reaction SMILES
+    # (`reactants>reagents>products`), and `check_table_cells` validates it
+    # with the same grammar as a chem block. Only raw markup is rejected here;
+    # this helper runs at module import, before `valid_smiles` is defined.
+    if not smiles.strip() or "<" in smiles:
+        raise ValueError("invalid chem cell SMILES: %r" % smiles)
+    if not spoken.strip():
+        raise ValueError("chem cell needs a spoken description: %r" % smiles)
+    if diagram:
+        raise ValueError("the sample never ships a captured cell PNG")
+    attrs = [
+        'class="mcq-chem-cell"',
+        'data-smiles="%s"' % _cell_attr(smiles),
+    ]
+    for name, value in (
+        ("data-formula", formula),
+        ("data-caption", caption),
+        ("data-spoken", spoken),
+    ):
+        if value.strip():
+            attrs.append('%s="%s"' % (name, _cell_attr(value)))
+    handles = " ".join(value for value in (caption, formula, smiles) if value.strip())
+    return "<span %s>%s</span>" % (" ".join(attrs), _cell_attr(handles))
+
+
 # --------------------------------------------------------------------------
 # MathML snippets
 # --------------------------------------------------------------------------
@@ -919,6 +1024,73 @@ CATEGORIES = [
                 ],
                 difficulty="easy",
                 tags=["chemistry", "smiles", "structure"],
+            ),
+            # One table cell per payload: prose, a formula, an inline picture
+            # and a structure. The structure is the canonical marker string,
+            # not a chem element, because a table cell is one string on the
+            # wire; the importer keeps it verbatim and the renderer draws it.
+            q(
+                "q-chem-6",
+                [
+                    txt(
+                        "The table shows water in four forms. Which statement is correct?"
+                    ),
+                    table(
+                        [
+                            ["Name", "Formula", "Structure", "Picture"],
+                            [
+                                "Water",
+                                formula_math("H2O")["content"],
+                                chem_cell(
+                                    smiles="O",
+                                    formula="H₂O",
+                                    caption="water",
+                                    spoken="one oxygen atom bonded to two hydrogen atoms, water",
+                                ),
+                                img(
+                                    "water_molecule",
+                                    "A water molecule drawn as one oxygen atom joined "
+                                    "to two hydrogen atoms",
+                                )["content"],
+                            ],
+                        ]
+                    ),
+                ],
+                {
+                    "a": [
+                        txt(
+                            "The formula is CH₄, and the structure is a ring of six carbon atoms."
+                        )
+                    ],
+                    "b": [
+                        txt(
+                            "The formula is H₂O, and the structure is one oxygen atom bonded "
+                            "to two hydrogen atoms."
+                        )
+                    ],
+                    "c": [
+                        txt(
+                            "The picture shows sodium chloride, so the formula must be NaCl."
+                        )
+                    ],
+                    "d": [
+                        txt(
+                            "The structure is benzene, and the picture shows a different molecule."
+                        )
+                    ],
+                },
+                ["b"],
+                [
+                    txt(
+                        "The name cell says water. The formula cell typesets H₂O — two hydrogen "
+                        "atoms for every oxygen atom. The structure cell draws the SMILES O, the "
+                        "same one-oxygen, two-hydrogen molecule, and the picture shows its bent "
+                        "H–O–H shape. Methane, sodium chloride and benzene are different "
+                        "substances, so the other options are wrong."
+                    )
+                ],
+                difficulty="easy",
+                tags=["water", "table-question", "rich-table"],
             ),
             # Two textbook organic problems. Every structure is a Chemistry
             # element drawn by SmilesDrawer from SMILES — no pasted pictures —
@@ -2703,6 +2875,89 @@ def check_chem(doc):
     return bad
 
 
+def check_table_cells(doc):
+    """Pin the rich-cell grammar the sample is the demo of.
+
+    A table cell is one string. A chem marker must carry a valid SMILES and a
+    spoken description, use the canonical class/attribute spelling, and never
+    ship a captured PNG (the app draws it; only the editor fills `data-png`).
+    A picture must be an embedded data URI with an `alt`, and a formula must be
+    one complete `<math>` block. A marker must respect the same 2 KiB field and
+    16 KiB marker caps the importer enforces, so an over-limit sample fails at
+    generation instead of only in Kotlin. This is a shape gate, not a renderer.
+    """
+    bad = []
+
+    def check_cell(cell, where):
+        for mathml in re.findall(r"<math\b.*?</math>", cell, re.DOTALL):
+            for tag in sorted(set(re.findall(r"</?([a-zA-Z][a-zA-Z0-9]*)", mathml))):
+                if tag not in MATHML_TAGS:
+                    bad.append(f"{where}: unknown MathML tag <{tag}> in a cell")
+        for image in re.findall(r"<img\b[^>]*>", cell, re.IGNORECASE):
+            src = re.search(r'src="([^"]*)"', image)
+            if not src or not re.match(
+                r"data:image/(png|jpeg|gif|webp);base64,",
+                _decode_entities(src.group(1)),
+            ):
+                bad.append(f"{where}: a cell picture is not an embedded data URI")
+            if not re.search(r'alt="[^"]+"', image):
+                bad.append(f"{where}: a cell picture has no alt text")
+        if "mcq-chem-cell" not in cell:
+            return
+        if '<span class="mcq-chem-cell" data-smiles="' not in cell:
+            bad.append(f"{where}: non-canonical chem marker")
+        marker = re.search(
+            r'<span class="mcq-chem-cell".*?</span>', cell, re.DOTALL | re.IGNORECASE
+        )
+        marker_text = marker.group(0) if marker else cell
+        smiles = re.search(r'data-smiles="([^"]*)"', marker_text)
+        if not smiles or not valid_smiles(_decode_entities(smiles.group(1))):
+            bad.append(f"{where}: chem marker has no valid SMILES")
+        if 'data-spoken="' not in marker_text:
+            bad.append(f"{where}: chem marker has no spoken description")
+        if "data-png=" in marker_text:
+            bad.append(f"{where}: the sample must never ship a captured cell PNG")
+        if not marker_text.rstrip().endswith("</span>"):
+            bad.append(f"{where}: chem marker is not one closed span")
+        if _utf16_len(marker_text) > CHEM_CELL_MAX_MARKER:
+            bad.append(
+                f"{where}: chem marker exceeds {CHEM_CELL_MAX_MARKER} characters"
+            )
+        for name in ("data-smiles", "data-formula", "data-caption", "data-spoken"):
+            field = re.search(r'%s="([^"]*)"' % name, marker_text)
+            if field and _utf16_len(_decode_entities(field.group(1))) > CHEM_CELL_MAX_FIELD:
+                bad.append(
+                    f"{where}: chem {name} exceeds {CHEM_CELL_MAX_FIELD} characters"
+                )
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            if node.get("type") == "table":
+                content = node.get("content")
+                if not isinstance(content, list) or not content:
+                    bad.append(f"{where}: table has no rows")
+                else:
+                    for r, row in enumerate(content):
+                        if not isinstance(row, list):
+                            bad.append(f"{where}[{r}]: table row is not a list")
+                            continue
+                        for c, cell in enumerate(row):
+                            if not isinstance(cell, str):
+                                bad.append(
+                                    f"{where}[{r}][{c}]: table cell is not a string"
+                                )
+                            else:
+                                check_cell(cell, f"{where}[{r}][{c}]")
+            for key, value in node.items():
+                walk(value, f"{where}/{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{where}[{index}]")
+
+    walk(doc, "")
+    return bad
+
+
 PASSAGES = [
     {
         "id": "passage-1",
@@ -2811,6 +3066,11 @@ def main():
     bad = check_chem(doc)
     if bad:
         raise SystemExit("invalid chemistry in the sample bank:\n  " + "\n  ".join(bad))
+    bad = check_table_cells(doc)
+    if bad:
+        raise SystemExit(
+            "invalid table cell in the sample bank:\n  " + "\n  ".join(bad)
+        )
     text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write(text)

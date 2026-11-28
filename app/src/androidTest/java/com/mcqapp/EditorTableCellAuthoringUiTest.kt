@@ -159,9 +159,11 @@ class EditorTableCellAuthoringUiTest {
         compose.onNodeWithText("Insert").performClick()
 
         val view = editable("cell-field-t1-0-0")
-        // The cell text field never exposes the marker; it shows one token.
-        assertFalse(view.contains("mcq-chem-cell"))
-        assertTrue(view.any { it.code in 0xE000..0xF8FF })
+        // The field shows the readable label, never the stored marker or its
+        // attributes; the raw salted token is transformed away for display.
+        assertTrue("expected the structure label, saw '$view'", view.contains("[Structure]"))
+        assertFalse("the marker must never reach the field: $view", view.contains("mcq-chem-cell"))
+        assertFalse("no stored attribute may leak: $view", view.contains("data-"))
         // The live preview under the grid is what draws the structure.
         compose.onNodeWithTag("table-preview-t1").assertExists()
     }
@@ -173,8 +175,9 @@ class EditorTableCellAuthoringUiTest {
         compose.onNodeWithText("Image").performClick()
 
         val view = editable("cell-field-t1-0-0")
-        assertFalse("base64 must never reach the field: $view", view.contains("data:image"))
-        assertTrue(view.any { it.code in 0xE000..0xF8FF })
+        assertTrue("expected the image label, saw '$view'", view.contains("[Image]"))
+        assertFalse("a data URI must never reach the field: $view", view.contains("data:image"))
+        assertFalse("base64 must never reach the field: $view", view.contains("base64"))
         compose.onNodeWithTag("table-preview-t1").assertExists()
     }
 
@@ -196,9 +199,10 @@ class EditorTableCellAuthoringUiTest {
         // keystroke is a valid commit of the same formula.
         compose.onNodeWithText("Replace").performClick()
         compose.onNodeWithText("Formula in row 1, column 1").assertDoesNotExist()
+        val view = editable("cell-field-t1-0-0")
         assertTrue(
-            "the formula part must survive the round trip",
-            editable("cell-field-t1-0-0").any { it.code in 0xE000..0xF8FF }
+            "the formula part must survive the round trip; saw '$view'",
+            view.contains("[Formula]")
         )
         compose.onNodeWithTag("table-preview-t1").assertExists()
     }

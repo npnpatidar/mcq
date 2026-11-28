@@ -1636,8 +1636,9 @@ The structure marker is the only non-obvious shape:
 
 - `data-smiles` is required and is what the renderer draws; the other four
   attributes are optional. `data-png` is an export cache: when it holds a
-  valid PNG payload, exports print that picture next to the handles; nothing
-  in the editor writes it for a cell yet, and the sample bank never ships one.
+  valid PNG payload, exports print that picture next to the handles. The
+  editor writes it when it captures the cell, and the sample bank never ships
+  one (its structures export as handles until first previewed).
 - The body is the handles text `caption formula SMILES`. Every surface that
   does not understand the marker (the native cell, search, a text-only surface,
   an older build) prints that, never raw tags or base64.
@@ -1682,20 +1683,23 @@ picture contributes no search text. On import a picture over 800 px is
 downscaled; it becomes `[image]` only when the scaled result is still over
 512 KB, unreadable or torn.
 
-**Editor:** every cell has one menu — **Text**, **Formula**, **Image**,
-**Structure** — plus a Remove entry for each rich part it actually contains.
-Formula opens the same MathLive editor a block formula uses and stores the
-MathML in the cell. Image uses the gallery picker, downscales past 800 px and
-refuses a result still over 512 KB with a message, inserting the canonical
-`<img>`. Structure asks for SMILES plus optional formula, caption and spoken
-label, validates the SMILES with the drawer's own rule, and inserts the marker
-through the same writer the import path uses. The field shows one opaque label
-per rich part (`[Formula]`, `[Image]`, `[Structure]`) and editing the words
-around them never rewrites a marker; a part pasted from another cell, or one
-left behind by undo after its part was deleted, is dropped instead of being
-re-attached. A rich table previews live under the grid, and the preview never
-captures or dirties the form. Stem, option and explanation tables share the
-same cell editor.
+**Editor:** a table shows a compact read-only grid of cell chips — a short
+preview of the words plus one label per rich part (`[Formula]`, `[Image]`,
+`[Structure]`). Tapping a chip opens a popup with the cell field, the cell menu
+(**Text**, **Formula**, **Image**, **Structure**, plus Remove for each part it
+actually contains) and Done; edits apply live. Formula opens the same MathLive
+editor a block formula uses, in a near-full-screen dialog so its keyboard fits,
+and stores a complete MathML block. Image uses the gallery picker, downscales
+past 800 px and refuses a result still over 512 KB with a message, inserting the
+canonical `<img>`. Structure asks for SMILES plus optional formula, caption and
+spoken label, validates the SMILES with the drawer's own rule, and inserts the
+marker through the same writer the import path uses. Editing the words around a
+label never rewrites a marker; a part pasted from another cell, or one left
+behind by undo after its part was deleted, is dropped instead of re-attached.
+One compact toolbar adds or removes a row or column, and the duplicate table
+preview is gone — the whole-question preview is the only drawing. Stem, option
+and explanation tables share the same editor; opening the editor captures a
+structure into its exact cell, so a saved question exports a drawing.
 
 **Exports:** a rich cell is handled by every document writer; plain tables keep
 their old fast path.
@@ -1713,12 +1717,13 @@ plain tables stay native. A table that draws a structure switches to a fixed
 layout with wrapped labels so a wide drawing cannot widen the page.
 
 **Exports print a structure as a drawing only when a captured PNG exists.** The
-app captures a standalone structure while its editor preview is open; cell
-captures are not produced yet, so a structure in a table cell prints its
-readable handles in every export. Exports never emit raw markup, SMILES as a
-picture or base64 text; the handles are always there as the fallback. Rendering
-structures at export time (so no stored capture is needed) is the first item of
-the next release.
+editor captures a structure — a standalone block or one inside a table cell —
+while its preview is open, so opening and saving a question makes its structures
+draw in every export. A structure that has never been previewed (a fresh import
+or the bundled sample) prints its readable handles instead. Exports never emit
+raw markup, SMILES as a picture or base64 text; the handles are always the
+fallback. Rendering structures at export time, so no stored capture is needed,
+is the first item of the next release.
 
 **Round trips:** an untouched DOCX round trip restores the exact cell strings
 (pictures and structures are carried by small hash-verified descriptors in the

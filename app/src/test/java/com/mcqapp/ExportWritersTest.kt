@@ -33,6 +33,10 @@ import java.util.zip.ZipInputStream
 
 class ExportWritersTest {
 
+    /** Exactly the wrapper the writer emits around every MathElement. */
+    private val inlineMathWrapper =
+        "<span class=\"math-block\" style=\"display:inline-block;overflow-x:auto;max-width:100%\">"
+
     private fun samplePaper(imageSrc: String? = null): PaperDto {
         val q = QuestionDto(
             id = "q1",
@@ -705,8 +709,8 @@ class ExportWritersTest {
             css.contains("math { display: inline-block")
         )
         assertTrue(
-            "the block wrapper carries the width cap: $css",
-            css.contains(".math-block { overflow-x: auto; max-width: 100%; }")
+            "the inline wrapper carries the width cap: $css",
+            css.contains(".math-block { display: inline-block; overflow-x: auto; max-width: 100%; }")
         )
     }
 
@@ -746,11 +750,11 @@ class ExportWritersTest {
             val label = "quiz=$quiz"
             assertStylesheetLeavesMathLayoutAlone(html)
 
-            val wrapper = "<div class=\"math-block\" style=\"overflow-x:auto;max-width:100%\">"
+            val wrapper = inlineMathWrapper
             val wrapperAt = html.indexOf(wrapper)
             val mathAt = html.indexOf("<math>", wrapperAt)
             val mathEnd = html.indexOf("</math>", mathAt)
-            assertTrue("$label: the block formula is wrapped: $html", wrapperAt >= 0)
+            assertTrue("$label: the formula is wrapped: $html", wrapperAt >= 0)
             assertTrue("$label: the formula follows the wrapper: $html", mathAt > wrapperAt)
             assertEquals(
                 "$label: nothing between wrapper and formula",
@@ -764,11 +768,103 @@ class ExportWritersTest {
             assertFalse("$label: no injected line break: $formula", formula.contains("<br"))
             assertEquals(
                 "$label: the wrapper closes immediately after the formula",
-                "</div>",
-                html.substring(mathEnd + "</math>".length).take("</div>".length)
+                "</span>",
+                html.substring(mathEnd + "</math>".length).take("</span>".length)
             )
             assertTrue("$label: prose after the formula kept: $html", html.contains(" then check the table"))
         }
+    }
+
+    @Test
+    fun htmlKeepsAnOptionLabelAndFormulaOnOneLine() {
+        // Owner screenshot: the wrapper must not push an option's formula onto
+        // the next line. The writer's label, the stored option text and the
+        // formula stay contiguous — no block element and no newline between
+        // them.
+        val mathml = "<math><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Options",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Pick one?",
+                            options = listOf(
+                                OptionDto(
+                                    id = "a",
+                                    text = "",
+                                    elements = listOf(
+                                        ContentElement.TextElement("A) "),
+                                        ContentElement.MathElement(mathml)
+                                    )
+                                )
+                            ),
+                            correctOptionIds = emptyList()
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        val expected = "A) $inlineMathWrapper$mathml</span>"
+        assertTrue("label and formula share one line: $html", html.contains(expected))
+        assertFalse(
+            "no block wrapper around the formula: $html",
+            html.contains("<div class=\"math-block\"")
+        )
+        val expectedAt = html.indexOf(expected)
+        assertTrue("the label precedes the formula: $html", expectedAt >= 0)
+        assertFalse(
+            "no newline injected between label and formula",
+            html.substring(expectedAt, expectedAt + expected.length).contains("\n")
+        )
+    }
+
+    @Test
+    fun htmlKeepsASentenceAndItsTrailingFormulaContiguous() {
+        // An explanation reads "… formula." — the period must follow the
+        // formula on the same line, so text, wrapper and text stay in order.
+        val mathml = "<math><msup><mi>c</mi><mn>2</mn></msup></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Explanations",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "What is it?",
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a"),
+                            explanationElements = listOf(
+                                ContentElement.TextElement("By the identity "),
+                                ContentElement.MathElement(mathml),
+                                ContentElement.TextElement(".")
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        val html = htmlOf(paper)
+        val expected = "By the identity $inlineMathWrapper$mathml</span>."
+        val start = html.indexOf("By the identity ")
+        assertTrue("the explanation is rendered: $html", start >= 0)
+        assertEquals(
+            "text, wrapper and trailing period stay in order: $html",
+            expected,
+            html.substring(start, start + expected.length)
+        )
+        assertFalse(
+            "no block wrapper around the formula: $html",
+            html.contains("<div class=\"math-block\"")
+        )
     }
 
     @Test

@@ -288,19 +288,26 @@ object HtmlPaperWriter {
                     sb.append("</table>")
                 }
                 is ContentElement.MathElement -> {
-                    // A block formula is the one place the export may cap
-                    // width: it sits on its own line, so a scroll wrapper
-                    // around it cannot change how the MathML itself lays out.
+                    // The wrapper must not break the line: an option's label,
+                    // a stem mid-sentence and an explanation ending in a
+                    // formula all flow around it. An inline-block span caps
+                    // the width and scrolls a wide formula without forcing
+                    // one. A formula that truly needs its own line gets that
+                    // from the surrounding content (a paragraph or block of
+                    // its own), never from this wrapper.
                     // Never set `display` on <math>: doing so replaces the
                     // native inline/block math container and its descendants
                     // collapse into a vertical stack of single characters.
-                    sb.append("<div class=\"math-block\" style=\"overflow-x:auto;max-width:100%\">")
+                    sb.append(
+                        "<span class=\"math-block\" " +
+                            "style=\"display:inline-block;overflow-x:auto;max-width:100%\">"
+                    )
                         .append(
                             com.mcqapp.data.sanitizeMathml(
                                 com.mcqapp.util.repairStoredMathml(element.mathml)
                             )
                         )
-                        .append("</div>")
+                        .append("</span>")
                 }
                 is ContentElement.ChemElement -> sb.append(chemElementHtml(element))
             }
@@ -372,10 +379,11 @@ ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
 /* The export page has no MathJax: the browser lays out native MathML. Never
    override `display` on <math> — it replaces the native math container and
-   the formula's children stack as single characters. A block formula gets
-   its width cap from the .math-block wrapper instead, which keeps a wide
-   formula scrollable without touching the math layout. */
-.math-block { overflow-x: auto; max-width: 100%; }
+   the formula's children stack as single characters. The .math-block wrapper
+   is inline-block so a formula beside text (an option label, a sentence
+   ending in a formula) stays on that line; it only caps and scrolls a wide
+   formula, and never sets display on the math element itself. */
+.math-block { display: inline-block; overflow-x: auto; max-width: 100%; }
 /* A table holding a formula, picture or chemical structure takes fixed
    columns, like the in-app page: auto layout lets a wide drawing or formula
    widen the whole grid past the body cap, because a percentage max-width does

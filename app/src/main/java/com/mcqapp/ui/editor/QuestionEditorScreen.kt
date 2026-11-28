@@ -381,7 +381,15 @@ fun QuestionEditorScreen(
             // time.
             Card(modifier = Modifier.fillMaxWidth().testTag("editor-preview")) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    ContentElements(state.elements)
+                    ContentElements(
+                        state.elements,
+                        // The preview is the table's only live page now: it
+                        // keys each cell structure by its stable block id and
+                        // row/column, so a captured PNG lands in that exact
+                        // marker.
+                        cellBlockIds = state.blockIds,
+                        onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                    )
                     if (state.cardType == EditorCardType.FLASHCARD) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text(
@@ -390,7 +398,11 @@ fun QuestionEditorScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(4.dp))
-                        ContentElements(state.explanationElements)
+                        ContentElements(
+                            state.explanationElements,
+                            cellBlockIds = state.explanationBlockIds,
+                            onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                        )
                         if (state.explanationImage.isNotBlank()) {
                             QuestionImage(src = state.explanationImage)
                         }
@@ -544,7 +556,11 @@ fun QuestionEditorScreen(
                 onRemoveCellPart = viewModel::removeTableCellPart,
                 onPickCellImage = pickCellImage,
                 onPickImage = { blockId -> pickBlockImage(ImageTarget.Explanation(blockId)) },
-                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }
+                onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) },
+                // A flashcard's back is already drawn in the question preview
+                // above; a regular explanation has no other preview, so its
+                // table draws one here and can capture a cell structure.
+                richCellPreview = state.cardType != EditorCardType.FLASHCARD
             )
             Spacer(Modifier.height(8.dp))
             if (state.explanationImage.isNotBlank()) {
@@ -921,7 +937,10 @@ private fun OptionEditorRow(
             onRemoveCellPart = onRemoveCellPart,
             onPickCellImage = onPickCellImage,
             onPickImage = onPickBlockImage,
-            onChemDiagram = onChemDiagram
+            onChemDiagram = onChemDiagram,
+            // An option has no whole-question preview of its own, so this
+            // table's structures need a local page to capture their PNG.
+            richCellPreview = true
         )
         // As with the question image, no blank field: an option image is added
         // as an Image block. A pre-existing one stays visible and removable.

@@ -21,10 +21,8 @@
     <string name="action_failed">कार्रवाई विफल रही</string>
     <string name="add_block">ब्लॉक जोड़ें</string>
     <string name="add_category">श्रेणी जोड़ें</string>
-    <string name="add_column">कॉलम जोड़ें</string>
     <string name="add_option">विकल्प जोड़ें</string>
     <string name="add_question">प्रश्न जोड़ें</string>
-    <string name="add_row">पंक्ति जोड़ें</string>
     <string name="add_tag">टैग जोड़ें…</string>
     <string name="add_tag_button">जोड़ें</string>
     <string name="advanced_anki_settings">उन्नत Anki सेटिंग्स</string>

@@ -427,6 +427,21 @@ private fun cellPngPayload(diagram: String): String? {
 }
 
 /**
+ * Cheap validation for a renderer-produced diagram on its way into the draft.
+ *
+ * A capture arrives once per structure per preview composition, so this must
+ * not decode a multi-megabyte payload on the UI thread. It checks the whole
+ * base64 shape and decodes only the PNG signature — the same bounded rule the
+ * cell marker reader uses. Storage/export boundaries still run the strict
+ * [com.mcqapp.data.export.isPngDataUri] before embedding a payload.
+ */
+internal fun isRendererPngDataUri(value: String): Boolean {
+    if (!value.startsWith(PNG_DATA_URI_PREFIX)) return false
+    val payload = value.substring(PNG_DATA_URI_PREFIX.length)
+    return payload.isNotEmpty() && isBoundedPngPayload(payload)
+}
+
+/**
  * Bounded PNG validation for the cell raster cache.
  *
  * The editor's cell field re-reads the stored cell on every keystroke, so this

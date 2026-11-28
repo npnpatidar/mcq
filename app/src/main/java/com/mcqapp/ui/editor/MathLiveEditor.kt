@@ -189,9 +189,12 @@ fun MathLiveEditor(
      */
     blockId: String,
     onMathMl: (blockId: String, mml: String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Overrides the app font scale (the cell dialog shrinks it on narrow screens). */
+    fontScaleOverride: Float? = null
 ) {
-    val fontScale = com.mcqapp.util.FontScale.LocalScale.current
+    val fontScale = fontScaleOverride
+        ?: com.mcqapp.util.FontScale.LocalScale.current
     val fontPx = mathLiveFontPx(fontScale)
     val initialJson = remember(initialLatex) { JSONObject.quote(initialLatex) }
     // Latches on the first keystroke; see [shouldPushLatex].
@@ -236,6 +239,12 @@ fun MathLiveEditor(
                 ): Boolean = true
             }
             view.setBackgroundColor(0x00000000)
+            // Android's text-selection action mode (Copy/Cut/Paste) is drawn
+            // over the WebView and covered MathLive's virtual keyboard on
+            // long-press (owner screenshot). Consuming the long click leaves
+            // MathLive's own taps, caret and keyboard untouched; its menu is
+            // still reachable through the math-field menu button.
+            view.setOnLongClickListener { true }
             // The bridge is installed once, so it captures this lambda as it
             // was on first composition. That is safe only because everything
             // it closes over is stable: [blockId] travels with this keyed

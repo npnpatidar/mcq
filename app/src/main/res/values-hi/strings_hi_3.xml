@@ -86,12 +86,10 @@
     <string name="remove">हटाएँ</string>
     <string name="remove_block_named">ब्लॉक %1$d हटाएँ</string>
     <string name="remove_bookmark">बुकमार्क हटाएँ</string>
-    <string name="remove_column_named">कॉलम %1$d हटाएँ</string>
     <string name="remove_from_passage">अनुच्छेद से हटाएँ</string>
     <string name="remove_imported_theme">यह थीम हटाएँ</string>
     <string name="remove_option_named">विकल्प %1$s हटाएँ</string>
     <string name="remove_question">प्रश्न हटाएँ</string>
-    <string name="remove_row_named">पंक्ति %1$d हटाएँ</string>
     <string name="remove_tag">टैग %1$s हटाएँ</string>
     <string name="report_accuracy_line">हल किए गए प्रश्नों की सटीकता %1$d%% (%2$d/%3$d)</string>
     <string name="report_action_attempt_every">अगली बार हर प्रश्न का प्रयास करें</string>

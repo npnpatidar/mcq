@@ -347,10 +347,11 @@ internal fun hasChemCell(cell: String): Boolean {
 
 /**
  * [cell] with every valid marker replaced by its escaped handles text — the
- * degradation every text-only surface uses. A hostile or malformed span is not
- * a marker and stays exactly as it was (prose, handled by the caller's inline
- * pipeline); a protected marker is degraded by [cellSegments] in place and
- * keeps its surrounding markup intact.
+ * degradation every text-only surface uses. A span shaped like a marker but
+ * rejected by the strict reader is degraded too: it becomes its escaped body
+ * only, never its attributes or `data-png`. Any other prose or markup is not
+ * a marker and stays exactly as it was; a protected marker is degraded by
+ * [cellSegments] in place and keeps its surrounding markup intact.
  */
 internal fun sanitizeCellChem(cell: String): String =
     cellSegments(cell, withPng = false).joinToString("") { segment ->

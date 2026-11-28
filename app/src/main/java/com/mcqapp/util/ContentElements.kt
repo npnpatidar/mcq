@@ -262,11 +262,19 @@ fun ContentElements(
     maxLines: Int = Int.MAX_VALUE,
     overflow: TextOverflow = TextOverflow.Clip,
     chemKey: String = "",
+    /**
+     * Stable block ids parallel to [elements], used ONLY to key a structure
+     * inside a table cell: that capture is addressed by
+     * `"<blockId>#<row>:<col>@<smiles>"`, never by a list index. An empty entry
+     * (or a short list) keeps cell capture disabled, which is what every
+     * read-only surface wants.
+     */
+    cellBlockIds: List<String> = emptyList(),
     onChemDiagram: (key: String, pngDataUri: String) -> Unit = { _, _ -> }
 ) {
     val path = contentRenderPath(elements)
     if (path == ContentRenderPath.MIXED) {
-        MixedContentView(elements, textStyle, modifier, chemKey, onChemDiagram)
+        MixedContentView(elements, textStyle, modifier, chemKey, cellBlockIds, onChemDiagram)
         return
     }
     if (path == ContentRenderPath.PLAIN_TEXT) {
@@ -539,6 +547,11 @@ internal fun jsStringLiteral(value: String): String = buildString {
             '<' -> append("\\u003c")
             '>' -> append("\\u003e")
             '&' -> append("\\u0026")
+            // U+2028/U+2029 are line terminators to a JS parser even though
+            // String accepts them. A cell key or caption can carry one, so
+            // escape them rather than ending the statement early.
+            '\u2028' -> append("\\u2028")
+            '\u2029' -> append("\\u2029")
             else -> append(ch)
         }
     }
@@ -580,11 +593,12 @@ private fun chemBlockHtml(
 /**
  * One table cell's structure: the same drawing, options, scoped styles, fit,
  * light-theme capture draw and fallback as a block, rendered as a block inside
- * the `<td>` (never a capture call — see [chemStructureHtml]). It is ALWAYS
- * drawn live: a stored `data-png` is an export cache with dark strokes on a
- * transparent canvas, so on screen it would be a low-contrast tile in dark
- * mode. The page therefore never carries or shows the stored PNG, and the
- * cell's spec is read with the payload skipped.
+ * the `<td>`. It is ALWAYS drawn live: a stored `data-png` is an export cache
+ * with dark strokes on a transparent canvas, so on screen it would be a
+ * low-contrast tile in dark mode. The page therefore never carries or shows the
+ * stored PNG, and the cell's spec is read with the payload skipped. [chemKey]
+ * is the cell's own `"<blockId>#<row>:<col>@<smiles>"` on an editable preview and
+ * blank everywhere else; only a non-blank key lets the cell capture.
  */
 private fun chemCellBlockHtml(
     element: ContentElement.ChemElement,
@@ -612,6 +626,11 @@ private fun chemStructureHtml(
     // "reactants>>" is the common case). A lone '>' is malformed: leave it on
     // the molecule path rather than letting ReactionParser throw.
     val isReaction = element.smiles.count { it == '>' } == 2
+    // A block captures on every surface, as it always has. A CELL captures
+    // only when the page names it (`"<blockId>#<row>:<col>@<smiles>"`, supplied
+    // by the editor's preview): a read-only page leaves the key blank and must
+    // not spend a raster on a diagram nothing can store.
+    val captureEnabled = !isCell || chemKey.isNotBlank()
     val displayStyle = if (isReaction) CHEM_REACTION_STYLE else CHEM_DISPLAY_STYLE
     // The caption becomes the text above the arrow, so there is no separate
     // caption line. Keep it in the fallback too: a broken drawer must not
@@ -746,13 +765,12 @@ private fun chemStructureHtml(
         // with the display style removed: the live SVG carries the theme's
         // text colour and its display cap, neither of which belongs in a PNG.
         //
-        // A CELL never captures. Its page reports a per-page chemKey, the same
-        // one a block uses, and nothing consumes a cell capture yet; allowing
-        // it would let a cell write a block's diagram on a keyed page. The
-        // light-theme draw is still emitted (it costs one hidden draw, no
-        // bridge call), so a future editor PR can opt in without changing the
-        // cell's grammar.
-        if (!isCell) {
+        // A CELL captures only when the page supplied its key (the editor's
+        // preview). Browse/Study/Test pass no cell key: a capture there has
+        // nowhere to go, and a keyed page must never let one cell write a
+        // block's diagram. The light-theme draw is still emitted (it costs one
+        // hidden draw, no bridge call).
+        if (captureEnabled) {
             append("function capture(){try{")
             append("var c=captureSvg.cloneNode(true);")
             append("c.removeAttribute('style');")
@@ -861,7 +879,7 @@ private fun chemStructureHtml(
             append("new window.SmilesDrawer.ReactionDrawer(captureRxnOptions,captureMolOptions)")
             append(".draw(reaction,captureSvg,'light',null,").append(reagentText).append(",\"\",false);")
             append("scopeChemStyles(captureSvg);")
-            if (!isCell) append("capture();")
+            if (captureEnabled) append("capture();")
             append("}catch(e){showFallback();}},err=>showFallback());")
         } else {
             append("if(!window.SmilesDrawer||!window.SmilesDrawer.parse)throw new Error('drawer');")
@@ -883,7 +901,7 @@ private fun chemStructureHtml(
             append("new window.SmilesDrawer.SvgDrawer({width:300,height:300,padding:2})")
             append(".draw(tree,captureSvg,'light');")
             append("scopeChemStyles(captureSvg);")
-            if (!isCell) append("capture();")
+            if (captureEnabled) append("capture();")
             append("}catch(e){showFallback();}},err=>showFallback());")
         }
         append("}catch(e){showFallback();}")
@@ -936,7 +954,9 @@ internal fun mixedContentHtml(
     fontSizePx: Float,
     textColorCss: String,
     structureUnavailable: String = "",
-    chemKey: String = ""
+    chemKey: String = "",
+    /** Stable block ids parallel to [elements]; blank disables cell capture. */
+    cellBlockIds: List<String> = emptyList()
 ): String {
     var chemIndex = 0
     // One drawer asset per page, and one id counter for blocks AND cell
@@ -951,7 +971,7 @@ internal fun mixedContentHtml(
     val richTables = tables.filter { it.carriesRichCell() }
     val hasChem = chemTables.isNotEmpty() || elements.any { it is ContentElement.ChemElement }
     val body = buildString {
-        for (element in elements) {
+        elements.forEachIndexed { elementIndex, element ->
             when (element) {
                 // Text runs may carry inline formatting the editor stored as
                 // HTML (<sub>, <br/>, …), but they originate in imported files,
@@ -969,7 +989,11 @@ internal fun mixedContentHtml(
                     append("<table")
                     if (richTables.any { it === element }) append(" class=\"mcq-rich-table\"")
                     append(" border=\"1\" cellspacing=\"0\" cellpadding=\"4\">")
-                    for (row in element.rows) {
+                    // The editor keys a cell capture by its stable block id and
+                    // its own row/column; a read-only page passes no ids, so
+                    // no cell script gets a key to report.
+                    val tableBlockId = cellBlockIds.getOrNull(elementIndex).orEmpty()
+                    element.rows.forEachIndexed { rowIndex, cells ->
                         append("<tr>")
                         // Cells carry inline markup; a portable picture is
                         // drawn as a real image sized to the cell, formulas go
@@ -978,7 +1002,12 @@ internal fun mixedContentHtml(
                         // chemical structure is drawn live by SmilesDrawer at
                         // the standalone scale, taking its id from the same
                         // page-level counter the blocks use.
-                        for (cell in row) {
+                        cells.forEachIndexed { colIndex, cell ->
+                            val cellKeyPrefix = if (tableBlockId.isNotBlank()) {
+                                "$tableBlockId#$rowIndex:$colIndex"
+                            } else {
+                                ""
+                            }
                             append("<td>").append(
                                 tableCellHtml(
                                     cell,
@@ -987,7 +1016,12 @@ internal fun mixedContentHtml(
                                             spec,
                                             chemIndex++,
                                             structureUnavailable,
-                                            chemKey,
+                                            // The capture key carries the SMILES
+                                            // that produced the drawing, so a
+                                            // capture queued before a source edit
+                                            // is rejected by the ViewModel.
+                                            if (cellKeyPrefix.isBlank()) "" else
+                                                "$cellKeyPrefix@${spec.smiles}",
                                             textColorCss
                                         )
                                     }
@@ -1372,6 +1406,7 @@ private fun MixedContentView(
     textStyle: TextStyle?,
     modifier: Modifier = Modifier,
     chemKey: String = "",
+    cellBlockIds: List<String> = emptyList(),
     onChemDiagram: (key: String, pngDataUri: String) -> Unit = { _, _ -> }
 ) {
     // The WebView is keyed by the page, so a recomposition must not leave it
@@ -1384,7 +1419,7 @@ private fun MixedContentView(
     // Visible fallback copy is resolved here (the composable has the locale)
     // and handed to the pure HTML builder, which only escapes and embeds it.
     val chemUnavailable = stringResource(R.string.chem_structure_unavailable)
-    val targetHtml = remember(elements, textStyle, colorScheme, density, chemUnavailable, chemKey) {
+    val targetHtml = remember(elements, textStyle, colorScheme, density, chemUnavailable, chemKey, cellBlockIds) {
         // WebView CSS px are density-independent like dp: scale the Sp
         // value by the font scale only. toPx() would also multiply by
         // the screen density and render several times too big, while
@@ -1393,7 +1428,7 @@ private fun MixedContentView(
             ?: defaultSize.value) * density.fontScale
         val color = textStyle?.color?.takeUnless { it == androidx.compose.ui.graphics.Color.Unspecified }
             ?: colorScheme.onSurface
-        mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey)
+        mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey, cellBlockIds)
     }
     // Coalesce preview updates: the WebView is keyed by the page, so a page
     // rebuilt on every keystroke was destroyed and recreated (with its

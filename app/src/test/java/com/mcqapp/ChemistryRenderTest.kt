@@ -38,8 +38,16 @@ class ChemistryRenderTest {
         vararg elements: ContentElement,
         fallback: String = "Unavailable",
         chemKey: String = "",
-        textColorCss: String = "rgba(0,0,0,1)"
-    ): String = mixedContentHtml(elements.toList(), 48f, textColorCss, fallback, chemKey)
+        textColorCss: String = "rgba(0,0,0,1)",
+        cellBlockIds: List<String> = emptyList()
+    ): String = mixedContentHtml(
+        elements.toList(),
+        48f,
+        textColorCss,
+        fallback,
+        chemKey,
+        cellBlockIds
+    )
 
     // ---- path selection ----------------------------------------------------
 
@@ -735,6 +743,43 @@ class ChemistryRenderTest {
     }
 
     @Test
+    fun twoCellsWithTheSameSmilesGetDistinctCaptureKeys() {
+        val html = htmlOf(
+            tableOf(listOf(cell(), cell())),
+            cellBlockIds = listOf("b7")
+        )
+        assertTrue("left cell key missing: $html", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"b7#0:0@CCO\",png)"
+        ))
+        assertTrue("right cell key missing: $html", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"b7#0:1@CCO\",png)"
+        ))
+    }
+
+    @Test
+    fun anEditorPreviewKeysACellCaptureByBlockRowAndColumn() {
+        // The page supplies stable block ids, so each cell's structure captures
+        // under its own key: block id + row/column, then the drawn SMILES.
+        val html = htmlOf(
+            tableOf(listOf("plain", cell()), listOf(cell("c1ccccc1", "C6H6", "benzene"))),
+            cellBlockIds = listOf("b7")
+        )
+        assertTrue("cell capture missing: $html", html.contains("capture();"))
+        assertTrue("cell did not name the bridge: $html", html.contains(CHEM_DIAGRAM_BRIDGE))
+        assertTrue("first cell key missing: $html", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"b7#0:1@CCO\",png)"
+        ))
+        assertTrue("second cell key missing: $html", html.contains(
+            "window.$CHEM_DIAGRAM_BRIDGE.onDiagram(\"b7#1:0@c1ccccc1\",png)"
+        ))
+        // A blank/absent id is the read-only page: no cell may capture.
+        val readOnly = htmlOf(tableOf(listOf(cell())), cellBlockIds = listOf(""))
+        assertFalse("read-only cell captured: $readOnly", readOnly.contains("capture();"))
+        assertFalse("read-only cell named the bridge: $readOnly",
+            readOnly.contains(CHEM_DIAGRAM_BRIDGE))
+    }
+
+    @Test
     fun onePageUsesOneDrawerAssetAndUniqueIdsForBlocksAndCells() {
         val html = htmlOf(
             ContentElement.ChemElement("CCO"),
@@ -803,8 +848,9 @@ class ChemistryRenderTest {
         assertFalse("data-png leaked: $html", html.contains("data-png"))
         assertFalse("stored picture rendered: $html", html.contains("<img "))
         assertTrue("height bridge missing: $html", html.contains(CONTENT_HEIGHT_BRIDGE))
-        // A cell never captures, so no cell script can call the diagram
-        // bridge; the light-theme capture draw is still emitted.
+        // An UNKEYED cell does not capture, so this page has no cell script
+        // calling the diagram bridge; the light-theme capture draw is still
+        // emitted. (Keyed cell capture is covered by the editor-preview test.)
         assertTrue("light capture draw missing: $html",
             html.contains(".draw(tree,captureSvg,'light');"))
         assertFalse("cell called capture(): $html", html.contains("capture();"))
@@ -937,9 +983,8 @@ class ChemistryRenderTest {
         assertFalse("SMILES broke the JS literal: $html", html.contains("\"\";alert(1)//"))
         assertTrue("allowlist-filtered SMILES missing: $html",
             html.contains("SmilesDrawer.parse(\"alert(1)//\""))
-        // A cell never captures, so the per-page key never enters a cell's
-        // script at all. (The block path's key escaping is pinned by
-        // theChemKeyIsJsEscapedAndCannotBreakOutOfTheScript.)
+        // An unkeyed cell does not capture (no cellBlockIds on this page), so
+        // the per-page block key never enters a cell's script.
         assertFalse("key closed the script tag: $html", html.contains("\"</script><b>&\""))
         assertFalse("key reached a cell page: $html",
             html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
@@ -1114,9 +1159,66 @@ class ChemistryRenderTest {
         assertTrue("key not escaped for the JS string",
             html.contains("\\u003c/script\\u003e\\u003cb\\u003e\\u0026"))
         assertEquals("\"a\\\"\\u003c/script\\u003e\\u003cb\\u003e\\u0026\"", jsStringLiteral(hostileKey))
+        // U+2028/U+2029 terminate a JavaScript statement; a key or caption
+        // carrying one must not be able to split the inline script.
+        assertEquals("\"a\\u2028b\\u2029c\"", jsStringLiteral("a\u2028b\u2029c"))
     }
 
     // ---- localised copy ----------------------------------------------------
+
+    @Test
+    fun theEditorPreviewWiresCellCaptureForTheQuestionAndTheCardBack() {
+        // The whole-question preview is the only in-editor page that draws a
+        // table now. Losing either cellBlockIds or the capture callback turns
+        // cell capture off silently, so pin both call sites at source level
+        // (the same technique the renderer tests already use).
+        val screen = File("src/main/java/com/mcqapp/ui/editor/QuestionEditorScreen.kt").readText()
+        val previewCalls = Regex(
+            """ContentElements\(\s*state\.(?:elements|explanationElements),[\s\S]*?\n\s*\)"""
+        ).findAll(screen).toList()
+        assertEquals("expected exactly the question and back previews", 2, previewCalls.size)
+        previewCalls.forEach { call ->
+            assertTrue("cellBlockIds missing from preview: ${call.value}", call.value.contains("cellBlockIds = state."))
+            assertTrue(
+                "capture callback missing from preview: ${call.value}",
+                call.value.contains("onChemDiagram = { key, png -> viewModel.updateChemDiagram(key, png) }")
+            )
+        }
+        assertTrue(
+            "body preview must pass the body block ids",
+            previewCalls.any {
+                it.value.contains("ContentElements(\n                        state.elements,") &&
+                    it.value.contains("cellBlockIds = state.blockIds")
+            }
+        )
+        assertTrue(
+            "card back preview must pass the explanation block ids",
+            previewCalls.any {
+                it.value.contains("state.explanationElements") &&
+                    it.value.contains("cellBlockIds = state.explanationBlockIds")
+            }
+        )
+        // Option and regular-explanation tables have no whole-question preview:
+        // they opt into a local one, which is what lets their structures
+        // capture. A flashcard's back is already drawn above.
+        assertTrue(
+            "option tables must keep a local capture preview",
+            screen.contains("richCellPreview = true")
+        )
+        assertTrue(
+            "regular explanation tables must keep a local capture preview",
+            screen.contains("richCellPreview = state.cardType != EditorCardType.FLASHCARD")
+        )
+        val blockEditor = File("src/main/java/com/mcqapp/ui/editor/BlockListEditor.kt").readText()
+        assertTrue(
+            "local table preview must key its cells by the table's block id",
+            blockEditor.contains("cellBlockIds = listOf(blockId)")
+        )
+        assertTrue(
+            "local table preview must forward the capture callback",
+            blockEditor.contains("onChemDiagram = onChemDiagram")
+        )
+    }
 
     @Test
     fun fallbackCopyExistsInBothLocalesAndIsUsedByTheRenderer() {
@@ -1127,7 +1229,7 @@ class ChemistryRenderTest {
         val renderer = File("src/main/java/com/mcqapp/util/ContentElements.kt").readText()
         assertTrue("fallback copy not resolved", renderer.contains("R.string.chem_structure_unavailable"))
         assertTrue("fallback copy not passed to the HTML sink", renderer.contains(
-            "mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey)"
+            "mixedContentHtml(elements, cssPx, color.toCssRgba(), chemUnavailable, currentChemKey, cellBlockIds)"
         ))
         assertTrue("no PNG capture bridge", renderer.contains("CHEM_DIAGRAM_BRIDGE"))
         assertTrue("bridge not registered", renderer.contains("addJavascriptInterface("))

@@ -18,10 +18,13 @@ import com.mcqapp.domain.textContent
 import com.mcqapp.util.Logger
 import com.mcqapp.util.CellEditPart
 import com.mcqapp.util.canonicalCellImageSrc
+import com.mcqapp.util.cellEditPartHtml
+import com.mcqapp.util.cellEditParts
 import com.mcqapp.util.cellTokenKey
 import com.mcqapp.util.cellWithPartInserted
 import com.mcqapp.util.cellWithPartRemoved
 import com.mcqapp.util.cellWithPartReplaced
+import com.mcqapp.util.isRendererPngDataUri
 import com.mcqapp.util.withCellEditorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -562,9 +565,10 @@ internal fun applyChemDiagram(
     blockId: String,
     pngDataUri: String
 ): EditorUiState {
-    if (!pngDataUri.startsWith(CHEM_DIAGRAM_PREFIX) ||
-        pngDataUri.length == CHEM_DIAGRAM_PREFIX.length
-    ) return s
+    // One bounded PNG validator for blocks and cells alike: a renderer capture
+    // must carry the real PNG signature, without decoding the whole payload on
+    // the UI thread. Storage/export still run the strict validator.
+    if (!isRendererPngDataUri(pngDataUri)) return s
 
     fun replace(elements: List<ContentElement>, ids: List<String>): List<ContentElement> {
         val i = ids.indexOf(blockId)
@@ -590,7 +594,8 @@ internal fun applyChemDiagram(
 }
 
 /**
- * Applies a PNG capture whose key is `"<blockId>@<smiles>"`.
+ * Applies a PNG capture whose key is `"<blockId>@<smiles>"` for a chem block,
+ * or `"<blockId>#<row>:<col>@<smiles>"` for a structure inside one table cell.
  *
  * The renderer draws from the SMILES in the HTML; by the time it rasterises
  * the SVG the user may already have typed a different source. Such a stale
@@ -605,11 +610,24 @@ internal fun applyKeyedChemDiagram(
 ): EditorUiState {
     val at = chemKey.indexOf('@')
     if (at <= 0 || at == chemKey.lastIndex) return s
-    val blockId = chemKey.substring(0, at)
+    val target = chemKey.substring(0, at)
     val smiles = chemKey.substring(at + 1)
 
+    // A cell key carries its row/column before the SMILES. SMILES itself may
+    // contain '#', so only the target part is searched for the separator.
+    val hash = target.lastIndexOf('#')
+    if (hash > 0) {
+        val blockId = target.substring(0, hash)
+        val coords = target.substring(hash + 1)
+        val colon = coords.indexOf(':')
+        if (colon <= 0 || colon == coords.lastIndex) return s
+        val row = coords.substring(0, colon).toIntOrNull() ?: return s
+        val col = coords.substring(colon + 1).toIntOrNull() ?: return s
+        return applyCellChemDiagram(s, blockId, row, col, smiles, pngDataUri)
+    }
+
     fun currentSmiles(ids: List<String>, elements: List<ContentElement>): String? {
-        val i = ids.indexOf(blockId)
+        val i = ids.indexOf(target)
         if (i !in elements.indices) return null
         return (elements[i] as? ContentElement.ChemElement)?.smiles
     }
@@ -619,7 +637,52 @@ internal fun applyKeyedChemDiagram(
         ?: s.options.firstNotNullOfOrNull { currentSmiles(it.blockIds, it.elements) }
         ?: return s
     if (liveSmiles != smiles) return s
-    return applyChemDiagram(s, blockId, pngDataUri)
+    return applyChemDiagram(s, target, pngDataUri)
+}
+
+/**
+ * Stores a renderer-captured PNG on the structure named by its cell key.
+ *
+ * The write resolves the table by its stable block id against the *current*
+ * draft, so a capture queued before a reorder or a delete finds nothing rather
+ * than a neighbouring table. The row/column must still exist, and the cell
+ * must still hold a structure drawn from [smiles]; anything else is a no-op.
+ * The marker is rebuilt through [chemCellHtml] by way of [cellEditPartHtml],
+ * so its other attributes and the text around it stay intact, and the result
+ * is identical for a repeated capture (the caller then leaves the state
+ * instance untouched).
+ */
+internal fun applyCellChemDiagram(
+    s: EditorUiState,
+    blockId: String,
+    row: Int,
+    col: Int,
+    smiles: String,
+    pngDataUri: String
+): EditorUiState {
+    // A cell payload travels into every export and backup part, so the same
+    // bounded renderer rule applies here; the writer validates again.
+    if (!isRendererPngDataUri(pngDataUri)) return s
+    return updateTableBlockById(s, blockId) { table ->
+        val cell = table.rows.getOrNull(row)?.getOrNull(col)
+            ?: return@updateTableBlockById table
+        val parts = cellEditParts(cell)
+        var changed = false
+        val updated = parts.map { part ->
+            val structure = part as? CellEditPart.Structure ?: return@map part
+            if (structure.element.smiles != smiles || structure.element.diagram == pngDataUri) {
+                part
+            } else {
+                changed = true
+                CellEditPart.Structure(structure.element.copy(diagram = pngDataUri))
+            }
+        }
+        if (!changed) {
+            table
+        } else {
+            table.withCell(row, col, updated.joinToString("") { cellEditPartHtml(it) })
+        }
+    }
 }
 
 /**

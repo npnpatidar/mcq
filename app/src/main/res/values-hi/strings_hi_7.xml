@@ -122,6 +122,14 @@
     <string name="tab_workload">कार्यभार</string>
     <string name="table">तालिका</string>
     <string name="table_cell_label">पंक्ति %1$d, स्तंभ %2$d</string>
+    <!-- Compact table size label: rows × columns. -->
+    <string name="table_dimensions">%1$d × %2$d</string>
+    <string name="table_add_row_named">तालिका %1$d में पंक्ति जोड़ें</string>
+    <string name="table_remove_row_named">तालिका %2$d: पंक्ति %1$d हटाएँ</string>
+    <string name="table_add_column_named">तालिका %1$d में कॉलम जोड़ें</string>
+    <string name="table_remove_column_named">तालिका %2$d: कॉलम %1$d हटाएँ</string>
+    <string name="table_cell_empty">खाली सेल</string>
+    <string name="table_cell_chip_cd">पंक्ति %1$d, स्तंभ %2$d, %3$s</string>
     <string name="tags_comma_separated">टैग (अल्पविराम से अलग किए गए)</string>
     <string name="tags_comma_separated_blank_keep">टैग, अल्पविराम से अलग किए गए (खाली = पुराने रखें)</string>
     <string name="tap_formula_to_edit">सूत्र संपादित करने के लिए उस पर टैप करें</string>

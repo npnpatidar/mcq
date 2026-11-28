@@ -33,6 +33,12 @@ import java.io.File
  */
 class ChemistryEditorTest {
 
+    /** A complete 8-byte PNG signature, so the shared strict validator accepts it. */
+    private val validPng = CHEM_DIAGRAM_PREFIX + "iVBORw0KGgo="
+
+    /** A second complete PNG, distinct from [validPng]. */
+    private val otherPng = CHEM_DIAGRAM_PREFIX + "iVBORw0KGgoAAA=="
+
     private fun state(elements: List<ContentElement>, ids: List<String>? = null) = EditorUiState(
         loading = false,
         elements = elements,
@@ -181,30 +187,31 @@ class ChemistryEditorTest {
         val before = state(listOf(ChemTemplates.BENZENE.toElement()), listOf("chem-1"))
         val rejected = listOf(
             "", "   ", "AAA", "data:image/jpeg;base64,AAA", CHEM_DIAGRAM_PREFIX,
+            CHEM_DIAGRAM_PREFIX + "AAA",
+            CHEM_DIAGRAM_PREFIX + "bm90IGEgcG5n",
             "https://example.com/structure.png"
         )
         rejected.forEach { assertSame("rejected $it", before, applyChemDiagram(before, "chem-1", it)) }
-        assertSame(before, applyChemDiagram(before, "missing", CHEM_DIAGRAM_PREFIX + "AAA"))
+        assertSame(before, applyChemDiagram(before, "missing", validPng))
         // A non-chem block with the same id must not turn into a diagram either.
         val text = state(listOf(ContentElement.TextElement("plain")), listOf("chem-1"))
-        assertSame(text, applyChemDiagram(text, "chem-1", CHEM_DIAGRAM_PREFIX + "AAA"))
+        assertSame(text, applyChemDiagram(text, "chem-1", validPng))
     }
 
     @Test
     fun anUnchangedDiagramIsANoOpAndDoesNotTouchDirty() {
-        val png = CHEM_DIAGRAM_PREFIX + "AAA"
-        val chem = ChemTemplates.BENZENE.toElement().copy(diagram = png)
+        val chem = ChemTemplates.BENZENE.toElement().copy(diagram = validPng)
         val before = state(listOf(chem), listOf("chem-1")).copy(isDirty = false)
-        assertSame(before, applyChemDiagram(before, "chem-1", png))
-        val changed = applyChemDiagram(before, "chem-1", png + "B")
+        assertSame(before, applyChemDiagram(before, "chem-1", validPng))
+        val changed = applyChemDiagram(before, "chem-1", otherPng)
         assertNotSame(before, changed)
         assertFalse("a capture is not a user edit", changed.isDirty)
-        assertTrue("the captured diagram is persisted content", changed.elements.single().toString().contains(png + "B"))
+        assertTrue("the captured diagram is persisted content", changed.elements.single().toString().contains(otherPng))
     }
 
     @Test
     fun diagramCaptureTargetsTheNamedBlockInAnyList() {
-        val png = CHEM_DIAGRAM_PREFIX + "AAA"
+        val png = validPng
         val option = OptionEditorState(
             id = "a",
             elements = listOf(EditorBlockType.CHEM.defaultElement()),
@@ -316,17 +323,18 @@ class ChemistryEditorTest {
 
         // The callback that was already in flight when the user typed carries
         // the old key; it must not stamp the benzene raster onto "c".
-        assertSame(edited, applyKeyedChemDiagram(edited, oldKey, CHEM_DIAGRAM_PREFIX + "OLD"))
-        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1", CHEM_DIAGRAM_PREFIX + "OLD"))
-        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@", CHEM_DIAGRAM_PREFIX + "OLD"))
+        assertSame(edited, applyKeyedChemDiagram(edited, oldKey, otherPng))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1", otherPng))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@", otherPng))
 
-        val freshPng = CHEM_DIAGRAM_PREFIX + "NEW"
+        val freshPng = validPng
         val stored = applyKeyedChemDiagram(edited, "chem-1@c", freshPng)
         assertNotSame(edited, stored)
         assertEquals(freshPng, (stored.elements.single() as ContentElement.ChemElement).diagram)
         assertFalse("a capture is still not a user edit", stored.isDirty)
         // The invalid-PNG and no-op guards still apply on the keyed path.
         assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", "data:image/jpeg;base64,AAA"))
+        assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", CHEM_DIAGRAM_PREFIX + "AAA"))
         assertSame(stored, applyKeyedChemDiagram(stored, "chem-1@c", freshPng))
     }
 

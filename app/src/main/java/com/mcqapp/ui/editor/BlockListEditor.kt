@@ -1,21 +1,31 @@
 package com.mcqapp.ui.editor
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.AddBox
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.IndeterminateCheckBox
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlaylistRemove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -26,9 +36,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,11 +55,15 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.util.CellEditPart
 import com.mcqapp.util.CellEditPartKind
 import com.mcqapp.util.ContentElements
+import com.mcqapp.util.InlineHtml
 import com.mcqapp.util.QuestionImage
 import com.mcqapp.util.cellEditParts
 import com.mcqapp.util.cellEditorText
@@ -121,6 +137,13 @@ fun BlockListEditor(
      * as the renderer reports it.
      */
     onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit = { _, _ -> },
+    /**
+     * Draws a local live preview under a rich table in this list. The question
+     * preview already draws the body and a flashcard's back, so those lists
+     * leave it off; an option or a regular explanation has no such preview, so
+     * its structures can capture their PNG here.
+     */
+    richCellPreview: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val tablesEditable = onUpdateCell != null && onAddRow != null &&
@@ -223,6 +246,9 @@ fun BlockListEditor(
                             TableBlockEditor(
                                 table = element,
                                 blockId = blockIds.getOrNull(index) ?: "index$index",
+                                tablePosition = index + 1,
+                                richCellPreview = richCellPreview,
+                                onChemDiagram = onChemDiagram,
                                 onUpdateCell = { row, col, value ->
                                     onUpdateCell?.invoke(index, row, col, value)
                                 },
@@ -395,6 +421,9 @@ private fun blockLabelRes(element: ContentElement): Int = when (element) {
     is ContentElement.ChemElement -> R.string.chem_editor_block_label
 }
 
+/** Cap on a chip's preview so a huge imported cell cannot build a huge utterance. */
+private const val CELL_CHIP_PREVIEW_CHARS = 120
+
 /** One open formula dialog; [partIndex] null means "insert a new formula". */
 private data class CellFormulaTarget(
     val row: Int,
@@ -415,6 +444,10 @@ private data class CellStructureTarget(
 private fun TableBlockEditor(
     table: ContentElement.TableElement,
     blockId: String,
+    /** 1-based position of this table in the list, for named toolbar actions. */
+    tablePosition: Int,
+    richCellPreview: Boolean,
+    onChemDiagram: (chemKey: String, pngDataUri: String) -> Unit,
     onUpdateCell: (row: Int, col: Int, value: String) -> Unit,
     onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)?,
     onSetCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int?, part: CellEditPart) -> Unit)?,
@@ -429,34 +462,91 @@ private fun TableBlockEditor(
         onRemoveCellPart != null && onPickCellImage != null
     var formulaTarget by remember { mutableStateOf<CellFormulaTarget?>(null) }
     var structureTarget by remember { mutableStateOf<CellStructureTarget?>(null) }
+    // Which cell the toolbar acts on. Null means "nothing focused yet", which
+    // falls back to the last cell — the same place add row/column leaves the
+    // cursor. Kept by block id and re-validated against the current table, so
+    // a removed row or column can never leave a stale target.
+    var activeCell by remember(blockId) { mutableStateOf<Pair<Int, Int>?>(null) }
+    // The cell whose text field is open in the popup editor.
+    var editorCell by remember(blockId) { mutableStateOf<Pair<Int, Int>?>(null) }
+    val rowCount = table.rows.size
     val colCount = table.rows.maxOfOrNull { it.size } ?: 0
+    val hasRichCell = remember(table) {
+        table.rows.any { cells ->
+            cells.any { cell -> cellEditParts(cell).any { it.kind() != CellEditPartKind.TEXT } }
+        }
+    }
+    val activeRow = activeCell?.first?.takeIf { it in table.rows.indices }
+        ?: table.rows.lastIndex
+    val activeCol = activeCell
+        ?.takeIf { it.first == activeRow && it.second in (table.rows.getOrNull(activeRow)?.indices ?: IntRange.EMPTY) }
+        ?.second
+        ?: (table.rows.getOrNull(activeRow)?.lastIndex ?: 0)
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Per-column delete buttons.
-        if (colCount > 0) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+        // One compact toolbar instead of a delete icon on every row/column and
+        // two large pill buttons under the grid. Each control names its target
+        // for a screen reader; the row/column it acts on is the focused cell,
+        // or the last cell when none is focused.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                stringResource(R.string.table_dimensions, rowCount, colCount),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.weight(1f).testTag("table-size-$blockId")
+            )
+            IconButton(
+                onClick = onAddRow,
+                modifier = Modifier.testTag("table-add-row-$blockId")
             ) {
-                repeat(colCount) { col ->
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        // Disable exactly the no-op cases (last column, or a
-                        // ragged row lacking this index) so the control agrees
-                        // with withColumnRemoved (question_editor_audit.md L-04).
-                        IconButton(
-                            onClick = { onRemoveColumn(col) },
-                            enabled = table.canRemoveColumn(col)
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.remove_column_named, col + 1)
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.width(48.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.PlaylistAdd,
+                    contentDescription = stringResource(
+                        R.string.table_add_row_named,
+                        tablePosition
+                    )
+                )
+            }
+            IconButton(
+                onClick = { onRemoveRow(activeRow) },
+                enabled = rowCount > 1,
+                modifier = Modifier.testTag("table-remove-row-$blockId")
+            ) {
+                Icon(
+                    Icons.Default.PlaylistRemove,
+                    contentDescription = stringResource(
+                        R.string.table_remove_row_named,
+                        activeRow + 1,
+                        tablePosition
+                    )
+                )
+            }
+            IconButton(
+                onClick = onAddColumn,
+                modifier = Modifier.testTag("table-add-column-$blockId")
+            ) {
+                Icon(
+                    Icons.Default.AddBox,
+                    contentDescription = stringResource(
+                        R.string.table_add_column_named,
+                        tablePosition
+                    )
+                )
+            }
+            IconButton(
+                onClick = { onRemoveColumn(activeCol) },
+                enabled = table.canRemoveColumn(activeCol),
+                modifier = Modifier.testTag("table-remove-column-$blockId")
+            ) {
+                Icon(
+                    Icons.Default.IndeterminateCheckBox,
+                    contentDescription = stringResource(
+                        R.string.table_remove_column_named,
+                        activeCol + 1,
+                        tablePosition
+                    )
+                )
             }
         }
         table.rows.forEachIndexed { row, cells ->
@@ -466,61 +556,34 @@ private fun TableBlockEditor(
             ) {
                 cells.forEachIndexed { col, cell ->
                     // Keyed by position so a row/column insertion cannot hand
-                    // one cell's dialog or focus state to another cell.
+                    // one cell's popup to another cell.
                     androidx.compose.runtime.key(row, col) {
-                        TableCellField(
+                        TableCellChip(
                             blockId = blockId,
                             row = row,
                             col = col,
                             cell = cell,
-                            rich = rich,
+                            selected = row == activeRow && col == activeCol,
                             modifier = Modifier.weight(1f).padding(end = 4.dp),
-                            onUpdateCell = onUpdateCell,
-                            onUpdateCellText = onUpdateCellText,
-                            onPickCellImage = onPickCellImage,
-                            onRemoveCellPart = onRemoveCellPart,
-                            onEditFormula = { partIndex, mathml ->
-                                formulaTarget = CellFormulaTarget(row, col, partIndex, mathml)
-                            },
-                            onEditStructure = { partIndex, element ->
-                                structureTarget = CellStructureTarget(row, col, partIndex, element)
+                            onClick = {
+                                activeCell = row to col
+                                editorCell = row to col
                             }
                         )
                     }
                 }
-                // Pad short rows so the delete button stays aligned.
+                // Pad short rows so the fields stay aligned to the columns.
                 repeat((colCount - cells.size).coerceAtLeast(0)) {
                     Spacer(Modifier.weight(1f))
-                }
-                IconButton(
-                    onClick = { onRemoveRow(row) },
-                    enabled = table.rows.size > 1
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.remove_row_named, row + 1)
-                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onAddRow) { Text(stringResource(R.string.add_row)) }
-            OutlinedButton(onClick = onAddColumn) { Text(stringResource(R.string.add_column)) }
-        }
-
-        // A rich cell is drawn live under the grid. The native table can only
-        // print markers, so this preview is what makes an inserted formula or
-        // structure visible while editing. A plain table needs no duplicate:
-        // the grid above already shows it.
-        val hasRichCell = remember(table) {
-            table.rows.any { cells ->
-                cells.any { cell ->
-                    cellEditParts(cell).any { it.kind() != CellEditPartKind.TEXT }
-                }
-            }
-        }
-        if (rich && hasRichCell) {
+        // No second table preview for the question body: the whole-question
+        // preview above already draws it. An option or a regular explanation
+        // has no other preview, so [richCellPreview] opts into a local one —
+        // that page is also what captures a cell structure's PNG.
+        if (richCellPreview && hasRichCell) {
             Text(
                 stringResource(R.string.chem_editor_preview),
                 style = MaterialTheme.typography.labelMedium,
@@ -528,10 +591,33 @@ private fun TableBlockEditor(
             )
             ContentElements(
                 elements = listOf(table),
-                // No capture callback yet: a cell structure is drawn live and
-                // no raster is stored, so an unrelated edit cannot disturb the
-                // editor's dirty snapshot.
+                cellBlockIds = listOf(blockId),
+                onChemDiagram = onChemDiagram,
                 modifier = Modifier.fillMaxWidth().testTag("table-preview-$blockId")
+            )
+        }
+    }
+
+    editorCell?.let { target ->
+        val cell = table.rows.getOrNull(target.first)?.getOrNull(target.second)
+        if (cell != null) {
+            CellEditorDialog(
+                blockId = blockId,
+                row = target.first,
+                col = target.second,
+                cell = cell,
+                rich = rich,
+                onDismiss = { editorCell = null },
+                onUpdateCell = onUpdateCell,
+                onUpdateCellText = onUpdateCellText,
+                onPickCellImage = onPickCellImage,
+                onRemoveCellPart = onRemoveCellPart,
+                onEditFormula = { partIndex, mathml ->
+                    formulaTarget = CellFormulaTarget(target.first, target.second, partIndex, mathml)
+                },
+                onEditStructure = { partIndex, element ->
+                    structureTarget = CellStructureTarget(target.first, target.second, partIndex, element)
+                }
             )
         }
     }
@@ -566,6 +652,170 @@ private fun TableBlockEditor(
 }
 
 /**
+ * The compact, read-only chip that stands for one cell in the grid.
+ *
+ * It shows a short preview — prose in reading order with one label per rich
+ * part — so the author can see the cell's shape without raw markup or base64.
+ * Tapping it opens [CellEditorDialog], which holds the only editable field.
+ * The chip stays empty-but-tappable for an empty cell.
+ */
+@Composable
+private fun TableCellChip(
+    blockId: String,
+    row: Int,
+    col: Int,
+    cell: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    val formulaToken = stringResource(R.string.chem_editor_cell_token_formula)
+    val imageToken = stringResource(R.string.chem_editor_cell_token_image)
+    val structureToken = stringResource(R.string.chem_editor_cell_token_structure)
+    val parts = remember(cell) { cellEditParts(cell) }
+    val preview = remember(parts, formulaToken, imageToken, structureToken) {
+        parts.joinToString(" ") { part ->
+            when (part) {
+                is CellEditPart.Text -> InlineHtml.parse(part.html).text
+                is CellEditPart.Formula -> formulaToken
+                is CellEditPart.Image -> imageToken
+                is CellEditPart.Structure -> structureToken
+            }
+        }.replace(Regex("\\s+"), " ").trim().take(CELL_CHIP_PREVIEW_CHARS)
+    }
+    val chipDescription = stringResource(
+        R.string.table_cell_chip_cd,
+        row + 1,
+        col + 1,
+        preview.ifBlank { stringResource(R.string.table_cell_empty) }
+    )
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        // The active cell gets a clear outline so the toolbar's target is
+        // visible, not only inferred from the last tap.
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outlineVariant
+        ),
+        modifier = modifier
+            .testTag("cell-chip-$blockId-$row-$col")
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                // A contentDescription replaces the chip's text for a screen
+                // reader, so it carries the position and the same preview.
+                contentDescription = chipDescription
+            }
+    ) {
+        Text(
+            preview.ifBlank { stringResource(R.string.table_cell_empty) },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp)
+        )
+    }
+}
+
+/**
+ * The popup cell editor: the token field, the per-cell menu and Done, in a
+ * near-full-screen dialog so the soft keyboard and the token field have room.
+ * The field edits the draft live through [onUpdateCellText]; Done only closes.
+ */
+@Composable
+private fun CellEditorDialog(
+    blockId: String,
+    row: Int,
+    col: Int,
+    cell: String,
+    rich: Boolean,
+    onDismiss: () -> Unit,
+    onUpdateCell: (row: Int, col: Int, value: String) -> Unit,
+    onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)?,
+    onPickCellImage: ((blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit)?,
+    onRemoveCellPart: ((blockId: String, row: Int, col: Int, partIndex: Int) -> Unit)?,
+    onEditFormula: (partIndex: Int?, mathml: String) -> Unit,
+    onEditStructure: (partIndex: Int?, element: ContentElement.ChemElement?) -> Unit
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(blockId, row, col) { focus.requestFocus() }
+    val label = stringResource(R.string.table_cell_label, row + 1, col + 1)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+                .safeDrawingPadding()
+                .testTag("cell-dialog-$blockId-$row-$col")
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("cell-dialog-title-$blockId-$row-$col")
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("cell-close-$blockId-$row-$col")
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = stringResource(R.string.close)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                TableCellField(
+                    blockId = blockId,
+                    row = row,
+                    col = col,
+                    cell = cell,
+                    rich = rich,
+                    focusRequester = focus,
+                    modifier = Modifier.fillMaxWidth(),
+                    onUpdateCell = onUpdateCell,
+                    onUpdateCellText = onUpdateCellText,
+                    onPickCellImage = onPickCellImage,
+                    onRemoveCellPart = onRemoveCellPart,
+                    onEditFormula = onEditFormula,
+                    onEditStructure = onEditStructure
+                )
+                Spacer(Modifier.weight(1f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("cell-done-$blockId-$row-$col")
+                    ) {
+                        Text(stringResource(R.string.done))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * One cell's text field plus its insert/edit menu. The field edits a value in
  * which every rich part is one opaque token ([cellEditorText]); the
  * transformation only changes how that token is displayed, so the value stays
@@ -579,6 +829,7 @@ private fun TableCellField(
     cell: String,
     rich: Boolean,
     modifier: Modifier,
+    focusRequester: FocusRequester? = null,
     onUpdateCell: (row: Int, col: Int, value: String) -> Unit,
     onUpdateCellText: ((blockId: String, row: Int, col: Int, text: String) -> Unit)?,
     onPickCellImage: ((blockId: String, row: Int, col: Int, replacePart: Int?) -> Unit)?,
@@ -608,7 +859,8 @@ private fun TableCellField(
     val transformation = remember(labels, parts, tokenKey) {
         CellTokenVisualTransformation(labels, parts, tokenKey)
     }
-    val focus = remember { FocusRequester() }
+    val localFocus = remember { FocusRequester() }
+    val focus = focusRequester ?: localFocus
     OutlinedTextField(
         value = value,
         onValueChange = {
@@ -646,6 +898,8 @@ private fun TableCellField(
         modifier = modifier
             .testTag("cell-field-$blockId-$row-$col")
             .focusRequester(focus)
+            // A long value keeps scrolling horizontally in this single-line
+            // field; the stored value is never truncated.
             .semantics {
                 // A contentDescription would replace the field's value for
                 // screen readers. A stateDescription adds the target-specific
@@ -766,7 +1020,7 @@ private fun CellEditMenu(
 private fun List<CellEditPart>.allIndexOfKind(kind: CellEditPartKind): List<Int> =
     indices.filter { this[it].kind() == kind }
 
-/** MathLive in a dialog; the cell only changes when the user confirms. */
+/** MathLive in a near-full-screen dialog; the cell changes only on confirm. */
 @Composable
 private fun CellFormulaDialog(
     target: CellFormulaTarget,
@@ -775,48 +1029,83 @@ private fun CellFormulaDialog(
     onCommit: (String) -> Unit
 ) {
     var mathml by remember(target) { mutableStateOf(target.mathml) }
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                stringResource(
-                    R.string.chem_editor_cell_formula_title,
-                    target.row + 1,
-                    target.col + 1
-                )
-            )
-        },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                MathLiveEditor(
-                    initialLatex = mathMlToLatex(target.mathml),
-                    blockId = "cell-formula-$blockId-${target.row}-${target.col}",
-                    onMathMl = { _, value -> mathml = value }
-                )
-                Text(
-                    stringResource(R.string.tap_formula_to_edit),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onCommit(mathml) },
-                enabled = mathml.isNotBlank()
-            ) {
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+                .safeDrawingPadding()
+                .testTag("cell-formula-dialog-$blockId-${target.row}-${target.col}")
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Text(
                     stringResource(
-                        if (target.partIndex == null) R.string.chem_editor_cell_insert
-                        else R.string.chem_editor_cell_replace
-                    )
+                        R.string.chem_editor_cell_formula_title,
+                        target.row + 1,
+                        target.col + 1
+                    ),
+                    style = MaterialTheme.typography.titleMedium
                 )
+                Spacer(Modifier.height(8.dp))
+                BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // MathLive sizes its virtual keyboard from the page font.
+                    // A narrow phone needs a slightly smaller field font so all
+                    // key columns fit, but never below the user's own text
+                    // scale and never above the default: a low-vision user
+                    // keeps the larger formula where the width allows it.
+                    val narrow = maxWidth < 360.dp
+                    val userScale = com.mcqapp.util.FontScale.LocalScale.current
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        MathLiveEditor(
+                            initialLatex = mathMlToLatex(target.mathml),
+                            blockId = "cell-formula-$blockId-${target.row}-${target.col}",
+                            onMathMl = { _, value -> mathml = value },
+                            fontScaleOverride = if (narrow) minOf(userScale, 1.0f) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("cell-formula-editor-$blockId-${target.row}-${target.col}")
+                        )
+                        Text(
+                            stringResource(R.string.tap_formula_to_edit),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(
+                        onClick = { onCommit(mathml) },
+                        enabled = mathml.isNotBlank()
+                    ) {
+                        Text(
+                            stringResource(
+                                if (target.partIndex == null) R.string.chem_editor_cell_insert
+                                else R.string.chem_editor_cell_replace
+                            )
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
-    )
+    }
 }
 
 /** SMILES + optional handles for one cell; confirm stays disabled until valid. */

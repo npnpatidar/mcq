@@ -7,10 +7,8 @@
     <string name="app_name" translatable="false">MCQ App</string>
     <string name="add_block">Add block</string>
     <string name="add_category">Add category</string>
-    <string name="add_column">Add column</string>
     <string name="add_option">Add option</string>
     <string name="add_question">Add question</string>
-    <string name="add_row">Add row</string>
     <string name="all_categories">All categories</string>
     <string name="apply">Apply</string>
     <string name="auto_advance">Auto-advance</string>
@@ -232,8 +230,14 @@
     <string name="move_block_up_named">Move block %1$d up</string>
     <string name="move_block_down_named">Move block %1$d down</string>
     <string name="remove_block_named">Remove block %1$d</string>
-    <string name="remove_row_named">Remove row %1$d</string>
-    <string name="remove_column_named">Remove column %1$d</string>
+    <!-- Compact table size label: rows × columns. -->
+    <string name="table_dimensions">%1$d × %2$d</string>
+    <string name="table_add_row_named">Add row to table %1$d</string>
+    <string name="table_remove_row_named">Table %2$d: remove row %1$d</string>
+    <string name="table_add_column_named">Add column to table %1$d</string>
+    <string name="table_remove_column_named">Table %2$d: remove column %1$d</string>
+    <string name="table_cell_empty">Empty cell</string>
+    <string name="table_cell_chip_cd">Row %1$d, column %2$d, %3$s</string>
     <string name="table_cell_label">Row %1$d, column %2$d</string>
     <string name="tap_formula_to_edit">Tap the formula to edit it</string>
     <string name="new_question_title">New question</string>

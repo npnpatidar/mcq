@@ -82,6 +82,28 @@ class DocxTableCellRichTest {
         return out
     }
 
+    /** [bytes] with one zip entry's body passed through [transform]. */
+    private fun rewriteEntry(
+        bytes: ByteArray,
+        name: String,
+        transform: (ByteArray) -> ByteArray
+    ): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { input ->
+            java.util.zip.ZipOutputStream(out).use { output ->
+                var entry = input.nextEntry
+                while (entry != null) {
+                    output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                    val body = input.readBytes()
+                    output.write(if (entry.name == name) transform(body) else body)
+                    output.closeEntry()
+                    entry = input.nextEntry
+                }
+            }
+        }
+        return out.toByteArray()
+    }
+
     private fun documentXml(bytes: ByteArray): String =
         entries(bytes).getValue("word/document.xml").toString(Charsets.UTF_8)
 
@@ -206,6 +228,98 @@ class DocxTableCellRichTest {
         )
     }
 
+    /**
+     * `mathMlToOmml` refuses `msubsup` (and `mtable`, `mfenced`, …), so the
+     * writer prints its linear text. The canon must type that formula as text
+     * too; typing it `m:` made payload and visible disagree and dropped the
+     * payload's ids, marks, difficulty and tags on an untouched export.
+     */
+    @Test
+    fun anUnsupportedCellFormulaIsCanonicalisedAsItsVisibleText() {
+        val math = "<math><msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup></math>"
+        val cell = "x $math"
+        val rows = listOf(listOf(cell))
+        val paper = paper(rows)
+        val xml = entries(docxOf(paper)).getValue("word/document.xml").toString(Charsets.UTF_8)
+        parseXml(xml.toByteArray(Charsets.UTF_8), "document")
+        assertTrue("the linear text must be what Word holds: $xml", xml.contains(">xi2<"))
+        assertTrue("the prose before it survives: $xml", xml.contains(">x <"))
+        assertFalse("an unsupported formula is never OMML: $xml", xml.contains("<m:oMath>"))
+
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue(
+            "an untouched export must stay fresh: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = singleQuestion(parsed)
+        assertEquals(
+            "the payload cell must come back unchanged",
+            rows,
+            after.explanationElements.filterIsInstance<ContentElement.TableElement>().single().rows
+        )
+        assertEquals(
+            "an untouched export must not reset the card's schedule",
+            CardContent.of(paper.categories.single().questions.single()),
+            CardContent.of(after)
+        )
+    }
+
+    @Test
+    fun anUnsupportedBodyFormulaIsCanonicalisedAsItsVisibleText() {
+        val math = "<math><msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup></math>"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Find xi2",
+            elements = listOf(
+                ContentElement.TextElement("Find "),
+                ContentElement.MathElement(math)
+            ),
+            options = listOf(OptionDto(id = "a", text = "Alpha"), OptionDto(id = "b", text = "Beta")),
+            correctOptionIds = listOf("a"),
+            difficulty = "hard",
+            marks = 1.5,
+            tags = listOf("formula")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Body math",
+            categories = listOf(CategoryDto(id = "c1", title = "C", questions = listOf(q)))
+        )
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue(
+            "an untouched export must stay fresh: ${parsed.warnings}",
+            parsed.warnings.none { it.contains("hidden question data") }
+        )
+        val after = singleQuestion(parsed)
+        assertEquals(
+            "the payload keeps the formula it could not write as OMML",
+            listOf(math),
+            after.elements.filterIsInstance<ContentElement.MathElement>().map { it.mathml }
+        )
+        assertEquals("marks, difficulty and tags ride the payload", 1.5, after.marks, 0.0)
+        assertEquals("hard", after.difficulty)
+        assertEquals(listOf("formula"), after.tags)
+        assertEquals(CardContent.of(q), CardContent.of(after))
+    }
+
+    /** Supported formulas must keep their `m:` canon (mfrac/msup behaviour). */
+    @Test
+    fun onlyFormulasTheWriterCannotConvertAreCanonicalisedAsText() {
+        fun canon(inner: String) = canonCell("<math>$inner</math>")
+        assertTrue(
+            "a fraction stays math",
+            canon("<mfrac><mi>a</mi><mi>b</mi></mfrac>").startsWith("m:")
+        )
+        assertTrue(
+            "a superscript stays math",
+            canon("<msup><mi>x</mi><mn>2</mn></msup>").startsWith("m:")
+        )
+        assertTrue(
+            "msubsup is linearised by the writer, so it is text",
+            canon("<msubsup><mi>x</mi><mi>i</mi><mn>2</mn></msubsup>").startsWith("t:")
+        )
+    }
+
     @Test
     fun aMathSpaceInACellDoesNotSwallowTheNextAtom() {
         // MathLive writes `\,` as `<mspace width="0.5em"/>`. Re-emitting it as
@@ -267,20 +381,24 @@ class DocxTableCellRichTest {
         )
         assertEquals(cellMaxCx.toLong(), extents.max())
 
-        // The payload carries the cell picture as a compact descriptor only,
-        // and the structure's own data-png (its spec) legitimately stays.
+        // The payload carries the cell picture and the structure's raster as
+        // compact descriptors only; the bytes ride in word/media.
         val payload = payloadJson(files)
         assertTrue(
             "the image cell must keep a compact descriptor, not base64: $payload",
             payload.contains("mcqapp:img|data|image|png|base64|")
         )
         assertTrue(
-            "a structure's data-png is part of the cell spec and may stay",
-            payload.contains("data-png=\\\"")
+            "a structure's data-png must be a descriptor too: $payload",
+            payload.contains("data-png=\\\"mcqapp:img|data|image|png|base64|")
         )
         assertFalse(
             "the full picture bytes must not be in the hidden payload",
             payload.contains(pngDataUri(2000, 10).substringAfter(','))
+        )
+        assertFalse(
+            "the structure's raster must not be in the hidden payload",
+            payload.contains(pngDataUri(8, 8).substringAfter(','))
         )
     }
 
@@ -790,6 +908,66 @@ class DocxTableCellRichTest {
             "picture before structure: the picture keeps its own src",
             listOf(userSrc),
             cellSrcs(afterRows[0][1])
+        )
+    }
+
+    /**
+     * The hidden property carried each structure's whole captured raster,
+     * which inflated it and hit Word's 255-character custom-property
+     * truncation. The payload must hold only a compact descriptor and the
+     * graft must restore the exact bytes from the visible structure picture.
+     */
+    @Test
+    fun aStructureRasterTravelsAsADescriptorAndGraftsBackExactly() {
+        val chemSrc = pngDataUri(8, 8)
+        val rows = listOf(listOf(chemCellHtml(chem(diagram = chemSrc))))
+        val paper = paper(rows)
+        val payload = payloadJson(entries(docxOf(paper)))
+        assertTrue(
+            "the structure raster must be a compact descriptor: $payload",
+            payload.contains("data-png=\\\"mcqapp:img|data|image|png|base64|")
+        )
+        assertFalse(
+            "no raster bytes may stay in the hidden payload: $payload",
+            payload.contains(chemSrc.substringAfter(','))
+        )
+
+        val parsed = parseDocx(docxOf(paper))
+        assertTrue("an untouched export must stay fresh: ${parsed.warnings}", parsed.warnings.isEmpty())
+        val after = singleQuestion(parsed)
+        val afterRows = after.explanationElements
+            .filterIsInstance<ContentElement.TableElement>().single().rows
+        assertEquals("the marker must come back byte-identically", rows, afterRows)
+        assertEquals(CardContent.of(paper.categories.single().questions.single()), CardContent.of(after))
+    }
+
+    /**
+     * A picture replaced after export must be detected: the descriptor's hash
+     * no longer matches the visible bytes, so the graft refuses the payload and
+     * the visible structure (its handles and the new drawing) wins.
+     */
+    @Test
+    fun aModifiedStructurePictureIsDetectedAndTheVisibleStructureWins() {
+        val rows = listOf(listOf(chemCellHtml(chem(diagram = pngDataUri(8, 8)))))
+        val paper = paper(rows)
+        val bytes = docxOf(paper)
+        val media = entries(bytes).keys.single { it.startsWith("word/media/") }
+        val replacement = pngBytes(9, 9)
+        val tampered = rewriteEntry(bytes, media) { replacement }
+
+        val parsed = parseDocx(tampered)
+        assertTrue(
+            "a replaced structure picture must make the payload stale: ${parsed.warnings}",
+            parsed.warnings.any { it.contains("hidden question data") }
+        )
+        val after = singleQuestion(parsed)
+        val cell = after.explanationElements
+            .filterIsInstance<ContentElement.TableElement>().single().rows[0][0]
+        assertFalse("the stale marker must not be stored: $cell", cell.contains("mcq-chem-cell"))
+        assertEquals(
+            "the visible drawing is the truth",
+            listOf("data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(replacement)),
+            cellSrcs(cell)
         )
     }
 

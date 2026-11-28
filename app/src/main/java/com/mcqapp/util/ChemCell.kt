@@ -3,6 +3,7 @@ package com.mcqapp.util
 import com.mcqapp.data.decodeHtmlEntities
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
+import com.mcqapp.data.export.isImageSrcDescriptor
 import com.mcqapp.domain.CELL_MATH_PATTERN
 import com.mcqapp.domain.ContentElement
 
@@ -85,8 +86,18 @@ internal sealed interface CellSegment {
     /** Prose (or any inline markup that is not a chem marker), verbatim. */
     data class Text(val html: String) : CellSegment
 
-    /** One validated chem marker, rebuilt from its own fields only. */
-    data class Chem(val element: ContentElement.ChemElement) : CellSegment
+    /**
+     * One validated chem marker, rebuilt from its own fields only.
+     *
+     * [pngDescriptor] is the compact `mcqapp:img|…` stand-in the DOCX hidden
+     * payload carries instead of the raster, or null for a stored marker. It
+     * is never written to storage: the DOCX graft resolves it against the
+     * visible picture and restores the marker's `data-png` bytes.
+     */
+    data class Chem(
+        val element: ContentElement.ChemElement,
+        val pngDescriptor: String? = null
+    ) : CellSegment
 }
 
 /**
@@ -131,7 +142,16 @@ private fun attribute(sb: StringBuilder, name: String, value: String) {
 internal data class CellChemSpan(
     val start: Int,
     val end: Int,
-    val element: ContentElement.ChemElement
+    val element: ContentElement.ChemElement,
+    /**
+     * The compact `mcqapp:img|…` descriptor the DOCX payload carries in
+     * `data-png` in place of the raster, or null.
+     */
+    val pngDescriptor: String? = null,
+    /** Offset of the `data-png` value in the cell, or -1 when there is none. */
+    val pngValueStart: Int = -1,
+    /** Offset just past the `data-png` value, or -1 when there is none. */
+    val pngValueEnd: Int = -1
 )
 
 /**
@@ -141,6 +161,11 @@ internal data class CellChemSpan(
  * count as a picture slot. Pure JVM; the DOCX graft uses this to align picture
  * positions without substring search (a degraded marker's rebuilt text is not
  * a substring of the payload).
+ *
+ * [CellChemSpan.pngDescriptor] reports a DOCX payload's descriptor instead of
+ * a raster, and [CellChemSpan.pngValueStart] / [CellChemSpan.pngValueEnd] the
+ * attribute value it replaced, so a graft can put the exact bytes back without
+ * rewriting the rest of the marker.
  */
 internal fun cellChemSpans(cell: String, withPng: Boolean = true): List<CellChemSpan> {
     if (!cell.contains(CELL_CHEM_CLASS)) return emptyList()
@@ -148,7 +173,8 @@ internal fun cellChemSpans(cell: String, withPng: Boolean = true): List<CellChem
     val spans = mutableListOf<CellChemSpan>()
     var protectedIndex = 0
     for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
-        val element = parseChemSpan(match.groupValues[1], withPng) ?: continue
+        val attributesStart = match.groups[1]?.range?.first ?: continue
+        val parsed = parseChemSpan(match.groupValues[1], withPng, attributesStart) ?: continue
         val start = match.range.first
         while (protectedIndex < protected.size && protected[protectedIndex].last < start) {
             protectedIndex++
@@ -157,7 +183,14 @@ internal fun cellChemSpans(cell: String, withPng: Boolean = true): List<CellChem
             start > protected[protectedIndex].first &&
             start <= protected[protectedIndex].last
         if (insideProtected) continue
-        spans += CellChemSpan(start, match.range.last + 1, element)
+        spans += CellChemSpan(
+            start = start,
+            end = match.range.last + 1,
+            element = parsed.element,
+            pngDescriptor = parsed.pngDescriptor,
+            pngValueStart = parsed.pngValueStart,
+            pngValueEnd = parsed.pngValueEnd
+        )
     }
     return spans
 }
@@ -191,7 +224,8 @@ internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
     var pos = 0
     var protectedIndex = 0
     for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
-        val element = parseChemSpan(match.groupValues[1], withPng) ?: continue
+        val attributesStart = match.groups[1]?.range?.first ?: continue
+        val parsed = parseChemSpan(match.groupValues[1], withPng, attributesStart) ?: continue
         val start = match.range.first
         while (protectedIndex < protected.size && protected[protectedIndex].last < start) {
             protectedIndex++
@@ -201,7 +235,7 @@ internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
             start <= protected[protectedIndex].last
         if (insideProtected) {
             text.append(cell, pos, start)
-                .append(escapeHtmlText(chemElementText(element)))
+                .append(escapeHtmlText(chemElementText(parsed.element)))
             pos = match.range.last + 1
             continue
         }
@@ -210,7 +244,7 @@ internal fun cellSegments(cell: String, withPng: Boolean): List<CellSegment> {
             parts += CellSegment.Text(text.toString())
             text.clear()
         }
-        parts += CellSegment.Chem(element)
+        parts += CellSegment.Chem(parsed.element, parsed.pngDescriptor)
         pos = match.range.last + 1
     }
     if (pos < cell.length) text.append(cell, pos, cell.length)
@@ -319,28 +353,50 @@ internal fun sanitizeCellChem(cell: String): String =
  * may not be blank after entity decoding. An invalid `data-png` is dropped
  * rather than rejecting the whole structure: the text handles still describe
  * it, and no writer may embed a non-PNG payload.
+ *
+ * [attributesStart] is the absolute index of the attribute region in the
+ * cell, so the returned `data-png` offsets can address the value directly.
  */
 private fun parseChemSpan(
     attributes: String,
-    withPng: Boolean
-): ContentElement.ChemElement? {
-    val attrs = parseCellChemAttributes(attributes) ?: return null
-    if (!hasCellChemClass(attrs["class"])) return null
-    val smiles = decodeHtmlEntities(attrs[CELL_CHEM_ATTR] ?: return null)
+    withPng: Boolean,
+    attributesStart: Int
+): ParsedChemSpan? {
+    val attrs = parseCellChemAttributes(attributes, attributesStart) ?: return null
+    if (!hasCellChemClass(attrs["class"]?.value)) return null
+    val smiles = decodeHtmlEntities(attrs[CELL_CHEM_ATTR]?.value ?: return null)
     if (smiles.isBlank()) return null
+    val png = attrs["data-png"]
     val diagram = if (withPng) {
-        attrs["data-png"]?.let { cellPngDiagram(it) }.orEmpty()
+        png?.value?.let { cellPngDiagram(it) }.orEmpty()
     } else {
         ""
     }
-    return ContentElement.ChemElement(
+    val element = ContentElement.ChemElement(
         smiles = smiles,
-        formula = decodeHtmlEntities(attrs["data-formula"].orEmpty()),
-        caption = decodeHtmlEntities(attrs["data-caption"].orEmpty()),
-        spoken = decodeHtmlEntities(attrs["data-spoken"].orEmpty()),
+        formula = decodeHtmlEntities(attrs["data-formula"]?.value.orEmpty()),
+        caption = decodeHtmlEntities(attrs["data-caption"]?.value.orEmpty()),
+        spoken = decodeHtmlEntities(attrs["data-spoken"]?.value.orEmpty()),
         diagram = diagram
     )
+    return ParsedChemSpan(
+        element = element,
+        // A descriptor is DOCX payload metadata, not a raster: it is reported
+        // beside the element so the cell grammar's normal consumers still see
+        // a structure with no drawable diagram.
+        pngDescriptor = png?.value?.takeIf(::isImageSrcDescriptor),
+        pngValueStart = png?.valueStart ?: -1,
+        pngValueEnd = png?.valueEnd ?: -1
+    )
 }
+
+/** One validated marker and where its `data-png` value sits in the cell. */
+private class ParsedChemSpan(
+    val element: ContentElement.ChemElement,
+    val pngDescriptor: String?,
+    val pngValueStart: Int,
+    val pngValueEnd: Int
+)
 
 /** The class attribute lists [CELL_CHEM_CLASS] as one of its whitespace-separated tokens. */
 private fun hasCellChemClass(value: String?): Boolean {
@@ -355,14 +411,27 @@ private fun hasCellChemClass(value: String?): Boolean {
     return false
 }
 
+/** One validated attribute: its raw value and where that value sits in the cell. */
+private class CellChemAttribute(
+    val value: String,
+    val valueStart: Int,
+    val valueEnd: Int
+)
+
 /**
- * The span's attribute region as name → raw value, or null when anything is
+ * The span's attribute region as name → attribute, or null when anything is
  * unfamiliar: an unknown name, a duplicate, a missing `=`, an unquoted value or
  * trailing junk. Strictness is the point — a marker is rebuilt, never copied.
+ *
+ * [offset] is the absolute index of [text][0] in the cell; each attribute's
+ * value offsets are returned in cell coordinates.
  */
-private fun parseCellChemAttributes(text: String): Map<String, String>? {
+private fun parseCellChemAttributes(
+    text: String,
+    offset: Int
+): Map<String, CellChemAttribute>? {
     if (text.isBlank()) return null
-    val attrs = LinkedHashMap<String, String>()
+    val attrs = LinkedHashMap<String, CellChemAttribute>()
     var pos = 0
     while (pos < text.length) {
         while (pos < text.length && text[pos].isWhitespace()) pos++
@@ -384,7 +453,8 @@ private fun parseCellChemAttributes(text: String): Map<String, String>? {
         while (valueEnd < text.length && text[valueEnd] != quote) valueEnd++
         if (valueEnd >= text.length) return null
         val value = text.substring(valueStart, valueEnd)
-        if (attrs.put(name, value) != null) return null
+        val attribute = CellChemAttribute(value, offset + valueStart, offset + valueEnd)
+        if (attrs.put(name, attribute) != null) return null
         pos = valueEnd + 1
         if (pos < text.length && !text[pos].isWhitespace()) return null
     }

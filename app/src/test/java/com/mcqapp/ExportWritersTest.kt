@@ -391,6 +391,80 @@ class ExportWritersTest {
         }
     }
 
+    /**
+     * The shared cell grammar also holds pictures: the writer remapped only
+     * top-level ImageElements, so a cell `<img>` and a structure's captured
+     * `data-png` stayed inline base64 in paper.json and never reached
+     * `images/`, contradicting the format's own promise.
+     */
+    @Test
+    fun zipMovesRichCellPicturesAndStructureRastersIntoTheFolder() {
+        val cellImageBytes = ByteArray(16) { (it + 1).toByte() }
+        val cellImageSrc = dataUri("image/png", cellImageBytes)
+        val structure = ContentElement.ChemElement(
+            smiles = "CCO",
+            formula = "C2H5OH",
+            caption = "ethanol",
+            diagram = cellPng
+        )
+        val formula = "<math><mi>x</mi><msup><mi>y</mi><mn>2</mn></msup></math>"
+        val richCell = "Text <b>bold</b> $formula " +
+            com.mcqapp.util.cellImageTag(cellImageSrc) + " " +
+            com.mcqapp.util.chemCellHtml(structure)
+        val remote = "https://example.com/remote.png"
+        val svg = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
+        val plainCell = "remote <img src=\"$remote\"> svg <img src=\"$svg\">"
+        val q = QuestionDto(
+            id = "q1",
+            text = "Look at the table?",
+            elements = listOf(
+                ContentElement.TableElement(listOf(listOf(richCell, plainCell)))
+            ),
+            options = listOf(OptionDto(id = "a", text = "Yes")),
+            correctOptionIds = listOf("a")
+        )
+        val paper = PaperDto(
+            id = "p1",
+            title = "Rich cells",
+            categories = listOf(CategoryDto(id = "c1", title = "Cat", questions = listOf(q)))
+        )
+
+        val entries = unzip(zipOf(paper))
+        val json = entries.getValue("paper.json").toString(Charsets.UTF_8)
+        val images = entries.filterKeys { it.startsWith("images/") }
+
+        assertEquals("one entry per distinct embedded picture", 2, images.size)
+        assertTrue(
+            "the cell picture's bytes must reach images/: $json",
+            images.values.any { it.contentEquals(cellImageBytes) }
+        )
+        assertTrue(
+            "the structure raster's bytes must reach images/",
+            images.values.any { it.contentEquals(cellPngBytes) }
+        )
+        val paths = Regex("images/img\\d{3}\\.png").findAll(json).map { it.value }.toSet()
+        assertEquals("each picture is referred to by its own relative path", 2, paths.size)
+        assertTrue(
+            "the cell <img> must point at a file: $json",
+            json.contains("src=\\\"images/")
+        )
+        assertTrue(
+            "the structure data-png must point at a file: $json",
+            json.contains("data-png=\\\"images/")
+        )
+        assertFalse(
+            "no portable base64 may stay in paper.json: $json",
+            json.contains("data:image/png;base64")
+        )
+        assertFalse(
+            "no captured raster bytes may stay in paper.json: $json",
+            json.contains(cellPngBytes.let { java.util.Base64.getEncoder().encodeToString(it) })
+        )
+        assertTrue("a formula is text, not an image", json.contains(formula))
+        assertTrue("a remote source is left untouched", json.contains(remote))
+        assertTrue("a non-portable data source is left untouched", json.contains(svg))
+    }
+
     @Test
     fun zipKeepsRemoteUrlsUntouched() {
         val bytes = zipOf(

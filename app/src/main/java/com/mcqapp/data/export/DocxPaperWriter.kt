@@ -19,6 +19,7 @@ import com.mcqapp.util.CELL_IMAGE_ALT
 import com.mcqapp.util.CELL_IMAGE_MARKER
 import com.mcqapp.util.CellSegment
 import com.mcqapp.util.Logger
+import com.mcqapp.util.cellChemSpans
 import com.mcqapp.util.cellSegments
 import com.mcqapp.util.forEachCellImageSpan
 import com.mcqapp.util.imgTagSrc
@@ -367,6 +368,13 @@ object DocxPaperWriter {
      * round-trips byte-identically instead of being rewritten to the app's
      * canonical form.
      *
+     * A structure's `mcq-chem-cell` raster is treated the same way: its
+     * `data-png` value becomes a descriptor instead of the full base64, and the
+     * parser restores the exact payload from the visible structure picture.
+     * Without this the property carried every structure's captured raster and
+     * a rich paper inflated `docProps/custom.xml` until Word's 255-character
+     * custom-property truncation mangled it.
+     *
      * A complete tag the body cannot embed stays exactly as the payload had it
      * — an SVG/BMP or otherwise non-portable `data:` source, a remote URL, a
      * `file:` reference, an empty `src` or a tag with no readable source. The
@@ -380,34 +388,48 @@ object DocxPaperWriter {
      * half a payload and can never become property text.
      */
     private fun stripCellImages(cell: String): String {
-        if (!cell.contains("<img", ignoreCase = true)) return cell
-        var out: StringBuilder? = null
-        var pos = 0
+        val replacements = mutableListOf<Triple<Int, Int, String>>()
+        // A structure's captured raster is a picture too. Its `data-png` is a
+        // bare payload, so the descriptor's exact header/padding/tail and hash
+        // are all the payload needs; graft verifies the hash before putting
+        // the bytes back.
+        for (span in cellChemSpans(cell)) {
+            if (span.pngDescriptor != null) continue // already compact
+            if (!isPngDataUri(span.element.diagram)) continue
+            if (span.pngValueStart < 0 || span.pngValueEnd <= span.pngValueStart) continue
+            val descriptor = imageSrcDescriptor(span.element.diagram) ?: continue
+            replacements += Triple(span.pngValueStart, span.pngValueEnd, descriptor)
+        }
         forEachCellImageSpan(cell) { tag, start, end ->
-            val replacement = when {
-                tag == null -> ""
-                else -> {
-                    val src = docxCellImageSrc(tag)
-                    val descriptor = src
-                        ?.takeIf { portableCellImageSrc(it) }
-                        ?.let(::imageSrcDescriptor)
-                    if (descriptor != null) {
-                        // Fail closed if the readers diverge: never leave a
-                        // descriptor in a stored cell. Dropping the tag makes
-                        // the payload stale, so the visible side wins instead.
-                        withDocxCellImageSrc(tag, descriptor) ?: ""
-                    } else {
-                        null
-                    }
+            val replacement = if (tag == null) {
+                ""
+            } else {
+                val src = docxCellImageSrc(tag)
+                val descriptor = src
+                    ?.takeIf { portableCellImageSrc(it) }
+                    ?.let(::imageSrcDescriptor)
+                if (descriptor != null) {
+                    // Fail closed if the readers diverge: never leave a
+                    // descriptor in a stored cell. Dropping the tag makes
+                    // the payload stale, so the visible side wins instead.
+                    withDocxCellImageSrc(tag, descriptor) ?: ""
+                } else {
+                    null
                 }
             }
-            if (replacement != null) {
-                val sb = out ?: StringBuilder(cell.length).also { out = it }
-                sb.append(cell, pos, start).append(replacement)
-                pos = end
-            }
+            if (replacement != null) replacements += Triple(start, end, replacement)
         }
-        val sb = out ?: return cell
+        if (replacements.isEmpty()) return cell
+        replacements.sortBy { it.first }
+        val sb = StringBuilder(cell.length)
+        var pos = 0
+        for ((start, end, text) in replacements) {
+            // Defensive: the scanners cannot overlap, but a malformed cell
+            // must never make this copy a range twice.
+            if (start < pos) continue
+            sb.append(cell, pos, start).append(text)
+            pos = end
+        }
         sb.append(cell, pos, cell.length)
         return sb.toString()
     }

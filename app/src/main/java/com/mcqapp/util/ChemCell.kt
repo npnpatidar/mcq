@@ -110,6 +110,41 @@ private fun attribute(sb: StringBuilder, name: String, value: String) {
         .append(escapeHtmlText(value)).append('"')
 }
 
+/** One valid top-level chem marker and the span it occupies in a cell. */
+internal data class CellChemSpan(
+    val start: Int,
+    val end: Int,
+    val element: ContentElement.ChemElement
+)
+
+/**
+ * Every valid top-level chem marker in [cell] with its exact offsets, in
+ * storage order. A marker inside a [protectedRanges] region is skipped: the
+ * writer degrades it to handles in place and never draws it, so it must not
+ * count as a picture slot. Pure JVM; the DOCX graft uses this to align picture
+ * positions without substring search (a degraded marker's rebuilt text is not
+ * a substring of the payload).
+ */
+internal fun cellChemSpans(cell: String, withPng: Boolean = true): List<CellChemSpan> {
+    if (!cell.contains(CELL_CHEM_CLASS)) return emptyList()
+    val protected = protectedRanges(cell)
+    val spans = mutableListOf<CellChemSpan>()
+    var protectedIndex = 0
+    for (match in CELL_CHEM_SPAN_PATTERN.findAll(cell)) {
+        val element = parseChemSpan(match.groupValues[1], withPng) ?: continue
+        val start = match.range.first
+        while (protectedIndex < protected.size && protected[protectedIndex].last < start) {
+            protectedIndex++
+        }
+        val insideProtected = protectedIndex < protected.size &&
+            start > protected[protectedIndex].first &&
+            start <= protected[protectedIndex].last
+        if (insideProtected) continue
+        spans += CellChemSpan(start, match.range.last + 1, element)
+    }
+    return spans
+}
+
 /**
  * Every chem marker in [cell], in storage order, with the text between them.
  * Empty markers are ignored; the cell is returned as one [CellSegment.Text]

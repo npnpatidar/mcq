@@ -12,8 +12,17 @@ import com.mcqapp.data.io.PaperDto
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.McqFileDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.CellPart
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.domain.tableCellParts
+import com.mcqapp.util.CELL_IMAGE_ALT
+import com.mcqapp.util.CELL_IMAGE_MARKER
+import com.mcqapp.util.CellSegment
 import com.mcqapp.util.Logger
+import com.mcqapp.util.cellSegments
+import com.mcqapp.util.forEachCellImageSpan
+import com.mcqapp.util.imgTagSrc
+import com.mcqapp.util.portableCellImageSrc
 import kotlinx.serialization.json.Json
 import java.io.Closeable
 import java.io.OutputStream
@@ -85,14 +94,17 @@ object DocxPaperWriter {
 
                 // The hidden payload: the full paper DTO as a custom document
                 // property. It is invisible in Word (File > Info > Advanced
-                // Properties aside) and survives Word's own saves, so a file the
-                // app wrote and nobody edited re-imports with ids, marks,
-                // difficulty and tags intact instead of duplicating everything the
-                // visible markers cannot carry. The parser falls back to the
-                // markers when the payload no longer matches the visible text,
-                // and grafts the image srcs back from the word/media entries the
-                // payload deliberately does not duplicate. It is streamed with the
-                // same writer the JSON export uses, with the images blanked.
+                // Properties aside), so a file the app wrote and nobody edited
+                // re-imports with ids, marks, difficulty and tags intact instead
+                // of duplicating everything the visible markers cannot carry.
+                // Word truncates a custom-property string at 255 UTF-16 chars
+                // when it saves the document itself, so the payload is trusted
+                // only while it matches the visible body; the parser falls back
+                // to the markers when it does not. Image bytes are replaced by
+                // compact descriptors (header + padding + SHA-256) because the
+                // pictures already ride in `word/media`; that keeps the property
+                // small and lets the parser restore the exact stored src.
+                // It is streamed with the same writer the JSON export uses.
                 zip.putNextEntry(ZipEntry("docProps/custom.xml"))
                 val props = OutputStreamWriter(zip, Charsets.UTF_8)
                 props.append(customPropsHead())
@@ -310,7 +322,7 @@ object DocxPaperWriter {
             }
             val stripped = stripElementImages(base)
             val elements = if (
-                option.image != null && option.image.startsWith("data:") &&
+                option.image != null && option.image.startsWith("data:", ignoreCase = true) &&
                 base.any { it is ContentElement.ImageElement }
             ) {
                 stripped + ContentElement.ImageElement("")
@@ -324,21 +336,81 @@ object DocxPaperWriter {
     )
 
     /**
-     * Only embedded data URIs are blanked: a remote URL is a short string
-     * the payload can keep as-is (the body cannot carry it, so the graft
-     * leaves it alone), while base64 bytes are what bloats the property.
+     * A portable data URI is replaced by a compact descriptor (see
+     * [imageSrcDescriptor]). A non-portable data URI keeps the old top-level
+     * behaviour (blanked and grafted from the body); a remote URL stays as the
+     * payload had it. Cell pictures use [stripCellImages] instead, which keeps
+     * a non-embeddable data tag verbatim for an exact round trip.
      */
     private fun stripScalarSrc(src: String): String =
-        if (src.startsWith("data:")) "" else src
+        imageSrcDescriptor(src)
+            ?: if (src.startsWith("data:", ignoreCase = true)) "" else src
 
     private fun stripElementImages(elements: List<ContentElement>): List<ContentElement> =
         elements.map { element ->
-            if (element is ContentElement.ImageElement) {
-                element.copy(src = stripScalarSrc(element.src))
-            } else {
-                element
+            when (element) {
+                is ContentElement.ImageElement ->
+                    element.copy(src = stripScalarSrc(element.src))
+                is ContentElement.TableElement ->
+                    element.copy(rows = element.rows.map { row -> row.map(::stripCellImages) })
+                else -> element
             }
         }
+
+    /**
+     * Cell pictures are replaced by the same compact descriptor as an
+     * element's src: the bytes already ride in `word/media`, so the hidden
+     * property keeps only the exact header (MIME alias/case and `;base64`
+     * casing), the original base64 padding and a SHA-256 of the decoded bytes.
+     * The tag's own `style`/`alt` are kept verbatim, and the parser rebuilds
+     * the stored src from the visible picture, so a hand-written tag
+     * round-trips byte-identically instead of being rewritten to the app's
+     * canonical form.
+     *
+     * A complete tag the body cannot embed stays exactly as the payload had it
+     * — an SVG/BMP or otherwise non-portable `data:` source, a remote URL, a
+     * `file:` reference, an empty `src` or a tag with no readable source. The
+     * visible cell prints `[image]` for a non-embeddable `data:` source (the
+     * freshness canon maps it back to that text), so the stored cell is not
+     * changed. Such a tag is payload-only and never becomes a media entry; it
+     * is kept verbatim regardless of size because exactness is the contract
+     * (the portable cell-image cap only covers cell pictures the app embeds).
+     * If JSON-imported SVGs prove large in practice, cap this and accept the
+     * schedule reset. A torn `<img` fragment is still removed: it can carry
+     * half a payload and can never become property text.
+     */
+    private fun stripCellImages(cell: String): String {
+        if (!cell.contains("<img", ignoreCase = true)) return cell
+        var out: StringBuilder? = null
+        var pos = 0
+        forEachCellImageSpan(cell) { tag, start, end ->
+            val replacement = when {
+                tag == null -> ""
+                else -> {
+                    val src = docxCellImageSrc(tag)
+                    val descriptor = src
+                        ?.takeIf { portableCellImageSrc(it) }
+                        ?.let(::imageSrcDescriptor)
+                    if (descriptor != null) {
+                        // Fail closed if the readers diverge: never leave a
+                        // descriptor in a stored cell. Dropping the tag makes
+                        // the payload stale, so the visible side wins instead.
+                        withDocxCellImageSrc(tag, descriptor) ?: ""
+                    } else {
+                        null
+                    }
+                }
+            }
+            if (replacement != null) {
+                val sb = out ?: StringBuilder(cell.length).also { out = it }
+                sb.append(cell, pos, start).append(replacement)
+                pos = end
+            }
+        }
+        val sb = out ?: return cell
+        sb.append(cell, pos, cell.length)
+        return sb.toString()
+    }
 
     private fun questionBlocks(
         question: QuestionDto,
@@ -549,7 +621,7 @@ object DocxPaperWriter {
                     }
                 }
                 is ContentElement.ImageElement ->
-                    media.embed(element.src, warnings)?.let {
+                    media.embedPortable(element.src, warnings)?.let {
                         items.add(it.copy(breaksParagraph = !flowsInline))
                     }
                 is ContentElement.TableElement -> items.add(Tbl(element.rows))
@@ -564,14 +636,18 @@ object DocxPaperWriter {
                         items.add(Runs(inlineRuns(text), breaksParagraph = !flowsInline))
                     }
                     if (isPngDataUri(element.diagram)) {
-                        media.embed(element.diagram, warnings)?.let {
+                        media.embedPortable(element.diagram, warnings)?.let {
                             items.add(it.copy(breaksParagraph = !flowsInline))
                         }
                     }
                 }
             }
         }
-        media.embed(legacyImage, warnings)?.let {
+        // The scalar channel uses the same portability normalisation as the
+        // element channel: an uppercase `DATA:` portable src must be lowercased
+        // for `parseDataUri`, or it is not embedded and the freshness canon sees
+        // a picture the body does not.
+        media.embedPortable(legacyImage, warnings)?.let {
             items.add(it.copy(breaksParagraph = !flowsInline))
         }
 
@@ -613,7 +689,7 @@ object DocxPaperWriter {
                     // re-consumes it — and had it ever fired it would have
                     // emitted the marker paragraph TWICE.
                     flush()
-                    out.add(tableXml(item.rows))
+                    out.add(tableXml(item.rows, media, warnings))
                 }
             }
         }
@@ -624,7 +700,11 @@ object DocxPaperWriter {
         return out
     }
 
-    private fun tableXml(rows: List<List<String>>): String {
+    private fun tableXml(
+        rows: List<List<String>>,
+        media: MediaPool,
+        warnings: MutableList<String>
+    ): String {
         // Auto layout: Word and LibreOffice size columns to their content,
         // so a two-word table does not stretch across the page. The grid
         // widths are only hints; the borders cover the inner lines too —
@@ -632,6 +712,11 @@ object DocxPaperWriter {
         val hint = 9360
         val cols = maxOf(1, rows.maxOfOrNull { it.size } ?: 1)
         val colWidth = hint / cols
+        // A cell picture is clamped to its column: Word does not scale a
+        // picture that overflows the cell, it silently clips it. The 240 twips
+        // of padding match the writer's cell margins; 635 EMU is one twip.
+        val cellMaxCx = ((colWidth - 240).coerceAtLeast(1)) * 635
+        val warnedChem = HashSet<String>()
         val border = { tag: String ->
             "<w:$tag w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"
         }
@@ -649,19 +734,118 @@ object DocxPaperWriter {
             for (c in 0 until cols) {
                 val cell = row.getOrElse(c) { "" }
                 sb.append("<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>")
-                // Cells carry the same inline markup as body text: one
-                // escaped <w:t> rendered every tag literally in Word. Pictures
-                // and formulas collapse to a marker — the cell model is text
-                // runs only (consolidated_bugs.md G6).
-                val builder = ParaBuilder()
-                builder.add(inlineRuns(com.mcqapp.util.sanitizeTableCell(cell)))
-                sb.append(builder.build() ?: "<w:p/>")
+                sb.append(
+                    cellParagraphXml(cell, media, warnings, cellMaxCx, warnedChem)
+                        ?: "<w:p/>"
+                )
                 sb.append("</w:tc>")
             }
             sb.append("</w:tr>")
         }
         sb.append("</w:tbl>")
         return sb.toString()
+    }
+
+    /**
+     * One table cell as a single paragraph: prose through the same inline
+     * pipeline as body text, a formula as inline OMML (with the linear
+     * fallback the body uses), a portable picture as a real `word/media`
+     * drawing clamped to the column, and a chemical structure as its readable
+     * handles plus its captured PNG when one is valid.
+     *
+     * A picture or formula never becomes the literal `[image]`/`[formula]`
+     * marker here: those belong to text-only surfaces. A non-portable picture
+     * source (remote, `file:`, SVG, broken base64) is dropped, exactly as the
+     * body drops an unembeddable element picture; the freshness canon ignores
+     * it on both sides, so an untouched export still reads as fresh.
+     *
+     * [warnedChem] keeps the "no diagram" warning to one per distinct
+     * structure in one table instead of one per row.
+     */
+    private fun cellParagraphXml(
+        cell: String,
+        media: MediaPool,
+        warnings: MutableList<String>,
+        maxCx: Int,
+        warnedChem: MutableSet<String>
+    ): String? {
+        val builder = ParaBuilder()
+        for (segment in cellSegments(cell)) {
+            when (segment) {
+                is CellSegment.Chem -> {
+                    val handles = chemElementText(segment.element)
+                    if (handles.isNotBlank()) builder.add(inlineRuns(handles))
+                    if (isPngDataUri(segment.element.diagram)) {
+                        media.embedPortable(
+                            segment.element.diagram,
+                            warnings,
+                            maxCx,
+                            chemAccessibleText(segment.element)
+                        )?.let(builder::addPicture)
+                    } else if (handles.isNotBlank() && warnedChem.add(handles)) {
+                        warnings.add(
+                            "A table structure had no diagram and was printed as text — " +
+                                "its drawing is only in the app."
+                        )
+                    }
+                }
+                is CellSegment.Text -> for (part in tableCellParts(segment.html)) {
+                    when (part) {
+                        is CellPart.Math -> {
+                            val omml = mathMlToOmml(part.mathml)
+                            if (omml != null) {
+                                builder.addMath(omml)
+                            } else {
+                                warnings.add(
+                                    "An equation uses constructs Word export does not support " +
+                                        "and was kept as plain text — check it after re-import."
+                                )
+                                builder.add(
+                                    inlineRuns(mathMlLinearText(part.mathml))
+                                )
+                            }
+                        }
+                        is CellPart.Text ->
+                            addCellProse(builder, part.html, media, warnings, maxCx)
+                    }
+                }
+            }
+        }
+        return builder.build()
+    }
+
+    /** One prose run of a cell: inline markup plus every picture tag in order. */
+    private fun addCellProse(
+        builder: ParaBuilder,
+        html: String,
+        media: MediaPool,
+        warnings: MutableList<String>,
+        maxCx: Int
+    ) {
+        var pos = 0
+        forEachDocxCellImage(html) { tag, src, start, end ->
+            if (start > pos) builder.add(inlineRuns(html.substring(pos, start)))
+            when {
+                src != null && portableCellImageSrc(src) ->
+                    media.embedPortable(src, warnings, maxCx, CELL_IMAGE_ALT)
+                        ?.let(builder::addPicture)
+                // A non-embeddable data URI is kept in the payload for an exact
+                // round trip; the visible document says a picture was there and
+                // never prints its bytes.
+                tag != null && imgTagSrc(tag)?.startsWith("data:", ignoreCase = true) == true ->
+                    builder.add(inlineRuns(CELL_IMAGE_MARKER))
+                // A stored src the body cannot embed (remote, file:) is left
+                // out like a top-level one; an empty or descriptor src is not
+                // a picture to warn about.
+                src != null && src.isNotEmpty() && !isImageSrcDescriptor(src) ->
+                    warnings.add(
+                        "An image that is not embedded (e.g. a remote URL) was left out — " +
+                            "Word documents carry their pictures as files."
+                    )
+            }
+            pos = end
+        }
+        if (pos < html.length) builder.add(inlineRuns(html.substring(pos)))
     }
 
     // ------------------------------------------------------------------
@@ -876,7 +1060,12 @@ object DocxPaperWriter {
         private var warnedWebp = false
 
         /** Inline picture item for a data URI, or null (with a warning). */
-        fun embed(src: String?, warnings: MutableList<String>): Pic? {
+        fun embed(
+            src: String?,
+            warnings: MutableList<String>,
+            maxCx: Int = MAX_CX,
+            alt: String = ""
+        ): Pic? {
             if (src == null) return null
             val image = parseDataUri(src)
             if (image == null) {
@@ -904,8 +1093,8 @@ object DocxPaperWriter {
                 rid
             }
             val (w, h) = imageDimensions(image.bytes) ?: (320 to 240)
-            val (cx, cy) = emuExtent(w, h)
-            return Pic(rid, cx, cy, ++docPrCounter)
+            val (cx, cy) = emuExtent(w, h, maxCx)
+            return Pic(rid, cx, cy, ++docPrCounter, alt = alt)
         }
 
         fun copyTo(target: String, out: OutputStream) = spool.copyTo(target, out)
@@ -913,10 +1102,44 @@ object DocxPaperWriter {
         override fun close() = spool.close()
     }
 
-    private fun drawingXml(pic: Pic): String =
-        "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">" +
+    /**
+     * The one embed channel for element, scalar, chem and cell pictures: any
+     * `data:` URI gets its scheme lowercased for `parseDataUri` (which is
+     * case-sensitive), not only the portable picture types. Using the same
+     * helper everywhere is what keeps an uppercase `DATA:` scalar from being
+     * counted by the canon but missed by the body.
+     *
+     * Inherited consequence for a *non-portable* body source: an uppercase
+     * `DATA:image/svg+xml` is embedded as its bytes under a `.jpg` entry (the
+     * extension fallback), and the visible reader returns `data:image/jpeg`.
+     * The scalar src therefore changes and the schedule resets — but the
+     * export stays fresh and no picture/metadata is lost. Cell SVG/BMP is
+     * different: it is never embedded, stays verbatim in the payload, and
+     * round-trips exactly.
+     */
+    private fun MediaPool.embedPortable(
+        src: String?,
+        warnings: MutableList<String>,
+        maxCx: Int = MAX_CX,
+        alt: String = ""
+    ): Pic? = embed(
+        src?.let { if (it.startsWith("data:", ignoreCase = true)) docxEmbedSrc(it) else it },
+        warnings,
+        maxCx,
+        alt
+    )
+
+    private fun drawingXml(pic: Pic): String {
+        val descr = if (pic.alt.isNotBlank()) {
+            // Attribute value, not text content: a quote in the spoken label
+            // must be escaped too.
+            " descr=\"" + escapeXmlText(pic.alt).replace("\"", "&quot;") + "\""
+        } else {
+            ""
+        }
+        return "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">" +
             "<wp:extent cx=\"${pic.cx}\" cy=\"${pic.cy}\"/>" +
-            "<wp:docPr id=\"${pic.docPrId}\" name=\"Picture ${pic.docPrId}\"/>" +
+            "<wp:docPr id=\"${pic.docPrId}\" name=\"Picture ${pic.docPrId}\"$descr/>" +
             "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">" +
             "<pic:pic>" +
             "<pic:nvPicPr><pic:cNvPr id=\"${pic.docPrId}\" name=\"image${pic.docPrId}\"/>" +
@@ -925,12 +1148,14 @@ object DocxPaperWriter {
             "<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"${pic.cx}\" cy=\"${pic.cy}\"/></a:xfrm>" +
             "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr>" +
             "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+    }
 
     private data class Pic(
         val rid: String,
         val cx: Int,
         val cy: Int,
         val docPrId: Int,
+        val alt: String = "",
         val breaksParagraph: Boolean = false
     ) : FieldItem
 
@@ -949,12 +1174,13 @@ object DocxPaperWriter {
      * bound stays where it is: its job is rejecting corrupt headers, not an
      * extra sizing knob.
      */
-    internal fun emuExtent(w: Int, h: Int): Pair<Int, Int> {
+    internal fun emuExtent(w: Int, h: Int, maxCx: Int = MAX_CX): Pair<Int, Int> {
         var cx = w.toLong() * EMU_PER_PX
         var cy = h.toLong() * EMU_PER_PX
-        if (cx > MAX_CX) {
-            cy = cy * MAX_CX / cx
-            cx = MAX_CX.toLong()
+        val limit = maxCx.coerceAtLeast(1).toLong()
+        if (cx > limit) {
+            cy = cy * limit / cx
+            cx = limit
         }
         // A lone huge height (narrow but 900k px tall header) would overflow
         // cy on its own after the unperturbed cx path; clamp it the same way.
@@ -1146,6 +1372,264 @@ internal class XmlEscapingAppendable(private val out: Appendable) : Appendable {
         '>' -> "\u0026gt;"
         else -> c.toString()
     }
+}
+
+/**
+ * A cell picture tag the DOCX pipeline may embed: one quoted `src`, and
+ * optionally `style`/`alt`, no other attribute. Unlike the renderer's
+ * `soleImgSrc`, the style and alt *values* are not required to be the
+ * canonical ones — a hand-written or sample-bank tag may size a cell picture
+ * its own way, and Word ignores the CSS. Everything else (a second `src`, an
+ * unknown attribute such as `onerror`, an unquoted value, a truncated tag) is
+ * rejected exactly like the renderer rejects it, so a hostile cell still never
+ * becomes a picture in Word.
+ */
+internal fun docxCellImageSrc(tag: String): String? {
+    if (tag.length < 4 || !tag.regionMatches(0, "<img", 0, 4, ignoreCase = true)) return null
+    val body = when {
+        tag.endsWith("/>") -> tag.substring(4, tag.length - 2)
+        tag.endsWith(">") -> tag.substring(4, tag.length - 1)
+        else -> return null
+    }
+    var pos = 0
+    var src: String? = null
+    var seenStyle = false
+    var seenAlt = false
+    while (pos < body.length) {
+        var k = pos
+        while (k < body.length && body[k].isWhitespace()) k++
+        if (k >= body.length) break
+        val match = DOCX_IMG_ATTRIBUTE.find(body, pos) ?: return null
+        if (match.range.first != pos) return null
+        val name = match.groupValues[1]
+        val value = match.groups[2]?.value ?: match.groups[3]?.value ?: return null
+        when {
+            name.equals("src", ignoreCase = true) -> {
+                if (src != null) return null
+                src = value
+            }
+            name.equals("style", ignoreCase = true) -> {
+                if (seenStyle) return null
+                seenStyle = true
+            }
+            name.equals("alt", ignoreCase = true) -> {
+                if (seenAlt) return null
+                seenAlt = true
+            }
+            else -> return null
+        }
+        pos = match.range.last + 1
+    }
+    return src
+}
+
+private val DOCX_IMG_ATTRIBUTE =
+    Regex("\\s+([A-Za-z_:][-A-Za-z0-9_:.]*)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
+
+/**
+ * [tag] with its `src` value replaced by [src], everything else (attribute
+ * order, quoting, `style`, `alt`, the `/>`) untouched. Null when the tag is not
+ * a well-formed single-src tag, so a caller never rewrites something it did
+ * not validate. Used to blank a picture's bytes in the payload and to graft
+ * them back without changing the cell's stored form.
+ */
+internal fun withDocxCellImageSrc(tag: String, src: String): String? {
+    // Self-validating: only a tag the reader accepts may be rewritten, so a
+    // duplicate `src`, an unquoted value or an unknown (hostile) attribute is
+    // rejected here too, not only by the caller.
+    if (docxCellImageSrc(tag) == null) return null
+    if (tag.length < 4 || !tag.regionMatches(0, "<img", 0, 4, ignoreCase = true)) return null
+    val suffix = when {
+        tag.endsWith("/>") -> 2
+        tag.endsWith(">") -> 1
+        else -> return null
+    }
+    val body = tag.substring(4, tag.length - suffix)
+    var pos = 0
+    var seen = 0
+    while (pos < body.length) {
+        var k = pos
+        while (k < body.length && body[k].isWhitespace()) k++
+        if (k >= body.length) break
+        val match = DOCX_IMG_ATTRIBUTE.find(body, pos) ?: return null
+        if (match.range.first != pos) return null
+        val name = match.groupValues[1]
+        val group = match.groups[2] ?: match.groups[3] ?: return null
+        if (name.equals("src", ignoreCase = true)) {
+            seen++
+            if (seen > 1) return null
+            val start = 4 + group.range.first
+            return tag.substring(0, start) + src + tag.substring(4 + group.range.last + 1)
+        }
+        pos = match.range.last + 1
+    }
+    return null
+}
+
+/** [com.mcqapp.util.forEachCellImage] using the DOCX cell tag reader above. */
+internal fun forEachDocxCellImage(
+    html: String,
+    onImage: (tag: String?, src: String?, start: Int, end: Int) -> Unit
+) {
+    forEachCellImageSpan(html) { tag, start, end ->
+        onImage(tag, tag?.let { docxCellImageSrc(it) }, start, end)
+    }
+}
+
+private const val IMAGE_DESCRIPTOR_PREFIX = "mcqapp:img|"
+
+private val CELL_IMAGE_MIME_LABELS = setOf("png", "jpeg", "jpg", "gif", "webp")
+
+/**
+ * A compact stand-in for an embedded picture's data URI in the hidden
+ * payload:
+ *
+ *     mcqapp:img|<scheme>|<image>|<mime>|<base64 token>|<padding>|<tail>|<sha256>
+ *
+ * Each label is stored exactly as written — `data`/`DATA`, `image`/`IMAGE`,
+ * `jpg`/`JPEG`, the `;BASE64` casing — and [padding] is the number of trailing
+ * `=` the stored body had (0 for unpadded input). [tail] is the original last
+ * base64 character, so non-canonical tail bits (`AB==` versus `AA==` for the
+ * same bytes) survive too; app encoders always produce canonical bits, so this
+ * is only reachable through a hand-written import. The SHA-256 verifies that
+ * the visible picture is still the same bytes before the exact src is rebuilt.
+ *
+ * No image bytes and no `data:image`/`;base64,` marker are stored, so the
+ * descriptor is ~100 chars regardless of the picture size: prefix 11 + scheme
+ * (≤4) + image token (≤5) + mime (≤4) + base64 token (≤6) + padding (1) + tail
+ * (1) + hash (64) plus separators.
+ *
+ * Null when [src] is not a portable inline picture (the caller keeps such a
+ * tag verbatim, e.g. an SVG/BMP data URI).
+ */
+internal fun imageSrcDescriptor(src: String): String? {
+    if (!portableCellImageSrc(src)) return null
+    val schemeEnd = src.indexOf(':')
+    if (schemeEnd <= 0) return null
+    val scheme = src.substring(0, schemeEnd)
+    if (!scheme.equals("data", ignoreCase = true)) return null
+    val imagePrefix = "image/"
+    if (!src.regionMatches(schemeEnd + 1, imagePrefix, 0, imagePrefix.length, ignoreCase = true)) {
+        return null
+    }
+    val imageLabel = src.substring(schemeEnd + 1, schemeEnd + 1 + imagePrefix.length - 1)
+    val typeStart = schemeEnd + 1 + imagePrefix.length
+    val semi = src.indexOf(';', typeStart)
+    if (semi < 0) return null
+    val mime = src.substring(typeStart, semi)
+    if (mime.contains('|')) return null
+    val tokenStart = semi + 1
+    val comma = src.indexOf(',', tokenStart)
+    if (comma < 0) return null
+    val token = src.substring(tokenStart, comma)
+    if (!token.equals("base64", ignoreCase = true)) return null
+    val body = src.substring(comma + 1)
+    val padding = when {
+        body.endsWith("==") -> 2
+        body.endsWith("=") -> 1
+        else -> 0
+    }
+    val tail = body.trimEnd('=').takeLast(1)
+    val bytes = try {
+        java.util.Base64.getMimeDecoder().decode(body)
+    } catch (e: IllegalArgumentException) {
+        return null
+    }
+    if (bytes.isEmpty()) return null
+    return IMAGE_DESCRIPTOR_PREFIX +
+        listOf(scheme, imageLabel, mime, token, padding.toString(), tail, sha256Hex(bytes))
+            .joinToString("|")
+}
+
+/** True when [src] is a descriptor written by [imageSrcDescriptor]. */
+internal fun isImageSrcDescriptor(src: String): Boolean =
+    src.startsWith(IMAGE_DESCRIPTOR_PREFIX)
+
+/**
+ * The exact stored src for [descriptor], rebuilt from the visible picture's
+ * bytes, or null when the descriptor is malformed or the visible bytes no
+ * longer match its hash (Word replaced the picture, so the visible src is the
+ * truth).
+ */
+internal fun resolveImageSrcDescriptor(descriptor: String, visibleSrc: String?): String? {
+    if (!isImageSrcDescriptor(descriptor) || visibleSrc == null) return null
+    val parts = descriptor.substring(IMAGE_DESCRIPTOR_PREFIX.length).split('|')
+    if (parts.size != 7) return null
+    val scheme = parts[0]
+    val imageLabel = parts[1]
+    val mime = parts[2]
+    val token = parts[3]
+    val padding = parts[4].toIntOrNull()?.takeIf { it in 0..2 } ?: return null
+    val tail = parts[5]
+    val hash = parts[6]
+    if (!scheme.equals("data", ignoreCase = true)) return null
+    if (!imageLabel.equals("image", ignoreCase = true)) return null
+    if (mime.lowercase() !in CELL_IMAGE_MIME_LABELS) return null
+    if (!token.equals("base64", ignoreCase = true)) return null
+    if (tail.length > 1 || (tail.isNotEmpty() && !isBase64Tail(tail[0]))) return null
+    val marker = ";base64,"
+    val markerAt = visibleSrc.indexOf(marker, ignoreCase = true)
+    if (markerAt < 0) return null
+    val bytes = try {
+        java.util.Base64.getMimeDecoder().decode(visibleSrc.substring(markerAt + marker.length))
+    } catch (e: IllegalArgumentException) {
+        return null
+    }
+    if (bytes.isEmpty() || sha256Hex(bytes) != hash) return null
+    val canonical = java.util.Base64.getEncoder().encodeToString(bytes)
+    // The canonical encoder pads; unpadded input had none.
+    var body = if (padding == 0) canonical.trimEnd('=') else canonical
+    if (tail.length == 1) {
+        // The hash proved the bytes are the same, so only the ignored low
+        // bits differ from the canonical character.
+        val coreEnd = body.indexOf('=').let { if (it < 0) body.length else it }
+        if (coreEnd > 0) {
+            body = body.substring(0, coreEnd - 1) + tail + body.substring(coreEnd)
+        }
+    }
+    return "$scheme:$imageLabel/$mime;$token,$body"
+}
+
+private fun isBase64Tail(c: Char): Boolean =
+    c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '+' || c == '/'
+
+/**
+ * The SHA-256 a canon part uses for one picture: the stored hash for a
+ * descriptor, or the hash of a data URI's decoded bytes. Null for empty,
+ * remote or undecodable sources (not a picture the body can draw).
+ */
+internal fun imageSrcHash(src: String?): String? {
+    if (src == null) return null
+    if (isImageSrcDescriptor(src)) {
+        val parts = src.substring(IMAGE_DESCRIPTOR_PREFIX.length).split('|')
+        return parts.getOrNull(6)?.takeIf { it.length == 64 }
+    }
+    val marker = ";base64,"
+    val markerAt = src.indexOf(marker, ignoreCase = true)
+    if (markerAt < 0) return null
+    val bytes = try {
+        java.util.Base64.getMimeDecoder().decode(src.substring(markerAt + marker.length))
+    } catch (e: IllegalArgumentException) {
+        return null
+    }
+    if (bytes.isEmpty()) return null
+    return sha256Hex(bytes)
+}
+
+/** Lowercase `data:` so the shared reader accepts an uppercase prefix too. */
+private fun docxEmbedSrc(src: String): String =
+    if (src.startsWith("data:")) src else "data:" + src.substring(5)
+
+private fun sha256Hex(bytes: ByteArray): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+    val hex = CharArray(digest.size * 2)
+    var i = 0
+    for (b in digest) {
+        val v = b.toInt() and 0xFF
+        hex[i++] = "0123456789abcdef"[v ushr 4]
+        hex[i++] = "0123456789abcdef"[v and 0x0F]
+    }
+    return String(hex)
 }
 
 /**

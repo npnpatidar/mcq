@@ -416,11 +416,15 @@ class EditorTableCellAuthoringUiTest {
         assertTrue("expected the structure label, saw '$view'", view.contains("[Structure]"))
         assertFalse("the marker must never reach the field: $view", view.contains("mcq-chem-cell"))
         assertFalse("no stored attribute may leak: $view", view.contains("data-"))
-        // The whole-question preview, not a second table copy, draws it; the
-        // chip shows the rich-part label once the popup closes.
+        // The whole-question preview, not a second table copy, draws it.
         compose.onNodeWithTag("table-preview-t1").assertDoesNotExist()
         compose.onNodeWithTag("cell-done-t1-0-0").performClick()
-        compose.onNodeWithText("[Structure]").assertExists()
+        // The chip shows the prose plus one label per rich part, so the label
+        // is never the whole chip text.
+        val chip = chipText(0, 0)
+        assertEquals("name [Structure]", chip)
+        assertFalse("the marker must never reach the chip: $chip", chip.contains("mcq-chem-cell"))
+        assertFalse("no stored attribute may leak into the chip: $chip", chip.contains("data-"))
     }
 
     @Test

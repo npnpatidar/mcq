@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
@@ -33,6 +34,7 @@ import com.mcqapp.ui.editor.QuestionEditorScreen
 import com.mcqapp.ui.importscreen.ImportDataHolder
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -126,6 +128,28 @@ class QuestionEditorUiTest {
     }
 
     private fun bodyFields() = compose.onAllNodesWithText("Text", substring = false)
+
+    /**
+     * The chip for one table cell. Block ids are generated per editor session,
+     * so the chip is found by its test-tag prefix plus the position in its
+     * content description (`Row 1, column 1, …`) instead of an exact tag.
+     */
+    private fun cellChip(row: Int, col: Int) = compose.onNode(
+        SemanticsMatcher("table cell chip at row $row, column $col") { node ->
+            node.config.getOrNull(SemanticsProperties.TestTag)
+                ?.startsWith("cell-chip-") == true &&
+                node.config.getOrNull(SemanticsProperties.ContentDescription)
+                    ?.any { it.contains("Row $row, column $col,") } == true
+        }
+    )
+
+    private fun cellChipPreview(row: Int, col: Int): String {
+        val chip = cellChip(row, col)
+        chip.assertExists()
+        return chip.fetchSemanticsNode()
+            .config[SemanticsProperties.ContentDescription]
+            .joinToString(" ")
+    }
 
     private fun dialogNode(text: String) =
         compose.onNode(hasText(text) and hasAnyAncestor(isDialog()))
@@ -265,17 +289,28 @@ class QuestionEditorUiTest {
         compose.onAllNodesWithText("Add block")[0].performClick()
         compose.onNodeWithText("Table").performClick()
 
-        // The cell uses a stateDescription (not contentDescription), so the
-        // typed value stays accessible and the cell is still targetable.
-        val cell = compose.onNode(
+        // The grid is read-only chips now: the only editable field for a cell
+        // lives in the popup the chip opens.
+        assertEquals("Row 1, column 1, Empty cell", cellChipPreview(1, 1))
+        cellChip(1, 1).performScrollTo().performClick()
+
+        // The popup field keeps the position as a stateDescription (not a
+        // contentDescription), so the typed value stays the field's text.
+        val field = compose.onNode(
             SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Row 1, column 1")
         )
-        cell.assertExists()
-        cell.performTextInput("cell")
+        field.assertExists()
+        field.performTextInput("cell")
         compose.onNode(
-            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Row 1, column 1") and
-                hasText("cell")
-        ).assertExists()
+            SemanticsMatcher("Done of the open table cell popup") { node ->
+                node.config.getOrNull(SemanticsProperties.TestTag)
+                    ?.startsWith("cell-done-") == true
+            }
+        ).performClick()
+
+        // The chip's preview shows the typed prose.
+        val preview = cellChipPreview(1, 1)
+        assertTrue("the chip preview did not update: $preview", preview.contains("cell"))
     }
 
     @Test

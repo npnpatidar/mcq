@@ -677,11 +677,98 @@ class ExportWritersTest {
         assertTrue(html.contains("table.mcq-rich-table{table-layout:fixed;width:100%}"))
         assertTrue(html.contains("table.mcq-rich-table td{overflow-wrap:anywhere;word-break:break-word}"))
         assertTrue(html.contains("table.mcq-rich-table td svg{max-width:100%;height:auto}"))
-        // The export page has no MathJax, so native MathML is made into a
-        // bounded box too.
-        assertTrue(html.contains(
-            "math { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }"
-        ))
+        assertStylesheetLeavesMathLayoutAlone(html)
+        // An inline, in-cell formula keeps its native MathML markup and is
+        // never put in the block wrapper: the wrapper is for a formula that
+        // sits on its own line.
+        assertTrue("the cell formula is native: $html", html.contains("<math><mi>v</mi></math> m/s"))
+        assertFalse("an inline formula is not wrapped: $html", html.contains("<div class=\"math-block\""))
+    }
+
+    /**
+     * A `display` declaration on a `math` selector replaces the browser's
+     * native MathML container; Chrome then lays out every atom on its own line
+     * (the owner's broken export screenshot). A string test cannot observe the
+     * resulting layout, so this pins the stylesheet state that caused it: no
+     * `display` on `<math>` at all, and the width cap only on the wrapper.
+     */
+    private fun assertStylesheetLeavesMathLayoutAlone(html: String) {
+        val css = html.substringAfter("<style>").substringBefore("</style>")
+        val mathRuleDisplay = Regex("""(^|})\s*math\b[^{}]*\{([^}]*)}""")
+            .findAll(css)
+            .map { it.groupValues[2] }
+            .firstOrNull { it.contains("display") }
+        assertNull("no display override on <math>: $mathRuleDisplay", mathRuleDisplay)
+        assertFalse("no math[display] selector: $css", css.contains("math[display"))
+        assertFalse(
+            "the old broken rule is gone: $css",
+            css.contains("math { display: inline-block")
+        )
+        assertTrue(
+            "the block wrapper carries the width cap: $css",
+            css.contains(".math-block { overflow-x: auto; max-width: 100%; }")
+        )
+    }
+
+    @Test
+    fun htmlWrapsABlockFractionAndPowerWithoutTouchingItsMathml() {
+        // The previous export CSS made <math> an inline-block with a
+        // vertical-align, which destroyed native MathML layout: a fraction
+        // and a power rendered as stacks of single characters. The stylesheet
+        // assertion above pins the fix; here the markup itself must stay one
+        // contiguous formula with no per-token div/br inserted.
+        val mathml = "<math><mrow><mfrac><mi>a</mi><mi>b</mi></mfrac>" +
+            "<msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+        val paper = PaperDto(
+            id = "p1",
+            title = "Fractions",
+            categories = listOf(
+                CategoryDto(
+                    id = "c1",
+                    title = "Cat",
+                    questions = listOf(
+                        QuestionDto(
+                            id = "q1",
+                            text = "Simplify?",
+                            elements = listOf(
+                                ContentElement.MathElement(mathml),
+                                ContentElement.TextElement(" then check the table")
+                            ),
+                            options = listOf(OptionDto(id = "a", text = "Yes")),
+                            correctOptionIds = listOf("a")
+                        )
+                    )
+                )
+            )
+        )
+        for (quiz in listOf(false, true)) {
+            val html = htmlOf(paper, quiz = quiz)
+            val label = "quiz=$quiz"
+            assertStylesheetLeavesMathLayoutAlone(html)
+
+            val wrapper = "<div class=\"math-block\" style=\"overflow-x:auto;max-width:100%\">"
+            val wrapperAt = html.indexOf(wrapper)
+            val mathAt = html.indexOf("<math>", wrapperAt)
+            val mathEnd = html.indexOf("</math>", mathAt)
+            assertTrue("$label: the block formula is wrapped: $html", wrapperAt >= 0)
+            assertTrue("$label: the formula follows the wrapper: $html", mathAt > wrapperAt)
+            assertEquals(
+                "$label: nothing between wrapper and formula",
+                wrapper.length,
+                mathAt - wrapperAt
+            )
+            val formula = html.substring(mathAt, mathEnd + "</math>".length)
+            assertTrue("$label: fraction kept: $formula", formula.contains("<mfrac>"))
+            assertTrue("$label: power kept: $formula", formula.contains("<msup>"))
+            assertFalse("$label: no per-token div: $formula", formula.contains("<div"))
+            assertFalse("$label: no injected line break: $formula", formula.contains("<br"))
+            assertEquals(
+                "$label: the wrapper closes immediately after the formula",
+                "</div>",
+                html.substring(mathEnd + "</math>".length).take("</div>".length)
+            )
+            assertTrue("$label: prose after the formula kept: $html", html.contains(" then check the table"))
+        }
     }
 
     @Test

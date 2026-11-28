@@ -287,11 +287,21 @@ object HtmlPaperWriter {
                     }
                     sb.append("</table>")
                 }
-                is ContentElement.MathElement -> sb.append(
-                    com.mcqapp.data.sanitizeMathml(
-                        com.mcqapp.util.repairStoredMathml(element.mathml)
-                    )
-                )
+                is ContentElement.MathElement -> {
+                    // A block formula is the one place the export may cap
+                    // width: it sits on its own line, so a scroll wrapper
+                    // around it cannot change how the MathML itself lays out.
+                    // Never set `display` on <math>: doing so replaces the
+                    // native inline/block math container and its descendants
+                    // collapse into a vertical stack of single characters.
+                    sb.append("<div class=\"math-block\" style=\"overflow-x:auto;max-width:100%\">")
+                        .append(
+                            com.mcqapp.data.sanitizeMathml(
+                                com.mcqapp.util.repairStoredMathml(element.mathml)
+                            )
+                        )
+                        .append("</div>")
+                }
                 is ContentElement.ChemElement -> sb.append(chemElementHtml(element))
             }
         }
@@ -360,12 +370,12 @@ ul.opts li { padding: 2px 0; }
 ul.opts li.correct { color: #2E7D32; font-weight: bold; }
 ul.opts li.optimg { padding-left: 18px; }
 img { max-width: 100%; height: auto; border-radius: 4px; margin: 4px 0; }
-/* The export page has no MathJax: the browser lays out native MathML, which
-   has no built-in cap. Inline-block + max-width makes the formula a box the
-   page can constrain; overflow-x keeps a pathologically wide formula
-   scrollable inside its own box instead of widening the page. */
-math { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }
-math[display="block"] { display: block; overflow-x: auto; }
+/* The export page has no MathJax: the browser lays out native MathML. Never
+   override `display` on <math> — it replaces the native math container and
+   the formula's children stack as single characters. A block formula gets
+   its width cap from the .math-block wrapper instead, which keeps a wide
+   formula scrollable without touching the math layout. */
+.math-block { overflow-x: auto; max-width: 100%; }
 /* A table holding a formula, picture or chemical structure takes fixed
    columns, like the in-app page: auto layout lets a wide drawing or formula
    widen the whole grid past the body cap, because a percentage max-width does

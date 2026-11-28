@@ -2,7 +2,7 @@ package com.mcqapp.data.anki
 
 import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.renderInlineHtml
-import com.mcqapp.domain.CELL_MATH_PATTERN
+import com.mcqapp.domain.forEachCellMathBlock
 import com.mcqapp.util.forEachCellImageSpan
 import com.mcqapp.util.imgTagSrc
 import com.mcqapp.util.portableCellImageSrc
@@ -162,8 +162,8 @@ object AnkiHtml {
      */
     private fun cellMarkupSpans(text: String): List<CellMarkupSpan> {
         val spans = ArrayList<CellMarkupSpan>()
-        for (math in CELL_MATH_PATTERN.findAll(text)) {
-            spans += CellMarkupSpan.Math(math.value, math.range.first, math.range.last + 1)
+        forEachCellMathBlock(text) { start, end ->
+            spans += CellMarkupSpan.Math(text.substring(start, end), start, end)
         }
         forEachCellImageSpan(text) { tag, start, end ->
             spans += CellMarkupSpan.Picture(tag?.let(::imgTagSrc), start, end)

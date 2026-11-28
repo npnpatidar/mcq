@@ -179,25 +179,45 @@ class ChemCellTest {
     }
 
     @Test
-    fun `a hostile span beside a valid marker stays prose`() {
+    fun `a hostile span beside a valid marker degrades to its text`() {
         val element = chem()
         val hostile = "<span class=\"$CELL_CHEM_CLASS\" data-smiles=\"CCO\" " +
             "onclick=\"x()\">ethanol CCO</span>"
         val cell = hostile + " " + chemCellHtml(element)
 
+        // A span shaped like a marker but rejected by the strict reader is not
+        // left as raw markup: its attributes must never fall through to the
+        // mixed page, so it degrades in place to its readable body.
         assertEquals(
-            listOf(CellSegment.Text("$hostile "), CellSegment.Chem(element)),
+            listOf(CellSegment.Text("ethanol CCO "), CellSegment.Chem(element)),
             cellSegments(cell)
         )
         assertTrue(hasChemCell(cell))
-        // The valid marker degrades to its handles; the hostile span is left
-        // for the caller's inline pipeline, which escapes or drops its tags.
         val sanitized = sanitizeCellChem(cell)
-        assertTrue("hostile span untouched: $sanitized", sanitized.startsWith(hostile))
+        assertTrue("hostile body is kept: $sanitized", sanitized.startsWith("ethanol CCO "))
+        assertFalse("no handler: $sanitized", sanitized.contains("onclick"))
         assertTrue(
             "valid marker becomes handles: $sanitized",
             sanitized.endsWith(escapeHtmlText(chemElementText(element)))
         )
+    }
+
+    @Test
+    fun `an invalid marker-shaped span never prints its attributes on the mixed page`() {
+        val payload = "iVBORw0KGgo="
+        val cell = "<span class=\"$CELL_CHEM_CLASS\" data-smiles=\"CCO\" " +
+            "data-png=\"$payload\" onclick=\"alert(1)\">ethanol CCO</span>"
+        // The mixed page is the only caller that passes a live chem renderer;
+        // every other surface goes through the text pipeline.
+        val html = tableCellHtml(cell, chemHtml = { "DRAW(${it.smiles})" }) {
+            sanitizeMathml(it)
+        }
+        assertEquals("ethanol CCO", html)
+        assertFalse("no marker markup: $html", html.contains("mcq-chem-cell"))
+        assertFalse("no handler: $html", html.contains("onclick"))
+        assertFalse("no payload: $html", html.contains(payload))
+        assertFalse("no attribute text: $html", html.contains("data-png"))
+        assertEquals("ethanol CCO", sanitizeTableCell(cell))
     }
 
     // ---- the strict reader ---------------------------------------------
@@ -231,10 +251,13 @@ class ChemCellTest {
     }
 
     @Test
-    fun `a blank data-smiles stays text`() {
+    fun `a blank data-smiles degrades to its text`() {
         val cell = "<span class=\"$CELL_CHEM_CLASS\" data-smiles=\"   \">ethanol CCO</span>"
-        assertEquals(listOf<CellSegment>(CellSegment.Text(cell)), cellSegments(cell))
+        // Marker-shaped (class + data-smiles) but invalid: the attributes are
+        // dropped and the readable body survives, never the raw span.
+        assertEquals(listOf<CellSegment>(CellSegment.Text("ethanol CCO")), cellSegments(cell))
         assertFalse(hasChemCell(cell))
+        assertEquals("ethanol CCO", sanitizeCellChem(cell))
     }
 
     @Test
@@ -290,6 +313,21 @@ class ChemCellTest {
     }
 
     @Test
+    fun `a hostile cell of unclosed math starts is scanned in linear time`() {
+        // ~60 KB of `<math>` openers with no closing tag. `CELL_MATH_PATTERN`
+        // retried its lazy tail from every start, so this cell cost seconds on
+        // the UI thread (composition calls this through cellIsRich). The one
+        // forward scan finds no closing tag from the first opener and stops.
+        val cell = "<math>".repeat(10_000) + CELL_CHEM_CLASS
+        assertTrue("fixture is large enough: ${cell.length}", cell.length >= 60_000)
+        val started = System.nanoTime()
+        assertEquals(listOf<CellSegment>(CellSegment.Text(cell)), cellSegments(cell))
+        assertFalse(hasChemCell(cell))
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 2000)
+    }
+
+    @Test
     fun `a non-png payload is dropped`() {
         val notPng = Base64.getEncoder().encodeToString("not a png".toByteArray())
         val jpeg = Base64.getEncoder().encodeToString(pngBytes)
@@ -317,7 +355,13 @@ class ChemCellTest {
             "<span class=\"$CELL_CHEM_CLASS\" data-smiles=\"CCO\" hidden>ethanol CCO</span>"
         )
         hostile.forEach { cell ->
-            assertEquals("not a marker: $cell", listOf<CellSegment>(CellSegment.Text(cell)), cellSegments(cell))
+            // Not a marker, but still marker-shaped: it degrades to its body so
+            // no attribute or payload can be printed by the inline pipeline.
+            assertEquals(
+                "degrades to text: $cell",
+                listOf<CellSegment>(CellSegment.Text("ethanol CCO")),
+                cellSegments(cell)
+            )
             assertFalse("not a marker: $cell", hasChemCell(cell))
         }
     }

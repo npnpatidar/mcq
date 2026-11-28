@@ -67,7 +67,7 @@ internal fun contentRenderPath(elements: List<ContentElement>): ContentRenderPat
     // page, and the native table has no way to turn its SMILES into a
     // picture. A plain table (no formula, portable picture or structure)
     // keeps the native fast path.
-    elements.any { it is ContentElement.TableElement && it.needsMixedCellRendering() } ->
+    elements.any { it is ContentElement.TableElement && it.carriesRichCell() } ->
         ContentRenderPath.MIXED
     elements.size == 1 && elements[0] is ContentElement.TextElement -> ContentRenderPath.PLAIN_TEXT
     else -> ContentRenderPath.NATIVE
@@ -86,10 +86,6 @@ internal fun cellIsRich(cell: String): Boolean =
         hasChemCell(cell)
 
 /** True when any cell of this table needs the mixed view or its asset pipeline. */
-private fun ContentElement.TableElement.needsMixedCellRendering(): Boolean =
-    rows.any { row -> row.any(::cellIsRich) }
-
-/** True when any cell of this table takes the fixed rich-table layout. */
 private fun ContentElement.TableElement.carriesRichCell(): Boolean =
     rows.any { row -> row.any(::cellIsRich) }
 

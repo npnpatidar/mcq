@@ -18,6 +18,7 @@ import com.mcqapp.util.cellImageTag
 import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.contentRenderPath
 import com.mcqapp.util.mapCellImages
+import com.mcqapp.util.normalizeCellImages
 import com.mcqapp.util.portableCellImageSrc
 import com.mcqapp.util.sanitizeTableCell
 import com.mcqapp.util.soleImgSrc
@@ -27,6 +28,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -369,6 +371,39 @@ class TableCellRenderTest {
             "before $CELL_IMAGE_MARKER",
             tableCellHtml(withProse) { sanitizeMathml(it) }
         )
+    }
+
+    @Test
+    fun `a hostile cell of truncated image starts is scanned once`() {
+        // Repeated `<img` with no closing bracket: the old scan read to the end
+        // of the cell from every start (quadratic, ~1e11 steps on ~1 MB). Each
+        // shape below is a 60 KB cell measured once; 2000 ms is far above the
+        // linear millisecond cost while a quadratic regression takes seconds.
+        val noBracket = "<img ".repeat(12_000)
+        // One `>` at the end: the first torn scan can still race every nested
+        // start to the same bracket, which was the other quadratic shape.
+        val oneBracket = noBracket + ">"
+        listOf(noBracket, oneBracket).forEach { cell ->
+            assertTrue("fixture is large enough: ${cell.length}", cell.length >= 60_000)
+            val started = System.nanoTime()
+            assertFalse("no portable picture in a torn cell", cellHasPortableImage(cell))
+            val mapped = mapCellImages(cell) { CELL_IMAGE_MARKER }
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            assertFalse("never a payload: $mapped", mapped.contains("base64"))
+            assertTrue("scanned a ${cell.length}-char cell in ${elapsedMs}ms", elapsedMs < 2_000)
+        }
+    }
+
+    @Test
+    fun `the last complete tag inside a torn image prefix is still found`() {
+        // A torn `<img` must not hide a readable picture that follows it. The
+        // linear resume re-reads from the last nested start, which is the only
+        // one that can still close. (The strict renderer only accepts quoted
+        // attributes, so the import reader is the surface that can use this
+        // unquoted tag; normalisation must still canonicalise it.)
+        val src = "data:image/png;base64,AAAA"
+        val cell = "<img <img src=$src>"
+        assertEquals(cellImageTag(src), normalizeCellImages(cell, { it }) { fail(it) })
     }
 
     @Test

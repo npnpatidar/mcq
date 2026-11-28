@@ -131,6 +131,40 @@ private fun mathBlockEnd(cell: String, at: Int): Int =
     CLOSING_MATH_PATTERN.find(cell, at + 5)?.range?.last?.plus(1) ?: -1
 
 /**
+ * Visit every complete `<math>…</math>` block in [cell], in order, handing out
+ * its half-open span. One forward scan: from each opener, [mathBlockEnd] finds
+ * the one closing tag and the scan resumes after the whole block. A cell full
+ * of unclosed `<math` starts is read once — the first failed lookup proves no
+ * later opener can close either, so the scan stops instead of lazily
+ * re-reading the tail from every start (the old `findAll` was quadratic there).
+ *
+ * The block grammar is the same one [tableCellParts] and [mathBlockEnd] use,
+ * so a surface can never disagree with the cell splitter about what a formula
+ * is. Blocks inside a block (nested `<math`) stay part of the outer block,
+ * exactly as the lazy pattern matched them.
+ */
+internal inline fun forEachCellMathBlock(
+    cell: String,
+    onMath: (start: Int, end: Int) -> Unit
+) {
+    var pos = 0
+    while (pos < cell.length) {
+        val lt = cell.indexOf("<math", pos, ignoreCase = true)
+        if (lt < 0) return
+        if (!isMathBlockStart(cell, lt)) {
+            pos = lt + 1
+            continue
+        }
+        val end = mathBlockEnd(cell, lt)
+        // No closing tag at or after this opener means none exists for any
+        // later opener either: one failed lookup ends the scan.
+        if (end < 0) return
+        onMath(lt, end)
+        pos = end
+    }
+}
+
+/**
  * What one bare-MathML scan found.
  *
  * A stored cell written by the buggy editor build carries MathLive's

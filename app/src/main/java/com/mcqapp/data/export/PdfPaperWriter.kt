@@ -1056,17 +1056,29 @@ private fun appendCellMath(
     val nodes = mathMlToNodes(marked)
     if (nodes != null) {
         val size = fittedMathSize(nodes, paint, maxWidth)
-        val start = out.length
-        out.append('\uFFFC')
-        out.setSpan(
-            MathSpan(nodes, size),
-            start, out.length,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
+        if (size >= MIN_LEGIBLE_CELL_FORMULA_SIZE) {
+            val start = out.length
+            out.append('\uFFFC')
+            out.setSpan(
+                MathSpan(nodes, size),
+                start, out.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        } else {
+            // The column is so narrow that fitting the formula would make it
+            // unreadable; print the same linear fallback the body uses rather
+            // than a clipped 4 pt span.
+            appendLinearCellMath(out, mathml)
+        }
     } else {
-        val linear = mathToLinear(mathml)
-        out.append(if (linear.isNotBlank()) "[formula: $linear]" else CELL_FORMULA_MARKER)
+        appendLinearCellMath(out, mathml)
     }
+}
+
+/** The linear `[formula: …]`/`[formula]` fallback for one cell formula. */
+private fun appendLinearCellMath(out: SpannableStringBuilder, mathml: String) {
+    val linear = mathToLinear(mathml)
+    out.append(if (linear.isNotBlank()) "[formula: $linear]" else CELL_FORMULA_MARKER)
 }
 
 /**
@@ -1096,6 +1108,14 @@ private fun fittedMathSize(nodes: List<TexNode>, paint: TextPaint, maxWidth: Flo
 
 /** The smallest type size a fitted cell formula is allowed to reach. */
 private const val MIN_FORMULA_SIZE = 4f
+
+/**
+ * Below this the fitted formula is not legible in print, so the cell takes the
+ * linear `[formula: …]` fallback instead of a clipped span. Six points is the
+ * usual small-print floor; 4 pt is only kept as a stopping bound for the fit
+ * search.
+ */
+private const val MIN_LEGIBLE_CELL_FORMULA_SIZE = 6f
 
 /** One cell flattened to readable single-line text (answer key), never base64. */
 internal fun cellFlatText(cell: String): String {

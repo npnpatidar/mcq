@@ -481,20 +481,40 @@ class CellEditorTextTest {
         assertFalse(isValidCellSmiles(""))
         assertFalse(isValidCellSmiles("   "))
         assertFalse(isValidCellSmiles("CCO\"</script>"))
-        assertFalse(isValidCellSmiles("C C O"))
         // The set is the renderer's own internal allowlist: no second copy.
         assertTrue('>' in SMILES_ALLOWED_CHARS)
         assertTrue('@' in SMILES_ALLOWED_CHARS)
         assertTrue('%' in SMILES_ALLOWED_CHARS)
         assertFalse('"' in SMILES_ALLOWED_CHARS)
         assertFalse(' ' in SMILES_ALLOWED_CHARS)
-        listOf('C', 'c', '>', '@', '%', '"', ' ', '<', ';').forEach { c ->
+        listOf('C', 'c', '>', '@', '%', '"', '<', ';').forEach { c ->
             assertEquals(
                 "$c must follow the shared allowlist",
                 c in SMILES_ALLOWED_CHARS,
                 isValidCellSmiles(c.toString())
             )
         }
+    }
+
+    /**
+     * A structure lifted from a block field or an import can carry spaces
+     * around and between its atoms and a comma-separated second component.
+     * The block proceeds to draw it (the renderer filters the separators from
+     * the JS literal), so the cell dialog must not disable Insert for it.
+     */
+    @Test
+    fun `accepts the spaces and commas a block or imported smiles may carry`() {
+        assertTrue(isValidCellSmiles("  CCO  "))
+        assertTrue(isValidCellSmiles("C C O"))
+        assertTrue(isValidCellSmiles("CCO, CCN"))
+        assertTrue(isValidCellSmiles("CCO\t>>\tCC=O"))
+        // Only the separators are added; characters that could break the JS
+        // literal or the HTML fallback stay rejected, even inside a separator
+        // run.
+        assertFalse(isValidCellSmiles("CCO, \"quoted\""))
+        assertFalse(isValidCellSmiles("CCO; CCN"))
+        assertFalse(isValidCellSmiles("CCO < CCN"))
+        assertFalse(isValidCellSmiles(" , "))
     }
 
     @Test

@@ -453,10 +453,26 @@ internal fun cellImageAllowed(src: String): Boolean {
 }
 
 /**
+ * Characters a cell SMILES may carry beside the renderer's allowlist: the
+ * spaces and commas a block field or an imported value can contain. The
+ * renderer drops them from the JS literal exactly as it does for a block, and
+ * the marker's visible body is the readable handles text, so neither can
+ * break the literal or the drawing. Quotes, angle brackets and semicolons
+ * stay rejected: they are the characters that could escape either context.
+ */
+private val CELL_SMILES_SEPARATORS = setOf(' ', '\t', ',')
+
+/**
  * True when [smiles] is non-blank and every character can reach the drawing
  * engine unchanged. Deliberately a per-character rule, not a full SMILES
  * parser: [SMILES_ALLOWED_CHARS] is the same allowlist the renderer applies,
- * so validation and drawing cannot drift.
+ * so validation and drawing cannot drift. Surrounding whitespace is trimmed
+ * and the harmless separators above are accepted, because a structure copied
+ * from a block or an import may carry them; the cell dialog must not disable
+ * Insert for a value the block proceeds to draw.
  */
-internal fun isValidCellSmiles(smiles: String): Boolean =
-    smiles.isNotBlank() && smiles.all { it in SMILES_ALLOWED_CHARS }
+internal fun isValidCellSmiles(smiles: String): Boolean {
+    val trimmed = smiles.trim()
+    return trimmed.any { it in SMILES_ALLOWED_CHARS } &&
+        trimmed.all { it in SMILES_ALLOWED_CHARS || it in CELL_SMILES_SEPARATORS }
+}

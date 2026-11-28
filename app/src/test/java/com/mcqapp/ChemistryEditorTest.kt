@@ -8,6 +8,7 @@ import com.mcqapp.ui.editor.ChemTemplates
 import com.mcqapp.ui.editor.EditorBlockType
 import com.mcqapp.ui.editor.EditorUiState
 import com.mcqapp.ui.editor.OptionEditorState
+import com.mcqapp.ui.editor.applyChemCapture
 import com.mcqapp.ui.editor.applyChemDiagram
 import com.mcqapp.ui.editor.applyKeyedChemDiagram
 import com.mcqapp.ui.editor.editorSnapshot
@@ -205,8 +206,25 @@ class ChemistryEditorTest {
         assertSame(before, applyChemDiagram(before, "chem-1", validPng))
         val changed = applyChemDiagram(before, "chem-1", otherPng)
         assertNotSame(before, changed)
-        assertFalse("a capture is not a user edit", changed.isDirty)
+        assertFalse("the raw writer leaves the dirty decision to the caller", changed.isDirty)
         assertTrue("the captured diagram is persisted content", changed.elements.single().toString().contains(otherPng))
+    }
+
+    /**
+     * A capture that arrives after Save carries the export raster the save did
+     * not see. It must dirty the draft so the next save/navigation writes it;
+     * the identical follow-up callback must be a no-op.
+     */
+    @Test
+    fun aBlockCaptureAfterACleanSaveMarksTheDraftDirty() {
+        val chem = ChemTemplates.BENZENE.toElement()
+        val clean = state(listOf(chem), listOf("chem-1")).copy(isDirty = false)
+        val captured = applyChemCapture(clean, "chem-1@${chem.smiles}", validPng)
+        assertNotSame(clean, captured)
+        assertTrue("the unpersisted PNG is a real edit", captured.isDirty)
+        assertEquals(validPng, (captured.elements.single() as ContentElement.ChemElement).diagram)
+        assertSame(captured, applyChemCapture(captured, "chem-1@${chem.smiles}", validPng))
+        assertTrue(captured.isDirty)
     }
 
     @Test
@@ -331,7 +349,7 @@ class ChemistryEditorTest {
         val stored = applyKeyedChemDiagram(edited, "chem-1@c", freshPng)
         assertNotSame(edited, stored)
         assertEquals(freshPng, (stored.elements.single() as ContentElement.ChemElement).diagram)
-        assertFalse("a capture is still not a user edit", stored.isDirty)
+        assertFalse("the raw writer still leaves the dirty decision to the caller", stored.isDirty)
         // The invalid-PNG and no-op guards still apply on the keyed path.
         assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", "data:image/jpeg;base64,AAA"))
         assertSame(edited, applyKeyedChemDiagram(edited, "chem-1@c", CHEM_DIAGRAM_PREFIX + "AAA"))

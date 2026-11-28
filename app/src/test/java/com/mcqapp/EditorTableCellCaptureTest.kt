@@ -3,6 +3,7 @@ package com.mcqapp
 import com.mcqapp.domain.ContentElement
 import com.mcqapp.ui.editor.CHEM_DIAGRAM_PREFIX
 import com.mcqapp.ui.editor.EditorUiState
+import com.mcqapp.ui.editor.applyChemCapture
 import com.mcqapp.ui.editor.applyKeyedChemDiagram
 import com.mcqapp.util.chemCellHtml
 import com.mcqapp.util.cellChemSpans
@@ -132,15 +133,62 @@ class EditorTableCellCaptureTest {
         assertFalse("no payload may be stored", tableCell(before).contains("data-png"))
     }
 
+    /**
+     * The raw writer only reports content; the draft-dirty decision belongs to
+     * [applyChemCapture], which the ViewModel installs as the callback. Keeping
+     * the flag untouched here is what lets the wrapper choose.
+     */
     @Test
-    fun aCaptureNeverChangesTheDirtyFlag() {
+    fun theRawKeyedWriterLeavesTheDirtyFlagToTheCaptureWrapper() {
         val clean = state(chemCellHtml(ethanol, includePng = false), isDirty = false)
-        val cleanCaptured = applyKeyedChemDiagram(clean, "b1#0:0@CCO", firstPng)
-        assertFalse("a capture is not a user edit", cleanCaptured.isDirty)
+        val raw = applyKeyedChemDiagram(clean, "b1#0:0@CCO", firstPng)
+        assertFalse("the raw writer does not touch the flag", raw.isDirty)
+        assertTrue("the wrapper marks a real capture", applyChemCapture(clean, "b1#0:0@CCO", firstPng).isDirty)
+    }
 
-        val dirty = clean.copy(isDirty = true)
-        val dirtyCaptured = applyKeyedChemDiagram(dirty, "b1#0:0@CCO", firstPng)
-        assertTrue("a capture must not clear a real edit", dirtyCaptured.isDirty)
+    /**
+     * The owner-reported race: a capture that finishes after Save lands in
+     * memory but the save already snapshotted the form without the PNG, so a
+     * clean flag meant the stored marker never got `data-png` and exports fell
+     * back to handles. A capture that changes a diagram is therefore a real
+     * edit; the identical callback that follows is a no-op and must not churn
+     * the state.
+     */
+    @Test
+    fun aCaptureAfterACleanSaveMarksTheDraftDirtyUntilItIsWritten() {
+        // A clean draft is the state immediately after Save, or after load.
+        val clean = state(chemCellHtml(ethanol, includePng = false), isDirty = false)
+
+        val captured = applyChemCapture(clean, "b1#0:0@CCO", firstPng)
+        assertNotSame(clean, captured)
+        assertTrue("the unpersisted PNG makes the draft dirty", captured.isDirty)
+        assertTrue(tableCell(captured).contains("data-png=\"$firstPayload\""))
+
+        // The renderer's follow-up callback with the same raster changes
+        // nothing: same instance, and no second dirty transition.
+        assertSame(captured, applyChemCapture(captured, "b1#0:0@CCO", firstPng))
+        assertTrue(captured.isDirty)
+    }
+
+    @Test
+    fun aCaptureThatChangesNothingLeavesACleanDraftClean() {
+        val stored = state(
+            chemCellHtml(ethanol.copy(diagram = firstPng)),
+            isDirty = false
+        )
+        assertSame("the same raster must be a no-op", stored, applyChemCapture(stored, "b1#0:0@CCO", firstPng))
+        assertFalse(stored.isDirty)
+
+        // Rejected keys and payloads are no-ops too, so they cannot dirty a
+        // clean form.
+        val hostiles = listOf(
+            "b1#0:0@CCN" to firstPng,
+            "b1#0:0@CCO" to CHEM_DIAGRAM_PREFIX
+        )
+        hostiles.forEach { (key, png) ->
+            assertSame("$key/$png must be a no-op", stored, applyChemCapture(stored, key, png))
+            assertFalse(stored.isDirty)
+        }
     }
 
     @Test

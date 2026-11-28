@@ -2,7 +2,9 @@ package com.mcqapp
 
 import com.mcqapp.data.io.OptionDto
 import com.mcqapp.data.io.QuestionDto
+import com.mcqapp.domain.ContentElement
 import com.mcqapp.domain.ImportWarnings
+import com.mcqapp.util.cellImageTag
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -17,7 +19,8 @@ class ImportWarningsTest {
         correct: List<String> = listOf("a"),
         marks: Double = 1.0,
         image: String? = null,
-        explanation: String = ""
+        explanation: String = "",
+        explanationElements: List<ContentElement> = emptyList()
     ) = QuestionDto(
         id = id,
         text = text,
@@ -25,6 +28,7 @@ class ImportWarningsTest {
         options = options,
         correctOptionIds = correct,
         explanation = explanation,
+        explanationElements = explanationElements,
         marks = marks
     )
 
@@ -113,6 +117,39 @@ class ImportWarningsTest {
         assertTrue(warnings[0].message.contains("KB"))
         val small = ImportWarnings.forQuestion(question(image = "tiny"), "Q3")
         assertTrue(small.isEmpty())
+    }
+
+    /**
+     * A picture stored in a table cell travels in the same question row as a
+     * scalar picture, so it must weigh on the same advisory. A table-only
+     * question with one large cell picture used to look small.
+     */
+    @Test
+    fun flagsLargeCellImagesByPayloadSize() {
+        val big = "A".repeat(ImportWarnings.LARGE_IMAGE_CHARS + 1)
+        val cell = "see " + cellImageTag("data:image/png;base64,$big")
+        val warnings = ImportWarnings.forQuestion(
+            question(
+                explanationElements = listOf(
+                    ContentElement.TableElement(listOf(listOf(cell)))
+                )
+            ),
+            "Q6"
+        )
+        assertEquals("one advisory for the table picture", 1, warnings.size)
+        assertTrue(warnings.single().message.startsWith("Large images"))
+        assertTrue(warnings.single().message.contains("KB"))
+
+        val smallCell = "see " + cellImageTag("data:image/png;base64,AAAA")
+        val small = ImportWarnings.forQuestion(
+            question(
+                explanationElements = listOf(
+                    ContentElement.TableElement(listOf(listOf(smallCell)))
+                )
+            ),
+            "Q6"
+        )
+        assertTrue("a small cell picture is not large", small.isEmpty())
     }
 
     @Test

@@ -686,6 +686,29 @@ internal fun applyCellChemDiagram(
 }
 
 /**
+ * Applies a renderer capture to the draft.
+ *
+ * A capture that changes a diagram is persisted content too: the PNG is what
+ * the DOCX/HTML/PDF exports draw, so the draft must become dirty and a later
+ * Save (or a Prev/Next auto-save) must write it. This matters most for a
+ * capture that arrives *after* the user pressed Save: the write already
+ * snapshotted the form without the PNG, so only a dirty draft can carry it to
+ * the next write.
+ *
+ * A capture that changes nothing — the same raster arriving again, a stale
+ * key, an invalid payload — leaves the state instance and the clean flag
+ * untouched, so an unchanged form is not made to look edited.
+ */
+internal fun applyChemCapture(
+    s: EditorUiState,
+    chemKey: String,
+    pngDataUri: String
+): EditorUiState {
+    val next = applyKeyedChemDiagram(s, chemKey, pngDataUri)
+    return if (next === s) s else next.copy(isDirty = true)
+}
+
+/**
  * Unambiguous canonical snapshot of exactly what a save would persist.
  *
  * The old signature joined raw user content with `|`, `;`, `,` and newlines,
@@ -1580,26 +1603,17 @@ class EditorViewModel(
     }
 
     /**
-     * Write-back for the shared renderer's captured PNG. Unlike every other
-     * block edit this is not a user action, so it deliberately bypasses
-     * [updateState] and preserves the dirty flag: capturing a diagram must
-     * not make a clean form look edited (or clear a real edit). A no-op leaves
+     * Write-back for the shared renderer's captured PNG. A capture that
+     * changes a diagram is stored content (it is what the next export draws),
+     * so it marks the draft dirty; otherwise a capture that finishes after
+     * Save would never be written. It bypasses [updateState] only to keep
+     * the rest of the dirty decision in [applyChemCapture]; a no-op leaves
      * the state instance untouched, so repeated capture callbacks do not
      * churn composition. The key also carries the SMILES the PNG was drawn
      * from; stale captures are rejected by [applyKeyedChemDiagram].
      */
     fun updateChemDiagram(chemKey: String, pngDataUri: String) {
-        _state.update { current ->
-            val next = applyKeyedChemDiagram(current, chemKey, pngDataUri)
-            if (next === current) {
-                current
-            } else {
-                // Keep the clean baseline in step with the captured content so
-                // a later edit-and-revert is not mistaken for a user change.
-                if (!current.isDirty) cleanSignature = editorSnapshot(next)
-                next.copy(isDirty = current.isDirty)
-            }
-        }
+        _state.update { applyChemCapture(it, chemKey, pngDataUri) }
     }
 
     private fun updateState(block: (EditorUiState) -> EditorUiState) {

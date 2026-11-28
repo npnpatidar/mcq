@@ -593,3 +593,61 @@ internal fun imgTagSrc(tag: String): String? {
     }
     return null
 }
+
+/**
+ * [tag] with the value of its first readable `src` replaced by [src]; every
+ * other byte — attribute order, quoting, `style`, `alt`, the `/>` — is kept.
+ * Null when the tag is truncated or carries no readable `src`, so a caller
+ * never rewrites something it did not read.
+ *
+ * This is the lenient counterpart of [soleImgSrc] and the shared replacement
+ * the ZIP writer uses: a relative `images/imgNNN.ext` path takes the place of
+ * a portable data URI without normalising a hand-written tag. It is not the
+ * reader that decides whether a picture may be drawn.
+ */
+internal fun withCellImageSrc(tag: String, src: String): String? {
+    if (imgTagSrc(tag) == null) return null
+    if (tag.length < 4 || !tag.regionMatches(0, "<img", 0, 4, ignoreCase = true)) return null
+    val bodyEnd = when {
+        tag.endsWith("/>") -> tag.length - 2
+        tag.endsWith(">") -> tag.length - 1
+        else -> return null
+    }
+    var pos = 4
+    while (pos < bodyEnd) {
+        while (pos < bodyEnd && tag[pos].isWhitespace()) pos++
+        if (pos < bodyEnd && tag[pos] == '/') pos++
+        while (pos < bodyEnd && tag[pos].isWhitespace()) pos++
+        if (pos >= bodyEnd) break
+        if (!isAttributeNameStart(tag[pos])) return null
+        val nameStart = pos
+        pos++
+        while (pos < bodyEnd && isAttributeNameChar(tag[pos])) pos++
+        val name = tag.substring(nameStart, pos)
+        var equals = pos
+        while (equals < bodyEnd && tag[equals].isWhitespace()) equals++
+        if (equals >= bodyEnd || tag[equals] != '=') {
+            pos = equals
+            continue
+        }
+        var valueStart = equals + 1
+        while (valueStart < bodyEnd && tag[valueStart].isWhitespace()) valueStart++
+        val quote = tag.getOrNull(valueStart)
+        if (quote == '"' || quote == '\'') {
+            val close = tag.indexOf(quote, valueStart + 1)
+            if (close < 0 || close > bodyEnd) return null
+            if (name.equals("src", ignoreCase = true)) {
+                return tag.substring(0, valueStart + 1) + src + tag.substring(close)
+            }
+            pos = close + 1
+        } else {
+            var valueEnd = valueStart
+            while (valueEnd < bodyEnd && !tag[valueEnd].isWhitespace()) valueEnd++
+            if (name.equals("src", ignoreCase = true)) {
+                return tag.substring(0, valueStart) + src + tag.substring(valueEnd)
+            }
+            pos = valueEnd
+        }
+    }
+    return null
+}

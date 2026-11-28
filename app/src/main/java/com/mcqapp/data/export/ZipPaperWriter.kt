@@ -3,6 +3,12 @@ package com.mcqapp.data.export
 import com.mcqapp.data.io.PassageDto
 import com.mcqapp.data.io.QuestionDto
 import com.mcqapp.domain.ContentElement
+import com.mcqapp.util.CELL_CHEM_CLASS
+import com.mcqapp.util.cellChemSpans
+import com.mcqapp.util.forEachCellImageSpan
+import com.mcqapp.util.imgTagSrc
+import com.mcqapp.util.portableCellImageSrc
+import com.mcqapp.util.withCellImageSrc
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.util.zip.ZipEntry
@@ -13,10 +19,12 @@ import java.util.zip.ZipOutputStream
  * Embedded (data-URI) images become files that the JSON refers to by relative
  * path; remote URLs are left untouched.
  *
- * Images are collected wherever they sit: the legacy per-row fields and the
- * image blocks inside a stem, an option, an explanation or a passage. Walking
+ * Images are collected wherever they sit: the legacy per-row fields, the image
+ * blocks inside a stem, an option, an explanation or a passage, a picture
+ * inside a table cell, and a chemical structure's captured raster. Walking
  * only the legacy fields left every block-editor image inline — the JSON grew
- * by the whole bank's base64 and the folder stayed empty.
+ * by the whole bank's base64 and the folder stayed empty — and skipping the
+ * cell grammar did the same for every rich table.
  *
  * Both the JSON and the folder are written while the paper streams past: the
  * JSON is encoded question by question straight into its entry, and each
@@ -43,13 +51,61 @@ object ZipPaperWriter {
             }
         }
 
+        /**
+         * One table cell: its portable `<img>` pictures and a structure's
+         * captured `data-png` raster become relative paths. Every other byte
+         * of the cell is kept, and a remote or non-portable source is left
+         * exactly as the author wrote it.
+         */
+        fun remapCell(cell: String): String {
+            if (!cell.contains("<img", ignoreCase = true) &&
+                !cell.contains(CELL_CHEM_CLASS)
+            ) {
+                return cell
+            }
+            val replacements = mutableListOf<Triple<Int, Int, String>>()
+            forEachCellImageSpan(cell) { tag, start, end ->
+                if (tag == null) return@forEachCellImageSpan
+                val src = imgTagSrc(tag) ?: return@forEachCellImageSpan
+                if (!portableCellImageSrc(src)) return@forEachCellImageSpan
+                val path = ref(src) ?: return@forEachCellImageSpan
+                val rewritten = withCellImageSrc(tag, path) ?: return@forEachCellImageSpan
+                replacements += Triple(start, end, rewritten)
+            }
+            for (span in cellChemSpans(cell)) {
+                val diagram = span.element.diagram
+                if (!isPngDataUri(diagram)) continue
+                if (span.pngValueStart < 0 || span.pngValueEnd <= span.pngValueStart) continue
+                val path = ref(diagram) ?: continue
+                replacements += Triple(span.pngValueStart, span.pngValueEnd, path)
+            }
+            if (replacements.isEmpty()) return cell
+            replacements.sortBy { it.first }
+            val sb = StringBuilder(cell.length)
+            var pos = 0
+            for ((start, end, text) in replacements) {
+                if (start < pos) continue
+                sb.append(cell, pos, start).append(text)
+                pos = end
+            }
+            sb.append(cell, pos, cell.length)
+            return sb.toString()
+        }
+
         /** The image blocks of a content list, repointed at their files. */
         fun remapElements(elements: List<ContentElement>): List<ContentElement> =
             elements.map { element ->
-                if (element is ContentElement.ImageElement) {
-                    ContentElement.ImageElement(ref(element.src) ?: element.src)
-                } else {
-                    element
+                when (element) {
+                    is ContentElement.ImageElement ->
+                        element.copy(src = ref(element.src) ?: element.src)
+                    is ContentElement.TableElement -> element.copy(
+                        rows = element.rows.map { row -> row.map(::remapCell) }
+                    )
+                    // A standalone structure's captured raster is the same
+                    // export cache; it travels as a file too.
+                    is ContentElement.ChemElement ->
+                        element.copy(diagram = ref(element.diagram) ?: element.diagram)
+                    else -> element
                 }
             }
 

@@ -1,5 +1,6 @@
 package com.mcqapp.data.docx
 
+import com.mcqapp.data.escapeHtmlText
 import com.mcqapp.data.export.chemElementText
 import com.mcqapp.data.export.docxCellImageSrc
 import com.mcqapp.data.export.forEachDocxCellImage
@@ -258,6 +259,12 @@ private fun preferPayload(
  * to its leaf text, so a fraction and a row with the same leaves compare
  * equal. A truncated or corrupt payload never reaches this comparison —
  * `preferPayload` catches the parse failure and uses the visible side.
+ *
+ * A formula [mathMlToOmml] refuses is typed as text (`t:`), not math: the
+ * writer prints its linear text in the same run, so the visible parse sees
+ * prose. Typing it `m:` made payload and visible disagree for a formula Word
+ * cannot carry (`msubsup`, `mtable`, `mfenced`, …) and dropped the payload —
+ * with the ids, marks, difficulty and tags it holds — on an untouched export.
  */
 private fun canonField(elements: List<ContentElement>, scalarImage: String?): String {
     if (elements.isEmpty() && scalarImage == null) return ""
@@ -282,12 +289,15 @@ private fun canonField(elements: List<ContentElement>, scalarImage: String?): St
         when (element) {
             is ContentElement.TextElement -> text.append(element.text)
             is ContentElement.MathElement -> {
-                flushText()
-                parts.add(
-                    "m:" + decodeXmlEntities(element.mathml)
-                        .replace(Regex("<[^>]*>"), "")
-                        .replace(Regex("\\s+"), "")
-                )
+                if (mathMlToOmml(element.mathml) == null) {
+                    // The writer cannot express this formula as OMML and
+                    // prints its linear text into the same run; the visible
+                    // side is prose, so canon it as prose too.
+                    text.append(mathMlLinearText(element.mathml))
+                } else {
+                    flushText()
+                    parts.add("m:" + canonMathLeaves(element.mathml))
+                }
             }
             is ContentElement.ImageElement -> {
                 flushText()
@@ -370,10 +380,11 @@ internal fun canonTable(rows: List<List<String>>): String = buildString {
 
 /**
  * One cell's freshness canon. A chemical structure contributes its readable
- * handles plus one picture position when it has a valid PNG; prose and math
- * follow the body's rules (tags stripped, whitespace removed, math by leaf
- * text), and every picture the writer embeds contributes one `i`. A
- * non-embeddable data picture contributes the same visible `[image]` text the
+ * handles plus one picture position when it has a valid PNG (or the DOCX
+ * payload's descriptor for it); prose and math follow the body's rules (tags
+ * stripped, whitespace removed, math by leaf text; a formula the writer must
+ * linearise is text), and every picture the writer embeds contributes one `i`.
+ * A non-embeddable data picture contributes the same visible `[image]` text the
  * writer prints; a remote/file/empty source or a tag with no readable source
  * contributes nothing on either side.
  *
@@ -393,23 +404,31 @@ internal fun canonCell(cell: String): String {
         when (segment) {
             is CellSegment.Chem -> {
                 text.append(chemElementText(segment.element))
-                if (isPngDataUri(segment.element.diagram)) {
+                // A payload descriptor is the same picture the visible cell
+                // draws; its hash must count at the same position.
+                val hash = when {
+                    isPngDataUri(segment.element.diagram) ->
+                        imageSrcHash(segment.element.diagram)
+                    segment.pngDescriptor != null -> imageSrcHash(segment.pngDescriptor)
+                    else -> null
+                }
+                if (hash != null) {
                     flush()
-                    parts.add(canonPart("i", imageSrcHash(segment.element.diagram).orEmpty()))
+                    parts.add(canonPart("i", hash))
                 }
             }
             is CellSegment.Text -> for (part in tableCellParts(segment.html)) {
                 when (part) {
                     is CellPart.Math -> {
-                        flush()
-                        parts.add(
-                            canonPart(
-                                "m",
-                                decodeXmlEntities(part.mathml)
-                                    .replace(Regex("<[^>]*>"), "")
-                                    .replace(Regex("\\s+"), "")
-                            )
-                        )
+                        if (mathMlToOmml(part.mathml) == null) {
+                            // The cell writer falls back to the same linear
+                            // text in the same paragraph, so this formula is
+                            // prose on the visible side.
+                            text.append(mathMlLinearText(part.mathml))
+                        } else {
+                            flush()
+                            parts.add(canonPart("m", canonMathLeaves(part.mathml)))
+                        }
                     }
                     is CellPart.Text -> {
                         var pos = 0
@@ -445,6 +464,16 @@ internal fun canonCell(cell: String): String {
 
 /** A typed, length-prefixed canon part: the length makes the encoding injective. */
 private fun canonPart(type: String, value: String): String = "$type:${value.length}:$value"
+
+/**
+ * A formula's leaf text: character data only, entities decoded and layout
+ * whitespace removed. The OMML round trip restructures tags, so only the
+ * leaves are comparable.
+ */
+private fun canonMathLeaves(mathml: String): String =
+    decodeXmlEntities(mathml)
+        .replace(Regex("<[^>]*>"), "")
+        .replace(Regex("\\s+"), "")
 
 /**
  * Image srcs the document body can carry: a descriptor for an embedded data
@@ -621,15 +650,19 @@ internal fun graftTable(
  * document order, by picture slot rather than by searching for segment text:
  * `cellSegments` rebuilds a marker that starts inside a protected range (a
  * complete tag or `<math>`), so its text is not a substring of the payload.
- * Instead every chem marker with a valid PNG is counted from
- * [cellChemSpans] and verified against the visible picture at that slot; the
- * next `<img>` consumes the following one. A hash mismatch refuses the graft
- * for the cell (the visible cell wins), and a descriptor that survives the
- * walk always falls back to the visible cell — a stored cell must never keep a
- * `mcqapp:img|` src.
+ * Instead every chem marker with a valid PNG (or the payload descriptor that
+ * replaced it) is counted from [cellChemSpans] and verified against the
+ * visible picture at that slot; the next `<img>` consumes the following one.
+ * A descriptor's hash must match the visible bytes before its exact
+ * `data-png` payload is put back. A hash mismatch refuses the graft for the
+ * cell (the visible cell wins), and a descriptor that survives the walk always
+ * falls back to the visible cell — a stored cell must never keep a
+ * `mcqapp:img|` src or a `data-png` descriptor.
  */
 private fun graftCell(payload: String, visible: String): String {
-    if (!payload.contains("<img", ignoreCase = true)) return payload
+    val chemSpans = cellChemSpans(payload)
+    val hasChemDescriptor = chemSpans.any { it.pngDescriptor != null }
+    if (!payload.contains("<img", ignoreCase = true) && !hasChemDescriptor) return payload
     val srcs = mutableListOf<String>()
     forEachCellImage(visible) { src, _, _ ->
         if (src != null && src.startsWith("data:", ignoreCase = true)) srcs.add(src)
@@ -638,9 +671,8 @@ private fun graftCell(payload: String, visible: String): String {
     forEachCellImageSpan(payload) { tag, start, end ->
         if (tag != null) spans.add(CellImageSpan(tag, start, end))
     }
-    if (spans.isEmpty()) return payload
+    if (spans.isEmpty() && !hasChemDescriptor) return payload
 
-    val chemSpans = cellChemSpans(payload)
     var next = 0
     var chemIndex = 0
     val replacements = mutableListOf<Triple<Int, Int, String>>()
@@ -649,6 +681,21 @@ private fun graftCell(payload: String, visible: String): String {
     fun consumeChemPictures(upTo: Int): Boolean {
         while (chemIndex < chemSpans.size && chemSpans[chemIndex].start < upTo) {
             val chem = chemSpans[chemIndex++]
+            val descriptor = chem.pngDescriptor
+            if (descriptor != null) {
+                val expected = imageSrcHash(descriptor) ?: return false
+                val visibleSrc = srcs.getOrNull(next) ?: return false
+                if (imageSrcHash(visibleSrc) != expected) return false
+                next++
+                // The descriptor held the exact header, padding and tail, so
+                // this is the byte-identical payload the writer stripped.
+                val resolved = resolveImageSrcDescriptor(descriptor, visibleSrc) ?: return false
+                val payloadBody = resolved.substringAfter(',', "")
+                if (payloadBody.isEmpty()) return false
+                if (chem.pngValueStart < 0 || chem.pngValueEnd <= chem.pngValueStart) return false
+                replacements += Triple(chem.pngValueStart, chem.pngValueEnd, payloadBody)
+                continue
+            }
             if (!isPngDataUri(chem.element.diagram)) continue
             val expected = imageSrcHash(chem.element.diagram) ?: return false
             val visibleSrc = srcs.getOrNull(next) ?: return false
@@ -683,33 +730,55 @@ private fun graftCell(payload: String, visible: String): String {
     return if (containsImageDescriptor(result)) visible else result
 }
 
+/**
+ * True when a cell still carries a picture the body was supposed to resolve:
+ * an `<img>` descriptor or a chem marker's `data-png` descriptor. Such a cell
+ * must never reach storage (see [graftCell]).
+ */
 private fun containsImageDescriptor(cell: String): Boolean {
     var found = false
     forEachCellImageSpan(cell) { tag, _, _ ->
         val src = tag?.let(::docxCellImageSrc)
         if (src != null && isImageSrcDescriptor(src)) found = true
     }
-    return found
+    if (found) return true
+    return cellChemSpans(cell).any { it.pngDescriptor != null }
 }
 
 /**
- * [cell] with every descriptor `<img>` removed. The last-resort path when no
- * visible cell can resolve it: a descriptor must never reach storage, so the
- * picture position is dropped rather than stored as `mcqapp:img|…`.
+ * [cell] with every descriptor removed or degraded to its visible text. The
+ * last-resort path when no visible cell can resolve it: a descriptor must
+ * never reach storage, so a picture position is dropped rather than stored as
+ * `mcqapp:img|…`, and a structure whose raster cannot be restored becomes its
+ * readable handles (exactly what a text-only surface shows).
  */
 private fun dropResidualDescriptors(cell: String): String {
     if (!containsImageDescriptor(cell)) return cell
-    var out: StringBuilder? = null
-    var pos = 0
+    val replacements = mutableListOf<Triple<Int, Int, String>>()
+    for (span in cellChemSpans(cell)) {
+        if (span.pngDescriptor != null) {
+            replacements += Triple(
+                span.start,
+                span.end,
+                escapeHtmlText(chemElementText(span.element))
+            )
+        }
+    }
     forEachCellImageSpan(cell) { tag, start, end ->
         val src = tag?.let(::docxCellImageSrc)
         if (tag != null && src != null && isImageSrcDescriptor(src)) {
-            val sb = out ?: StringBuilder(cell.length).also { out = it }
-            sb.append(cell, pos, start)
-            pos = end
+            replacements += Triple(start, end, "")
         }
     }
-    val sb = out ?: return cell
+    if (replacements.isEmpty()) return cell
+    replacements.sortBy { it.first }
+    val sb = StringBuilder(cell.length)
+    var pos = 0
+    for ((start, end, text) in replacements) {
+        if (start < pos) continue
+        sb.append(cell, pos, start).append(text)
+        pos = end
+    }
     sb.append(cell, pos, cell.length)
     return sb.toString()
 }
